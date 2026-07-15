@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 
+from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.storage import transaction
 
@@ -36,6 +38,9 @@ def _direction(value: float) -> str:
 class ReasonGraphStore:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
+        self._content_features: dict[str, dict[str, tuple[float, str, int]]] = {}
+        self._scene_titles: dict[str, str] = {}
+        self._scene_count = 1
 
     def build(self, model_id: str) -> None:
         scores = RecommendationModelStore(self.connection).scores(model_id)
@@ -45,6 +50,7 @@ class ReasonGraphStore:
         if row is None:
             raise RuntimeError(f"unknown model: {model_id}")
         feature_version = str(row[0])
+        self._prepare_neighbor_context(feature_version)
         graphs = {
             scene_id: self._scene_reasons(score, feature_version)
             for scene_id, score in scores.items()
@@ -78,6 +84,26 @@ class ReasonGraphStore:
                     for index, reason in enumerate(reasons)
                 ),
             )
+
+    def _prepare_neighbor_context(self, feature_version: str) -> None:
+        scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
+        self._content_features = {
+            scene_id: {
+                feature.name: (
+                    feature.value,
+                    str(feature.metadata.get("tag_name", "")).strip(),
+                    int(_number(feature.metadata.get("document_frequency", 0))),
+                )
+                for feature in features
+                if feature.family == "content"
+            }
+            for scene_id, features in scene_features.items()
+        }
+        self._scene_titles = {
+            str(row["scene_id"]): str(row["title"] or row["scene_id"])
+            for row in self.connection.execute("SELECT scene_id, title FROM source_scene")
+        }
+        self._scene_count = max(1, len(self._scene_titles))
 
     def reasons(self, model_id: str, scene_id: str) -> tuple[Reason, ...]:
         model = self.connection.execute(
@@ -348,6 +374,32 @@ class ReasonGraphStore:
         value = _number(neighbor.get("value")) if isinstance(neighbor, dict) else 0.0
         if abs(value) < 1e-6 or not score.neighbors:
             return
+        target = self._content_features.get(score.scene_id, {})
+        enriched_neighbors: list[dict[str, object]] = []
+        for raw_neighbor in score.neighbors[:3]:
+            neighbor = dict(raw_neighbor)
+            neighbor_id = str(neighbor.get("scene_id", ""))
+            shared = target.keys() & self._content_features.get(neighbor_id, {}).keys()
+            ranked_shared = sorted(
+                (
+                    (
+                        min(target[name][0], self._content_features[neighbor_id][name][0])
+                        * math.log1p(
+                            self._scene_count
+                            / max(
+                                1,
+                                target[name][2] or self._content_features[neighbor_id][name][2],
+                            )
+                        ),
+                        target[name][1] or name.removeprefix("tag:"),
+                    )
+                    for name in shared
+                ),
+                key=lambda item: (-item[0], item[1]),
+            )
+            neighbor["title"] = self._scene_titles.get(neighbor_id, neighbor_id)
+            neighbor["shared_tags"] = [name for _, name in ranked_shared[:4]]
+            enriched_neighbors.append(neighbor)
         reasons.append(
             self._reason(
                 score,
@@ -358,7 +410,7 @@ class ReasonGraphStore:
                 "scene",
                 str(score.neighbors[0].get("scene_id", "")) or None,
                 "content_neighbor_model",
-                {"neighbors": list(score.neighbors)},
+                {"neighbors": enriched_neighbors},
             )
         )
 

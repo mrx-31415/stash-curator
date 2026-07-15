@@ -239,6 +239,26 @@ Use ordered SQL migrations packaged under `curator/storage/sql`. Foreign keys ar
 enabled. Operational timestamps use UTC epoch milliseconds; source-domain dates such
 as scene date and performer birthdate remain normalized text.
 
+The sidecar is not a second authoritative library database. It has two deliberately
+different kinds of data:
+
+- a rebuildable, normalized cache of the subset read from Stash that ranking needs;
+- Curator-owned behavioral and derived state that Stash does not represent.
+
+The source cache overlaps with Stash on stable IDs, selected display metadata,
+relationships, tags and markers, file availability/duration, favorites/ratings, and
+play/O history. It does not copy media, images, complete GraphQL responses, or every
+Stash field. Stash remains authoritative: synchronization updates the cache and full
+reconciliation removes records no longer present upstream.
+
+Curator-owned tables contain impressions, future direct play sessions, normalized
+outcomes, feedback, exclusions/pruning decisions, feature snapshots, affinities,
+scores, explanations, lane classifications, and recommendation history. These are
+kept separate because they need immutable provenance, versioning, and inexpensive
+local joins that the Stash schema/API does not provide. Deleting the sidecar loses
+that Curator-owned learning history, but the source cache and historical projection
+can otherwise be rebuilt from Stash.
+
 ### 8.1 Source cache
 
 | Table | Purpose | Required identity |
@@ -288,6 +308,13 @@ confidence, source, timestamps, and related impression/session IDs explicitly.
 
 Build into a new unpublished model version inside one transaction or staging tables.
 Publish it atomically after validation checks pass.
+
+Versioned snapshots need bounded retention. Keep the current published model, models
+referenced by retained impressions/evaluations, and a small configurable number of
+recent superseded builds. Delete older reason, score, lane, affinity, and feature
+snapshots transactionally, then offer an explicit maintenance command to reclaim
+SQLite free pages. The validation prototype does not implement this policy yet, so
+derived snapshots currently accumulate.
 
 ## 9. GraphQL synchronization
 

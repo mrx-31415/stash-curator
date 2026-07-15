@@ -56,7 +56,7 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
 
     explanation = ExplanationService(connection).explain_scene("model", "a-best")
     assert explanation.summary == (
-        "The tag evidence around Familiar scenario lines up well with your past choices."
+        "The combination of Familiar scenario lines up particularly well with your past choices."
     )
 
 
@@ -77,9 +77,48 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
     assert challenge.provenance == "lane_policy"
     assert challenge.detail["challenged_assumption"] == "studio"
     assert explanation.summary == (
-        "This is a deliberate stretch: it challenges studio while retaining a positive anchor. "
-        "Its position was adjusted to keep the page varied."
+        "This is a deliberate stretch: it challenges studio while retaining a positive anchor."
     )
+    assert any(reason.code.startswith("diversity.") for reason in explanation.all_reasons)
+    assert all(not reason.code.startswith("diversity.") for reason in explanation.selected_reasons)
+
+
+def test_content_neighbor_explanation_names_scenes_and_shared_tags(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("UPDATE source_scene SET title='Known Good Scene' WHERE scene_id='b-best'")
+    connection.execute(
+        "UPDATE feature_definition SET metadata_json=? WHERE feature_id='feature-x'",
+        (json.dumps({"tag_name": "Shared scenario"}),),
+    )
+    connection.execute(
+        "UPDATE model_scene_score SET neighbors_json=? WHERE scene_id='a-best'",
+        (
+            json.dumps(
+                [
+                    {
+                        "scene_id": "b-best",
+                        "similarity": 0.72,
+                        "weight": 0.31,
+                        "outcome": 0.8,
+                    }
+                ]
+            ),
+        ),
+    )
+
+    explanation = ExplanationService(connection).explain_scene("model", "a-best")
+    reason = next(
+        reason for reason in explanation.all_reasons if reason.code == "appeal.content_neighbor"
+    )
+    neighbors = reason.detail["neighbors"]
+    assert isinstance(neighbors, list)
+    neighbor = neighbors[0]
+    assert isinstance(neighbor, dict)
+
+    assert neighbor["title"] == "Known Good Scene"
+    assert neighbor["shared_tags"] == ["Shared scenario"]
+    assert "Known Good Scene" in explanation.summary
+    assert "Shared scenario" in explanation.summary
 
 
 def test_direct_outcome_reason_comes_from_exact_scene_evidence(tmp_path: Path) -> None:

@@ -216,6 +216,9 @@ class ReportGenerator:
         )
         performer_values = cast(list[object], metadata["performers"])
         performers = ", ".join(map(str, performer_values))
+        supporting_scenes = ReportGenerator._supporting_scenes(
+            explanation_data, redacted, stash_base_url
+        )
         scene_link = ""
         title = html.escape(str(metadata["title"]))
         if stash_base_url:
@@ -236,6 +239,7 @@ class ReportGenerator:
           <p class="meta">{html.escape(performers)} · {html.escape(str(metadata["studio"]))}
             · {html.escape(str(metadata["date"] or "Unknown date"))}</p>
           <p class="why">{html.escape(str(explanation_data["summary"]))}</p>
+          {supporting_scenes}
           <div class="scores">
             <span>Appeal {float(item_data["appeal"]):+.3f}</span>
             <span>Current Fit {float(item_data["current_fit"]):+.3f}</span>
@@ -251,6 +255,49 @@ class ReportGenerator:
           <label class="review">Notes <input type="text"></label>
         </article>
         """
+
+    @staticmethod
+    def _supporting_scenes(
+        explanation: dict[str, Any], redacted: bool, stash_base_url: str | None
+    ) -> str:
+        reasons = cast(list[dict[str, Any]], explanation.get("all_reasons", []))
+        neighbor_reason = next(
+            (reason for reason in reasons if reason.get("code") == "appeal.content_neighbor"),
+            None,
+        )
+        if not neighbor_reason:
+            return ""
+        detail = neighbor_reason.get("detail", {})
+        raw_neighbors = detail.get("neighbors", []) if isinstance(detail, dict) else []
+        if not isinstance(raw_neighbors, list):
+            return ""
+        rows: list[str] = []
+        for neighbor in raw_neighbors[:3]:
+            if not isinstance(neighbor, dict):
+                continue
+            scene_id = str(neighbor.get("scene_id", ""))
+            title = html.escape(str(neighbor.get("title") or scene_id or "Supporting scene"))
+            if stash_base_url and not redacted and scene_id:
+                scene_url = f"{stash_base_url}/scenes/{quote(scene_id, safe='')}"
+                title = f'<a href="{html.escape(scene_url, quote=True)}">{title}</a>'
+            tags = neighbor.get("shared_tags", [])
+            tag_text = (
+                ", ".join(html.escape(str(tag)) for tag in tags) if isinstance(tags, list) else ""
+            )
+            similarity = neighbor.get("similarity")
+            similarity_text = (
+                f" · similarity {float(similarity):.2f}"
+                if isinstance(similarity, (int, float))
+                else ""
+            )
+            shared_text = f" · shared: {tag_text}" if tag_text else ""
+            rows.append(f"<li>{title}{shared_text}{similarity_text}</li>")
+        if not rows:
+            return ""
+        return (
+            '<details class="supporting-scenes"><summary>Supporting scenes and shared content'
+            "</summary><ul>" + "".join(rows) + "</ul></details>"
+        )
 
     @staticmethod
     def _stash_base_url(stash_url: str | None) -> str | None:

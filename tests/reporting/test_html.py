@@ -10,6 +10,25 @@ from tests.ranking.test_slate import _database
 
 def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        "UPDATE feature_definition SET metadata_json=? WHERE feature_id='feature-x'",
+        (json.dumps({"tag_name": "Shared scenario"}),),
+    )
+    connection.execute(
+        "UPDATE model_scene_score SET neighbors_json=? WHERE scene_id='a-best'",
+        (
+            json.dumps(
+                [
+                    {
+                        "scene_id": "b-best",
+                        "similarity": 0.72,
+                        "weight": 0.31,
+                        "outcome": 0.8,
+                    }
+                ]
+            ),
+        ),
+    )
     output = tmp_path / "report.html"
 
     result = ReportGenerator(connection).generate(
@@ -32,6 +51,9 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     assert 'src="http://stash.test:9999/scene/a-best/screenshot"' in document
     assert 'loading="lazy"' in document
     assert "Reason graph" in document
+    assert "Supporting scenes and shared content" in document
+    assert 'href="http://stash.test:9999/scenes/b-best"' in document
+    assert "Shared scenario" in document
     assert "direct.positive" in document and "private" in document
     assert "Full inspector data" in document
     assert "Appeal" in document and "Current Fit" in document and "Confidence" in document

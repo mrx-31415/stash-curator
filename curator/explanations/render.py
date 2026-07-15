@@ -129,9 +129,17 @@ class ExplanationService:
 
     def _render(self, reasons: tuple[Reason, ...]) -> Explanation:
         selected = self._plan(reasons)
-        phrases = [self._phrase(reason) for reason in selected]
-        phrases = [phrase for phrase in phrases if phrase]
-        summary = " ".join(phrases)
+        positive = [reason for reason in selected if reason.direction == "positive"]
+        exploration = [reason for reason in selected if reason.code.startswith("explore.")]
+        reservations = [
+            reason
+            for reason in selected
+            if reason.direction == "negative" and not reason.code.startswith("diversity.")
+        ]
+        phrases = [self._phrase(reason) for reason in positive]
+        phrases.extend(self._phrase(reason) for reason in exploration)
+        phrases.extend(self._phrase(reason) for reason in reservations)
+        summary = " ".join(phrase for phrase in phrases if phrase)
         if not summary:
             summary = "This is a cautious catalog suggestion where Curator has limited evidence."
         return Explanation(summary, selected, reasons)
@@ -152,8 +160,7 @@ class ExplanationService:
                 for reason in reasons
                 if reason.direction == "negative"
                 and (
-                    reason.code.startswith("fit.")
-                    or reason.code.startswith("diversity.")
+                    reason.code in {"fit.cooldown", "fit.not_now"}
                     or reason.code.startswith("appeal.")
                 )
             ),
@@ -191,9 +198,9 @@ class ExplanationService:
             return self._choose(
                 reason,
                 (
-                    f"Tags such as {tags} are a strong match for patterns in scenes you enjoy.",
-                    f"The tag evidence around {tags} lines up well with your past choices.",
-                    f"The clearest content-level matches are {tags}.",
+                    f"The content makes a good case for this one, especially {tags}.",
+                    f"The combination of {tags} lines up particularly well with your past choices.",
+                    f"A lot of the fit comes from {tags}, which recur in scenes you enjoy.",
                 ),
             )
         if code == "appeal.tag_negative":
@@ -204,9 +211,10 @@ class ExplanationService:
             return self._choose(
                 reason,
                 (
-                    f"There is some tag-level friction around {tags}.",
-                    f"Your history is less positive around the tags {tags}.",
-                    f"The main content-level reservation is {tags}.",
+                    f"The main reservation is {tags}, which are less convincing in your history.",
+                    f"There is some friction around {tags}; those patterns have worked less often.",
+                    f"The presence of {tags} makes this a little less certain "
+                    "than the stronger picks.",
                 ),
             )
         if code == "appeal.performer_identity":
@@ -214,9 +222,10 @@ class ExplanationService:
             return self._choose(
                 reason,
                 (
-                    f"{name} is a positive performer-level signal for this scene.",
-                    f"Your existing preference evidence for {name} raises this scene's appeal.",
-                    f"The performer model favors this scene partly because of {name}.",
+                    f"Your history with {name} is one of the clearest reasons to recommend it.",
+                    f"{name} has been a reliable draw for you, which gives this a strong start.",
+                    f"A large part of the appeal is {name}, based on how their scenes "
+                    "have worked for you.",
                 ),
             )
         if code == "appeal.performer_similar":
@@ -232,17 +241,17 @@ class ExplanationService:
                 or ["their overall performer profiles"]
             )
             effect = (
-                f"Positive preference evidence for {known} gives this scene a lift."
+                f"Since {known} has worked for you, that resemblance gives this scene a lift."
                 if reason.direction == "positive"
-                else f"Less-positive preference evidence for {known} creates some friction."
+                else f"Your history with {known} makes that resemblance a mild reservation."
             )
             return self._choose(
                 reason,
                 (
-                    f"I linked {target} to {known} mainly through {aspects}; "
-                    f"{target} has {profile}. {effect}",
-                    f"{target} looks adjacent to {known} in {aspects}. In plain terms, "
-                    f"the profile is {profile}. {effect}",
+                    f"{target} looks close to {known}, mainly in {aspects}. "
+                    f"In plain terms, {target} has {profile}. {effect}",
+                    f"I would place {target} near {known} because of {aspects}; "
+                    f"the visible profile is {profile}. {effect}",
                 ),
             )
         if code == "appeal.studio":
@@ -250,27 +259,22 @@ class ExplanationService:
             return self._choose(
                 reason,
                 (
-                    f"{name} contributes positive studio-level evidence.",
-                    f"Scenes from {name} have generally matched your preferences.",
-                    f"The studio history for {name} works in this scene's favor.",
+                    f"{name} has a good enough track record with you to add some confidence.",
+                    f"Your history with {name} works in this scene's favor.",
+                    f"Scenes from {name} have tended to suit you, which helps here.",
                 ),
             )
         if code == "appeal.content_neighbor":
-            return self._choose(
-                reason,
-                (
-                    "Its content resembles other scenes that have worked well for you.",
-                    "Nearby scenes in the content model have produced positive outcomes.",
-                    "The closest tag-based scene neighbors are encouraging.",
-                ),
-            )
+            return self._neighbor_phrase(reason)
         if code == "direct.positive":
             return self._choose(
                 reason,
                 (
-                    "You have strong direct positive history with this scene.",
-                    "Your own prior outcomes make this a confident revisit.",
-                    "This scene has worked well for you before.",
+                    "You have come back to this scene successfully before, so it has "
+                    "earned another look.",
+                    "This has worked well for you directly, making it a particularly safe revisit.",
+                    "Your own history is the strongest argument here: this scene has "
+                    "delivered before.",
                 ),
             )
         if code == "direct.negative":
@@ -299,9 +303,48 @@ class ExplanationService:
             )
         if code == "explore.unknown":
             return "This is a deliberate probe beyond the better-known parts of your taste."
-        if code.startswith("diversity."):
-            return "Its position was adjusted to keep the page varied."
         return ""
+
+    def _neighbor_phrase(self, reason: Reason) -> str:
+        raw = reason.detail.get("neighbors", [])
+        neighbors = (
+            [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+        )
+        useful = [item for item in neighbors if _number(item.get("outcome")) > 0][:2]
+        if not useful:
+            return "Its closest content precedents provide some supporting evidence."
+        titles = [
+            str(item.get("title") or item.get("scene_id") or "a nearby scene") for item in useful
+        ]
+        tags = self._natural_list(
+            list(
+                dict.fromkeys(
+                    tag for item in useful for tag in self._detail_list(item.get("shared_tags"))
+                )
+            )[:4]
+        )
+        title_list = self._natural_list(titles)
+        if len(useful) == 1:
+            return self._choose(
+                reason,
+                (
+                    f"A useful precedent is {title_list}: it shares {tags} with this "
+                    "scene and sits in your positive viewing history.",
+                    f"{title_list} is the clearest nearby example, overlapping on "
+                    f"{tags} and having worked well for you.",
+                ),
+            )
+        return self._choose(
+            reason,
+            (
+                f"Two useful precedents are {title_list}. They overlap on {tags}, and "
+                "both sit in your positive viewing history.",
+                f"This sits near {title_list}, chiefly through {tags}; both of those "
+                "scenes worked well for you.",
+                f"The closest encouraging comparisons are {title_list}, which share "
+                f"{tags} and have both worked for you before.",
+            ),
+        )
 
     @staticmethod
     def _detail_list(value: object) -> list[str]:
