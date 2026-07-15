@@ -81,13 +81,13 @@ stash-curator/
 │   ├── config.py
 │   ├── graphql/
 │   ├── storage/
+│   │   └── sql/
 │   ├── events/
 │   ├── features/
 │   ├── model/
 │   ├── ranking/
 │   ├── explanations/
 │   └── reporting/
-├── migrations/
 ├── ui/
 ├── tests/
 │   ├── unit/
@@ -235,8 +235,9 @@ Rules:
 
 ## 8. SQLite data model
 
-Use ordered SQL migrations. Foreign keys are enabled. Timestamps use UTC ISO-8601 or
-integer epoch milliseconds consistently; choose one in the first migration.
+Use ordered SQL migrations packaged under `curator/storage/sql`. Foreign keys are
+enabled. Operational timestamps use UTC epoch milliseconds; source-domain dates such
+as scene date and performer birthdate remain normalized text.
 
 ### 8.1 Source cache
 
@@ -246,7 +247,7 @@ integer epoch milliseconds consistently; choose one in the first migration.
 | `source_file` | duration and availability | `file_id` |
 | `source_performer` | identity, favorite, physical attributes | `performer_id` |
 | `source_studio` | studio and parent relation | `studio_id` |
-| `source_tag` | name, hierarchy, resolved role | `tag_id` |
+| `source_tag` | source name and hierarchy | `tag_id` |
 | `scene_performer` | scene/performer relation | composite |
 | `scene_tag` | scene/tag relation and provenance | composite |
 | `scene_marker` | temporal tag evidence | `marker_id` |
@@ -278,6 +279,7 @@ confidence, source, timestamps, and related impression/session IDs explicitly.
 | Table | Purpose |
 |---|---|
 | `feature_definition` | stable feature ID, family, provenance, version |
+| `tag_role` | configuration-versioned role and resolution reason |
 | `entity_feature` | sparse entity/feature values |
 | `model_version` | immutable build metadata and publication state |
 | `feature_affinity` | learned affinity, confidence, support, family |
@@ -739,6 +741,8 @@ Each package is independently assignable after its dependencies are complete.
 
 ### WP-00 — Repository foundation
 
+Status: complete.
+
 Dependencies: approved design and implementation plan.
 
 Deliverables:
@@ -756,6 +760,8 @@ Acceptance:
 - package and CLI help build reproducibly.
 
 ### WP-01 — SQLite foundation
+
+Status: complete.
 
 Dependencies: WP-00.
 
