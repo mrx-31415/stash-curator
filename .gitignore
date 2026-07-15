@@ -1,0 +1,43 @@
+# Python and tooling
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.local.toml
+*.local.yaml
+*.local.yml
+
+# Curator private and generated state
+*.private.*
+data/
+private/
+reports/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db
+*.db-*
+*.backup
+
+# Build and package output
+_site/
+*.zip
+coverage.xml
+htmlcov/
+.coverage
