@@ -389,6 +389,19 @@ The viewing contribution is a configurable smooth curve that:
 - largely saturates after several minutes;
 - gives no special end-of-file bonus.
 
+The implemented provisional curve is continuous at the neutral threshold `T`:
+
+```text
+direct_view(t < T)  = negative_floor * (1 - t / T)
+view(t >= T)        = positive_cap * (1 - exp(-(t - T) / rise_seconds))
+```
+
+Defaults are `T = 30 seconds`, `negative_floor = -0.10`,
+`positive_cap = +0.35`, and `rise_seconds = 90`. This yields roughly `+0.10` at one
+minute and is close to saturation after several minutes. Historical-imputed duration
+uses only the non-negative branch and reduced confidence. Completion remains
+record-only and cannot alter this curve.
+
 ### 10.3 Repeats and replacement
 
 ```text
@@ -398,6 +411,13 @@ repeat_independence(gap_hours) = 1 - exp(-gap_hours / 6)
 Detect a quick replacement when a Curator-originated play ends under the configured
 threshold and another observed Stash scene is selected within the configured window,
 without intervening positive feedback or substantial resumed playback.
+
+`EventCalibration` owns every provisional strength, confidence, threshold, and time
+constant. Historical reconstruction matches O timestamps one-to-one to the nearest
+play inside a configurable plausibility window; unmatched O events remain standalone
+exact-scene successes. The sidecar projection is deterministic and rebuildable from
+preserved `source_scene`, `source_play`, and `source_o` facts. Source reads and derived
+projection replacement commit in one SQLite transaction.
 
 ## 11. Feature construction
 
@@ -803,6 +823,8 @@ Stash v0.31.1; committed fixtures remain entirely synthetic.
 
 ### WP-03 — Event normalization
 
+Status: complete.
+
 Dependencies: WP-01, WP-02.
 
 Deliverables: historical pseudo-sessions, normalized outcome records, repeat and
@@ -810,6 +832,12 @@ quick-replacement functions, direct-session input contract.
 
 Acceptance: all curves and invariants have boundary tests; historical imputations
 cannot create negative exits.
+
+Implemented with a typed direct-player session contract, centralized calibration,
+smooth view/repeat curves, strongest-signal occasion collapse, conservative
+historical reconstruction, one-to-one O matching, quick-replacement detection, and
+an idempotent SQLite historical projection. Direct ranges, seeks, markers, and
+completion are captured by contract but remain record-only as designed.
 
 ### WP-04 — Feature pipeline
 

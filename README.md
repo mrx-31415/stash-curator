@@ -8,8 +8,9 @@ explicit feedback to offer reliable choices, timely revisits, nearby discoveries
 and deliberate adventures without letting the feed become repetitive.
 
 The project is in its foundation and validation phase. The read-only sidecar cache
-can now synchronize Stash metadata, but Curator does not yet build recommendations
-or provide an installable Stash plugin.
+can synchronize Stash metadata and normalize historical behavior into conservative
+training evidence, but Curator does not yet build recommendations or provide an
+installable Stash plugin.
 
 ## Documentation
 
