@@ -7,8 +7,9 @@ Stash Curator is a planned recommendation and discovery plugin for
 explicit feedback to offer reliable choices, timely revisits, nearby discoveries,
 and deliberate adventures without letting the feed become repetitive.
 
-The project is in its foundation and validation phase. It does not yet provide an
-installable Stash plugin.
+The project is in its foundation and validation phase. The read-only sidecar cache
+can now synchronize Stash metadata, but Curator does not yet build recommendations
+or provide an installable Stash plugin.
 
 ## Documentation
 
@@ -35,8 +36,20 @@ uv run mypy curator tests
 uv run pytest
 ```
 
-The initial validation client will use read-only Stash GraphQL queries. Repository
-tests use synthetic data and must not require access to a real Stash instance.
+Synchronize a local validation cache:
+
+```bash
+export STASH_URL=http://localhost:9999
+# export STASH_API_KEY=...  # only when Stash requires one
+uv run curator --db data/curator.sqlite3 doctor
+uv run curator --db data/curator.sqlite3 sync
+uv run curator --db data/curator.sqlite3 sync --full
+```
+
+Normal sync is incremental. A full sync traverses stable IDs and reconciles source
+deletions. Both modes resume interrupted page traversal. The validation client
+accepts GraphQL `query` operations only; it contains no Stash mutations. Repository
+tests use synthetic data and do not require access to a real Stash instance.
 
 ## Privacy
 

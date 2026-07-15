@@ -323,6 +323,19 @@ Incremental sync uses update timestamps and stable IDs where supported, plus per
 full ID reconciliation to detect deletions. Interrupted sync resumes safely. A slate
 continues using the last published complete model while a sync/build is in progress.
 
+The implemented sync policy has two modes:
+
+- normal sync reads each entity newest-first by `updated_at` and stops after crossing
+  the last completed watermark; the boundary page is upserted again so equal
+  timestamps cannot create a brittle hard edge;
+- full sync traverses every entity by stable ascending ID, records IDs in a run-local
+  seen set, and reconciles deletions only after all traversals complete.
+
+Normalized records, full-sync seen IDs, the pending high watermark, and the next page
+number commit in one SQLite transaction. A failed run retains that page boundary and
+is resumed on the next invocation. Completed entity traversals are skipped during
+resume. Published models are not read or modified by synchronization.
+
 ### 9.3 Safety
 
 The validation client contains no mutation documents. Integration tests assert that
@@ -773,6 +786,8 @@ build cannot replace the published model.
 
 ### WP-02 — GraphQL adapter and sync
 
+Status: complete.
+
 Dependencies: WP-01.
 
 Deliverables: capability probe, named queries, response adapters, paginated initial
@@ -780,6 +795,11 @@ sync, incremental sync, reconciliation, doctor command.
 
 Acceptance: synthetic integration covers resume and deletion; validation client
 contains and sends queries only.
+
+Implemented with named read-only queries for capabilities, tags, studios,
+performers, and scenes (including files, markers, relationships, play history, and O
+history). Final query documents and both sort modes were validated read-only against
+Stash v0.31.1; committed fixtures remain entirely synthetic.
 
 ### WP-03 — Event normalization
 

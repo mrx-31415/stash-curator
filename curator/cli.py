@@ -10,12 +10,20 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from curator import __version__
+from curator.graphql import GraphQLClient
 from curator.storage import MigrationRunner, backup_database, connect_database
 from curator.storage.migrations import MigrationStatus
+from curator.sync import SyncService
+from curator.sync.repository import SyncRepository
+from curator.sync.service import probe_capabilities
 
 
 def _default_database_path() -> Path:
     return Path(os.environ.get("CURATOR_DB", "data/curator.sqlite3"))
+
+
+def _default_stash_url() -> str | None:
+    return os.environ.get("STASH_URL")
 
 
 def _status_payload(status: MigrationStatus) -> dict[str, object]:
@@ -48,10 +56,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=_default_database_path(),
         help="SQLite path (default: CURATOR_DB or data/curator.sqlite3)",
     )
+    parser.add_argument(
+        "--stash-url",
+        default=_default_stash_url(),
+        help="Stash base or GraphQL URL (default: STASH_URL)",
+    )
 
     subparsers = parser.add_subparsers(dest="command")
     doctor = subparsers.add_parser("doctor", help="Check the local Curator runtime")
     doctor.add_argument("--json", action="store_true", help="Emit structured JSON")
+
+    sync = subparsers.add_parser("sync", help="Synchronize the read-only Stash cache")
+    sync.add_argument("--full", action="store_true", help="Reconcile a complete snapshot")
+    sync.add_argument("--page-size", type=int, default=250)
+    sync.add_argument("--json", action="store_true", help="Emit structured JSON")
 
     database = subparsers.add_parser("db", help="Manage Curator's SQLite database")
     db_commands = database.add_subparsers(dest="db_command", required=True)
@@ -72,11 +90,56 @@ def run(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
-        result = {"status": "ok", "version": __version__}
+        connection = connect_database(args.db)
+        try:
+            migration_status = MigrationRunner(connection).status()
+        finally:
+            connection.close()
+        result: dict[str, object] = {
+            "status": "ok",
+            "version": __version__,
+            "database": str(args.db),
+            "schema_current": migration_status.current_version,
+            "schema_latest": migration_status.latest_version,
+            "stash": "not_configured",
+        }
+        if args.stash_url:
+            client = GraphQLClient(args.stash_url, api_key=os.environ.get("STASH_API_KEY"))
+            capabilities = probe_capabilities(client)
+            result["stash"] = "connected"
+            result["stash_version"] = capabilities.server_version
         if args.json:
             print(json.dumps(result, sort_keys=True))
         else:
-            print(f"Stash Curator {__version__}: foundation runtime is ready")
+            print(f"Stash Curator {__version__}: runtime is ready")
+            print(f"Stash: {result['stash']}")
+        return 0
+
+    if args.command == "sync":
+        if not args.stash_url:
+            parser.error("sync requires --stash-url or STASH_URL")
+        connection = connect_database(args.db)
+        try:
+            MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
+            client = GraphQLClient(args.stash_url, api_key=os.environ.get("STASH_API_KEY"))
+            service = SyncService(
+                client,
+                SyncRepository(connection),
+                page_size=int(args.page_size),
+            )
+            synced = service.sync(full=bool(args.full))
+        finally:
+            connection.close()
+        _print_result(
+            {
+                "run_id": synced.run_id,
+                "mode": synced.mode,
+                "server_version": synced.server_version,
+                "resumed": synced.resumed,
+                "entity_counts": synced.entity_counts,
+            },
+            as_json=bool(args.json),
+        )
         return 0
 
     if args.command == "db":
