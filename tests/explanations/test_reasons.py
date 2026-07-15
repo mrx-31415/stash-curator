@@ -55,7 +55,9 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
     assert reason.confidence == 0.80
 
     explanation = ExplanationService(connection).explain_scene("model", "a-best")
-    assert explanation.summary == "Its Familiar scenario matches patterns you tend to enjoy."
+    assert explanation.summary == (
+        "The tag evidence around Familiar scenario lines up well with your past choices."
+    )
 
 
 def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Path) -> None:
@@ -108,3 +110,49 @@ def test_every_recommended_item_has_versioned_structured_reasons(tmp_path: Path)
             assert any(reason.code == "eligibility.lane" for reason in explanation.all_reasons)
             assert all(reason.model_id == "model" for reason in explanation.all_reasons)
             assert all(reason.feature_version == "features" for reason in explanation.all_reasons)
+
+
+def test_performer_similarity_explains_the_shared_blocks(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("UPDATE source_performer SET name='Alex' WHERE performer_id='p1'")
+    connection.execute("UPDATE source_performer SET name='Blair' WHERE performer_id='p2'")
+    row = connection.execute(
+        "SELECT components_json FROM model_scene_score WHERE scene_id='a-best'"
+    ).fetchone()
+    components = json.loads(row[0])
+    components["performer_similarity"] = {
+        "raw": 0.12,
+        "value": 0.12,
+        "performers": [
+            {
+                "performer_id": "p1",
+                "value": 0.12,
+                "matches": [
+                    {
+                        "performer_id": "p2",
+                        "similarity": 0.82,
+                        "affinity": 0.30,
+                        "blocks": {"proportions": 0.91, "content": 0.78, "eyes": 0.25},
+                    }
+                ],
+            }
+        ],
+    }
+    connection.execute(
+        "UPDATE model_scene_score SET components_json=? WHERE scene_id='a-best'",
+        (json.dumps(components),),
+    )
+
+    explanation = ExplanationService(connection).explain_scene("model", "a-best")
+    reason = next(
+        reason for reason in explanation.all_reasons if reason.code == "appeal.performer_similar"
+    )
+
+    assert reason.detail["shared_aspects"] == [
+        "body proportions",
+        "the kinds of scenes they appear in",
+        "eye color",
+    ]
+    assert "Alex" in explanation.summary
+    assert "Blair" in explanation.summary
+    assert "body proportions" in explanation.summary

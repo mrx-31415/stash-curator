@@ -135,6 +135,17 @@ class ReasonGraphStore:
         content = score.components.get("content")
         if not isinstance(content, dict) or not isinstance(content.get("top"), list):
             return
+        related_names: dict[str, list[str]] = {"positive": [], "negative": []}
+        for item in content["top"]:
+            if not isinstance(item, dict):
+                continue
+            value = _number(item.get("value"))
+            metadata = item.get("metadata", {})
+            metadata = metadata if isinstance(metadata, dict) else {}
+            name = str(metadata.get("tag_name", "")).strip()
+            direction = "positive" if value > 0 else "negative"
+            if abs(value) >= 1e-6 and name and name not in related_names[direction]:
+                related_names[direction].append(name)
         for item in content["top"]:
             if not isinstance(item, dict):
                 continue
@@ -155,6 +166,7 @@ class ReasonGraphStore:
                     "learned_feature_affinity",
                     {
                         "name": str(metadata.get("tag_name", "this content pattern")),
+                        "related_names": related_names[_direction(value)][:3],
                         "contribution": value,
                         "support": metadata.get("document_frequency"),
                     },
@@ -197,6 +209,8 @@ class ReasonGraphStore:
             if abs(value) < 1e-6 or not isinstance(matches, list) or not matches:
                 continue
             performer_id = str(item.get("performer_id", "")) or None
+            ordered_matches = self._supporting_matches(matches, value)
+            representative = ordered_matches[0]
             reasons.append(
                 self._reason(
                     score,
@@ -208,14 +222,54 @@ class ReasonGraphStore:
                     performer_id,
                     "performer_profile_similarity",
                     {
-                        "matches": matches,
+                        "matches": ordered_matches,
                         "value": value,
+                        "similarity": representative.get("similarity"),
+                        "shared_aspects": self._shared_aspects(representative),
+                        "block_similarities": representative.get("blocks", {}),
                         "profile_description": self._profile_description(
                             performer_id, feature_version
                         ),
                     },
                 )
             )
+
+    @staticmethod
+    def _supporting_matches(matches: list[object], value: float) -> list[dict[str, object]]:
+        valid = [dict(item) for item in matches if isinstance(item, dict)]
+
+        def key(item: dict[str, object]) -> tuple[bool, float, str]:
+            affinity = _number(item.get("affinity"))
+            agrees = affinity * value > 0
+            impact = abs(affinity) * _number(item.get("similarity")) ** 3
+            return (not agrees, -impact, str(item.get("performer_id", "")))
+
+        return sorted(valid, key=key)
+
+    @staticmethod
+    def _shared_aspects(match: dict[str, object]) -> list[str]:
+        blocks = match.get("blocks")
+        if not isinstance(blocks, dict):
+            return []
+        labels = {
+            "content": "the kinds of scenes they appear in",
+            "proportions": "body proportions",
+            "age": "age at recording",
+            "augmentation": "augmentation profile",
+            "appearance": "broad appearance profile",
+            "tattoos": "tattoo profile",
+            "piercings": "piercing profile",
+            "eyes": "eye color",
+        }
+        ranked = sorted(
+            (
+                (_number(similarity), labels.get(str(block), str(block).replace("_", " ")))
+                for block, similarity in blocks.items()
+                if _number(similarity) > 0.05
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        return [label for _, label in ranked[:3]]
 
     def _profile_description(self, performer_id: str | None, feature_version: str) -> str:
         if performer_id is None:

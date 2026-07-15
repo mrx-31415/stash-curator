@@ -8,6 +8,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from curator.explanations import Explanation, ExplanationService, ReasonGraphStore
 from curator.model import RecommendationModelStore
@@ -32,6 +33,7 @@ class ReportGenerator:
         *,
         count: int = 20,
         redacted: bool = False,
+        stash_url: str | None = None,
     ) -> ReportResult:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
@@ -43,8 +45,10 @@ class ReportGenerator:
         sections = []
         lane_counts: dict[str, int] = {}
         aliases = self._aliases(redacted)
+        stash_base_url = None if redacted else self._stash_base_url(stash_url)
+        slate_builder = SlateBuilder(self.connection)
         for lane in lanes:
-            slate = SlateBuilder(self.connection).recommend(lane, count)
+            slate = slate_builder.recommend(lane, count)
             lane_counts[lane] = len(slate.items)
             cards = []
             for item in slate.items:
@@ -60,6 +64,7 @@ class ReportGenerator:
                         explanation,
                         aliases,
                         redacted,
+                        stash_base_url,
                     )
                 )
             diagnostic = "".join(
@@ -174,6 +179,7 @@ class ReportGenerator:
         explanation: Explanation,
         aliases: dict[tuple[str, str], str],
         redacted: bool,
+        stash_base_url: str | None,
     ) -> str:
         item_data = asdict(item)
         explanation_data = asdict(explanation)
@@ -210,10 +216,23 @@ class ReportGenerator:
         )
         performer_values = cast(list[object], metadata["performers"])
         performers = ", ".join(map(str, performer_values))
+        scene_link = ""
+        title = html.escape(str(metadata["title"]))
+        if stash_base_url:
+            encoded_scene_id = quote(item.scene_id, safe="")
+            scene_url = f"{stash_base_url}/scenes/{encoded_scene_id}"
+            screenshot_url = f"{stash_base_url}/scene/{encoded_scene_id}/screenshot"
+            scene_link = (
+                f'<a class="scene-image" href="{html.escape(scene_url, quote=True)}">'
+                f'<img loading="lazy" src="{html.escape(screenshot_url, quote=True)}" '
+                f'alt="Cover for {title}"></a>'
+            )
+            title = f'<a href="{html.escape(scene_url, quote=True)}">{title}</a>'
         return f"""
         <article class="card">
+          {scene_link}
           <header><span class="position">#{int(item_data["position"]) + 1}</span>
-            <h3>{html.escape(str(metadata["title"]))}</h3></header>
+            <h3>{title}</h3></header>
           <p class="meta">{html.escape(performers)} · {html.escape(str(metadata["studio"]))}
             · {html.escape(str(metadata["date"] or "Unknown date"))}</p>
           <p class="why">{html.escape(str(explanation_data["summary"]))}</p>
@@ -232,6 +251,18 @@ class ReportGenerator:
           <label class="review">Notes <input type="text"></label>
         </article>
         """
+
+    @staticmethod
+    def _stash_base_url(stash_url: str | None) -> str | None:
+        if not stash_url:
+            return None
+        parsed = urlsplit(stash_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Stash URL must be an absolute HTTP(S) URL")
+        path = parsed.path.rstrip("/")
+        if path.endswith("/graphql"):
+            path = path[: -len("/graphql")]
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
     @staticmethod
     def _redact_value(value: object, aliases: dict[tuple[str, str], str]) -> object:
@@ -280,6 +311,9 @@ h1,h2,h3 {{ line-height:1.1; }} nav {{ display:flex; gap:1rem; flex-wrap:wrap; p
 top:0; background:#111e; padding:1rem 0; z-index:2; }} a {{ color:#9cc8ff; }}
 .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:1rem; }}
 .card {{ background:#1d1d21; border:1px solid #383840; border-radius:12px; padding:1rem; }}
+.scene-image {{ display:block; margin:-1rem -1rem 1rem; overflow:hidden;
+border-radius:11px 11px 0 0; aspect-ratio:16/9; background:#09090b; }}
+.scene-image img {{ display:block; width:100%; height:100%; object-fit:cover; }}
 .card header {{ display:flex; gap:.7rem; align-items:baseline; }} .position {{ color:#aaa; }}
 .meta,.subtype {{ color:#aaa; }} .why {{ font-size:1.04rem; min-height:4.5em; }}
 .scores {{ display:flex; flex-wrap:wrap; gap:.4rem; }} .scores span {{ background:#292932;

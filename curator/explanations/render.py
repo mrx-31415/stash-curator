@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 
@@ -161,7 +162,7 @@ class ExplanationService:
         selected: list[Reason] = []
         seen_families: set[str] = set()
         for reason in positive:
-            family = reason.code.rsplit(".", 1)[0]
+            family = ExplanationService._reason_family(reason.code)
             if family in seen_families:
                 continue
             selected.append(reason)
@@ -174,17 +175,50 @@ class ExplanationService:
             selected.append(adjustments[0])
         return tuple(selected[:3])
 
+    @staticmethod
+    def _reason_family(code: str) -> str:
+        if code.startswith("appeal.tag_"):
+            return "appeal.tag"
+        if code.startswith("appeal.performer_"):
+            return "appeal.performer"
+        return code.rsplit(".", 1)[0]
+
     def _phrase(self, reason: Reason) -> str:
         code = reason.code
         if code == "appeal.tag_positive":
-            return f"Its {reason.detail.get('name', 'content')} matches patterns you tend to enjoy."
+            names = self._detail_list(reason.detail.get("related_names"))
+            tags = self._natural_list(names or [str(reason.detail.get("name", "content"))])
+            return self._choose(
+                reason,
+                (
+                    f"Tags such as {tags} are a strong match for patterns in scenes you enjoy.",
+                    f"The tag evidence around {tags} lines up well with your past choices.",
+                    f"The clearest content-level matches are {tags}.",
+                ),
+            )
         if code == "appeal.tag_negative":
-            return (
-                f"There is some friction around {reason.detail.get('name', 'one content pattern')}."
+            names = self._detail_list(reason.detail.get("related_names"))
+            tags = self._natural_list(
+                names or [str(reason.detail.get("name", "one content pattern"))]
+            )
+            return self._choose(
+                reason,
+                (
+                    f"There is some tag-level friction around {tags}.",
+                    f"Your history is less positive around the tags {tags}.",
+                    f"The main content-level reservation is {tags}.",
+                ),
             )
         if code == "appeal.performer_identity":
             name = self._name("performer", reason.subject_id)
-            return f"Your history with {name} is a strong positive anchor."
+            return self._choose(
+                reason,
+                (
+                    f"{name} is a positive performer-level signal for this scene.",
+                    f"Your existing preference evidence for {name} raises this scene's appeal.",
+                    f"The performer model favors this scene partly because of {name}.",
+                ),
+            )
         if code == "appeal.performer_similar":
             matches = reason.detail.get("matches", [])
             known_id = None
@@ -193,13 +227,52 @@ class ExplanationService:
             target = self._name("performer", reason.subject_id)
             known = self._name("performer", known_id)
             profile = str(reason.detail.get("profile_description", "a similar overall profile"))
-            return f"{target} has {profile}, resembling {known}, who appears in scenes you enjoy."
+            aspects = self._natural_list(
+                self._detail_list(reason.detail.get("shared_aspects"))
+                or ["their overall performer profiles"]
+            )
+            effect = (
+                f"Positive preference evidence for {known} gives this scene a lift."
+                if reason.direction == "positive"
+                else f"Less-positive preference evidence for {known} creates some friction."
+            )
+            return self._choose(
+                reason,
+                (
+                    f"I linked {target} to {known} mainly through {aspects}; "
+                    f"{target} has {profile}. {effect}",
+                    f"{target} looks adjacent to {known} in {aspects}. In plain terms, "
+                    f"the profile is {profile}. {effect}",
+                ),
+            )
         if code == "appeal.studio":
-            return f"{self._name('studio', reason.subject_id)} has generally worked well for you."
+            name = self._name("studio", reason.subject_id)
+            return self._choose(
+                reason,
+                (
+                    f"{name} contributes positive studio-level evidence.",
+                    f"Scenes from {name} have generally matched your preferences.",
+                    f"The studio history for {name} works in this scene's favor.",
+                ),
+            )
         if code == "appeal.content_neighbor":
-            return "Its content resembles other scenes that have worked well for you."
+            return self._choose(
+                reason,
+                (
+                    "Its content resembles other scenes that have worked well for you.",
+                    "Nearby scenes in the content model have produced positive outcomes.",
+                    "The closest tag-based scene neighbors are encouraging.",
+                ),
+            )
         if code == "direct.positive":
-            return "You have strong direct positive history with this scene."
+            return self._choose(
+                reason,
+                (
+                    "You have strong direct positive history with this scene.",
+                    "Your own prior outcomes make this a confident revisit.",
+                    "This scene has worked well for you before.",
+                ),
+            )
         if code == "direct.negative":
             return "Your direct history with this scene is negative."
         if code == "fit.cooldown":
@@ -229,6 +302,29 @@ class ExplanationService:
         if code.startswith("diversity."):
             return "Its position was adjusted to keep the page varied."
         return ""
+
+    @staticmethod
+    def _detail_list(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if str(item).strip()]
+
+    @staticmethod
+    def _natural_list(values: list[str]) -> str:
+        unique = list(dict.fromkeys(values))
+        if not unique:
+            return "the available evidence"
+        if len(unique) == 1:
+            return unique[0]
+        if len(unique) == 2:
+            return f"{unique[0]} and {unique[1]}"
+        return f"{', '.join(unique[:-1])}, and {unique[-1]}"
+
+    @staticmethod
+    def _choose(reason: Reason, variants: tuple[str, ...]) -> str:
+        key = f"{reason.model_id}\0{reason.subject_id or ''}\0{reason.code}".encode()
+        index = int.from_bytes(hashlib.sha256(key).digest()[:4], "big") % len(variants)
+        return variants[index]
 
     def _name(self, entity_type: str, entity_id: str | None) -> str:
         if not entity_id:

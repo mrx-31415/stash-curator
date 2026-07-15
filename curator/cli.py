@@ -289,7 +289,10 @@ def run(argv: Sequence[str] | None = None) -> int:
         connection = connect_database(args.db)
         try:
             report_result = ReportGenerator(connection).generate(
-                args.output, count=int(args.count), redacted=bool(args.redacted)
+                args.output,
+                count=int(args.count),
+                redacted=bool(args.redacted),
+                stash_url=args.stash_url,
             )
         finally:
             connection.close()

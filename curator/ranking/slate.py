@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
-from curator.model import RecommendationModelStore
+from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.ranking.policy import LaneClassification, LanePolicy
 
 
@@ -57,6 +57,9 @@ class SlateBuilder:
     ) -> None:
         self.connection = connection
         self.config = config
+        self._cached_model_id: str | None = None
+        self._cached_candidates: tuple[_Candidate, ...] = ()
+        self._cached_scores: dict[str, ModelSceneScore] = {}
 
     def recommend(self, lane: str, count: int) -> Slate:
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
@@ -66,9 +69,13 @@ class SlateBuilder:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
-        classifications = LanePolicy(self.connection, self.config).classify(model_id)
-        candidates = self._candidates(model_id, classifications)
-        scores = RecommendationModelStore(self.connection).scores(model_id)
+        if model_id != self._cached_model_id:
+            classifications = LanePolicy(self.connection, self.config).classify(model_id)
+            self._cached_model_id = model_id
+            self._cached_candidates = tuple(self._candidates(model_id, classifications))
+            self._cached_scores = RecommendationModelStore(self.connection).scores(model_id)
+        candidates = self._cached_candidates
+        scores = self._cached_scores
         selected: list[_Candidate] = []
         items: list[RecommendationItem] = []
         diagnostics: list[str] = []

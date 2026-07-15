@@ -656,6 +656,8 @@ Generate one self-contained local HTML file containing:
 - build/config/model summary;
 - For You and each individual lane;
 - scene metadata sufficient for local identification;
+- lazy-loaded cover images and links back to the corresponding Stash scene when a
+  Stash URL is supplied;
 - natural-language Why-this summary;
 - Appeal, Current Fit, confidence, lane value, and final utility;
 - strongest positive/negative/unknown reasons;

@@ -12,7 +12,9 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     connection = _database(tmp_path / "curator.sqlite3")
     output = tmp_path / "report.html"
 
-    result = ReportGenerator(connection).generate(output, count=3)
+    result = ReportGenerator(connection).generate(
+        output, count=3, stash_url="http://stash.test:9999/graphql"
+    )
     document = output.read_text(encoding="utf-8")
 
     assert result.output == output.resolve()
@@ -26,8 +28,9 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     assert all(f'<section id="{lane}">' in document for lane in result.lane_counts)
     assert "<style>" in document
     assert "<script" not in document
-    assert "http://" not in document
-    assert "https://" not in document
+    assert 'href="http://stash.test:9999/scenes/a-best"' in document
+    assert 'src="http://stash.test:9999/scene/a-best/screenshot"' in document
+    assert 'loading="lazy"' in document
     assert "Reason graph" in document
     assert "direct.positive" in document and "private" in document
     assert "Full inspector data" in document
@@ -57,7 +60,12 @@ def test_redacted_report_removes_synthetic_private_identifiers(tmp_path: Path) -
     )
     output = tmp_path / "redacted.html"
 
-    ReportGenerator(connection).generate(output, count=20, redacted=True)
+    ReportGenerator(connection).generate(
+        output,
+        count=20,
+        redacted=True,
+        stash_url="http://private-stash.test:9999/graphql?apikey=secret",
+    )
     document = output.read_text(encoding="utf-8")
 
     private_values = [
@@ -75,6 +83,8 @@ def test_redacted_report_removes_synthetic_private_identifiers(tmp_path: Path) -
     assert "Performer 001" in document
     assert "Studio 001" in document
     assert "Tag 001" in document
+    assert "private-stash" not in document
+    assert "apikey" not in document
 
 
 def test_explain_and_report_cli_emit_machine_readable_results(
