@@ -147,7 +147,11 @@ class ExplanationService:
     @staticmethod
     def _plan(reasons: tuple[Reason, ...]) -> tuple[Reason, ...]:
         positive = sorted(
-            (reason for reason in reasons if reason.direction == "positive"),
+            (
+                reason
+                for reason in reasons
+                if reason.direction == "positive" and ExplanationService._narratable(reason)
+            ),
             key=lambda reason: (-reason.magnitude * reason.confidence, reason.code),
         )
         exploration = sorted(
@@ -159,6 +163,7 @@ class ExplanationService:
                 reason
                 for reason in reasons
                 if reason.direction == "negative"
+                and ExplanationService._narratable(reason)
                 and (
                     reason.code in {"fit.cooldown", "fit.not_now"}
                     or reason.code.startswith("appeal.")
@@ -181,6 +186,12 @@ class ExplanationService:
         if adjustments and len(selected) < 3:
             selected.append(adjustments[0])
         return tuple(selected[:3])
+
+    @staticmethod
+    def _narratable(reason: Reason) -> bool:
+        if reason.code != "appeal.performer_similar":
+            return True
+        return _number(reason.detail.get("novelty_weight")) >= 0.5
 
     @staticmethod
     def _reason_family(code: str) -> str:

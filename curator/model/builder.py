@@ -348,7 +348,10 @@ class PreferenceModelBuilder:
         reference_at_ms: int,
     ) -> tuple[_Score, ...]:
         vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
-        neighbors = self._content_neighbors(vectors, labels, label_mean)
+        preference_vectors, discriminative_tag_count = self._preference_content_vectors(
+            vectors, scene_features, affinities
+        )
+        neighbors = self._content_neighbors(preference_vectors, labels, label_mean)
         performer_similarity_scores = self._performer_similarity_scores(
             feature_version, scene_features, affinities
         )
@@ -459,7 +462,25 @@ class PreferenceModelBuilder:
                 similarity = performer_similarity_scores.get(
                     performer_id, {"value": 0.0, "confidence": 0.0, "matches": []}
                 )
-                similarity_values.append({"performer_id": performer_id, **similarity})
+                identity_confidence = max(
+                    affinity.confidence if affinity else 0.0,
+                    prior.confidence,
+                )
+                novelty_weight = max(
+                    self.config.model.performer_similarity_novelty_floor,
+                    1 - identity_confidence,
+                )
+                similarity_values.append(
+                    {
+                        "performer_id": performer_id,
+                        **similarity,
+                        "raw_value": _number(similarity.get("value")),
+                        "value": _number(similarity.get("value")) * novelty_weight,
+                        "confidence": _number(similarity.get("confidence")) * novelty_weight,
+                        "identity_confidence": identity_confidence,
+                        "novelty_weight": novelty_weight,
+                    }
+                )
             identity_raw = self._asymmetric([_number(item["value"]) for item in identity_values])
             similarity_raw = self._asymmetric(
                 [_number(item["value"]) for item in similarity_values]
@@ -541,6 +562,8 @@ class PreferenceModelBuilder:
                 "lift": neighbor_data.lift,
                 "evidence_confidence": neighbor_data.confidence,
                 "total_weight": neighbor_data.total_weight,
+                "vector_mode": "preference_discriminative",
+                "discriminative_tag_count": discriminative_tag_count,
             }
             component_total = sum(
                 float(value["value"])
@@ -617,6 +640,38 @@ class PreferenceModelBuilder:
                 )
             )
         return tuple(scores)
+
+    def _preference_content_vectors(
+        self,
+        vectors: dict[str, dict[str, float]],
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> tuple[dict[str, dict[str, float]], int]:
+        strengths: dict[str, float] = {}
+        for features in scene_features.values():
+            for feature in features:
+                if feature.family != "content" or feature.name in strengths:
+                    continue
+                affinity = affinities.get(feature.feature_id)
+                strengths[feature.name] = (
+                    max(0.0, affinity.affinity) * affinity.confidence if affinity else 0.0
+                )
+        maximum = max(strengths.values(), default=0.0)
+        generic = self.config.model.neighbor_generic_weight
+        weighted: dict[str, dict[str, float]] = {}
+        for scene_id, vector in vectors.items():
+            values: dict[str, float] = {}
+            for name, value in vector.items():
+                multiplier = (
+                    generic + (1 - generic) * strengths.get(name, 0.0) / maximum
+                    if maximum > 0
+                    else 1.0
+                )
+                if multiplier > 1e-9:
+                    values[name] = value * multiplier
+            norm = math.sqrt(sum(value * value for value in values.values())) or 1.0
+            weighted[scene_id] = {name: value / norm for name, value in values.items()}
+        return weighted, sum(strength > 0 for strength in strengths.values())
 
     def _content_neighbors(
         self,

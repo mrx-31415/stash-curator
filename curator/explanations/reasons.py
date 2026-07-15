@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
 from dataclasses import dataclass
 
@@ -38,9 +37,9 @@ def _direction(value: float) -> str:
 class ReasonGraphStore:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
-        self._content_features: dict[str, dict[str, tuple[float, str, int]]] = {}
+        self._content_features: dict[str, dict[str, tuple[float, str]]] = {}
+        self._content_preference: dict[str, float] = {}
         self._scene_titles: dict[str, str] = {}
-        self._scene_count = 1
 
     def build(self, model_id: str) -> None:
         scores = RecommendationModelStore(self.connection).scores(model_id)
@@ -50,7 +49,7 @@ class ReasonGraphStore:
         if row is None:
             raise RuntimeError(f"unknown model: {model_id}")
         feature_version = str(row[0])
-        self._prepare_neighbor_context(feature_version)
+        self._prepare_neighbor_context(model_id, feature_version)
         graphs = {
             scene_id: self._scene_reasons(score, feature_version)
             for scene_id, score in scores.items()
@@ -85,14 +84,13 @@ class ReasonGraphStore:
                 ),
             )
 
-    def _prepare_neighbor_context(self, feature_version: str) -> None:
+    def _prepare_neighbor_context(self, model_id: str, feature_version: str) -> None:
         scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
         self._content_features = {
             scene_id: {
                 feature.name: (
                     feature.value,
                     str(feature.metadata.get("tag_name", "")).strip(),
-                    int(_number(feature.metadata.get("document_frequency", 0))),
                 )
                 for feature in features
                 if feature.family == "content"
@@ -103,7 +101,17 @@ class ReasonGraphStore:
             str(row["scene_id"]): str(row["title"] or row["scene_id"])
             for row in self.connection.execute("SELECT scene_id, title FROM source_scene")
         }
-        self._scene_count = max(1, len(self._scene_titles))
+        self._content_preference = {
+            str(row["name"]): max(0.0, float(row["affinity"]) * float(row["confidence"]))
+            for row in self.connection.execute(
+                """
+                SELECT fd.name, fa.affinity, fa.confidence FROM feature_affinity fa
+                JOIN feature_definition fd ON fd.feature_id=fa.feature_id
+                WHERE fa.model_id=? AND fd.family='content'
+                """,
+                (model_id,),
+            )
+        }
 
     def reasons(self, model_id: str, scene_id: str) -> tuple[Reason, ...]:
         model = self.connection.execute(
@@ -256,6 +264,9 @@ class ReasonGraphStore:
                         "profile_description": self._profile_description(
                             performer_id, feature_version
                         ),
+                        "raw_value": item.get("raw_value", value),
+                        "identity_confidence": item.get("identity_confidence", 0.0),
+                        "novelty_weight": item.get("novelty_weight", 1.0),
                     },
                 )
             )
@@ -380,25 +391,31 @@ class ReasonGraphStore:
             neighbor = dict(raw_neighbor)
             neighbor_id = str(neighbor.get("scene_id", ""))
             shared = target.keys() & self._content_features.get(neighbor_id, {}).keys()
+            maximum_preference = max(self._content_preference.values(), default=0.0)
+            if maximum_preference > 0:
+                shared = {name for name in shared if self._content_preference.get(name, 0.0) > 0}
             ranked_shared = sorted(
                 (
                     (
                         min(target[name][0], self._content_features[neighbor_id][name][0])
-                        * math.log1p(
-                            self._scene_count
-                            / max(
-                                1,
-                                target[name][2] or self._content_features[neighbor_id][name][2],
-                            )
+                        * (
+                            self._content_preference.get(name, 0.0) / maximum_preference
+                            if maximum_preference > 0
+                            else 1.0
                         ),
                         target[name][1] or name.removeprefix("tag:"),
+                        self._content_preference.get(name, 0.0),
                     )
                     for name in shared
                 ),
                 key=lambda item: (-item[0], item[1]),
             )
             neighbor["title"] = self._scene_titles.get(neighbor_id, neighbor_id)
-            neighbor["shared_tags"] = [name for _, name in ranked_shared[:4]]
+            neighbor["shared_tags"] = [name for _, name, _ in ranked_shared[:4]]
+            neighbor["shared_tag_evidence"] = [
+                {"name": name, "preference_strength": strength}
+                for _, name, strength in ranked_shared[:4]
+            ]
             enriched_neighbors.append(neighbor)
         reasons.append(
             self._reason(

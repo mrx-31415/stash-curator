@@ -543,6 +543,9 @@ interaction model.
 ### 12.2 Content neighbors
 
 ```text
+tag_preference_strength = max(0, affinity_f) * confidence_f
+preference_vector_tag = catalog_vector_tag
+                        * normalized(tag_preference_strength)
 overlap_confidence = 1 - exp(-shared_informative_features / 4)
 evidence_similarity = cosine_similarity * overlap_confidence
 neighbor_mean = weighted_mean(outcome, evidence_similarity^3)
@@ -551,9 +554,19 @@ neighbor_appeal = neighbor_lift * evidence_confidence
 ```
 
 Require minimum feature and outcome support. Keep neighbor contribution bounded and
-retain the representative neighbors used in the reason graph.
+retain the representative neighbors used in the reason graph. Preserve the unmodified
+catalog vector separately for diversity and Adventure coverage. If no positive tag
+lift exists yet, use the catalog vector as the cold-start fallback; otherwise,
+zero-lift generic tags do not create preference-neighbor overlap.
 
-### 12.3 Direct scene state
+### 12.3 Performer novelty bridge
+
+For each target performer, retain raw profile similarity but scale its score and
+confidence by `max(novelty_floor, 1 - identity_confidence)`. Favorite and sufficiently
+supported direct identity evidence therefore suppress redundant similarity. New or
+weakly known performers retain the full bridge from similar known performers.
+
+### 12.4 Direct scene state
 
 ```text
 direct_appeal = confidence_weighted_mean(exact_scene_outcomes)
@@ -566,7 +579,7 @@ A current thumbs down suppresses the exact scene before scoring. Never-show and 
 unavailability are hard exclusions. Preserve unexplained direct residual instead of
 forcing unrelated reusable features to explain it.
 
-### 12.4 Current Fit
+### 12.5 Current Fit
 
 ```text
 recovery = sigmoid((days_since_played - cooldown_center_days)

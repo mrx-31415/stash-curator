@@ -41,7 +41,7 @@ class FeatureConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    algorithm_version: int = 2
+    algorithm_version: int = 3
     affinity_prior: float = 1.0
     affinity_confidence_scale: float = 3.0
     direct_confidence_scale: float = 0.8
@@ -64,6 +64,8 @@ class ModelConfig:
     neighbor_count: int = 12
     minimum_neighbor_similarity: float = 0.05
     neighbor_confidence_scale: float = 0.35
+    neighbor_generic_weight: float = 0.0
+    performer_similarity_novelty_floor: float = 0.05
 
 
 @dataclass(frozen=True)

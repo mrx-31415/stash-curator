@@ -366,8 +366,15 @@ Text topics, NMF topics, and explicit interaction terms are not MVP ranking inpu
 
 ### 8.4 Content neighbors
 
-Build a TF-IDF scene vector from role-filtered scene tags and lower-weight marker
-tags. Neighbor evidence combines similarity, outcomes, and evidence quantity:
+Build a neutral TF-IDF scene vector from role-filtered scene tags and lower-weight
+marker tags. Preserve that catalog vector for diversity and Adventure coverage.
+
+For preference prediction, derive a second vector space. Weight each tag by its
+confidence-shrunk positive outcome lift relative to the viewer's training mean, then
+renormalize the scene vector. Once discriminative evidence exists, tags with no
+positive lift do not create Best Bets neighbor similarity; before any lift can be
+estimated, fall back to the neutral vector. Neighbor evidence then combines this
+preference-weighted similarity, outcomes, and evidence quantity:
 
 ```text
 training_mean = weighted_mean(outcome(all labeled scenes), scene confidence)
@@ -378,7 +385,9 @@ neighbor_appeal = (neighbor_mean - training_mean) * evidence_confidence
 ```
 
 This prevents one shared tag from producing false certainty. The component remains
-bounded and explanations cite representative enjoyed neighbors. Other reusable
+bounded and explanations cite representative enjoyed neighbors plus the
+discriminative shared tags that made them close. General catalog tags can still shape
+Adventure and diversity without masquerading as evidence of taste. Other reusable
 feature affinities are likewise learned as outcome lift relative to the weighted
 training mean. This is essential during positive-unlabeled cold start: a below-average
 association is model friction, not proof of an explicit dislike.
@@ -387,6 +396,18 @@ association is model friction, not proof of an explicit dislike.
 
 Performer favorite is a strong prior, not repeated observations. Performer identity
 and similarity/physical attributes remain separate contributions.
+
+Similarity is primarily a bridge for a new or weakly known performer. Apply a smooth
+novelty factor based on confidence in the target performer's direct identity evidence:
+
+```text
+novelty_weight = max(configured_floor, 1 - identity_confidence)
+similarity_contribution = raw_similarity_contribution * novelty_weight
+```
+
+Thus a familiar liked performer stands on direct evidence rather than being
+double-counted through resemblance to another performer. The raw similarity remains
+inspectable.
 
 For multiple performers, use asymmetric aggregation: a strongly liked performer
 usually outweighs one mild negative, while the negative remains visible friction.

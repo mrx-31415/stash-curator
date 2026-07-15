@@ -154,6 +154,25 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
     assert connection.execute("SELECT count(*) FROM feature_affinity").fetchone()[0] > 0
     assert scores["unseen-good"].neighbors
     assert all("scene_id" in neighbor for neighbor in scores["unseen-good"].neighbors)
+    assert {str(neighbor["scene_id"]) for neighbor in scores["unseen-good"].neighbors} <= {
+        "old-good",
+        "recent-good",
+    }
+    neighbor_component = scores["unseen-good"].components["content_neighbor"]
+    assert isinstance(neighbor_component, dict)
+    assert neighbor_component["vector_mode"] == "preference_discriminative"
+    assert int(neighbor_component["discriminative_tag_count"]) > 0
+
+    known_similarity = scores["old-good"].components["performer_similarity"]
+    new_similarity = scores["unseen-good"].components["performer_similarity"]
+    assert isinstance(known_similarity, dict) and isinstance(new_similarity, dict)
+    known_performers = known_similarity["performers"]
+    new_performers = new_similarity["performers"]
+    assert isinstance(known_performers, list) and isinstance(new_performers, list)
+    known_performer = known_performers[0]
+    new_performer = new_performers[0]
+    assert isinstance(known_performer, dict) and isinstance(new_performer, dict)
+    assert float(known_performer["novelty_weight"]) < float(new_performer["novelty_weight"])
 
     for score in scores.values():
         for family, bound in (
