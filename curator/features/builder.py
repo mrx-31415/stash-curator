@@ -61,7 +61,7 @@ class FeatureBuilder:
     def build(self) -> FeatureBuildResult:
         source_fingerprint = self._source_fingerprint()
         version_hash = hashlib.sha256(
-            f"{source_fingerprint}\0{self.config.canonical_json()}".encode()
+            f"{source_fingerprint}\0{self.config.feature_json()}".encode()
         ).hexdigest()
         feature_version = f"fv-{version_hash[:20]}"
         existing = self.connection.execute(
@@ -78,7 +78,7 @@ class FeatureBuilder:
                 ) VALUES (?, 'building', ?, ?, ?)
                 ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL
                 """,
-                (feature_version, self.config.canonical_json(), source_fingerprint, now),
+                (feature_version, self.config.feature_json(), source_fingerprint, now),
             )
         try:
             roles = self._resolve_tag_roles()
@@ -466,7 +466,7 @@ class FeatureBuilder:
         roles: dict[str, TagRoleResult],
         features: tuple[_Feature, ...],
     ) -> None:
-        config_version = f"cfg-{self.config.fingerprint()[:20]}"
+        config_version = f"cfg-{self.config.feature_fingerprint()[:20]}"
         definitions: dict[tuple[str, str, str], tuple[str, dict[str, object]]] = {}
         for feature in features:
             key = (feature.entity_type, feature.family, feature.name)

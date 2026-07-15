@@ -487,29 +487,40 @@ Internal Appeal is a signed index in `[-1, 1]`. Estimate bounded contributions f
 
 Each feature affinity stores mean, effective support, confidence, and provenance.
 For the MVP, collapse all evidence for one scene into one confidence-weighted scene
-label before training reusable features. For feature `f`:
+label before training reusable features. Because the initial history is mostly
+positive-unlabeled, learn reusable preferences as lift relative to the typical
+training outcome rather than treating every viewed feature as an absolute positive.
+For feature `f`:
 
 ```text
+training_mean = weighted_mean(scene_outcome_s, scene_confidence_s)
+relative_outcome_s = scene_outcome_s - training_mean
 support_f = sum(scene_confidence_s for scenes containing f)
-affinity_f = sum(scene_confidence_s * scene_outcome_s)
+affinity_f = sum(scene_confidence_s * relative_outcome_s)
              / (prior_strength_f + support_f)
 confidence_f = 1 - exp(-support_f / confidence_scale_f)
 contribution_f = feature_value_f * affinity_f * confidence_f
 ```
 
 This prevents many plays of one scene from masquerading as many independent feature
-contexts. Family totals are clamped to configured positive and negative bounds before
-summation. Record distinct-scene and distinct-studio/performer-context counts for
-inspection; correlation-aware context weighting may replace the simple scene-level
-collapse later without changing stored events. The MVP has no learned interaction
-model.
+contexts and prevents a positive-only history from pushing nearly every candidate to
+the score ceiling. A negative learned affinity means "less associated with success
+than the viewer's observed baseline," not an explicit dislike. Family totals are
+clamped to configured positive and negative bounds before summation. Confidence is
+combined across distinct evidence families so correlated tags cannot create certainty
+merely through volume. Record distinct-scene and distinct-studio/performer-context
+counts for inspection; correlation-aware context weighting may replace the simple
+scene-level collapse later without changing stored events. The MVP has no learned
+interaction model.
 
 ### 12.2 Content neighbors
 
 ```text
 overlap_confidence = 1 - exp(-shared_informative_features / 4)
 evidence_similarity = cosine_similarity * overlap_confidence
-neighbor_appeal = weighted_mean(outcome, evidence_similarity^3)
+neighbor_mean = weighted_mean(outcome, evidence_similarity^3)
+neighbor_lift = neighbor_mean - training_mean
+neighbor_appeal = neighbor_lift * evidence_confidence
 ```
 
 Require minimum feature and outcome support. Keep neighbor contribution bounded and
@@ -553,8 +564,16 @@ them named and configurable rather than scattering literals through code.
 
 - high Current Fit;
 - sufficient evidence and metadata confidence;
+- high relative relevance across the eligible library, using content-neighbor,
+  performer, content-tag, and studio percentiles;
+- either neighbor evidence corroborated by a distinct anchor family, or reliable
+  direct scene evidence;
 - no exploration-only qualification;
 - watched and unseen items allowed.
+
+Rank qualified candidates primarily by relative relevance, then Current Fit and
+confidence. This shortlist-first policy keeps diversity from promoting merely
+adequate candidates over clearly stronger matches.
 
 ### Revisit
 
@@ -575,6 +594,10 @@ Classify as anchored model gap, structured combination challenge, under-covered
 island, model disagreement, or pure probe. The first page targets two anchored gaps,
 one combination, one island, and one later pure probe. For You receives anchored
 Adventure by default.
+
+Rank Adventure using under-covered content, distance from known content neighbors,
+unknown performers/studios, and metadata confidence. This makes the lane a structured
+probe of the model's blind spots rather than an inverse Best Bets list.
 
 ### For You
 
@@ -872,12 +895,12 @@ Current Fit, confidence, atomic build command.
 Acceptance: scale/bounds invariants pass; direct evidence and cooldown behave as the
 design specifies; a complete synthetic model builds reproducibly.
 
-Implemented with confidence-weighted feature affinities, sparse content-neighbor
-evidence, performer identity and profile similarity, studio/structure contributions,
-family clamps, exact-scene evidence blending, smooth cooldown and satiation, hard
-eligibility state, and atomic publication. `build-model` rebuilds the historical
-projection and publishes a deterministic model without replacing the prior model on
-failure.
+Implemented with baseline-centered feature affinities, lift-based sparse
+content-neighbor evidence, performer identity and profile similarity,
+studio/structure contributions, family clamps, evidence-family confidence,
+exact-scene evidence blending, smooth cooldown and satiation, hard eligibility state,
+and atomic publication. `build-model` rebuilds the historical projection and
+publishes a deterministic model without replacing the prior model on failure.
 
 ### WP-06 — Lanes and slate builder
 
@@ -891,8 +914,9 @@ greedy diversity selection, recommend CLI.
 Acceptance: golden synthetic slates meet lane and adjacency rules; soft penalties
 change order without acting as exclusions; output includes full score decomposition.
 
-Implemented with explicit Best Bets, Revisit, Discover, and Adventure qualification;
-the five Adventure subtypes; the configured For You lane mixture; default hard
+Implemented with relative, corroborated Best Bets qualification; direct-evidence
+Revisit; anchored Discover; coverage-gap Adventure ranking and five Adventure
+subtypes; the configured For You lane mixture; default hard
 adjacent-performer separation; soft performer, studio, content, and recent-history
 variety penalties; stable tie-breaking; and complete JSON score decomposition from
 `recommend`.

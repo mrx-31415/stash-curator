@@ -48,6 +48,22 @@ class _Affinity:
 
 
 @dataclass(frozen=True)
+class _Prior:
+    value: float
+    confidence: float
+
+
+@dataclass(frozen=True)
+class _NeighborEvidence:
+    value: float
+    outcome_mean: float
+    lift: float
+    confidence: float
+    total_weight: float
+    neighbors: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
 class _Score:
     scene_id: str
     general_appeal: float
@@ -84,13 +100,15 @@ class PreferenceModelBuilder:
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
 
     def build(self) -> ModelBuildResult:
-        feature_version = FeatureStore(self.connection).current_version()
-        if feature_version is None:
-            feature_version = (
-                FeatureBuilder(self.connection, self.config, clock_ms=self.clock_ms)
-                .build()
-                .feature_version
-            )
+        # FeatureBuilder is deterministic and reuses an existing version when neither
+        # source data nor feature configuration changed. Always ask it for the current
+        # version so a feature-only configuration change cannot silently train against
+        # stale vectors.
+        feature_version = (
+            FeatureBuilder(self.connection, self.config, clock_ms=self.clock_ms)
+            .build()
+            .feature_version
+        )
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
         evidence_fingerprint = self._evidence_fingerprint(labels)
@@ -128,12 +146,14 @@ class PreferenceModelBuilder:
                 )
         try:
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
-            affinities = self._affinities(scene_features, labels)
+            label_mean = self._label_mean(labels)
+            affinities = self._affinities(scene_features, labels, label_mean)
             scores = self._scores(
                 feature_version,
                 scene_features,
                 affinities,
                 labels,
+                label_mean,
                 reference_at_ms,
             )
             self._publish(model_id, feature_version, affinities, labels, scores)
@@ -256,13 +276,18 @@ class PreferenceModelBuilder:
         self,
         scene_features: dict[str, tuple[StoredFeature, ...]],
         labels: dict[str, _SceneLabel],
+        label_mean: float,
     ) -> dict[str, _Affinity]:
         accumulators: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
         for scene_id, label in labels.items():
             for feature in scene_features.get(scene_id, ()):
                 weight = label.confidence * feature.confidence * abs(feature.value)
                 accumulators[feature.feature_id].append(
-                    (scene_id, weight, label.outcome * math.copysign(1, feature.value))
+                    (
+                        scene_id,
+                        weight,
+                        (label.outcome - label_mean) * math.copysign(1, feature.value),
+                    )
                 )
         scene_context = self._scene_contexts()
         result: dict[str, _Affinity] = {}
@@ -290,6 +315,13 @@ class PreferenceModelBuilder:
             )
         return result
 
+    @staticmethod
+    def _label_mean(labels: dict[str, _SceneLabel]) -> float:
+        support = sum(label.confidence for label in labels.values())
+        if support <= 0:
+            return 0.0
+        return sum(label.outcome * label.confidence for label in labels.values()) / support
+
     def _scene_contexts(self) -> dict[str, tuple[str | None, tuple[str, ...]]]:
         contexts: dict[str, tuple[str | None, list[str]]] = {}
         for row in self.connection.execute(
@@ -312,19 +344,17 @@ class PreferenceModelBuilder:
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
         labels: dict[str, _SceneLabel],
+        label_mean: float,
         reference_at_ms: int,
     ) -> tuple[_Score, ...]:
         vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
-        neighbors = self._content_neighbors(vectors, labels)
+        neighbors = self._content_neighbors(vectors, labels, label_mean)
         performer_similarity_scores = self._performer_similarity_scores(
             feature_version, scene_features, affinities
         )
         baseline_support = sum(label.confidence for label in labels.values())
         baseline = (
-            sum(label.outcome * label.confidence for label in labels.values())
-            / (self.config.model.affinity_prior + baseline_support)
-            if labels
-            else 0.0
+            label_mean * baseline_support / (self.config.model.affinity_prior + baseline_support)
         )
         baseline = _clamp(
             baseline, -self.config.model.baseline_bound, self.config.model.baseline_bound
@@ -352,8 +382,15 @@ class PreferenceModelBuilder:
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         for scene_id in all_scene_ids:
             features = scene_features.get(scene_id, ())
-            components: dict[str, object] = {"baseline": {"raw": baseline, "value": baseline}}
-            reusable_support = 0.0
+            components: dict[str, object] = {
+                "baseline": {
+                    "raw": baseline,
+                    "value": baseline,
+                    "training_outcome_mean": label_mean,
+                    "effective_support": baseline_support,
+                }
+            }
+            family_confidences: dict[str, float] = {}
             for family, bound in (
                 ("content", self.config.model.content_bound),
                 ("structure", self.config.model.structure_bound),
@@ -366,7 +403,6 @@ class PreferenceModelBuilder:
                     if affinity is None:
                         continue
                     value = feature.value * affinity.affinity * affinity.confidence
-                    reusable_support += affinity.support
                     contributions.append(
                         {
                             "feature_id": feature.feature_id,
@@ -378,9 +414,21 @@ class PreferenceModelBuilder:
                         }
                     )
                 raw = sum(_number(item["value"]) for item in contributions)
+                contribution_mass = sum(abs(_number(item["value"])) for item in contributions)
+                evidence_confidence = (
+                    sum(
+                        abs(_number(item["value"])) * _number(item["confidence"])
+                        for item in contributions
+                    )
+                    / contribution_mass
+                    if contribution_mass
+                    else 0.0
+                )
+                family_confidences[family] = evidence_confidence
                 components[family] = {
                     "raw": raw,
                     "value": _clamp(raw, -bound, bound),
+                    "evidence_confidence": evidence_confidence,
                     "top": sorted(
                         contributions,
                         key=lambda item: (-abs(_number(item["value"])), str(item["name"])),
@@ -395,23 +443,35 @@ class PreferenceModelBuilder:
                 performer_id = feature.name.removeprefix("performer:")
                 affinity = affinities.get(feature.feature_id)
                 learned = affinity.affinity * affinity.confidence if affinity else 0.0
-                prior = performer_priors.get(performer_id, 0.0)
+                prior = performer_priors.get(performer_id, _Prior(0.0, 0.0))
                 identity_values.append(
                     {
                         "performer_id": performer_id,
-                        "value": learned + prior,
+                        "value": learned + prior.value,
                         "learned": learned,
-                        "prior": prior,
+                        "prior": prior.value,
+                        "confidence": max(
+                            affinity.confidence if affinity else 0.0,
+                            prior.confidence,
+                        ),
                     }
                 )
                 similarity = performer_similarity_scores.get(
-                    performer_id, {"value": 0.0, "matches": []}
+                    performer_id, {"value": 0.0, "confidence": 0.0, "matches": []}
                 )
                 similarity_values.append({"performer_id": performer_id, **similarity})
             identity_raw = self._asymmetric([_number(item["value"]) for item in identity_values])
             similarity_raw = self._asymmetric(
                 [_number(item["value"]) for item in similarity_values]
             )
+            identity_confidence = max(
+                (_number(item.get("confidence")) for item in identity_values), default=0.0
+            )
+            similarity_confidence = max(
+                (_number(item.get("confidence")) for item in similarity_values), default=0.0
+            )
+            family_confidences["performer_identity"] = identity_confidence
+            family_confidences["performer_similarity"] = similarity_confidence
             components["performer_identity"] = {
                 "raw": identity_raw,
                 "value": _clamp(
@@ -420,6 +480,7 @@ class PreferenceModelBuilder:
                     self.config.model.performer_identity_bound,
                 ),
                 "performers": identity_values,
+                "evidence_confidence": identity_confidence,
             }
             components["performer_similarity"] = {
                 "raw": similarity_raw,
@@ -429,6 +490,7 @@ class PreferenceModelBuilder:
                     self.config.model.performer_similarity_bound,
                 ),
                 "performers": similarity_values,
+                "evidence_confidence": similarity_confidence,
             }
             studio_features = [feature for feature in features if feature.family == "studio"]
             studio_items = []
@@ -436,25 +498,49 @@ class PreferenceModelBuilder:
                 studio_id = feature.name.removeprefix("studio:")
                 affinity = affinities.get(feature.feature_id)
                 learned = affinity.affinity * affinity.confidence if affinity else 0.0
+                prior = studio_priors.get(studio_id, _Prior(0.0, 0.0))
                 studio_items.append(
-                    {"studio_id": studio_id, "value": learned + studio_priors.get(studio_id, 0.0)}
+                    {
+                        "studio_id": studio_id,
+                        "value": learned + prior.value,
+                        "learned": learned,
+                        "prior": prior.value,
+                        "confidence": max(
+                            affinity.confidence if affinity else 0.0,
+                            prior.confidence,
+                        ),
+                    }
                 )
             studio_raw = sum(_number(item["value"]) for item in studio_items)
+            studio_confidence = max(
+                (_number(item.get("confidence")) for item in studio_items), default=0.0
+            )
+            family_confidences["studio"] = studio_confidence
             components["studio"] = {
                 "raw": studio_raw,
                 "value": _clamp(
                     studio_raw, -self.config.model.studio_bound, self.config.model.studio_bound
                 ),
                 "studios": studio_items,
+                "evidence_confidence": studio_confidence,
             }
-            neighbor_data = neighbors.get(scene_id, (0.0, ()))
+            neighbor_data = neighbors.get(
+                scene_id,
+                _NeighborEvidence(0.0, label_mean, 0.0, 0.0, 0.0, ()),
+            )
+            family_confidences["content_neighbor"] = neighbor_data.confidence
             components["content_neighbor"] = {
-                "raw": neighbor_data[0],
+                "raw": neighbor_data.value,
                 "value": _clamp(
-                    neighbor_data[0],
+                    neighbor_data.value,
                     -self.config.model.neighbor_bound,
                     self.config.model.neighbor_bound,
                 ),
+                "outcome_mean": neighbor_data.outcome_mean,
+                "training_outcome_mean": label_mean,
+                "lift": neighbor_data.lift,
+                "evidence_confidence": neighbor_data.confidence,
+                "total_weight": neighbor_data.total_weight,
             }
             component_total = sum(
                 float(value["value"])
@@ -480,11 +566,24 @@ class PreferenceModelBuilder:
             metadata_confidence = 1 - math.exp(
                 -(content_count + performer_profile_count + len(studio_items)) / 5
             )
-            prediction_confidence = 1 - math.exp(-reusable_support / 4)
+            active_evidence: list[tuple[float, float]] = []
+            for family, family_confidence in family_confidences.items():
+                component = components.get(family)
+                if not isinstance(component, dict) or family_confidence <= 0:
+                    continue
+                component_value = abs(_number(component.get("value")))
+                if component_value >= 0.005:
+                    active_evidence.append((component_value, family_confidence))
+            evidence_mass = sum(value for value, _ in active_evidence)
+            evidence_confidence = (
+                sum(value * confidence for value, confidence in active_evidence) / evidence_mass
+                if evidence_mass
+                else 0.0
+            )
+            breadth = 1 - math.exp(-len(active_evidence) / 2)
+            prediction_confidence = evidence_confidence * (0.65 + 0.35 * breadth)
             confidence = _clamp(
-                exact_confidence
-                + (1 - exact_confidence)
-                * (0.55 * prediction_confidence + 0.45 * metadata_confidence),
+                exact_confidence + (1 - exact_confidence) * prediction_confidence,
                 0,
                 1,
             )
@@ -513,7 +612,7 @@ class PreferenceModelBuilder:
                     metadata_confidence,
                     recovery,
                     components,
-                    neighbor_data[1],
+                    neighbor_data.neighbors,
                     eligibility.get(scene_id, {"eligible": False, "reasons": ["missing"]}),
                 )
             )
@@ -523,14 +622,15 @@ class PreferenceModelBuilder:
         self,
         vectors: dict[str, dict[str, float]],
         labels: dict[str, _SceneLabel],
-    ) -> dict[str, tuple[float, tuple[dict[str, object], ...]]]:
+        label_mean: float,
+    ) -> dict[str, _NeighborEvidence]:
         inverted: dict[str, list[tuple[str, float]]] = defaultdict(list)
         for scene_id, vector in vectors.items():
             if scene_id not in labels:
                 continue
             for name, value in vector.items():
                 inverted[name].append((scene_id, value))
-        result: dict[str, tuple[float, tuple[dict[str, object], ...]]] = {}
+        result: dict[str, _NeighborEvidence] = {}
         for scene_id, vector in vectors.items():
             dots: dict[str, float] = defaultdict(float)
             shared: dict[str, int] = defaultdict(int)
@@ -551,11 +651,21 @@ class PreferenceModelBuilder:
             evidence.sort(key=lambda item: (-item[2], item[0]))
             selected = evidence[: self.config.model.neighbor_count]
             denominator = sum(item[2] for item in selected)
-            appeal = (
+            outcome_mean = (
                 sum(item[2] * item[3] for item in selected) / denominator if denominator else 0.0
             )
-            result[scene_id] = (
-                appeal,
+            lift = outcome_mean - label_mean if denominator else 0.0
+            confidence = (
+                1 - math.exp(-denominator / self.config.model.neighbor_confidence_scale)
+                if denominator
+                else 0.0
+            )
+            result[scene_id] = _NeighborEvidence(
+                lift * confidence,
+                outcome_mean,
+                lift,
+                confidence,
+                denominator,
                 tuple(
                     {
                         "scene_id": item[0],
@@ -574,14 +684,15 @@ class PreferenceModelBuilder:
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
     ) -> dict[str, dict[str, object]]:
-        identity_affinity: dict[str, float] = {}
+        identity_affinity: dict[str, tuple[float, float]] = {}
         for features in scene_features.values():
             for feature in features:
                 if feature.family != "performer_identity" or feature.feature_id not in affinities:
                     continue
                 affinity = affinities[feature.feature_id]
                 identity_affinity[feature.name.removeprefix("performer:")] = (
-                    affinity.affinity * affinity.confidence
+                    affinity.affinity * affinity.confidence,
+                    affinity.confidence,
                 )
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         weights = dict(self.config.feature.performer_block_weights)
@@ -599,7 +710,8 @@ class PreferenceModelBuilder:
                     {
                         "performer_id": known_id,
                         "similarity": similarity.similarity,
-                        "affinity": identity_affinity[known_id],
+                        "affinity": identity_affinity[known_id][0],
+                        "confidence": identity_affinity[known_id][1],
                         "blocks": similarity.block_similarities,
                     }
                 )
@@ -615,11 +727,24 @@ class PreferenceModelBuilder:
                 if denominator
                 else 0.0
             )
-            result[performer_id] = {"value": value, "matches": selected[:3]}
+            confidence = (
+                sum(
+                    _number(item["confidence"]) * _number(item["similarity"]) ** 3
+                    for item in selected
+                )
+                / denominator
+                if denominator
+                else 0.0
+            )
+            result[performer_id] = {
+                "value": value,
+                "confidence": confidence,
+                "matches": selected[:3],
+            }
         return result
 
-    def _performer_priors(self) -> dict[str, float]:
-        result = {}
+    def _performer_priors(self) -> dict[str, _Prior]:
+        result: dict[str, _Prior] = {}
         for row in self.connection.execute(
             "SELECT performer_id, favorite, rating100 FROM source_performer"
         ):
@@ -629,12 +754,15 @@ class PreferenceModelBuilder:
                     _clamp((float(row["rating100"]) - 50) / 50)
                     * self.config.model.performer_rating_bound
                 )
-            result[str(row["performer_id"])] = prior
+            result[str(row["performer_id"])] = _Prior(
+                prior,
+                0.90 if row["favorite"] else 0.75 if row["rating100"] is not None else 0.0,
+            )
         return result
 
-    def _studio_priors(self) -> dict[str, float]:
+    def _studio_priors(self) -> dict[str, _Prior]:
         return {
-            str(row["studio_id"]): self.config.model.studio_favorite_prior
+            str(row["studio_id"]): _Prior(self.config.model.studio_favorite_prior, 0.70)
             for row in self.connection.execute(
                 "SELECT studio_id FROM source_studio WHERE favorite=1"
             )

@@ -25,6 +25,7 @@ def _score(
     direct_confidence: float = 0.0,
     recovery: float = 1.0,
     content: float = 0.0,
+    neighbor: float = 0.0,
     studio: float = 0.0,
     structure: float = 0.0,
     signals: tuple[str, ...] = (),
@@ -33,7 +34,7 @@ def _score(
     components = {
         "baseline": _component(0),
         "content": _component(content),
-        "content_neighbor": _component(0),
+        "content_neighbor": _component(neighbor),
         "performer_identity": _component(0),
         "performer_similarity": _component(0),
         "studio": _component(studio),
@@ -146,9 +147,36 @@ def _database(path: Path) -> sqlite3.Connection:
             """,
             (scene_id, feature_id),
         )
-    _score(connection, "a-best", fit=0.80, appeal=0.75, confidence=0.9, metadata=0.8, content=0.20)
-    _score(connection, "b-best", fit=0.79, appeal=0.74, confidence=0.9, metadata=0.8, content=0.20)
-    _score(connection, "c-best", fit=0.70, appeal=0.68, confidence=0.9, metadata=0.8, content=0.20)
+    _score(
+        connection,
+        "a-best",
+        fit=0.80,
+        appeal=0.75,
+        confidence=0.9,
+        metadata=0.8,
+        content=0.20,
+        neighbor=0.10,
+    )
+    _score(
+        connection,
+        "b-best",
+        fit=0.79,
+        appeal=0.74,
+        confidence=0.9,
+        metadata=0.8,
+        content=0.20,
+        neighbor=0.10,
+    )
+    _score(
+        connection,
+        "c-best",
+        fit=0.70,
+        appeal=0.68,
+        confidence=0.9,
+        metadata=0.8,
+        content=0.20,
+        neighbor=0.10,
+    )
     _score(
         connection,
         "d-revisit",
@@ -197,6 +225,7 @@ def _database(path: Path) -> sqlite3.Connection:
         confidence=0.9,
         metadata=0.8,
         content=0.20,
+        neighbor=0.10,
     )
     _score(
         connection,
@@ -238,8 +267,8 @@ def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_pat
     assert [item.scene_id for item in slate.items] == [
         "a-best",
         "l-varied",
-        "b-best",
         "c-best",
+        "b-best",
     ]
     assert slate.items[1].lane_value < slate.items[2].lane_value
     assert slate.items[1].penalties["studio"] == 0
@@ -255,7 +284,7 @@ def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path
     adventure = SlateBuilder(connection).recommend("adventure", 5)
     assert [item.subtype for item in adventure.items] == [
         "anchored_model_gap",
-        "anchored_model_gap",
+        "model_disagreement",
         "structured_combination_challenge",
         "under_covered_island",
         "pure_probe",

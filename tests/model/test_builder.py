@@ -1,10 +1,12 @@
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from curator.cli import run
+from curator.config import DEFAULT_CONFIG
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from curator.storage import MigrationRunner, connect_database
 
@@ -198,6 +200,55 @@ def test_failed_rebuild_cannot_replace_published_model(
     ]
     assert "published" in statuses
     assert "failed" in statuses
+
+
+def test_all_positive_cold_start_learns_relative_lift_without_saturating(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("DELETE FROM feedback")
+    connection.execute(
+        """
+        UPDATE behavior_event SET outcome=0.2, confidence=0.45,
+          payload_json='{"primary_signal":"view"}'
+        WHERE scene_id='disliked'
+        """
+    )
+
+    built = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    scores = RecommendationModelStore(connection).scores(built.model_id)
+    affinities = [
+        float(row[0])
+        for row in connection.execute(
+            "SELECT affinity FROM feature_affinity WHERE model_id=?", (built.model_id,)
+        )
+    ]
+
+    assert min(affinities) < 0 < max(affinities)
+    assert all(score.appeal < 0.999 for score in scores.values())
+    assert all(score.confidence < 0.95 for score in scores.values())
+    assert all(
+        abs(float(score.components["content_neighbor"]["value"]))
+        < DEFAULT_CONFIG.model.neighbor_bound
+        for score in scores.values()
+        if isinstance(score.components["content_neighbor"], dict)
+    )
+
+
+def test_model_build_refreshes_feature_version_after_feature_config_change(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    changed_feature = replace(DEFAULT_CONFIG.feature, marker_weight=0.25)
+    changed_config = replace(DEFAULT_CONFIG, feature=changed_feature)
+
+    second = PreferenceModelBuilder(
+        connection, changed_config, clock_ms=lambda: REFERENCE_MS
+    ).build()
+
+    assert second.feature_version != first.feature_version
+    assert second.model_id != first.model_id
 
 
 def test_build_model_cli_publishes_complete_model(

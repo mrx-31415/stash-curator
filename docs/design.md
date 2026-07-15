@@ -370,13 +370,18 @@ Build a TF-IDF scene vector from role-filtered scene tags and lower-weight marke
 tags. Neighbor evidence combines similarity, outcomes, and evidence quantity:
 
 ```text
+training_mean = weighted_mean(outcome(all labeled scenes), scene confidence)
 overlap_confidence = 1 - exp(-shared_informative_features / 4)
 evidence_similarity = cosine_similarity * overlap_confidence
-neighbor_appeal = weighted_mean(outcome(neighbors), evidence_similarity^3)
+neighbor_mean = weighted_mean(outcome(neighbors), evidence_similarity^3)
+neighbor_appeal = (neighbor_mean - training_mean) * evidence_confidence
 ```
 
 This prevents one shared tag from producing false certainty. The component remains
-bounded and explanations cite representative enjoyed neighbors.
+bounded and explanations cite representative enjoyed neighbors. Other reusable
+feature affinities are likewise learned as outcome lift relative to the weighted
+training mean. This is essential during positive-unlabeled cold start: a below-average
+association is model friction, not proof of an explicit dislike.
 
 ### 8.5 Performer evidence
 
@@ -479,8 +484,14 @@ thumb suppression run before every lane policy.
 ### 11.1 Best Bets
 
 Require high Appeal/Current Fit, sufficient evidence confidence, and adequate
-metadata support. An unseen favorite-performer scene can qualify, but supporting
-content raises reliability. Exploration-only uncertainty cannot qualify.
+metadata support. Rank candidates by relative library percentiles for content
+neighbors, performer evidence, content affinity, and studio evidence. Require either
+neighbor evidence corroborated by a distinct anchor family or reliable direct scene
+evidence. An unseen favorite-performer scene can qualify, but supporting content
+raises reliability. Exploration-only uncertainty cannot qualify.
+
+Apply this relevance gate before slate diversity. Diversity chooses among genuinely
+strong candidates; it does not rescue an otherwise middling candidate into Top Picks.
 
 ### 11.2 Revisit
 
@@ -516,6 +527,10 @@ Adventure is not ascending badness. Compose distinct model-gap subtypes:
 - **under-covered island:** coherent library region rarely surfaced;
 - **model disagreement:** components disagree materially;
 - **pure probe:** metadata-complete catalog sample with minimal preference filtering.
+
+Within those subtypes, prioritize under-covered content, distance from established
+content neighbors, unknown performers/studios, and usable metadata. These are
+coverage-gap signals, not inverted Appeal.
 
 For the first five positions, start with approximately:
 

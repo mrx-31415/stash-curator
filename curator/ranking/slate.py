@@ -155,7 +155,7 @@ class SlateBuilder:
         if lane == "adventure":
             subtypes = (
                 "anchored_model_gap",
-                "anchored_model_gap",
+                "model_disagreement",
                 "structured_combination_challenge",
                 "under_covered_island",
                 "pure_probe",

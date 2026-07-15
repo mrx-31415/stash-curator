@@ -41,6 +41,7 @@ class FeatureConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
+    algorithm_version: int = 2
     affinity_prior: float = 1.0
     affinity_confidence_scale: float = 3.0
     direct_confidence_scale: float = 0.8
@@ -62,6 +63,7 @@ class ModelConfig:
     not_now_penalty: float = 0.50
     neighbor_count: int = 12
     minimum_neighbor_similarity: float = 0.05
+    neighbor_confidence_scale: float = 0.35
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,10 @@ class RankingConfig:
     uncovered_content_bonus: float = 0.03
     best_bet_fit: float = 0.18
     best_bet_confidence: float = 0.30
+    best_bet_relevance: float = 0.60
+    best_bet_neighbor_percentile: float = 0.60
+    best_bet_anchor_percentile: float = 0.60
+    best_bet_metadata_confidence: float = 0.35
     revisit_direct_confidence: float = 0.35
     discover_anchor: float = 0.08
     page_size: int = 20
@@ -117,6 +123,12 @@ class CuratorConfig:
 
     def fingerprint(self) -> str:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
+
+    def feature_json(self) -> str:
+        return json.dumps(asdict(self.feature), sort_keys=True, separators=(",", ":"))
+
+    def feature_fingerprint(self) -> str:
+        return hashlib.sha256(self.feature_json().encode()).hexdigest()
 
 
 DEFAULT_CONFIG = CuratorConfig()
