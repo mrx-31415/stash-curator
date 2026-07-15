@@ -11,10 +11,10 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
         runner = MigrationRunner(connection)
         before = runner.status()
         assert before.current_version == 0
-        assert before.pending_versions == (1, 2)
+        assert before.pending_versions == (1, 2, 3)
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 2
+        assert after.current_version == 3
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -24,7 +24,14 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        assert {"source_scene", "behavior_event", "model_version", "sync_run"} <= tables
+        assert {
+            "source_scene",
+            "behavior_event",
+            "model_version",
+            "sync_run",
+            "feature_build",
+            "model_scene_score",
+        } <= tables
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         connection.close()

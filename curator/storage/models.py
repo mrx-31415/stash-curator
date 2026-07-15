@@ -46,12 +46,13 @@ class ModelStore:
     def start_build(
         self,
         *,
+        model_id: str | None = None,
         feature_version: str,
         config: object,
         sync_watermark: str | None,
         created_at_ms: int,
     ) -> ModelVersion:
-        model_id = uuid4().hex
+        model_id = model_id or uuid4().hex
         config_json = json.dumps(config, sort_keys=True, separators=(",", ":"))
         with transaction(self.connection):
             self.connection.execute(

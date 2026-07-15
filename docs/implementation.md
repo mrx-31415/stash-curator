@@ -841,6 +841,8 @@ completion are captured by contract but remain record-only as designed.
 
 ### WP-04 — Feature pipeline
 
+Status: complete.
+
 Dependencies: WP-02.
 
 Deliverables: tag roles, sparse scene vectors, performer profiles, physical-attribute
@@ -849,7 +851,16 @@ normalization, feature versioning.
 Acceptance: deterministic feature matrix; missing fields add no similarity; admin
 tags are explainably excluded; block contributions are inspectable.
 
+Implemented with precedence-based tag roles, versioned sparse scene vectors,
+separate content/performer/studio/structure families, missing-aware performer
+profiles, age-at-recording and physical-attribute normalization, DD-to-E cup
+normalization, augmentation state, and inspectable weighted similarity blocks.
+Feature IDs, source/config fingerprints, and stable ordering make repeated builds
+reproducible.
+
 ### WP-05 — Deterministic model
+
+Status: complete.
 
 Dependencies: WP-03, WP-04.
 
@@ -859,7 +870,16 @@ Current Fit, confidence, atomic build command.
 Acceptance: scale/bounds invariants pass; direct evidence and cooldown behave as the
 design specifies; a complete synthetic model builds reproducibly.
 
+Implemented with confidence-weighted feature affinities, sparse content-neighbor
+evidence, performer identity and profile similarity, studio/structure contributions,
+family clamps, exact-scene evidence blending, smooth cooldown and satiation, hard
+eligibility state, and atomic publication. `build-model` rebuilds the historical
+projection and publishes a deterministic model without replacing the prior model on
+failure.
+
 ### WP-06 — Lanes and slate builder
+
+Status: complete.
 
 Dependencies: WP-05.
 
@@ -869,7 +889,15 @@ greedy diversity selection, recommend CLI.
 Acceptance: golden synthetic slates meet lane and adjacency rules; soft penalties
 change order without acting as exclusions; output includes full score decomposition.
 
+Implemented with explicit Best Bets, Revisit, Discover, and Adventure qualification;
+the five Adventure subtypes; the configured For You lane mixture; default hard
+adjacent-performer separation; soft performer, studio, content, and recent-history
+variety penalties; stable tie-breaking; and complete JSON score decomposition from
+`recommend`.
+
 ### WP-07 — Reasons and report
+
+Status: complete.
 
 Dependencies: WP-05, WP-06.
 
@@ -878,6 +906,13 @@ self-contained HTML report, redaction mode.
 
 Acceptance: every recommendation has truthful structured reasons; report renders all
 lanes; repository golden output contains synthetic data only.
+
+Implemented with a versioned reason graph derived only from stored model and ranking
+decomposition, deterministic positive-core/exploration/adjustment planning,
+controlled natural-language templates, `explain`, and a self-contained five-lane
+HTML inspector. Redaction aliases scene, performer, studio, and tag IDs and names.
+Synthetic acceptance tests cover exact provenance, representative prose, both CLI
+contracts, all report lanes, redaction, and the full sync-to-model-to-report path.
 
 ### Gate A — Recommendation validation
 

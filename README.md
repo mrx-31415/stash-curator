@@ -2,15 +2,16 @@
 
 **Navigate your library, guided by your taste.**
 
-Stash Curator is a planned recommendation and discovery plugin for
-[Stash](https://github.com/stashapp/stash). It learns from viewing behavior and
+Stash Curator is a recommendation and discovery engine intended to become a
+[Stash](https://github.com/stashapp/stash) plugin. It learns from viewing behavior and
 explicit feedback to offer reliable choices, timely revisits, nearby discoveries,
 and deliberate adventures without letting the feed become repetitive.
 
-The project is in its foundation and validation phase. The read-only sidecar cache
-can synchronize Stash metadata and normalize historical behavior into conservative
-training evidence, but Curator does not yet build recommendations or provide an
-installable Stash plugin.
+The read-only validation slice is implemented. It can synchronize Stash metadata,
+normalize historical behavior, build a deterministic recommendation model, generate
+all five lanes with inspectable reasons, compare performers, and export a
+self-contained HTML evaluation report. The Stash-native page and event collection
+are later work packages; no installable plugin is provided yet.
 
 ## Documentation
 
@@ -51,6 +52,29 @@ Normal sync is incremental. A full sync traverses stable IDs and reconciles sour
 deletions. Both modes resume interrupted page traversal. The validation client
 accepts GraphQL `query` operations only; it contains no Stash mutations. Repository
 tests use synthetic data and do not require access to a real Stash instance.
+
+Build and inspect recommendations after a sync:
+
+```bash
+uv run curator --db data/curator.sqlite3 build-model --json
+uv run curator --db data/curator.sqlite3 recommend --lane for_you --count 12
+uv run curator --db data/curator.sqlite3 recommend --lane best_bets --count 12
+uv run curator --db data/curator.sqlite3 recommend --lane revisit --count 12
+uv run curator --db data/curator.sqlite3 recommend --lane discover --count 12
+uv run curator --db data/curator.sqlite3 recommend --lane adventure --count 12
+```
+
+Generate the local evaluation report:
+
+```bash
+uv run curator --db data/curator.sqlite3 report \
+  --output reports/curator-report.html --count 12
+```
+
+The report contains model internals and local entity names by default. Keep it in the
+ignored `reports/` directory. Add `--redacted` when producing an artifact suitable
+for sharing, and use `explain --scene-id <id> --json` or
+`similar-performers --performer-id <id> --json` for focused inspection.
 
 ## Privacy
 
