@@ -41,7 +41,7 @@ class ExplanationService:
         reasons = (*base, *self._ranking_reasons(model_id, item))
         return self._render(
             reasons,
-            f"{model_id}\0{item.scene_id}\0{item.lane}\0{item.source_lane}",
+            f"{model_id}\0{item.scene_id}\0{item.lane}\0{item.source_lane}\0{item.position}",
         )
 
     def _current_model_id(self) -> str:
@@ -200,9 +200,7 @@ class ExplanationService:
             [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
         )
         useful = [item for item in neighbors if _number(item.get("outcome")) > 0][:2]
-        titles = [str(item.get("title") or "a scene you enjoyed") for item in useful]
-        if sum(map(len, titles)) > 105:
-            titles = [min(titles, key=len), "another scene you enjoyed"]
+        titles = [self._prose_precedent(item.get("title")) for item in useful]
         tags = list(
             dict.fromkeys(
                 tag for item in useful for tag in self._detail_list(item.get("shared_tags"))
@@ -216,6 +214,11 @@ class ExplanationService:
             "precedents": self._natural_list(titles or ["nearby scenes you enjoyed"]),
             "tags": self._natural_list(tags or ["their content profile"]),
         }
+
+    @staticmethod
+    def _prose_precedent(value: object) -> str:
+        title = str(value or "")
+        return title if len(title) <= 30 else "a past favorite"
 
     @staticmethod
     def _outcome_phrase(neighbor: dict[str, object]) -> str:

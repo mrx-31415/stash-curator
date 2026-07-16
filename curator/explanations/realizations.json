@@ -378,7 +378,7 @@
         "this is not riding on {performer} alone: {tags} independently connect it to {precedent}, {precedent_outcome}",
         "your good history with {performer} combines with a content pattern you liked in {precedent}, with {tags} tying the two recommendations together",
         "I would put this on the shortlist because {performer} has served you well and because the combination of {tags} makes it a close cousin of {precedent}, {precedent_outcome}",
-        "the recommendation has two sturdy legs: {performer}'s record with you and the {tags} it shares with {precedent}, {precedent_outcome}"
+        "{performer}'s record supports this, and the shared {tags} connect it to {precedent}, {precedent_outcome}"
       ]
     },
     "appeal.performer_identity+direct.positive": {

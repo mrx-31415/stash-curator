@@ -76,12 +76,14 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     assert "Shared scenario" in document
     assert "direct.positive" in document and "private" in document
     assert "How the score was built" in document
+    assert 'summary::before { content:"▸";' in document
     assert "Library baseline" in document
     assert "Tag preferences" in document
     assert "Direct scene history" in document
     assert "Reason records (developer view)" in document
     assert "Raw inspector data (developer view)" in document
     assert "Appeal" in document and "Current Fit" in document and "Confidence" in document
+    assert "<span>Appeal +" not in document and "<span>Current Fit +" not in document
 
 
 def test_redacted_report_removes_synthetic_private_identifiers(tmp_path: Path) -> None:

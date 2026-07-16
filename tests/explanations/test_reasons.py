@@ -143,6 +143,17 @@ def test_content_neighbor_explanation_names_scenes_and_shared_tags(tmp_path: Pat
     assert "Shared scenario" in explanation.summary
 
 
+def test_long_neighbor_titles_stay_in_supporting_evidence_not_card_prose(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    service = ExplanationService(connection)
+
+    assert service._prose_precedent("A short scene title") == "A short scene title"
+    assert (
+        service._prose_precedent("A deliberately long scene title for report prose")
+        == "a past favorite"
+    )
+
+
 def test_fused_performer_and_neighbor_claim_preserves_entity_names(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute("UPDATE source_performer SET name='Alex' WHERE performer_id='p1'")

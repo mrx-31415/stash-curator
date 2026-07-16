@@ -242,8 +242,6 @@ class ReportGenerator:
           <p class="why">{html.escape(str(explanation_data["summary"]))}</p>
           {supporting_evidence}
           <div class="scores">
-            <span>Appeal {float(item_data["appeal"]):+.3f}</span>
-            <span>Current Fit {float(item_data["current_fit"]):+.3f}</span>
             <span>Confidence {float(item_data["confidence"]):.2f}</span>
             <span>Lane {float(item_data["lane_value"]):+.3f}</span>
             <span>Utility {float(item_data["final_utility"]):+.3f}</span>
@@ -627,7 +625,11 @@ padding:.25rem .45rem; border-radius:5px; }} details {{ margin-top:.8rem; }}
 .supporting-evidence ul {{ margin-top:.25rem; }}
 .number {{ font-variant-numeric:tabular-nums; color:#b9d6ff; margin-left:auto; }}
 .score-tree > ul,.score-tree ul {{ list-style:none; padding-left:1rem; }}
-.score-tree li {{ margin:.3rem 0; }} .score-tree summary {{ display:flex; gap:.7rem; }}
+.score-tree li {{ margin:.3rem 0; }}
+.score-tree summary {{ display:flex; gap:.7rem; cursor:pointer; }}
+.score-tree summary::marker,.score-tree summary::-webkit-details-marker {{ display:none; }}
+.score-tree summary::before {{ content:"▸"; color:#9cc8ff; }}
+.score-tree details[open] > summary::before {{ content:"▾"; }}
 .score-tree li:not(:has(details)) {{ display:flex; gap:.7rem; }}
 .score-tree .hint,.hint {{ color:#aaa; font-size:.88rem; }}
 .developer {{ color:#bbb; }}
