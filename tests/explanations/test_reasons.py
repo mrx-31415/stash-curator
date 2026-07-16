@@ -42,9 +42,9 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
     _add_explainable_content(connection)
     store = ReasonGraphStore(connection)
 
-    store.build("model")
+    store.ensure("model")
     first = store.reasons("model", "a-best")
-    store.build("model")
+    store.ensure("model")
     second = store.reasons("model", "a-best")
 
     assert first == second

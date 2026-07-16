@@ -84,6 +84,13 @@ class ReasonGraphStore:
                 ),
             )
 
+    def ensure(self, model_id: str) -> None:
+        row = self.connection.execute(
+            "SELECT 1 FROM model_scene_reason WHERE model_id=? LIMIT 1", (model_id,)
+        ).fetchone()
+        if row is None:
+            self.build(model_id)
+
     def _prepare_neighbor_context(self, model_id: str, feature_version: str) -> None:
         scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
         self._content_features = {

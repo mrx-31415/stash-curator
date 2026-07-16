@@ -38,7 +38,7 @@ class ReportGenerator:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
-        ReasonGraphStore(self.connection).build(model_id)
+        ReasonGraphStore(self.connection).ensure(model_id)
         explanation_service = ExplanationService(self.connection)
         scores = RecommendationModelStore(self.connection).scores(model_id)
         lanes = ("for_you", "best_bets", "revisit", "discover", "adventure")
