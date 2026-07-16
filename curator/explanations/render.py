@@ -135,29 +135,16 @@ class ExplanationService:
     def _render(self, reasons: tuple[Reason, ...], seed: str) -> Explanation:
         plan = self.planner.plan(reasons)
         slots: dict[str, str] = {}
-        pairing = self._pairing(plan.primary, plan.support, seed)
-        primary = pairing or self._realize(plan.primary, "lead", seed)
+        primary = self._realize(plan.primary, "lead", seed)
         slots.update(primary=primary, primary_cap=_capitalize(primary))
-        if plan.support is not None and pairing is None:
+        if plan.support is not None:
             support = self._realize(plan.support, "support", seed)
             slots.update(support=support, support_cap=_capitalize(support))
         if plan.boundary is not None:
             boundary = self._realize(plan.boundary, "boundary", seed)
             slots.update(boundary=boundary, boundary_cap=_capitalize(boundary))
-        shape = plan.shape
-        if pairing is not None:
-            shape = "primary_boundary" if plan.boundary is not None else "primary"
-        summary = self.catalog.plan_variant(plan.lane, shape, slots, seed)
+        summary = self.catalog.plan_variant(plan.lane, plan.shape, slots, seed)
         return Explanation(summary, plan.selected_reasons, reasons)
-
-    def _pairing(
-        self, primary: EvidenceUnit, support: EvidenceUnit | None, seed: str
-    ) -> str | None:
-        if support is None:
-            return None
-        slots = self._slots(primary.reason)
-        slots.update(self._specific_slots(support.reason))
-        return self.catalog.pairing_variant(primary.reason.code, support.reason.code, slots, seed)
 
     def _realize(self, unit: EvidenceUnit, position: str, seed: str) -> str:
         reason = unit.reason

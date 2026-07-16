@@ -28,33 +28,106 @@ _PLAN_FIELDS = {
     "support",
     "support_cap",
 }
-_EDITORIAL_OPENERS = (
-    "i ",
-    "my ",
-    "if i ",
-    "this is ",
-    "this has ",
-    "this brings ",
-    "this looks ",
-    "this feels ",
-    "there are ",
-    "the fit ",
-    "the recommendation ",
-    "the strongest ",
-    "the clearest ",
-    "the case ",
-)
-_EDITORIAL_PHRASES = (
-    "worked for you",
-    "worked well for you",
-    "give me ",
-    "push it further",
-    "lend me ",
-    "wildcard",
-    "strong first impression",
-    "straightforward revisit",
-    "goes beyond the parts of your taste",
-)
+_CARD_TEMPLATES = {
+    ("direct.positive", "lead"): (
+        "you have enjoyed this scene before",
+        "this scene has a positive history with you",
+        "you have returned to this scene before",
+    ),
+    ("direct.positive", "support"): (
+        "you have seen this scene successfully before",
+        "your own history supports it",
+        "you already know this scene can be worthwhile",
+    ),
+    ("appeal.performer_identity", "lead"): (
+        "you tend to enjoy {performer}",
+        "your history with {performer} is positive",
+        "{performer} has been a reliable choice for you",
+    ),
+    ("appeal.performer_identity", "support"): (
+        "{performer} is another performer you enjoy",
+        "{performer}'s history adds support",
+        "you have a positive history with {performer}",
+    ),
+    ("appeal.content_neighbor", "lead"): (
+        "{tags} also recur in scenes you have enjoyed",
+        "your history is positive around {tags}",
+        "the {tags} here match a pattern you have enjoyed",
+    ),
+    ("appeal.content_neighbor", "support"): (
+        "{tags} are also present in scenes you have enjoyed",
+        "{tags} add a familiar content pattern",
+        "your past choices also favour {tags}",
+    ),
+    ("appeal.tag_positive", "lead"): (
+        "scenes with {tags} have tended to suit you",
+        "your history is positive around {tags}",
+        "{tags} are a recurring positive pattern for you",
+    ),
+    ("appeal.tag_positive", "support"): (
+        "{tags} provide additional support",
+        "your past choices also favour {tags}",
+        "{tags} are another positive signal",
+    ),
+    ("appeal.studio", "lead"): (
+        "your history with {studio} is positive",
+        "scenes from {studio} have often suited you",
+        "{studio} has been a reliable source in your library",
+    ),
+    ("appeal.studio", "support"): (
+        "{studio} adds a positive studio signal",
+        "your history with {studio} provides additional support",
+        "{studio} is another familiar source",
+    ),
+    ("appeal.performer_similar", "lead"): (
+        "{target} resembles {known} in {profile}",
+        "{target} is similar to {known}, particularly in {profile}",
+        "{known} is a useful reference for {target} because of {profile}",
+    ),
+    ("appeal.performer_similar", "support"): (
+        "{target} also resembles {known} in {profile}",
+        "the similarity between {target} and {known} is strongest in {profile}",
+        "{profile} is the main connection between {target} and {known}",
+    ),
+    ("appeal.tag_negative", "boundary"): (
+        "your history with {tags} is mixed",
+        "the pattern around {tags} has been less consistent for you",
+        "there is some friction around {tags}",
+    ),
+    ("fit.cooldown", "boundary"): (
+        "you watched this relatively recently",
+        "it may need a little more time to feel fresh",
+        "recency is holding this back for now",
+    ),
+    ("fit.not_now", "boundary"): (
+        "your recent Not now feedback still applies",
+        "you asked to leave this for later",
+        "the temporary Not now signal is still active",
+    ),
+    ("explore.challenge", "boundary"): (
+        "the deliberate stretch is {challenge}",
+        "{challenge} is the part being tested here",
+        "this asks you to reconsider {challenge}",
+    ),
+    ("explore.disagreement", "boundary"): (
+        "your past choices give mixed signals here",
+        "the evidence points in different directions",
+        "this sits near a boundary in your history",
+    ),
+    ("explore.coverage", "boundary"): (
+        "there is less history to rely on here",
+        "this explores a less-covered part of your library",
+        "the evidence is thinner than usual",
+    ),
+    ("explore.unknown", "boundary"): (
+        "the evidence here is limited",
+        "this is a less-tested direction",
+        "your history does not give a clear answer yet",
+    ),
+    ("fallback", "lead"): ("the evidence is limited",),
+    ("fallback", "support"): ("there is some supporting evidence",),
+    ("fallback", "boundary"): ("the evidence is still uncertain",),
+}
 
 
 @dataclass(frozen=True)
@@ -117,13 +190,8 @@ class RealizationCatalog:
         slots: dict[str, str],
         seed: str,
     ) -> str:
-        group = self.evidence.get(code) or self.evidence["fallback"]
-        variants = group.get(position) or group.get("lead")
-        if variants is None:
-            raise ValueError(f"missing evidence position {position!r} for {code!r}")
-        return self._choose_factual(variants, f"{seed}\0evidence\0{code}\0{position}").format(
-            **slots
-        )
+        variants = _CARD_TEMPLATES.get((code, position)) or _CARD_TEMPLATES[("fallback", position)]
+        return self._choose(variants, f"{seed}\0evidence\0{code}\0{position}").format(**slots)
 
     def plan_variant(self, lane: str, shape: str, slots: dict[str, str], seed: str) -> str:
         del lane, seed
@@ -150,17 +218,7 @@ class RealizationCatalog:
         if group is None:
             return None
         variants = group["fused"]
-        return self._choose_factual(variants, f"{seed}\0pairing\0{key}").format(**slots)
-
-    @classmethod
-    def _choose_factual(cls, variants: tuple[str, ...], seed: str) -> str:
-        factual = tuple(
-            variant
-            for variant in variants
-            if not variant.lstrip().lower().startswith(_EDITORIAL_OPENERS)
-            and not any(phrase in variant.lower() for phrase in _EDITORIAL_PHRASES)
-        )
-        return cls._choose(factual or variants, seed)
+        return self._choose(variants, f"{seed}\0pairing\0{key}").format(**slots)
 
     @staticmethod
     def _choose(variants: tuple[str, ...], seed: str) -> str:
