@@ -284,22 +284,16 @@ The visible lane participates in that stable seed, so a scene repeated in For Yo
 its dedicated source lane may use a different truthful realization rather than
 duplicating the paragraph word for word.
 
-The implementation keeps evidence selection and discourse planning in Python, while
-reviewed clause and plan variants live in
-`curator/explanations/realizations.json`. JSON keeps the runtime dependency-free and
-is included in the Python package. The loader validates every placeholder before any
-text can be rendered. Every evidence, pairing, and lane-plan category contains at
-least twenty reviewed realizations in total; the loader enforces that floor. The
-inventory deliberately includes first-person editorial phrasing such as “my read”
-and “I would choose” so the voice feels like a curator making a recommendation, while
-all factual clauses still come from reason slots.
+The implementation keeps evidence selection and sentence assembly in Python, while
+all active card phrases live in `curator/explanations/realizations.json`. JSON keeps
+the runtime dependency-free and is included in the Python package. The loader
+validates every placeholder before any text can be rendered. Each position has at
+least three reviewed alternatives; stable hashing chooses among them.
 
-Common evidence pairs use relation-specific realizations rather than concatenating
-independent clauses. In particular, performer history plus a content neighbor is
-rendered as one recommendation thesis: the performer has worked for the user, the
-named comparison also worked for the user, and the shared content explains the
-resemblance. Terms such as “anchor,” “overlap,” “model,” and “positive precedent” are
-implementation vocabulary and do not belong in ordinary card prose.
+Cards concatenate independent, factual evidence sentences. Supporting-scene names
+and detailed comparisons live in Supporting evidence, not the card paragraph. Terms
+such as “anchor,” “overlap,” “model,” and “positive precedent” are implementation
+vocabulary and do not belong in ordinary card prose.
 
 Generated examples may be used offline to propose additional variants. They are
 reviewed, reduced to fact-preserving clauses or plan shapes, and added to the catalog;
