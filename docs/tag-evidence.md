@@ -47,6 +47,58 @@ Resolution precedence remains explicit tag-ID overrides, configured hierarchy/na
 rules, and conservative defaults. Ambiguous terms stay scene content until mapped.
 The inspector must show the selected role and why it was selected.
 
+### Automated classification
+
+Classification is designed as a versioned, mostly automatic pipeline rather than a
+requirement that users rename every tag:
+
+1. apply explicit local tag-ID overrides, which always win;
+2. map a local tag's StashDB ID to the cached StashDB taxonomy when available;
+3. otherwise resolve a unique normalized canonical name or alias from that taxonomy;
+4. recognize configured namespaces and conservative fallback vocabulary;
+5. use local tag hierarchy, whether a tag occurs on performers or scenes, and
+   agreement with structured metadata on single-cast scenes;
+6. combine those signals into a role, scope, confidence, and human-readable rationale.
+
+Stash exposes `stash_ids` on tags, while StashDB exposes stable tag and category IDs,
+canonical names, aliases, category descriptions, and category groups. Curator should
+periodically download that public taxonomy into its sidecar and perform all matching
+locally; it never needs to send library tag names or behavior to StashDB. A configured
+StashDB token is used only for the read-only taxonomy fetch. The cached snapshot keeps
+model builds reproducible and permits offline operation.
+
+Category IDs, not only broad groups, determine semantics. The `PEOPLE` group contains
+both physical attributes and scene presentation such as Clothing. Initial
+performer-attribute categories include Body Type, Ass, Breasts, Face, Genitals, Hair
+Color, Hair Style, Height, Piercings, Race, Skin Tone, and Tattoos. Clothing remains
+scene content. StashDB's Age Group describes character presentation, so it must not
+replace age-at-recording derived from performer birthdate and scene date.
+
+Mapping records retain local tag ID, external tag/category IDs, match method, taxonomy
+snapshot, confidence, and ambiguity. Stable-ID matches are strongest. A canonical or
+alias match is accepted automatically only when unique; ambiguous or absent terms
+fall through to local rules or review. For example, StashDB currently maps `Athletic
+Body` as an alias of `Athletic` in Body Type and `Trimmed` as an alias of `Trimmed
+Pussy` in Genitals, while a local `Bubble Butt` tag still needs a fallback rule or
+manual override because it is not currently returned by StashDB's tag search.
+
+The first implemented layer automatically recognizes configured namespaces and a
+conservative physical-attribute vocabulary. StashDB taxonomy synchronization,
+usage/agreement classification, and the review queue form the next taxonomy work
+package.
+
+High-confidence mappings are accepted automatically. Medium-confidence mappings go
+to a small review queue; low-confidence or genuinely ambiguous tags remain
+`scene_content` and cannot silently become performer facts. A later offline
+classifier or language model may propose mappings for unfamiliar names, but it does
+not publish them without the same confidence and consistency checks. Corrections are
+stored as durable ID overrides, so review effort teaches the resolver rather than
+being repeated after every sync.
+
+This makes a naming convention such as `[Attribute: Blonde]` useful but optional.
+Namespaced tags resolve immediately; ordinary existing tags can still be classified
+from their vocabulary, hierarchy, usage, and agreement with metadata.
+
 ## 3. Canonical performer profile
 
 Build one provenance-aware profile per performer. Evidence precedence is:
@@ -70,6 +122,42 @@ An initial confidence scale may use approximately:
 | ambiguous multi-cast observation | about 0.2; initially non-predictive |
 
 Tag absence remains unknown.
+
+### Attribute blocks and priority
+
+Physical attributes are not interchangeable. The default similarity ordering is:
+
+```text
+measurements and proportions
+  > augmentation
+  > ethnicity
+  > height
+  > age at recording
+  > hair color
+  > tattoos
+  > piercings
+  > eye color
+```
+
+The implementation keeps these as separate blocks so configuration can express the
+ordering. Measurements include bust, waist, hips, cup normalization, and derived
+waist-to-hip shape, with a shared budget so correlated values do not multiply their
+importance. Height is separate. Content-profile similarity remains a distinct,
+high-value non-physical block.
+
+### Attributes that change over time
+
+Hair color is an observation, not a permanent identity field. The performer metadata
+value is treated as a lower-confidence current or fallback value. A hair attribute
+attached to a dated scene describes the performer at recording time and takes
+precedence for that scene when its subject can be established. It does not overwrite
+the global performer profile. Store observation date, provenance, confidence, and
+subject scope so a brunette scene and a later blonde scene can both be represented
+truthfully.
+
+Tattoos, piercings, augmentation, and measurements can also change, although usually
+more slowly, and use the same observation model when dated evidence exists. Age is
+always derived at recording time rather than from current age.
 
 ## 4. Single- and multi-performer scenes
 

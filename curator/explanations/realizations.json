@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "evidence": {
+    "direct.positive": {
+      "lead": [
+        "this scene has already worked well for you",
+        "your direct experience makes this worth returning to",
+        "you have come back to this successfully before",
+        "the strongest case is your own positive history with this scene"
+      ],
+      "support": [
+        "your direct history backs that up",
+        "you already know this scene can work for you",
+        "your previous experience reinforces the choice"
+      ]
+    },
+    "appeal.performer_identity": {
+      "lead": [
+        "{performer} is the clearest anchor here",
+        "the strongest draw is {performer}",
+        "{performer} gives this a familiar starting point",
+        "your history with {performer} makes a strong opening case"
+      ],
+      "support": [
+        "{performer} adds a familiar anchor",
+        "your history with {performer} reinforces it",
+        "{performer} strengthens the case",
+        "the presence of {performer} adds confidence"
+      ]
+    },
+    "appeal.content_neighbor": {
+      "lead": [
+        "{precedents} provide useful precedents through {tags}",
+        "the closest positive comparisons are {precedents}, linked by {tags}",
+        "{precedents} point in the same direction, especially around {tags}",
+        "the content case rests on {precedents}, which share {tags}"
+      ],
+      "support": [
+        "it also echoes {precedents} through {tags}",
+        "{precedents} reinforce it through {tags}",
+        "the overlap with {precedents} is strongest around {tags}",
+        "{tags} connect it with {precedents}"
+      ]
+    },
+    "appeal.tag_positive": {
+      "lead": [
+        "the clearest content fit comes from {tags}",
+        "the combination of {tags} makes the strongest content-level case",
+        "the content evidence is strongest around {tags}"
+      ],
+      "support": [
+        "the pattern around {tags} adds a separate content match",
+        "the pattern around {tags} supports it",
+        "the pattern around {tags} provides additional support"
+      ]
+    },
+    "appeal.studio": {
+      "lead": [
+        "{studio} has a useful track record with you",
+        "your history with {studio} works in this scene's favor"
+      ],
+      "support": [
+        "{studio} adds some supporting evidence",
+        "the studio history helps as well"
+      ]
+    },
+    "appeal.performer_similar": {
+      "lead": [
+        "{target} is close to {known}, mainly in {profile}",
+        "the unfamiliar anchor is {target}, whose resemblance to {known} is strongest in {profile}"
+      ],
+      "support": [
+        "{target} also resembles {known} in {profile}",
+        "the profile comparison with {known} adds support"
+      ]
+    },
+    "appeal.tag_negative": {
+      "boundary": [
+        "the pattern around {tags} is the main less-proven element",
+        "the evidence around {tags} is weaker",
+        "the pattern around {tags} adds a slight caution",
+        "your history is less convincing around {tags}"
+      ]
+    },
+    "fit.cooldown": {
+      "boundary": [
+        "it is still relatively recent",
+        "the timing is the main reason not to rank it higher",
+        "a little more distance from the last viewing would improve the fit"
+      ]
+    },
+    "fit.not_now": {
+      "boundary": [
+        "your recent Not now feedback still applies",
+        "a temporary Not now signal keeps it from ranking higher"
+      ]
+    },
+    "explore.challenge": {
+      "boundary": [
+        "this is a measured stretch around {challenge}",
+        "the deliberate question is whether {challenge} still matters here",
+        "it keeps a familiar anchor while testing {challenge}"
+      ]
+    },
+    "explore.disagreement": {
+      "boundary": [
+        "the positive and negative signals genuinely disagree",
+        "this is a deliberate test of conflicting evidence",
+        "the value here is in testing a real model disagreement"
+      ]
+    },
+    "explore.coverage": {
+      "boundary": [
+        "this explores a coherent but under-covered part of the library",
+        "it is a deliberate step into a region your history covers less often",
+        "the purpose is to test an under-explored content cluster"
+      ]
+    },
+    "explore.unknown": {
+      "boundary": [
+        "support is intentionally limited, so this is a genuine probe",
+        "this reaches beyond the better-known parts of your taste",
+        "the recommendation is exploratory rather than a predicted favorite"
+      ]
+    },
+    "fallback": {
+      "lead": [
+        "the available evidence makes this a cautious suggestion",
+        "this is a tentative catalog suggestion"
+      ],
+      "support": [
+        "the remaining evidence is limited"
+      ],
+      "boundary": [
+        "confidence remains limited"
+      ]
+    }
+  },
+  "plans": {
+    "generic": {
+      "primary": [
+        "{primary_cap}.",
+        "{primary_cap}."
+      ],
+      "primary_support": [
+        "{primary_cap}, and {support}.",
+        "{primary_cap}. {support_cap}.",
+        "{primary_cap}; {support}."
+      ],
+      "primary_boundary": [
+        "{primary_cap}, although {boundary}.",
+        "{primary_cap}. {boundary_cap}.",
+        "{boundary_cap}, but {primary}."
+      ],
+      "primary_support_boundary": [
+        "{primary_cap}, and {support}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}; however, {boundary}.",
+        "{primary_cap}. {support_cap}. {boundary_cap}."
+      ]
+    },
+    "best_bets": {
+      "primary": [
+        "{primary_cap}.",
+        "{primary_cap}; that is enough to make it a strong unseen option."
+      ],
+      "primary_support": [
+        "{primary_cap}, and {support}.",
+        "{primary_cap}. {support_cap}.",
+        "{support_cap}; {primary}."
+      ],
+      "primary_boundary": [
+        "{primary_cap}, although {boundary}.",
+        "{primary_cap}. {boundary_cap}, so it is not quite as certain as the top few."
+      ],
+      "primary_support_boundary": [
+        "{primary_cap}, and {support}. {boundary_cap}.",
+        "{support_cap}, while {primary}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}; the only real reservation is that {boundary}."
+      ]
+    },
+    "revisit": {
+      "primary": [
+        "{primary_cap}.",
+        "{primary_cap}; it has earned another look."
+      ],
+      "primary_support": [
+        "{primary_cap}, and {support}.",
+        "{primary_cap}. {support_cap}.",
+        "{primary_cap}; {support}."
+      ],
+      "primary_boundary": [
+        "{primary_cap}, although {boundary}.",
+        "{primary_cap}. {boundary_cap}."
+      ],
+      "primary_support_boundary": [
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}; still, {boundary}.",
+        "{primary_cap}, and {support}. {boundary_cap}."
+      ]
+    },
+    "discover": {
+      "primary": [
+        "{primary_cap}; the rest is intentionally less certain."
+      ],
+      "primary_support": [
+        "{primary_cap}, and {support}.",
+        "{primary_cap}. {support_cap}, giving the exploration a concrete bridge."
+      ],
+      "primary_boundary": [
+        "{primary_cap}, but {boundary}.",
+        "{boundary_cap}; {primary}.",
+        "{primary_cap}. {boundary_cap}."
+      ],
+      "primary_support_boundary": [
+        "{primary_cap}, and {support}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}, but {boundary}.",
+        "{boundary_cap}; the case for trying it is that {primary} and {support}."
+      ]
+    },
+    "adventure": {
+      "primary": [
+        "{primary_cap}; treat it as a probe rather than a prediction."
+      ],
+      "primary_support": [
+        "{primary_cap}. {support_cap}; that provides a second foothold.",
+        "{primary_cap}. {support_cap}, though the point is still exploration."
+      ],
+      "primary_boundary": [
+        "{boundary_cap}; the concrete foothold is that {primary}.",
+        "{primary_cap}, but {boundary}.",
+        "{primary_cap}. {boundary_cap}."
+      ],
+      "primary_support_boundary": [
+        "{boundary_cap}; {primary}, and {support}.",
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}; even so, {boundary}."
+      ]
+    }
+  }
+}

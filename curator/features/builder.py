@@ -361,8 +361,6 @@ class FeatureBuilder:
             performer_id = str(row["performer_id"])
             measurements = parse_measurements(row["measurements"])
             numeric: dict[str, tuple[float, float]] = {}
-            if row["height_cm"] is not None:
-                numeric["height_cm"] = (float(row["height_cm"]), 1.0)
             if row["weight_kg"] is not None:
                 numeric["weight_kg"] = (float(row["weight_kg"]), 1.0)
             if measurements:
@@ -376,25 +374,27 @@ class FeatureBuilder:
                 )
                 if measurements.cup_index is not None:
                     numeric["cup_index"] = (measurements.cup_index, measurements.confidence)
-                if row["height_cm"]:
-                    height_inches = float(row["height_cm"]) / 2.54
-                    numeric["waist_to_height"] = (
-                        measurements.waist_inches / height_inches,
-                        measurements.confidence,
-                    )
-                    numeric["hip_to_height"] = (
-                        measurements.hip_inches / height_inches,
-                        measurements.confidence,
-                    )
             for name, (value, confidence) in sorted(numeric.items()):
                 features.append(
                     _Feature(
                         "performer",
                         performer_id,
-                        "profile:proportions",
+                        "profile:measurements",
                         name,
                         value,
                         confidence,
+                        {},
+                    )
+                )
+            if row["height_cm"] is not None:
+                features.append(
+                    _Feature(
+                        "performer",
+                        performer_id,
+                        "profile:height",
+                        "height_cm",
+                        float(row["height_cm"]),
+                        1.0,
                         {},
                     )
                 )
@@ -411,9 +411,8 @@ class FeatureBuilder:
                     )
                 )
             categories = (
-                ("appearance", "hair", row["hair_color"], 0.9),
-                ("appearance", "ethnicity", row["ethnicity"], 0.9),
-                ("appearance", "country", row["country"], 0.7),
+                ("hair", "hair", row["hair_color"], 0.65),
+                ("ethnicity", "ethnicity", row["ethnicity"], 0.9),
                 ("eyes", "eye", row["eye_color"], 0.9),
             )
             for block, prefix, raw, confidence in categories:

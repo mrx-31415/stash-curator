@@ -25,3 +25,24 @@ def test_role_precedence_and_explanations() -> None:
     assert bracketed.role is TagRole.WORKFLOW_ADMINISTRATIVE
     assert bracketed.reason == "bracketed_automation_default"
     assert content.role is TagRole.CONTENT
+
+
+def test_default_physical_vocabulary_is_not_scene_content() -> None:
+    resolver = TagRoleResolver(FeatureConfig())
+
+    for name in (
+        "Blonde",
+        "Blue Eyes",
+        "Big Tits",
+        "Fake Tits",
+        "Visible Tattoos",
+        "Athletic Body",
+        "Athletic Woman",
+        "Bubble Butt",
+        "Trimmed",
+    ):
+        result = resolver.resolve(name, name)
+        assert result.role is TagRole.PERFORMER_ATTRIBUTE
+        assert result.reason.startswith("configured_regex_rule")
+
+    assert resolver.resolve("scenario", "Office").role is TagRole.CONTENT

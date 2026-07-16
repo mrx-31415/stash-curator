@@ -1,11 +1,12 @@
-"""Deterministic planning and natural-language rendering from reason objects only."""
+"""Deterministic microplanning and realization from reason objects only."""
 
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 from dataclasses import dataclass
 
+from curator.explanations.catalog import RealizationCatalog
+from curator.explanations.planner import EvidenceUnit, Microplanner
 from curator.explanations.reasons import Reason, ReasonGraphStore
 from curator.ranking import RecommendationItem
 
@@ -21,13 +22,15 @@ class ExplanationService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
         self.store = ReasonGraphStore(connection)
+        self.planner = Microplanner()
+        self.catalog = RealizationCatalog.load()
 
     def explain_scene(self, model_id: str, scene_id: str) -> Explanation:
         reasons = self.store.reasons(model_id, scene_id)
         if not reasons:
             self.store.build(model_id)
             reasons = self.store.reasons(model_id, scene_id)
-        return self._render(reasons)
+        return self._render(reasons, f"{model_id}\0{scene_id}")
 
     def explain_recommendation(self, item: RecommendationItem) -> Explanation:
         model_id = self._current_model_id()
@@ -36,7 +39,7 @@ class ExplanationService:
             self.store.build(model_id)
             base = self.store.reasons(model_id, item.scene_id)
         reasons = (*base, *self._ranking_reasons(model_id, item))
-        return self._render(reasons)
+        return self._render(reasons, f"{model_id}\0{item.scene_id}\0{item.source_lane}")
 
     def _current_model_id(self) -> str:
         row = self.connection.execute(
@@ -71,10 +74,9 @@ class ExplanationService:
             )
         ]
         if item.source_lane in {"discover", "adventure"}:
-            code = self._exploration_code(item)
             reasons.append(
                 Reason(
-                    code,
+                    self._exploration_code(item),
                     "unknown",
                     min(1.0, _number(item.qualification.get("uncertainty"))),
                     item.confidence,
@@ -127,235 +129,81 @@ class ExplanationService:
             return "explore.coverage"
         return "explore.unknown"
 
-    def _render(self, reasons: tuple[Reason, ...]) -> Explanation:
-        selected = self._plan(reasons)
-        positive = [reason for reason in selected if reason.direction == "positive"]
-        exploration = [reason for reason in selected if reason.code.startswith("explore.")]
-        reservations = [
-            reason
-            for reason in selected
-            if reason.direction == "negative" and not reason.code.startswith("diversity.")
-        ]
-        phrases = [self._phrase(reason) for reason in positive]
-        phrases.extend(self._phrase(reason) for reason in exploration)
-        phrases.extend(self._phrase(reason) for reason in reservations)
-        summary = " ".join(phrase for phrase in phrases if phrase)
-        if not summary:
-            summary = "This is a cautious catalog suggestion where Curator has limited evidence."
-        return Explanation(summary, selected, reasons)
+    def _render(self, reasons: tuple[Reason, ...], seed: str) -> Explanation:
+        plan = self.planner.plan(reasons)
+        slots: dict[str, str] = {}
+        primary = self._realize(plan.primary, "lead", seed)
+        slots.update(primary=primary, primary_cap=_capitalize(primary))
+        if plan.support is not None:
+            support = self._realize(plan.support, "support", seed)
+            slots.update(support=support, support_cap=_capitalize(support))
+        if plan.boundary is not None:
+            boundary = self._realize(plan.boundary, "boundary", seed)
+            slots.update(boundary=boundary, boundary_cap=_capitalize(boundary))
+        summary = self.catalog.plan_variant(plan.lane, plan.shape, slots, seed)
+        return Explanation(summary, plan.selected_reasons, reasons)
 
-    @staticmethod
-    def _plan(reasons: tuple[Reason, ...]) -> tuple[Reason, ...]:
-        positive = sorted(
-            (
-                reason
-                for reason in reasons
-                if reason.direction == "positive" and ExplanationService._narratable(reason)
+    def _realize(self, unit: EvidenceUnit, position: str, seed: str) -> str:
+        reason = unit.reason
+        slots = {
+            "challenge": str(
+                reason.detail.get("challenged_assumption") or "one less-certain preference"
             ),
-            key=lambda reason: (-reason.magnitude * reason.confidence, reason.code),
-        )
-        exploration = sorted(
-            (reason for reason in reasons if reason.code.startswith("explore.")),
-            key=lambda reason: (-reason.magnitude, reason.code),
-        )
-        adjustments = sorted(
-            (
-                reason
-                for reason in reasons
-                if reason.direction == "negative"
-                and ExplanationService._narratable(reason)
-                and (
-                    reason.code in {"fit.cooldown", "fit.not_now"}
-                    or reason.code.startswith("appeal.")
-                )
-            ),
-            key=lambda reason: (-reason.magnitude * reason.confidence, reason.code),
-        )
-        selected: list[Reason] = []
-        seen_families: set[str] = set()
-        for reason in positive:
-            family = ExplanationService._reason_family(reason.code)
-            if family in seen_families:
-                continue
-            selected.append(reason)
-            seen_families.add(family)
-            if len(selected) == 2:
-                break
-        if exploration:
-            selected.append(exploration[0])
-        if adjustments and len(selected) < 3:
-            selected.append(adjustments[0])
-        return tuple(selected[:3])
+            "known": "a familiar performer",
+            "performer": self._name("performer", reason.subject_id),
+            "precedents": "nearby scenes you enjoyed",
+            "profile": "their overall profiles",
+            "studio": self._name("studio", reason.subject_id),
+            "tags": self._tag_names(reason),
+            "target": self._name("performer", reason.subject_id),
+        }
+        if reason.code == "appeal.content_neighbor":
+            slots.update(self._neighbor_slots(reason))
+        elif reason.code == "appeal.performer_similar":
+            slots.update(self._similarity_slots(reason))
+        return self.catalog.evidence_variant(reason.code, position, slots, seed)
 
-    @staticmethod
-    def _narratable(reason: Reason) -> bool:
-        if reason.code != "appeal.performer_similar":
-            return True
-        return _number(reason.detail.get("novelty_weight")) >= 0.5
-
-    @staticmethod
-    def _reason_family(code: str) -> str:
-        if code.startswith("appeal.tag_"):
-            return "appeal.tag"
-        if code.startswith("appeal.performer_"):
-            return "appeal.performer"
-        return code.rsplit(".", 1)[0]
-
-    def _phrase(self, reason: Reason) -> str:
-        code = reason.code
-        if code == "appeal.tag_positive":
-            names = self._detail_list(reason.detail.get("related_names"))
-            tags = self._natural_list(names or [str(reason.detail.get("name", "content"))])
-            return self._choose(
-                reason,
-                (
-                    f"The content makes a good case for this one, especially {tags}.",
-                    f"The combination of {tags} lines up particularly well with your past choices.",
-                    f"A lot of the fit comes from {tags}, which recur in scenes you enjoy.",
-                ),
-            )
-        if code == "appeal.tag_negative":
-            names = self._detail_list(reason.detail.get("related_names"))
-            tags = self._natural_list(
-                names or [str(reason.detail.get("name", "one content pattern"))]
-            )
-            return self._choose(
-                reason,
-                (
-                    f"The main reservation is {tags}, which are less convincing in your history.",
-                    f"There is some friction around {tags}; those patterns have worked less often.",
-                    f"The presence of {tags} makes this a little less certain "
-                    "than the stronger picks.",
-                ),
-            )
-        if code == "appeal.performer_identity":
-            name = self._name("performer", reason.subject_id)
-            return self._choose(
-                reason,
-                (
-                    f"Your history with {name} is one of the clearest reasons to recommend it.",
-                    f"{name} has been a reliable draw for you, which gives this a strong start.",
-                    f"A large part of the appeal is {name}, based on how their scenes "
-                    "have worked for you.",
-                ),
-            )
-        if code == "appeal.performer_similar":
-            matches = reason.detail.get("matches", [])
-            known_id = None
-            if isinstance(matches, list) and matches and isinstance(matches[0], dict):
-                known_id = str(matches[0].get("performer_id", "")) or None
-            target = self._name("performer", reason.subject_id)
-            known = self._name("performer", known_id)
-            profile = str(reason.detail.get("profile_description", "a similar overall profile"))
-            aspects = self._natural_list(
-                self._detail_list(reason.detail.get("shared_aspects"))
-                or ["their overall performer profiles"]
-            )
-            effect = (
-                f"Since {known} has worked for you, that resemblance gives this scene a lift."
-                if reason.direction == "positive"
-                else f"Your history with {known} makes that resemblance a mild reservation."
-            )
-            return self._choose(
-                reason,
-                (
-                    f"{target} looks close to {known}, mainly in {aspects}. "
-                    f"In plain terms, {target} has {profile}. {effect}",
-                    f"I would place {target} near {known} because of {aspects}; "
-                    f"the visible profile is {profile}. {effect}",
-                ),
-            )
-        if code == "appeal.studio":
-            name = self._name("studio", reason.subject_id)
-            return self._choose(
-                reason,
-                (
-                    f"{name} has a good enough track record with you to add some confidence.",
-                    f"Your history with {name} works in this scene's favor.",
-                    f"Scenes from {name} have tended to suit you, which helps here.",
-                ),
-            )
-        if code == "appeal.content_neighbor":
-            return self._neighbor_phrase(reason)
-        if code == "direct.positive":
-            return self._choose(
-                reason,
-                (
-                    "You have come back to this scene successfully before, so it has "
-                    "earned another look.",
-                    "This has worked well for you directly, making it a particularly safe revisit.",
-                    "Your own history is the strongest argument here: this scene has "
-                    "delivered before.",
-                ),
-            )
-        if code == "direct.negative":
-            return "Your direct history with this scene is negative."
-        if code == "fit.cooldown":
-            return "I ranked it lower for now because you watched it relatively recently."
-        if code == "fit.satiation":
-            return (
-                "I held it back slightly to avoid repeating a recent performer, "
-                "studio, or content pattern."
-            )
-        if code == "fit.not_now":
-            return "Your recent Not now feedback temporarily lowers its fit."
-        if code == "explore.challenge":
-            challenge = reason.detail.get("challenged_assumption") or "one weaker preference"
-            return (
-                f"This is a deliberate stretch: it challenges {challenge} "
-                "while retaining a positive anchor."
-            )
-        if code == "explore.disagreement":
-            return "This is testing a scene where Curator's positive and negative signals disagree."
-        if code == "explore.coverage":
-            return (
-                "This explores a coherent part of your library that your history "
-                "has covered less often."
-            )
-        if code == "explore.unknown":
-            return "This is a deliberate probe beyond the better-known parts of your taste."
-        return ""
-
-    def _neighbor_phrase(self, reason: Reason) -> str:
+    def _neighbor_slots(self, reason: Reason) -> dict[str, str]:
         raw = reason.detail.get("neighbors", [])
         neighbors = (
             [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
         )
         useful = [item for item in neighbors if _number(item.get("outcome")) > 0][:2]
-        if not useful:
-            return "Its closest content precedents provide some supporting evidence."
-        titles = [
-            str(item.get("title") or item.get("scene_id") or "a nearby scene") for item in useful
-        ]
-        tags = self._natural_list(
-            list(
-                dict.fromkeys(
-                    tag for item in useful for tag in self._detail_list(item.get("shared_tags"))
-                )
-            )[:4]
-        )
-        title_list = self._natural_list(titles)
-        if len(useful) == 1:
-            return self._choose(
-                reason,
-                (
-                    f"A useful precedent is {title_list}: it shares {tags} with this "
-                    "scene and sits in your positive viewing history.",
-                    f"{title_list} is the clearest nearby example, overlapping on "
-                    f"{tags} and having worked well for you.",
-                ),
+        titles = [str(item.get("title") or "a scene you enjoyed") for item in useful]
+        if sum(map(len, titles)) > 105:
+            titles = [min(titles, key=len), "another scene you enjoyed"]
+        tags = list(
+            dict.fromkeys(
+                tag for item in useful for tag in self._detail_list(item.get("shared_tags"))
             )
-        return self._choose(
-            reason,
-            (
-                f"Two useful precedents are {title_list}. They overlap on {tags}, and "
-                "both sit in your positive viewing history.",
-                f"This sits near {title_list}, chiefly through {tags}; both of those "
-                "scenes worked well for you.",
-                f"The closest encouraging comparisons are {title_list}, which share "
-                f"{tags} and have both worked for you before.",
-            ),
-        )
+        )[:3]
+        return {
+            "precedents": self._natural_list(titles or ["nearby scenes you enjoyed"]),
+            "tags": self._natural_list(tags or ["their content profile"]),
+        }
+
+    def _similarity_slots(self, reason: Reason) -> dict[str, str]:
+        matches = reason.detail.get("matches", [])
+        known_id = None
+        if isinstance(matches, list) and matches and isinstance(matches[0], dict):
+            known_id = str(matches[0].get("performer_id", "")) or None
+        aspects = self._detail_list(reason.detail.get("shared_aspects"))
+        description = str(reason.detail.get("profile_description", "")).strip()
+        profile = self._natural_list(aspects or ["their overall performer profiles"])
+        if description and description != "a similar overall performer profile":
+            profile = f"{profile}, reflected in {description}"
+        return {
+            "known": self._name("performer", known_id),
+            "profile": profile,
+            "target": self._name("performer", reason.subject_id),
+        }
+
+    def _tag_names(self, reason: Reason) -> str:
+        names = self._detail_list(reason.detail.get("related_names"))
+        if not names:
+            name = str(reason.detail.get("name", "a relevant content pattern")).strip()
+            names = [name]
+        return self._natural_list(names[:3])
 
     @staticmethod
     def _detail_list(value: object) -> list[str]:
@@ -374,12 +222,6 @@ class ExplanationService:
             return f"{unique[0]} and {unique[1]}"
         return f"{', '.join(unique[:-1])}, and {unique[-1]}"
 
-    @staticmethod
-    def _choose(reason: Reason, variants: tuple[str, ...]) -> str:
-        key = f"{reason.model_id}\0{reason.subject_id or ''}\0{reason.code}".encode()
-        index = int.from_bytes(hashlib.sha256(key).digest()[:4], "big") % len(variants)
-        return variants[index]
-
     def _name(self, entity_type: str, entity_id: str | None) -> str:
         if not entity_id:
             return "this performer" if entity_type == "performer" else "this studio"
@@ -392,6 +234,10 @@ class ExplanationService:
             f"SELECT name FROM {table} WHERE {id_column}=?", (entity_id,)
         ).fetchone()
         return str(row[0]) if row and row[0] else entity_id
+
+
+def _capitalize(value: str) -> str:
+    return value[:1].upper() + value[1:]
 
 
 def _number(value: object) -> float:

@@ -907,7 +907,7 @@ completion are captured by contract but remain record-only as designed.
 
 ### WP-04 — Feature pipeline
 
-Status: complete.
+Status: validation foundation complete; taxonomy enrichment pending.
 
 Dependencies: WP-02.
 
@@ -923,6 +923,12 @@ profiles, age-at-recording and physical-attribute normalization, DD-to-E cup
 normalization, augmentation state, and inspectable weighted similarity blocks.
 Feature IDs, source/config fingerprints, and stable ordering make repeated builds
 reproducible.
+
+Taxonomy enrichment subpackage: synchronize tag `stash_ids`; fetch and cache the
+read-only StashDB tag/category taxonomy; resolve stable IDs and unique aliases before
+fallback rules; persist mapping provenance and ambiguity; add a review queue; then
+consume dated cast-attribute observations without adding them to content vectors.
+The model must remain usable offline from a versioned cached snapshot.
 
 ### WP-05 — Deterministic model
 
@@ -975,9 +981,10 @@ Acceptance: every recommendation has truthful structured reasons; report renders
 lanes; repository golden output contains synthetic data only.
 
 Implemented with a versioned reason graph derived only from stored model and ranking
-decomposition, deterministic positive-core/exploration/adjustment planning,
-controlled natural-language templates, `explain`, and a self-contained five-lane
-HTML inspector. Redaction aliases scene, performer, studio, and tag IDs and names.
+decomposition, typed evidence units, lane-specific discourse plans, redundancy
+suppression, deterministic realization from a validated external JSON catalog,
+`explain`, and a self-contained five-lane HTML inspector. Redaction aliases scene,
+performer, studio, and tag IDs and names.
 Synthetic acceptance tests cover exact provenance, representative prose, both CLI
 contracts, all report lanes, redaction, and the full sync-to-model-to-report path.
 

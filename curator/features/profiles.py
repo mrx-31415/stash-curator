@@ -73,7 +73,7 @@ def performer_similarity(
 ) -> SimilarityResult:
     similarities: dict[str, float] = {}
     used_weights: dict[str, float] = {}
-    numeric_blocks = {"proportions", "age"}
+    numeric_blocks = {"measurements", "height", "age"}
     for block in sorted(set(left.blocks) & set(right.blocks)):
         weight = block_weights.get(block, 0.0)
         if weight <= 0:

@@ -290,10 +290,12 @@ class ReasonGraphStore:
             return []
         labels = {
             "content": "the kinds of scenes they appear in",
-            "proportions": "body proportions",
+            "measurements": "body measurements and proportions",
+            "height": "height",
             "age": "age at recording",
             "augmentation": "augmentation profile",
-            "appearance": "broad appearance profile",
+            "ethnicity": "ethnicity",
+            "hair": "hair color",
             "tattoos": "tattoo profile",
             "piercings": "piercing profile",
             "eyes": "eye color",
@@ -322,7 +324,7 @@ class ReasonGraphStore:
         )
         values = {(str(row["family"]), str(row["name"])): float(row["value"]) for row in rows}
         phrases: list[str] = []
-        height = values.get(("profile:proportions", "height_cm"))
+        height = values.get(("profile:height", "height_cm"))
         if height is not None:
             phrases.append(
                 "shorter stature"
@@ -331,12 +333,12 @@ class ReasonGraphStore:
                 if height > 175
                 else "similar height"
             )
-        cup = values.get(("profile:proportions", "cup_index"))
+        cup = values.get(("profile:measurements", "cup_index"))
         if cup is not None:
             phrases.append(
                 "fuller bust" if cup >= 5 else "smaller bust" if cup <= 2 else "mid-range bust"
             )
-        ratio = values.get(("profile:proportions", "waist_to_hip"))
+        ratio = values.get(("profile:measurements", "waist_to_hip"))
         if ratio is not None:
             phrases.append(
                 "pronounced waist-to-hip proportions"

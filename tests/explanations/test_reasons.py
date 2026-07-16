@@ -55,9 +55,8 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
     assert reason.confidence == 0.80
 
     explanation = ExplanationService(connection).explain_scene("model", "a-best")
-    assert explanation.summary == (
-        "The combination of Familiar scenario lines up particularly well with your past choices."
-    )
+    assert "Familiar scenario" in explanation.summary
+    assert explanation.selected_reasons == (reason,)
 
 
 def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Path) -> None:
@@ -76,9 +75,8 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
     )
     assert challenge.provenance == "lane_policy"
     assert challenge.detail["challenged_assumption"] == "studio"
-    assert explanation.summary == (
-        "This is a deliberate stretch: it challenges studio while retaining a positive anchor."
-    )
+    assert "studio" in explanation.summary
+    assert any(word in explanation.summary for word in ("stretch", "question", "testing"))
     assert any(reason.code.startswith("diversity.") for reason in explanation.all_reasons)
     assert all(not reason.code.startswith("diversity.") for reason in explanation.selected_reasons)
 
@@ -192,7 +190,7 @@ def test_performer_similarity_explains_the_shared_blocks(tmp_path: Path) -> None
                         "performer_id": "p2",
                         "similarity": 0.82,
                         "affinity": 0.30,
-                        "blocks": {"proportions": 0.91, "content": 0.78, "eyes": 0.25},
+                        "blocks": {"measurements": 0.91, "content": 0.78, "eyes": 0.25},
                     }
                 ],
             }
@@ -209,13 +207,13 @@ def test_performer_similarity_explains_the_shared_blocks(tmp_path: Path) -> None
     )
 
     assert reason.detail["shared_aspects"] == [
-        "body proportions",
+        "body measurements and proportions",
         "the kinds of scenes they appear in",
         "eye color",
     ]
     assert "Alex" in explanation.summary
     assert "Blair" in explanation.summary
-    assert "body proportions" in explanation.summary
+    assert "body measurements and proportions" in explanation.summary
 
 
 def test_known_performer_similarity_remains_inspectable_but_not_narrated(tmp_path: Path) -> None:
@@ -246,7 +244,7 @@ def test_known_performer_similarity_remains_inspectable_but_not_narrated(tmp_pat
                         "performer_id": "p2",
                         "similarity": 0.82,
                         "affinity": 0.30,
-                        "blocks": {"proportions": 0.91, "content": 0.78},
+                        "blocks": {"measurements": 0.91, "content": 0.78},
                     }
                 ],
             }

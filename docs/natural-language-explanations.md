@@ -1,6 +1,6 @@
 # Natural-language explanation design
 
-Status: design proposal; initial deterministic slice implemented
+Status: deterministic microplanner implemented; evaluation in progress
 
 This document proposes a middle ground between repetitive sentence templates and an
 unconstrained language model for Stash Curator's **Why this?** descriptions. The core
@@ -101,7 +101,7 @@ contain enough information to support both short prose and detailed inspection:
   "comparison": {"type": "performer", "id": "performer-b"},
   "evidence": {
     "similarity": 0.82,
-    "shared_aspects": ["content", "proportions", "age_at_recording"]
+    "shared_aspects": ["content", "measurements", "age_at_recording"]
   },
   "visibility": "sensitive",
   "provenance": "performer_profile_similarity"
@@ -281,6 +281,17 @@ Variation should be chosen by semantic conditions first. Stable hashing may choo
 between equivalent lexical realizations only after the structure has been determined.
 This prevents wording from changing on refresh while avoiding one universal phrase.
 
+The implementation keeps evidence selection and discourse planning in Python, while
+reviewed clause and plan variants live in
+`curator/explanations/realizations.json`. JSON keeps the runtime dependency-free and
+is included in the Python package. The loader validates every placeholder before any
+text can be rendered.
+
+Generated examples may be used offline to propose additional variants. They are
+reviewed, reduced to fact-preserving clauses or plan shapes, and added to the catalog;
+Curator does not splice arbitrary generated paragraphs at runtime. This allows a much
+larger language inventory without letting generated prose become a source of facts.
+
 ### Confidence language
 
 | Confidence | Language |
@@ -454,15 +465,14 @@ configuration or developer diagnostics.
 
 ## 15. Implementation sequence
 
-### Phase 1: deterministic microplanner
+### Phase 1: deterministic microplanner (implemented foundation)
 
-1. introduce semantic claim and discourse-plan types;
-2. separate content selection from phrase rendering;
-3. aggregate tags, similarity blocks, and current adjustments;
-4. implement reinforcement, contrast, exploration, and timing relations;
-5. add referring-expression and slate-local repetition handling;
-6. cache output by reason signature;
-7. replace the existing complete-sentence template selection.
+Implemented: semantic evidence units, deterministic lane plans, non-redundant content
+selection, external validated realizations, stable variation, direct-memory-first
+Revisit prose, and mandatory Discover/Adventure boundaries.
+
+Remaining: richer aggregation, confidence-sensitive wording, referring-expression
+and slate-local repetition handling, and persistent caching by reason signature.
 
 ### Phase 2: evaluation
 

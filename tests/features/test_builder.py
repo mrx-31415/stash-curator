@@ -123,10 +123,10 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     assert {"content", "performer_identity", "studio"} <= families
 
     profiles = FeatureStore(connection).performer_profiles(first.feature_version)
-    assert {"content", "proportions", "age", "augmentation", "eyes"} <= set(
+    assert {"content", "measurements", "height", "age", "augmentation", "eyes"} <= set(
         profiles["performer-1"].blocks
     )
-    assert profiles["performer-2"].blocks.get("proportions") is None
+    assert profiles["performer-2"].blocks.get("measurements") is None
 
 
 def test_source_change_publishes_new_version_and_supersedes_old(tmp_path: Path) -> None:

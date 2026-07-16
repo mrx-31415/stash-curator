@@ -21,6 +21,38 @@ class FeatureConfig:
         TagRule("prefix", "[Workflow:", "workflow_administrative"),
         TagRule("prefix", "[Technical:", "quality_technical"),
         TagRule("exact", "[Curator: Ignore]", "ignored"),
+        TagRule(
+            "regex",
+            r"\b(?:blonde?|brunette|redhead|black hair|brown hair|dyed hair)\b",
+            "performer_attribute",
+        ),
+        TagRule(
+            "regex",
+            r"\b(?:blue|brown|green|hazel|gr[ae]y) eyes?\b",
+            "performer_attribute",
+        ),
+        TagRule(
+            "regex",
+            r"\b(?:caucasian|asian|latina?|ebony)\b|"
+            r"\b(?:black|white|pale|medium|dark) skin\b",
+            "performer_attribute",
+        ),
+        TagRule(
+            "regex",
+            r"\b(?:big|small|medium|huge|tiny) (?:ass|tits|boobs|breasts)\b",
+            "performer_attribute",
+        ),
+        TagRule(
+            "regex",
+            r"\b(?:fake|natural) (?:tits|boobs|breasts)\b|\baugmentation\b",
+            "performer_attribute",
+        ),
+        TagRule("regex", r"\b(?:tattoos?|piercings?)\b", "performer_attribute"),
+        TagRule(
+            "regex",
+            r"^(?:athletic(?: body| woman)?|bubble butt|trimmed)$",
+            "performer_attribute",
+        ),
     )
     marker_weight: float = 0.45
     parent_weight: float = 0.35
@@ -29,13 +61,15 @@ class FeatureConfig:
     one_off_prior: float = 2.0
     performer_block_weights: tuple[tuple[str, float], ...] = (
         ("content", 1.0),
-        ("proportions", 1.0),
-        ("age", 1.0),
-        ("augmentation", 1.0),
-        ("appearance", 0.75),
-        ("tattoos", 0.75),
-        ("piercings", 0.5),
-        ("eyes", 0.2),
+        ("measurements", 1.0),
+        ("augmentation", 0.9),
+        ("ethnicity", 0.8),
+        ("height", 0.7),
+        ("age", 0.6),
+        ("hair", 0.45),
+        ("tattoos", 0.35),
+        ("piercings", 0.25),
+        ("eyes", 0.1),
     )
 
 
