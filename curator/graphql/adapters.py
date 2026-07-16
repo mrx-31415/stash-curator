@@ -13,11 +13,18 @@ class AdapterError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class StashID:
+    endpoint: str
+    stash_id: str
+
+
+@dataclass(frozen=True)
 class Tag:
     id: str
     name: str | None
     updated_at: str | None
     parents: tuple[Tag, ...] = ()
+    stash_ids: tuple[StashID, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,6 +151,11 @@ def adapt_tag(value: object, *, include_parents: bool = True) -> Tag:
         _optional_str(raw.get("name")),
         _optional_str(raw.get("updated_at")),
         parents,
+        tuple(
+            StashID(str(item["endpoint"]), str(item["stash_id"]))
+            for item in _objects(raw.get("stash_ids", []), "stash_ids")
+            if item.get("endpoint") and item.get("stash_id")
+        ),
     )
 
 

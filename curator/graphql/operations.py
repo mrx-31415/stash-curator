@@ -22,6 +22,7 @@ query CuratorCapabilities {
   queryType: __type(name: "Query") { fields { name } }
   sceneType: __type(name: "Scene") { fields { name } }
   performerType: __type(name: "Performer") { fields { name } }
+  tagType: __type(name: "Tag") { fields { name } }
 }
 """
 
@@ -32,7 +33,10 @@ TAGS = EntityOperation(
 query CuratorTags($page: Int!, $perPage: Int!, $sort: String!, $direction: SortDirectionEnum!) {
   findTags(filter: {page: $page, per_page: $perPage, sort: $sort, direction: $direction}) {
     count
-    tags { id name updated_at parents { id name updated_at } }
+    tags {
+      id name updated_at stash_ids { endpoint stash_id }
+      parents { id name updated_at }
+    }
   }
 }
 """,

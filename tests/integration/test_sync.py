@@ -12,7 +12,15 @@ from curator.sync.repository import SyncRepository
 
 
 def _tag(identifier: str, updated: str = "2026-01-01T00:00:00Z") -> dict[str, object]:
-    return {"id": identifier, "name": f"Tag {identifier}", "updated_at": updated, "parents": []}
+    return {
+        "id": identifier,
+        "name": f"Tag {identifier}",
+        "updated_at": updated,
+        "parents": [],
+        "stash_ids": [
+            {"endpoint": "https://stashdb.org/graphql", "stash_id": f"external-{identifier}"}
+        ],
+    }
 
 
 def _studio(identifier: str) -> dict[str, object]:
@@ -114,6 +122,9 @@ class SyntheticClient:
                         for name in ("id", "updated_at", "favorite", "weight", "fake_tits")
                     ]
                 },
+                "tagType": {
+                    "fields": [{"name": name} for name in ("id", "updated_at", "stash_ids")]
+                },
             }
         names = {
             "CuratorTags": ("tag", "findTags", "tags"),
@@ -183,6 +194,11 @@ def test_full_sync_resumes_at_transactionally_saved_page(
     assert result.entity_counts["scene"] == 1
     assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
     assert connection.execute("SELECT state FROM sync_run").fetchone()[0] == "complete"
+    assert tuple(
+        connection.execute(
+            "SELECT endpoint, stash_id FROM source_tag_stash_id WHERE tag_id='t1'"
+        ).fetchone()
+    ) == ("https://stashdb.org/graphql", "external-t1")
     scene_calls_after_failure = [call for call in client.calls if call[0] == "scene"]
     assert scene_calls_after_failure == [("scene", 1), ("scene", 2), ("scene", 2)]
 

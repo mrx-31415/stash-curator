@@ -48,10 +48,22 @@ def test_catalog_is_deterministic_and_rejects_unknown_fields(tmp_path: Path) -> 
     first = catalog.evidence_variant("appeal.performer_identity", "lead", slots, "seed")
     second = catalog.evidence_variant("appeal.performer_identity", "lead", slots, "seed")
     assert first == second
-    assert all(
-        template.startswith("the pattern around ")
-        for template in catalog.evidence["appeal.tag_positive"]["support"]
+    pairing_slots = {
+        "performer": "Alex",
+        "precedent": "Known Scene",
+        "precedent_outcome": "which worked well for you",
+        "tags": "Office and stockings",
+    }
+    pairing = catalog.pairing_variant(
+        "appeal.performer_identity",
+        "appeal.content_neighbor",
+        pairing_slots,
+        "seed",
     )
+    assert pairing is not None
+    assert "Alex" in pairing
+    assert "Known Scene" in pairing
+    assert "worked well for you" in pairing
 
     payload = json.loads(Path("curator/explanations/realizations.json").read_text())
     payload["evidence"]["fallback"]["lead"] = ["invent {unsupported}"]

@@ -20,6 +20,8 @@ from curator.features.measurements import (
 )
 from curator.features.tag_roles import TagRole, TagRoleResolver, TagRoleResult
 from curator.storage import transaction
+from curator.taxonomy import TaxonomyIndex
+from curator.taxonomy.store import CATEGORY_ROLE_FINGERPRINT
 
 
 class FeatureBuildError(RuntimeError):
@@ -133,12 +135,26 @@ class FeatureBuilder:
             )
             for row in rows:
                 digest.update(f"{table}\0{row[0]}\0{row[1]}\n".encode())
+        for row in self.connection.execute(
+            "SELECT tag_id, endpoint, stash_id FROM source_tag_stash_id ORDER BY tag_id, endpoint"
+        ):
+            digest.update(f"source_tag_stash_id\0{row[0]}\0{row[1]}\0{row[2]}\n".encode())
+        row = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
+        ).fetchone()
+        digest.update(f"taxonomy_snapshot\0{row[0] if row else ''}\n".encode())
+        digest.update(f"taxonomy_category_roles\0{CATEGORY_ROLE_FINGERPRINT}\n".encode())
         return digest.hexdigest()
 
     def _resolve_tag_roles(self) -> dict[str, TagRoleResult]:
         resolver = TagRoleResolver(self.config.feature)
+        taxonomy = TaxonomyIndex(self.connection)
         return {
-            str(row["tag_id"]): resolver.resolve(str(row["tag_id"]), row["name"])
+            str(row["tag_id"]): resolver.resolve(
+                str(row["tag_id"]),
+                row["name"],
+                taxonomy.resolve(str(row["tag_id"]), row["name"]),
+            )
             for row in self.connection.execute(
                 "SELECT tag_id, name FROM source_tag ORDER BY tag_id"
             )
@@ -485,6 +501,37 @@ class FeatureBuilder:
                 (
                     (tag_id, config_version, result.role.value, result.reason)
                     for tag_id, result in sorted(roles.items())
+                ),
+            )
+            taxonomy_rows = [
+                (tag_id, result.taxonomy)
+                for tag_id, result in sorted(roles.items())
+                if result.taxonomy is not None
+            ]
+            self.connection.executemany(
+                """
+                INSERT INTO tag_taxonomy_match(
+                    local_tag_id, snapshot_id, external_tag_id, external_category_id,
+                    match_method, confidence, ambiguity_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(local_tag_id, snapshot_id) DO UPDATE SET
+                    external_tag_id=excluded.external_tag_id,
+                    external_category_id=excluded.external_category_id,
+                    match_method=excluded.match_method,
+                    confidence=excluded.confidence,
+                    ambiguity_count=excluded.ambiguity_count
+                """,
+                (
+                    (
+                        tag_id,
+                        taxonomy.snapshot_id,
+                        taxonomy.external_tag_id,
+                        taxonomy.external_category_id,
+                        taxonomy.method,
+                        taxonomy.confidence,
+                        taxonomy.ambiguity_count,
+                    )
+                    for tag_id, taxonomy in taxonomy_rows
                 ),
             )
             self.connection.executemany(

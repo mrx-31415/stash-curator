@@ -10,8 +10,10 @@ and deliberate adventures without letting the feed become repetitive.
 The read-only validation slice is implemented. It can synchronize Stash metadata,
 normalize historical behavior, build a deterministic recommendation model, generate
 all five lanes with inspectable reasons, compare performers, and export a
-self-contained HTML evaluation report. The Stash-native page and event collection
-are later work packages; no installable plugin is provided yet.
+self-contained HTML evaluation report. It can also cache StashDB's public tag
+taxonomy so physical-description tags do not masquerade as scene-content matches.
+The Stash-native page and event collection are later work packages; no installable
+plugin is provided yet.
 
 ## Documentation
 
@@ -52,6 +54,22 @@ Normal sync is incremental. A full sync traverses stable IDs and reconciles sour
 deletions. Both modes resume interrupted page traversal. The validation client
 accepts GraphQL `query` operations only; it contains no Stash mutations. Repository
 tests use synthetic data and do not require access to a real Stash instance.
+
+Optionally cache StashDB's public tag taxonomy before building the model:
+
+```bash
+# Either export STASHDB_API_KEY=... or add a stashdb.org entry to ~/.netrc.
+uv run curator --db data/curator.sqlite3 sync-taxonomy --json
+```
+
+`sync-taxonomy` sends read-only GraphQL queries for public categories and tags. It
+does not upload library metadata or behavior. The immutable snapshot is stored in
+Curator's sidecar, so subsequent model builds are offline and reproducible. Local
+tags resolve by StashDB ID when available, then by a unique canonical name or alias;
+ambiguous matches are retained as provenance but are not guessed. The committed
+[category-role policy](curator/taxonomy/stashdb_category_roles.json) classifies body
+and appearance categories as performer attributes and treats other categories,
+including Clothing, as scene content by default.
 
 Build and inspect recommendations after a sync:
 

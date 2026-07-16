@@ -1,16 +1,16 @@
 # Tag and performer evidence design
 
-Status: proposed architecture; read-only audit complete
+Status: taxonomy classification implemented; profile enrichment proposed
 
 This note separates what a scene contains from what its cast is like. The distinction
 matters because a physical characteristic may currently appear as a scene tag, a
 performer-profile field, and a reason that two performers are similar. Treating all
 three as independent evidence exaggerates one underlying fact.
 
-## 1. Current limitation
+## 1. Current boundary
 
-Tag-role resolution currently defaults nearly every non-administrative tag to
-`content`. The feature builder then uses those tags for:
+Tag-role resolution now separates StashDB body and appearance categories from scene
+content. The feature builder excludes tags classified as `performer_attribute` from:
 
 - direct content affinity;
 - preference-weighted scene neighbors;
@@ -19,10 +19,13 @@ Tag-role resolution currently defaults nearly every non-administrative tag to
 
 Structured performer metadata separately supplies proportions, age at recording,
 appearance, augmentation, tattoos, piercings, and other similarity blocks. Physical
-scene tags can therefore be counted both as content and as performer evidence.
+scene tags would therefore be double-counted without the role boundary.
 
-The `performer_attribute` role and synchronized performer-tag relationships exist,
-but are not yet consumed by the feature pipeline.
+The role, cached taxonomy, match provenance, and synchronized performer-tag
+relationships exist. Building dated, subject-aware observations from those tags is
+the remaining profile-enrichment work; the current implementation deliberately
+excludes them from content vectors without yet counting them as new preference
+evidence.
 
 ## 2. Semantic roles and scope
 
@@ -77,18 +80,20 @@ replace age-at-recording derived from performer birthdate and scene date.
 Mapping records retain local tag ID, external tag/category IDs, match method, taxonomy
 snapshot, confidence, and ambiguity. Stable-ID matches are strongest. A canonical or
 alias match is accepted automatically only when unique; ambiguous or absent terms
-fall through to local rules or review. For example, StashDB currently maps `Athletic
-Body` as an alias of `Athletic` in Body Type and `Trimmed` as an alias of `Trimmed
-Pussy` in Genitals, while a local `Bubble Butt` tag still needs a fallback rule or
-manual override because it is not currently returned by StashDB's tag search.
+fall through to local rules or review. For example, the current snapshot maps
+`Athletic Body` and `Athletic Woman` to `Athletic` in Body Type, `Trimmed` to
+`Trimmed Pussy` in Genitals, and `Bubble Butt` to the Ass category. The conservative
+fallback vocabulary retains these terms as performer attributes if a future or
+older taxonomy snapshot cannot resolve them.
 
-The first implemented layer automatically recognizes configured namespaces and a
-conservative physical-attribute vocabulary. StashDB taxonomy synchronization,
-usage/agreement classification, and the review queue form the next taxonomy work
-package.
+The implemented resolver recognizes explicit rules, the cached StashDB taxonomy,
+and a conservative fallback vocabulary. Its reviewed category policy lives in
+[`stashdb_category_roles.json`](../curator/taxonomy/stashdb_category_roles.json), not
+in a private library export. Usage/agreement classification and the review queue are
+later profile-enrichment work.
 
-High-confidence mappings are accepted automatically. Medium-confidence mappings go
-to a small review queue; low-confidence or genuinely ambiguous tags remain
+High-confidence mappings are accepted automatically. A later review queue will hold
+medium-confidence mappings; low-confidence or genuinely ambiguous tags remain
 `scene_content` and cannot silently become performer facts. A later offline
 classifier or language model may propose mappings for unfamiliar names, but it does
 not publish them without the same confidence and consistency checks. Corrections are

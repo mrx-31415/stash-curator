@@ -132,36 +132,64 @@ class ExplanationService:
     def _render(self, reasons: tuple[Reason, ...], seed: str) -> Explanation:
         plan = self.planner.plan(reasons)
         slots: dict[str, str] = {}
-        primary = self._realize(plan.primary, "lead", seed)
+        pairing = self._pairing(plan.primary, plan.support, seed)
+        primary = pairing or self._realize(plan.primary, "lead", seed)
         slots.update(primary=primary, primary_cap=_capitalize(primary))
-        if plan.support is not None:
+        if plan.support is not None and pairing is None:
             support = self._realize(plan.support, "support", seed)
             slots.update(support=support, support_cap=_capitalize(support))
         if plan.boundary is not None:
             boundary = self._realize(plan.boundary, "boundary", seed)
             slots.update(boundary=boundary, boundary_cap=_capitalize(boundary))
-        summary = self.catalog.plan_variant(plan.lane, plan.shape, slots, seed)
+        shape = plan.shape
+        if pairing is not None:
+            shape = "primary_boundary" if plan.boundary is not None else "primary"
+        summary = self.catalog.plan_variant(plan.lane, shape, slots, seed)
         return Explanation(summary, plan.selected_reasons, reasons)
+
+    def _pairing(
+        self, primary: EvidenceUnit, support: EvidenceUnit | None, seed: str
+    ) -> str | None:
+        if support is None:
+            return None
+        slots = self._slots(primary.reason)
+        slots.update(self._specific_slots(support.reason))
+        return self.catalog.pairing_variant(primary.reason.code, support.reason.code, slots, seed)
 
     def _realize(self, unit: EvidenceUnit, position: str, seed: str) -> str:
         reason = unit.reason
+        return self.catalog.evidence_variant(reason.code, position, self._slots(reason), seed)
+
+    def _slots(self, reason: Reason) -> dict[str, str]:
         slots = {
-            "challenge": str(
-                reason.detail.get("challenged_assumption") or "one less-certain preference"
-            ),
+            "challenge": "one less-certain part of your taste",
             "known": "a familiar performer",
-            "performer": self._name("performer", reason.subject_id),
+            "performer": "a familiar performer",
+            "precedent": "a scene that worked for you",
+            "precedent_outcome": "which worked for you",
             "precedents": "nearby scenes you enjoyed",
             "profile": "their overall profiles",
-            "studio": self._name("studio", reason.subject_id),
-            "tags": self._tag_names(reason),
-            "target": self._name("performer", reason.subject_id),
+            "studio": "a familiar studio",
+            "tags": "familiar elements",
+            "target": "a new performer",
         }
+        slots.update(self._specific_slots(reason))
+        return slots
+
+    def _specific_slots(self, reason: Reason) -> dict[str, str]:
         if reason.code == "appeal.content_neighbor":
-            slots.update(self._neighbor_slots(reason))
-        elif reason.code == "appeal.performer_similar":
-            slots.update(self._similarity_slots(reason))
-        return self.catalog.evidence_variant(reason.code, position, slots, seed)
+            return self._neighbor_slots(reason)
+        if reason.code == "appeal.performer_similar":
+            return self._similarity_slots(reason)
+        if reason.code == "appeal.performer_identity":
+            return {"performer": self._name("performer", reason.subject_id)}
+        if reason.code == "appeal.studio":
+            return {"studio": self._name("studio", reason.subject_id)}
+        if reason.code.startswith("appeal.tag_"):
+            return {"tags": self._tag_names(reason)}
+        if reason.code == "explore.challenge":
+            return {"challenge": self._challenge_phrase(reason.detail.get("challenged_assumption"))}
+        return {}
 
     def _neighbor_slots(self, reason: Reason) -> dict[str, str]:
         raw = reason.detail.get("neighbors", [])
@@ -178,9 +206,31 @@ class ExplanationService:
             )
         )[:3]
         return {
+            "precedent": titles[0] if titles else "a scene that worked for you",
+            "precedent_outcome": self._outcome_phrase(useful[0])
+            if useful
+            else "which worked for you",
             "precedents": self._natural_list(titles or ["nearby scenes you enjoyed"]),
             "tags": self._natural_list(tags or ["their content profile"]),
         }
+
+    @staticmethod
+    def _outcome_phrase(neighbor: dict[str, object]) -> str:
+        outcome = _number(neighbor.get("outcome"))
+        if outcome >= 0.75:
+            return "which you particularly enjoyed"
+        if outcome >= 0.45:
+            return "which worked well for you"
+        return "which seems to have worked for you"
+
+    @staticmethod
+    def _challenge_phrase(value: object) -> str:
+        return {
+            "studio": "a less familiar studio",
+            "performer": "a less familiar performer",
+            "content": "a less familiar content pattern",
+            "history": "something outside your usual rotation",
+        }.get(str(value), "one less-certain part of your taste")
 
     def _similarity_slots(self, reason: Reason) -> dict[str, str]:
         matches = reason.detail.get("matches", [])

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "default_role": "content",
+  "categories": [
+    {"id": "90db3f8b-12ad-42c7-9fa5-a45d75cb1f66", "name": "Ass", "role": "performer_attribute"},
+    {"id": "20c82f8a-4f2b-412a-8047-934eeb6c32e7", "name": "Body Type", "role": "performer_attribute"},
+    {"id": "be3adc0c-a3fe-40bf-98a7-5eacd9fb89fe", "name": "Breasts", "role": "performer_attribute"},
+    {"id": "ce09c0f1-06e3-4f13-a5f6-7c5f93d85af9", "name": "Face", "role": "performer_attribute"},
+    {"id": "9bd1d55e-d7c4-4b7c-a66f-96ec52b7af08", "name": "Genitals", "role": "performer_attribute"},
+    {"id": "fdc60263-77f6-4a7f-bb79-1f5e85abe9ca", "name": "Hair Color", "role": "performer_attribute"},
+    {"id": "ab179fb8-aa2f-4c75-86cf-0166dd8d8136", "name": "Hair Style", "role": "performer_attribute"},
+    {"id": "5c08369e-bbd9-4ea4-8c9f-081412408cd8", "name": "Height", "role": "performer_attribute"},
+    {"id": "8095fe3e-371f-4c2e-b1b6-b801ab330402", "name": "Piercings", "role": "performer_attribute"},
+    {"id": "95be690d-36f9-42dc-bf15-248136e40e18", "name": "Race", "role": "performer_attribute"},
+    {"id": "6d007228-58b9-44ac-9bf8-0a0e8a049241", "name": "Skin Tone", "role": "performer_attribute"},
+    {"id": "f7f6bb51-51c3-48c6-b890-eb10a6e09bcf", "name": "Tattoos", "role": "performer_attribute"}
+  ]
+}

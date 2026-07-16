@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from curator.explanations import ExplanationService, ReasonGraphStore
+from curator.explanations import ExplanationService, Reason, ReasonGraphStore
 from curator.ranking import SlateBuilder
 from tests.ranking.test_slate import _database
 
@@ -76,7 +76,10 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
     assert challenge.provenance == "lane_policy"
     assert challenge.detail["challenged_assumption"] == "studio"
     assert "studio" in explanation.summary
-    assert any(word in explanation.summary for word in ("stretch", "question", "testing"))
+    assert any(
+        phrase in explanation.summary
+        for phrase in ("less familiar studio", "usual pattern", "outweigh")
+    )
     assert any(reason.code.startswith("diversity.") for reason in explanation.all_reasons)
     assert all(not reason.code.startswith("diversity.") for reason in explanation.selected_reasons)
 
@@ -138,6 +141,53 @@ def test_content_neighbor_explanation_names_scenes_and_shared_tags(tmp_path: Pat
     assert neighbor["shared_tags"] == ["Shared scenario"]
     assert "Known Good Scene" in explanation.summary
     assert "Shared scenario" in explanation.summary
+
+
+def test_fused_performer_and_neighbor_claim_preserves_entity_names(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("UPDATE source_performer SET name='Alex' WHERE performer_id='p1'")
+    identity = Reason(
+        "appeal.performer_identity",
+        "positive",
+        0.4,
+        0.9,
+        "performer",
+        "p1",
+        "standard",
+        "test",
+        {},
+        "model",
+        "features",
+    )
+    neighbor = Reason(
+        "appeal.content_neighbor",
+        "positive",
+        0.3,
+        0.9,
+        "scene",
+        "scene-neighbor-id",
+        "standard",
+        "test",
+        {
+            "neighbors": [
+                {
+                    "scene_id": "scene-neighbor-id",
+                    "title": "Known Scene",
+                    "outcome": 0.8,
+                    "shared_tags": ["Office", "Stockings"],
+                }
+            ]
+        },
+        "model",
+        "features",
+    )
+
+    explanation = ExplanationService(connection)._render((identity, neighbor), "seed")
+
+    assert "Alex" in explanation.summary
+    assert "Known Scene" in explanation.summary
+    assert "Office and Stockings" in explanation.summary
+    assert "scene-neighbor-id" not in explanation.summary
 
 
 def test_direct_outcome_reason_comes_from_exact_scene_evidence(tmp_path: Path) -> None:

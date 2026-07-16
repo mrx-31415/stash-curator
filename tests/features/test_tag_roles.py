@@ -1,5 +1,6 @@
 from curator.config import FeatureConfig, TagRule
 from curator.features.tag_roles import TagRole, TagRoleResolver
+from curator.taxonomy import TaxonomyMatch
 
 
 def test_role_precedence_and_explanations() -> None:
@@ -46,3 +47,25 @@ def test_default_physical_vocabulary_is_not_scene_content() -> None:
         assert result.reason.startswith("configured_regex_rule")
 
     assert resolver.resolve("scenario", "Office").role is TagRole.CONTENT
+
+
+def test_taxonomy_precedes_regex_fallback_but_not_explicit_rules() -> None:
+    resolver = TagRoleResolver(
+        FeatureConfig(tag_rules=(TagRule("exact", "Athletic Body", "quality_technical"),))
+    )
+    taxonomy = TaxonomyMatch(
+        "snapshot",
+        "performer_attribute",
+        "external-tag",
+        "body-category",
+        "unique_name_or_alias",
+        0.9,
+    )
+
+    configured = resolver.resolve("tag", "Athletic Body", taxonomy)
+    classified = TagRoleResolver(FeatureConfig()).resolve("tag", "Athletic Body", taxonomy)
+
+    assert configured.role is TagRole.QUALITY_TECHNICAL
+    assert configured.reason.startswith("configured_exact_rule")
+    assert classified.role is TagRole.PERFORMER_ATTRIBUTE
+    assert classified.reason.startswith("stashdb_unique_name_or_alias")

@@ -54,6 +54,7 @@ def probe_capabilities(client: QueryClient) -> Capabilities:
             "performers",
         },
         "performerType": {"id", "updated_at", "favorite", "weight", "fake_tits"},
+        "tagType": {"id", "updated_at", "stash_ids"},
     }
     for type_key, required_fields in requirements.items():
         type_data = data.get(type_key)

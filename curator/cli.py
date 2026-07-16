@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import netrc
 import os
 import time
 from collections.abc import Sequence
@@ -24,6 +25,7 @@ from curator.storage.migrations import MigrationStatus
 from curator.sync import SyncService
 from curator.sync.repository import SyncRepository
 from curator.sync.service import probe_capabilities
+from curator.taxonomy import StashDBTaxonomyClient, TaxonomyStore
 
 
 def _default_database_path() -> Path:
@@ -32,6 +34,20 @@ def _default_database_path() -> Path:
 
 def _default_stash_url() -> str | None:
     return os.environ.get("STASH_URL")
+
+
+def _stashdb_api_key(host: str = "stashdb.org") -> str | None:
+    configured = os.environ.get("STASHDB_API_KEY")
+    if configured:
+        return configured
+    path = Path(os.environ.get("NETRC", Path.home() / ".netrc"))
+    if not path.exists():
+        return None
+    credentials = netrc.netrc(str(path)).authenticators(host)
+    if credentials is None:
+        return None
+    login, _, password = credentials
+    return password or login
 
 
 def _status_payload(status: MigrationStatus) -> dict[str, object]:
@@ -78,6 +94,16 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--full", action="store_true", help="Reconcile a complete snapshot")
     sync.add_argument("--page-size", type=int, default=250)
     sync.add_argument("--json", action="store_true", help="Emit structured JSON")
+
+    taxonomy = subparsers.add_parser(
+        "sync-taxonomy", help="Cache the read-only StashDB tag taxonomy"
+    )
+    taxonomy.add_argument(
+        "--endpoint",
+        default=os.environ.get("STASHDB_URL", "https://stashdb.org/graphql"),
+    )
+    taxonomy.add_argument("--page-size", type=int, default=500)
+    taxonomy.add_argument("--json", action="store_true", help="Emit structured JSON")
 
     build_model = subparsers.add_parser(
         "build-model", help="Build and atomically publish the recommendation model"
@@ -179,6 +205,23 @@ def run(argv: Sequence[str] | None = None) -> int:
             },
             as_json=bool(args.json),
         )
+        return 0
+
+    if args.command == "sync-taxonomy":
+        api_key = _stashdb_api_key()
+        if not api_key:
+            parser.error("sync-taxonomy requires STASHDB_API_KEY or a stashdb.org netrc entry")
+        connection = connect_database(args.db)
+        try:
+            MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
+            client = GraphQLClient(str(args.endpoint), api_key=api_key)
+            taxonomy = StashDBTaxonomyClient(client, page_size=int(args.page_size)).fetch()
+            published = TaxonomyStore(connection).publish(
+                taxonomy, fetched_at_ms=time.time_ns() // 1_000_000
+            )
+        finally:
+            connection.close()
+        _print_result(asdict(published), as_json=bool(args.json))
         return 0
 
     if args.command == "build-model":

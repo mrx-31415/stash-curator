@@ -287,6 +287,13 @@ reviewed clause and plan variants live in
 is included in the Python package. The loader validates every placeholder before any
 text can be rendered.
 
+Common evidence pairs use relation-specific realizations rather than concatenating
+independent clauses. In particular, performer history plus a content neighbor is
+rendered as one recommendation thesis: the performer has worked for the user, the
+named comparison also worked for the user, and the shared content explains the
+resemblance. Terms such as “anchor,” “overlap,” “model,” and “positive precedent” are
+implementation vocabulary and do not belong in ordinary card prose.
+
 Generated examples may be used offline to propose additional variants. They are
 reviewed, reduced to fact-preserving clauses or plan shapes, and added to the catalog;
 Curator does not splice arbitrary generated paragraphs at runtime. This allows a much

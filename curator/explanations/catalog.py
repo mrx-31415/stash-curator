@@ -12,6 +12,8 @@ _EVIDENCE_FIELDS = {
     "challenge",
     "known",
     "performer",
+    "precedent",
+    "precedent_outcome",
     "precedents",
     "profile",
     "studio",
@@ -32,6 +34,7 @@ _PLAN_FIELDS = {
 class RealizationCatalog:
     version: int
     evidence: dict[str, dict[str, tuple[str, ...]]]
+    pairings: dict[str, dict[str, tuple[str, ...]]]
     plans: dict[str, dict[str, tuple[str, ...]]]
 
     @classmethod
@@ -41,8 +44,9 @@ class RealizationCatalog:
         if not isinstance(payload, dict) or payload.get("version") != 1:
             raise ValueError("realization catalog must have version 1")
         evidence = cls._section(payload.get("evidence"), _EVIDENCE_FIELDS)
+        pairings = cls._section(payload.get("pairings"), _EVIDENCE_FIELDS)
         plans = cls._section(payload.get("plans"), _PLAN_FIELDS)
-        return cls(1, evidence, plans)
+        return cls(1, evidence, pairings, plans)
 
     @staticmethod
     def _section(value: object, allowed_fields: set[str]) -> dict[str, dict[str, tuple[str, ...]]]:
@@ -94,6 +98,20 @@ class RealizationCatalog:
         if variants is None:
             raise ValueError(f"missing plan shape {shape!r} for {lane!r}")
         return self._choose(variants, f"{seed}\0plan\0{lane}\0{shape}").format(**slots)
+
+    def pairing_variant(
+        self,
+        first_code: str,
+        second_code: str,
+        slots: dict[str, str],
+        seed: str,
+    ) -> str | None:
+        key = "+".join(sorted((first_code, second_code)))
+        group = self.pairings.get(key)
+        if group is None:
+            return None
+        variants = group["fused"]
+        return self._choose(variants, f"{seed}\0pairing\0{key}").format(**slots)
 
     @staticmethod
     def _choose(variants: tuple[str, ...], seed: str) -> str:

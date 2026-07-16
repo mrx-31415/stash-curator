@@ -16,70 +16,76 @@
     },
     "appeal.performer_identity": {
       "lead": [
-        "{performer} is the clearest anchor here",
-        "the strongest draw is {performer}",
-        "{performer} gives this a familiar starting point",
-        "your history with {performer} makes a strong opening case"
+        "you have had good luck with {performer} before",
+        "{performer} has generally been a good choice for you",
+        "your past choices make {performer} a good reason to try this",
+        "this looks promising largely because {performer} has worked for you before",
+        "{performer} is someone you have enjoyed watching before",
+        "your history suggests that {performer} is usually worth a look"
       ],
       "support": [
-        "{performer} adds a familiar anchor",
-        "your history with {performer} reinforces it",
-        "{performer} strengthens the case",
-        "the presence of {performer} adds confidence"
+        "you have also responded well to {performer}'s scenes",
+        "{performer} has worked for you before too",
+        "your history with {performer} makes that more convincing",
+        "{performer}'s track record gives you another reason to consider it"
       ]
     },
     "appeal.content_neighbor": {
       "lead": [
-        "{precedents} provide useful precedents through {tags}",
-        "the closest positive comparisons are {precedents}, linked by {tags}",
-        "{precedents} point in the same direction, especially around {tags}",
-        "the content case rests on {precedents}, which share {tags}"
+        "this resembles {precedent}, {precedent_outcome}, because both feature {tags}",
+        "{tags} make this reminiscent of {precedent}, {precedent_outcome}",
+        "if you liked {precedent}, this follows a similar thread through {tags}",
+        "this shares {tags} with {precedent}, {precedent_outcome}",
+        "{precedent} is a useful comparison: it worked for you, and both scenes include {tags}"
       ],
       "support": [
-        "it also echoes {precedents} through {tags}",
-        "{precedents} reinforce it through {tags}",
-        "the overlap with {precedents} is strongest around {tags}",
-        "{tags} connect it with {precedents}"
+        "it also resembles {precedent}, {precedent_outcome}, through {tags}",
+        "{tags} recall {precedent}, {precedent_outcome}",
+        "it shares {tags} with {precedent}, {precedent_outcome}",
+        "there is also a familiar thread from {precedent} in the form of {tags}"
       ]
     },
     "appeal.tag_positive": {
       "lead": [
-        "the clearest content fit comes from {tags}",
-        "the combination of {tags} makes the strongest content-level case",
-        "the content evidence is strongest around {tags}"
+        "scenes featuring {tags} have tended to work for you",
+        "your past choices have responded well to scenes with {tags}",
+        "this brings together {tags}, a combination that suits your viewing history",
+        "your past choices point toward {tags} as reasons to consider this"
       ],
       "support": [
-        "the pattern around {tags} adds a separate content match",
-        "the pattern around {tags} supports it",
-        "the pattern around {tags} provides additional support"
+        "scenes with {tags} have also worked well for you before",
+        "your history gives {tags} another point in its favor",
+        "it also includes {tags}, a pattern that recurs in scenes you have enjoyed"
       ]
     },
     "appeal.studio": {
       "lead": [
-        "{studio} has a useful track record with you",
-        "your history with {studio} works in this scene's favor"
+        "scenes from {studio} have often suited you",
+        "you have had good results with {studio} before",
+        "{studio} has delivered some worthwhile scenes for you"
       ],
       "support": [
-        "{studio} adds some supporting evidence",
-        "the studio history helps as well"
+        "{studio} has treated you well before too",
+        "your history with {studio} is another reason to give it a chance"
       ]
     },
     "appeal.performer_similar": {
       "lead": [
-        "{target} is close to {known}, mainly in {profile}",
-        "the unfamiliar anchor is {target}, whose resemblance to {known} is strongest in {profile}"
+        "you may not know {target} yet, but they resemble {known} in {profile}",
+        "{target} looks like a promising new performer for you because their profile is close to {known}, especially in {profile}",
+        "{target} has a lot in common with {known}, mainly {profile}"
       ],
       "support": [
         "{target} also resembles {known} in {profile}",
-        "the profile comparison with {known} adds support"
+        "{target}'s similarity to {known}, especially in {profile}, gives you another reason to try it"
       ]
     },
     "appeal.tag_negative": {
       "boundary": [
-        "the pattern around {tags} is the main less-proven element",
-        "the evidence around {tags} is weaker",
-        "the pattern around {tags} adds a slight caution",
-        "your history is less convincing around {tags}"
+        "the only hesitation comes from {tags}; those elements have been less reliable for you",
+        "your past results with {tags} have been less consistent",
+        "your history is a little more mixed when {tags} are involved",
+        "the presence of {tags} makes this less of a sure thing for you"
       ]
     },
     "fit.cooldown": {
@@ -97,30 +103,36 @@
     },
     "explore.challenge": {
       "boundary": [
-        "this is a measured stretch around {challenge}",
-        "the deliberate question is whether {challenge} still matters here",
-        "it keeps a familiar anchor while testing {challenge}"
+        "the small gamble is {challenge}",
+        "this asks whether the rest of the scene can outweigh {challenge}",
+        "I am bending your usual pattern slightly with {challenge}"
       ]
     },
     "explore.disagreement": {
       "boundary": [
-        "the positive and negative signals genuinely disagree",
-        "this is a deliberate test of conflicting evidence",
-        "the value here is in testing a real model disagreement"
+        "some of your past choices point toward it and others away",
+        "it sits on a genuine boundary in your viewing history",
+        "the interesting question is which of its mixed qualities matters more to you"
       ]
     },
     "explore.coverage": {
       "boundary": [
-        "this explores a coherent but under-covered part of the library",
-        "it is a deliberate step into a region your history covers less often",
-        "the purpose is to test an under-explored content cluster"
+        "this takes you a little outside your usual rotation, but not at random",
+        "it is a guided step into a part of the library you have watched less often",
+        "this is here to broaden the menu without losing the connection to things you enjoy",
+        "I would treat this as a change of pace with a reason behind it",
+        "this follows a familiar thread into something you have sampled less often",
+        "it offers some variety without being a blind leap"
       ]
     },
     "explore.unknown": {
       "boundary": [
-        "support is intentionally limited, so this is a genuine probe",
-        "this reaches beyond the better-known parts of your taste",
-        "the recommendation is exploratory rather than a predicted favorite"
+        "the rest is less predictable, so treat this as the adventurous part of the page",
+        "this goes beyond the parts of your taste I know well",
+        "there is less history to lean on here, which makes it an exploratory choice",
+        "this keeps one foot in familiar territory while trying something less predictable",
+        "I would choose this when you want a little more uncertainty in the mix",
+        "this is less of a safe bet and more of a considered change of pace"
       ]
     },
     "fallback": {
@@ -133,6 +145,46 @@
       ],
       "boundary": [
         "confidence remains limited"
+      ]
+    }
+  },
+  "pairings": {
+    "appeal.content_neighbor+appeal.performer_identity": {
+      "fused": [
+        "you have enjoyed {performer}'s scenes before, and this one resembles {precedent}, {precedent_outcome}, because both feature {tags}",
+        "{performer} has worked for you before; this also shares {tags} with {precedent}, {precedent_outcome}",
+        "if you are in the mood for {performer}, this looks especially promising: {tags} make it reminiscent of {precedent}, {precedent_outcome}",
+        "this brings back {performer}, whose scenes you tend to enjoy, in a setup similar to {precedent}; both include {tags}",
+        "you have enjoyed {performer} before, and {tags} give this a familiar connection to {precedent}, {precedent_outcome}",
+        "there are two good reasons to try this: {performer} has been a good pick for you before, and it shares {tags} with {precedent}, {precedent_outcome}"
+      ]
+    },
+    "appeal.performer_identity+direct.positive": {
+      "fused": [
+        "you already know this scene works for you, and {performer} remains one of its clearest attractions",
+        "this has delivered for you before, with {performer} giving it another reason to revisit",
+        "you have returned to this successfully before; your history with {performer} helps explain why it is worth another look",
+        "this is a proven revisit for you, not least because {performer}'s scenes tend to work well"
+      ]
+    },
+    "appeal.performer_identity+appeal.studio": {
+      "fused": [
+        "both {performer} and {studio} have treated you well before",
+        "this combines {performer}, whose scenes you enjoy, with a generally reliable studio in {studio}",
+        "your history is encouraging on both fronts: {performer} and scenes from {studio}"
+      ]
+    },
+    "appeal.content_neighbor+appeal.studio": {
+      "fused": [
+        "this resembles {precedent}, {precedent_outcome}, through {tags}, and {studio} has a decent track record with you too",
+        "{studio} has worked for you before, while {tags} recall {precedent}, {precedent_outcome}"
+      ]
+    },
+    "appeal.performer_similar+appeal.tag_positive": {
+      "fused": [
+        "{target} may be new to you, but they resemble {known} in {profile}; the scene also includes {tags}, which have worked for you before",
+        "this introduces {target}, whose profile is close to {known} in {profile}, alongside familiar ingredients in {tags}",
+        "{target}'s resemblance to {known}, especially in {profile}, makes them an interesting discovery, and {tags} give the scene a familiar side"
       ]
     }
   },
@@ -161,21 +213,21 @@
     "best_bets": {
       "primary": [
         "{primary_cap}.",
-        "{primary_cap}; that is enough to make it a strong unseen option."
+        "{primary_cap}. It looks like one of the safer new choices for you."
       ],
       "primary_support": [
         "{primary_cap}, and {support}.",
         "{primary_cap}. {support_cap}.",
-        "{support_cap}; {primary}."
+        "{primary_cap}; {support}."
       ],
       "primary_boundary": [
         "{primary_cap}, although {boundary}.",
-        "{primary_cap}. {boundary_cap}, so it is not quite as certain as the top few."
+        "{primary_cap}. {boundary_cap}, so I would keep it just behind the safest choices."
       ],
       "primary_support_boundary": [
         "{primary_cap}, and {support}. {boundary_cap}.",
-        "{support_cap}, while {primary}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}; the only real reservation is that {boundary}."
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}; still, {boundary}."
       ]
     },
     "revisit": {
@@ -200,11 +252,11 @@
     },
     "discover": {
       "primary": [
-        "{primary_cap}; the rest is intentionally less certain."
+        "{primary_cap}. The rest is more of a question mark."
       ],
       "primary_support": [
         "{primary_cap}, and {support}.",
-        "{primary_cap}. {support_cap}, giving the exploration a concrete bridge."
+        "{primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
         "{primary_cap}, but {boundary}.",
@@ -214,21 +266,21 @@
       "primary_support_boundary": [
         "{primary_cap}, and {support}. {boundary_cap}.",
         "{primary_cap}. {support_cap}, but {boundary}.",
-        "{boundary_cap}; the case for trying it is that {primary} and {support}."
+        "{primary_cap}. {support_cap}. {boundary_cap}."
       ]
     },
     "adventure": {
       "primary": [
-        "{primary_cap}; treat it as a probe rather than a prediction."
+        "{primary_cap}. That is the thread to follow here if you want something different."
       ],
       "primary_support": [
-        "{primary_cap}. {support_cap}; that provides a second foothold.",
-        "{primary_cap}. {support_cap}, though the point is still exploration."
+        "{primary_cap}. {support_cap}.",
+        "{primary_cap}, and {support}."
       ],
       "primary_boundary": [
-        "{boundary_cap}; the concrete foothold is that {primary}.",
+        "{primary_cap}. {boundary_cap}.",
         "{primary_cap}, but {boundary}.",
-        "{primary_cap}. {boundary_cap}."
+        "{boundary_cap}; what makes it worth considering is that {primary}."
       ],
       "primary_support_boundary": [
         "{boundary_cap}; {primary}, and {support}.",
