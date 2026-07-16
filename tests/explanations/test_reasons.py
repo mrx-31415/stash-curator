@@ -1,10 +1,15 @@
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 from curator.explanations import ExplanationService, Reason, ReasonGraphStore
 from curator.ranking import SlateBuilder
 from tests.ranking.test_slate import _database
+
+
+def test_unknown_exploration_subtype_has_no_card_reason() -> None:
+    assert ExplanationService._exploration_code(SimpleNamespace(subtype=None)) is None
 
 
 def _add_explainable_content(connection: sqlite3.Connection) -> None:

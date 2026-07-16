@@ -77,25 +77,29 @@ class ExplanationService:
             )
         ]
         if item.source_lane in {"discover", "adventure"}:
-            reasons.append(
-                Reason(
-                    self._exploration_code(item),
-                    "unknown",
-                    min(1.0, _number(item.qualification.get("uncertainty"))),
-                    item.confidence,
-                    "scene",
-                    item.scene_id,
-                    "standard",
-                    "lane_policy",
-                    {
-                        "subtype": item.subtype,
-                        "challenged_assumption": item.qualification.get("challenged_assumption"),
-                        "positive_anchors": item.qualification.get("positive_anchors", {}),
-                    },
-                    model_id,
-                    feature_version,
+            exploration_code = self._exploration_code(item)
+            if exploration_code is not None:
+                reasons.append(
+                    Reason(
+                        exploration_code,
+                        "unknown",
+                        min(1.0, _number(item.qualification.get("uncertainty"))),
+                        item.confidence,
+                        "scene",
+                        item.scene_id,
+                        "standard",
+                        "lane_policy",
+                        {
+                            "subtype": item.subtype,
+                            "challenged_assumption": item.qualification.get(
+                                "challenged_assumption"
+                            ),
+                            "positive_anchors": item.qualification.get("positive_anchors", {}),
+                        },
+                        model_id,
+                        feature_version,
+                    )
                 )
-            )
         for name, penalty in item.penalties.items():
             if penalty <= 0:
                 continue
@@ -123,14 +127,14 @@ class ExplanationService:
         return tuple(reasons)
 
     @staticmethod
-    def _exploration_code(item: RecommendationItem) -> str:
+    def _exploration_code(item: RecommendationItem) -> str | None:
         if item.subtype == "model_disagreement":
             return "explore.disagreement"
         if item.subtype == "stretch":
             return "explore.challenge"
         if item.subtype in {"under_covered_island", "anchored_model_gap"}:
             return "explore.coverage"
-        return "explore.unknown"
+        return None
 
     def _render(self, reasons: tuple[Reason, ...], seed: str) -> Explanation:
         plan = self.planner.plan(reasons)
