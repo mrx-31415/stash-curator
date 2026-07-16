@@ -722,10 +722,14 @@ Generate one self-contained local HTML file containing:
 - scene metadata sufficient for local identification;
 - lazy-loaded cover images and links back to the corresponding Stash scene when a
   Stash URL is supplied;
+- a report-level control for hiding or showing cover images;
 - natural-language Why-this summary;
 - Appeal, Current Fit, confidence, lane value, and final utility;
-- strongest positive/negative/unknown reasons;
-- representative scene neighbors;
+- an expandable score tree from final utility through policy inputs and individual
+  Appeal/Current Fit components;
+- readable supporting tag, performer, studio, and scene-neighbor evidence;
+- raw reason records and inspector data retained as explicitly developer-oriented
+  fallback views;
 - lane subtype and diversity adjustments;
 - optional local-only review controls or printable review fields.
 
@@ -987,7 +991,9 @@ Implemented with a versioned reason graph derived only from stored model and ran
 decomposition, typed evidence units, lane-specific discourse plans, redundancy
 suppression, deterministic realization from a validated external JSON catalog,
 `explain`, and a self-contained five-lane HTML inspector. Redaction aliases scene,
-performer, studio, and tag IDs and names.
+performer, studio, and tag IDs and names. The report adds a cover-image toggle,
+human-readable supporting evidence, and a nested score tree while retaining raw
+reason and inspector records for debugging.
 Synthetic acceptance tests cover exact provenance, representative prose, both CLI
 contracts, all report lanes, redaction, and the full sync-to-model-to-report path.
 

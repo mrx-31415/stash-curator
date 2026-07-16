@@ -6,12 +6,25 @@
         "this scene has already worked well for you",
         "your direct experience makes this worth returning to",
         "you have come back to this successfully before",
-        "the strongest case is your own positive history with this scene"
+        "the strongest case is your own positive history with this scene",
+        "you do not have to take my word for this one; it has worked for you before",
+        "your own history puts this firmly in proven territory",
+        "this one has earned its place through experience, not guesswork",
+        "you have already given this scene a convincing test run",
+        "I would trust your previous experience here more than any estimate",
+        "this is a known quantity, and your history with it is encouraging"
       ],
       "support": [
         "your direct history backs that up",
         "you already know this scene can work for you",
-        "your previous experience reinforces the choice"
+        "your previous experience reinforces the choice",
+        "you have first-hand evidence in its favor",
+        "your own viewing history makes the case stronger",
+        "this is not purely a prediction; you have enjoyed it before",
+        "your past response gives me more confidence in the pick",
+        "there is a proven result behind the recommendation",
+        "you have already found something worthwhile in this scene",
+        "your experience with it is the most persuasive supporting evidence"
       ]
     },
     "appeal.performer_identity": {
@@ -21,28 +34,49 @@
         "your past choices make {performer} a good reason to try this",
         "this looks promising largely because {performer} has worked for you before",
         "{performer} is someone you have enjoyed watching before",
-        "your history suggests that {performer} is usually worth a look"
+        "your history suggests that {performer} is usually worth a look",
+        "I would put {performer} near the top of the reasons to consider this",
+        "{performer} gives this an immediate advantage based on your history",
+        "you tend to find something worthwhile in {performer}'s scenes",
+        "my read is that {performer} makes this a naturally promising choice"
       ],
       "support": [
         "you have also responded well to {performer}'s scenes",
         "{performer} has worked for you before too",
         "your history with {performer} makes that more convincing",
-        "{performer}'s track record gives you another reason to consider it"
+        "{performer}'s track record gives you another reason to consider it",
+        "having {performer} here strengthens the case",
+        "your previous choices involving {performer} point the same way",
+        "{performer} adds a familiar reason to lean toward it",
+        "I am also encouraged by how {performer}'s scenes have landed for you",
+        "the presence of {performer} is another meaningful point in its favor",
+        "your history with {performer} gives the recommendation a little more weight"
       ]
     },
     "appeal.content_neighbor": {
       "lead": [
         "this resembles {precedent}, {precedent_outcome}, because both feature {tags}",
-        "{tags} make this reminiscent of {precedent}, {precedent_outcome}",
+        "the combination of {tags} makes this reminiscent of {precedent}, {precedent_outcome}",
         "if you liked {precedent}, this follows a similar thread through {tags}",
         "this shares {tags} with {precedent}, {precedent_outcome}",
-        "{precedent} is a useful comparison: it worked for you, and both scenes include {tags}"
+        "{precedent} is a useful comparison: it worked for you, and both scenes include {tags}",
+        "I keep coming back to {precedent} as a comparison, since it shares {tags} with this and {precedent_outcome}",
+        "the clearest precedent is {precedent}: the shared content in {tags} connects the two, and it is a scene {precedent_outcome}",
+        "this follows a route that paid off in {precedent}, with {tags} providing the connection",
+        "{tags} put this in the same neighborhood as {precedent}, {precedent_outcome}",
+        "if I were explaining the resemblance in one line, it would be {tags}: the same thread runs through {precedent}, {precedent_outcome}"
       ],
       "support": [
         "it also resembles {precedent}, {precedent_outcome}, through {tags}",
-        "{tags} recall {precedent}, {precedent_outcome}",
+        "the content in {tags} recalls {precedent}, {precedent_outcome}",
         "it shares {tags} with {precedent}, {precedent_outcome}",
-        "there is also a familiar thread from {precedent} in the form of {tags}"
+        "there is also a familiar thread from {precedent} in the form of {tags}",
+        "{precedent} offers a reassuring comparison because of the shared {tags}",
+        "the connection to {precedent} becomes clearer when you look at {tags}",
+        "I also see a useful parallel with {precedent} in {tags}",
+        "the shared content in {tags} makes {precedent}, {precedent_outcome}, relevant here",
+        "another point in its favor is how closely {tags} echo {precedent}",
+        "the content pattern around {tags} provides a concrete link to {precedent}, rather than just a vague resemblance"
       ]
     },
     "appeal.tag_positive": {
@@ -50,69 +84,199 @@
         "scenes featuring {tags} have tended to work for you",
         "your past choices have responded well to scenes with {tags}",
         "this brings together {tags}, a combination that suits your viewing history",
-        "your past choices point toward {tags} as reasons to consider this"
+        "your past choices point toward {tags} as reasons to consider this",
+        "the pattern around {tags} is doing real work in this recommendation; it recurs in scenes you enjoy",
+        "I would count {tags} among the clearest ingredients in its favor",
+        "this lines up with your history particularly well through {tags}",
+        "the presence of {tags} gives this the kind of content profile that has suited you before",
+        "the strongest tag-level case comes from {tags}",
+        "your library history makes {tags} a genuinely encouraging combination"
       ],
       "support": [
         "scenes with {tags} have also worked well for you before",
         "your history gives {tags} another point in its favor",
-        "it also includes {tags}, a pattern that recurs in scenes you have enjoyed"
+        "it also includes {tags}, a pattern that recurs in scenes you have enjoyed",
+        "the inclusion of {tags} adds another familiar reason to consider it",
+        "the tag evidence points the same way, especially around {tags}",
+        "I am also encouraged by its use of {tags}",
+        "the pattern around {tags} reinforces the fit with your previous choices",
+        "there is supporting evidence in the pattern around {tags}, which has served you well before",
+        "its inclusion of {tags} makes the recommendation easier to justify",
+        "the content case is strengthened by {tags}"
       ]
     },
     "appeal.studio": {
       "lead": [
         "scenes from {studio} have often suited you",
         "you have had good results with {studio} before",
-        "{studio} has delivered some worthwhile scenes for you"
+        "{studio} has delivered some worthwhile scenes for you",
+        "{studio} has been reliable enough in your library to deserve attention here",
+        "your history gives scenes from {studio} a modest head start",
+        "I would give {studio} some credit based on how its earlier scenes worked for you",
+        "{studio} is not a guarantee, but its track record with you is encouraging",
+        "past scenes from {studio} make this easier to recommend",
+        "there is a useful bit of studio-level evidence in {studio}'s favor",
+        "{studio} has earned a generally positive place in your viewing history"
       ],
       "support": [
-        "{studio} has treated you well before too",
-        "your history with {studio} is another reason to give it a chance"
+        "{studio} has produced worthwhile choices for you before too",
+        "your history with {studio} is another reason to give it a chance",
+        "{studio}'s past results add a little confidence",
+        "the studio history is supportive too: {studio} has worked for you before",
+        "I would also count {studio}'s track record in its favor",
+        "{studio} provides some additional reassurance",
+        "your earlier choices from {studio} strengthen the recommendation",
+        "there is a small but useful studio signal from {studio}",
+        "{studio}'s history with you points in the same direction",
+        "the fact that it comes from {studio} makes the case a little stronger"
       ]
     },
     "appeal.performer_similar": {
       "lead": [
         "you may not know {target} yet, but they resemble {known} in {profile}",
         "{target} looks like a promising new performer for you because their profile is close to {known}, especially in {profile}",
-        "{target} has a lot in common with {known}, mainly {profile}"
+        "{target} has a lot in common with {known}, mainly {profile}",
+        "if {known} is a useful reference point, {target} is worth meeting; they are close in {profile}",
+        "I would introduce {target} as someone in the same general orbit as {known}, particularly in {profile}",
+        "{target} is new territory with a sensible guidepost: {known}, through {profile}",
+        "the case for trying {target} starts with their resemblance to {known} in {profile}",
+        "{target} looks like a thoughtful extension of your interest in {known}, especially around {profile}",
+        "my best familiar comparison for {target} is {known}, largely because of {profile}",
+        "{target} offers novelty without being a blind guess; their profile is close to {known} in {profile}"
       ],
       "support": [
         "{target} also resembles {known} in {profile}",
-        "{target}'s similarity to {known}, especially in {profile}, gives you another reason to try it"
+        "{target}'s similarity to {known}, especially in {profile}, gives you another reason to try it",
+        "the resemblance between {target} and {known} in {profile} adds a useful clue",
+        "I also like the comparison between {target} and {known}, particularly around {profile}",
+        "{known} provides a familiar reference for {target} through {profile}",
+        "{target} is less of an unknown when viewed alongside {known} in {profile}",
+        "their closeness to {known} in {profile} makes {target} easier to place",
+        "my clearest comparison connects {target} to {known} through {profile}",
+        "the similarities in {profile} make the comparison between {target} and {known} worth considering",
+        "there is also a credible bridge from {known} to {target} in {profile}"
       ]
     },
     "appeal.tag_negative": {
       "boundary": [
         "the only hesitation comes from {tags}; those elements have been less reliable for you",
         "your past results with {tags} have been less consistent",
-        "your history is a little more mixed when {tags} are involved",
-        "the presence of {tags} makes this less of a sure thing for you"
+        "your history is a little more mixed when the content involves {tags}",
+        "the presence of {tags} makes this less of a sure thing for you",
+        "I would temper the recommendation slightly because the pattern around {tags} has not been as dependable for you",
+        "the content around {tags} is the part that gives me pause based on your history",
+        "the main reservation is {tags}, which have produced uneven results for you",
+        "I like the overall case more than I like its use of {tags}",
+        "the presence of {tags} introduces a little friction into an otherwise encouraging pick",
+        "your past choices suggest some caution around {tags}",
+        "the scene is not a perfect fit on every front; your results around {tags} have been hit or miss",
+        "I would keep expectations measured because of {tags}",
+        "the evidence around {tags} is weaker than the rest of the recommendation",
+        "the presence of {tags} stops this from being an entirely straightforward choice",
+        "if there is a reason to pass today, it is probably your mixed history with {tags}",
+        "the case softens when {tags} enter the picture",
+        "I would call {tags} the uncertain ingredient here",
+        "your library offers less reassurance around {tags}",
+        "the pattern around {tags} has not earned the same confidence as the scene's stronger qualities",
+        "the recommendation comes with one caveat: your history with {tags} has been less consistent"
       ]
     },
     "fit.cooldown": {
       "boundary": [
         "it is still relatively recent",
         "the timing is the main reason not to rank it higher",
-        "a little more distance from the last viewing would improve the fit"
+        "a little more distance from the last viewing would improve the fit",
+        "I like the scene more than I like the timing",
+        "this may be worth saving until it feels less recent",
+        "the only real drawback is that you have seen it fairly recently",
+        "I would be more enthusiastic after a little breathing room",
+        "it has not quite had enough time to feel fresh again",
+        "the recommendation is sound, but the calendar is working against it",
+        "this feels more like a good future revisit than an urgent one",
+        "its recent appearance keeps me from pushing it to the front",
+        "I would let this one rest a little longer",
+        "the fit should improve naturally as the last viewing recedes",
+        "it is a strong enough option, just perhaps a touch too soon",
+        "recency is doing most of the work against it right now",
+        "the scene has appeal, though I am not convinced today is the ideal moment",
+        "a bit more time would make this recommendation easier",
+        "I would bookmark it mentally rather than rush back immediately",
+        "this is being held back by timing, not by a lack of appeal",
+        "the scene is ready for a return before the schedule quite is"
       ]
     },
     "fit.not_now": {
       "boundary": [
         "your recent Not now feedback still applies",
-        "a temporary Not now signal keeps it from ranking higher"
+        "a temporary Not now signal keeps it from ranking higher",
+        "I am respecting your recent decision to leave this for later",
+        "this may fit your taste, but your latest feedback says the timing is off",
+        "the recommendation can wait; you recently told me this was not for now",
+        "I would not push this past the temporary pause you gave it",
+        "your Not now feedback matters more than my enthusiasm today",
+        "this stays lower until that recent Not now signal has had time to fade",
+        "the ingredients may fit, but you have already asked for some distance",
+        "I am keeping this in reserve because of your latest Not now choice",
+        "I see reasons to return, while your recent feedback says to wait",
+        "this is a later option rather than a current one",
+        "your temporary pause is the clearest instruction here",
+        "I would leave this on the shelf a little longer",
+        "the main constraint is not taste but your recent request to defer it",
+        "your latest signal says this should not lead the queue yet",
+        "I am treating this as postponed, not rejected",
+        "there is enough appeal to remember it, but not enough reason to ignore Not now",
+        "this remains a plausible future pick once the temporary hesitation passes",
+        "for the moment, your own Not now feedback wins the argument"
       ]
     },
     "explore.challenge": {
       "boundary": [
         "the small gamble is {challenge}",
         "this asks whether the rest of the scene can outweigh {challenge}",
-        "I am bending your usual pattern slightly with {challenge}"
+        "I am bending your usual pattern slightly with {challenge}",
+        "the deliberate stretch here is {challenge}",
+        "I am curious whether {challenge} matters less when the other pieces fit",
+        "this is testing the edges of your taste through {challenge}",
+        "the interesting risk is {challenge}, not the whole scene",
+        "I would approach this as a measured experiment with {challenge}",
+        "the recommendation earns its Discover label because of {challenge}",
+        "this keeps most of the map familiar while questioning {challenge}",
+        "my one intentional departure from your usual pattern is {challenge}",
+        "there is a real question mark around {challenge}",
+        "this gives {challenge} another chance in a more promising context",
+        "the scene is asking for a little flexibility around {challenge}",
+        "I would watch this to learn whether {challenge} is truly a drawback for you",
+        "the rest of the case is meant to make {challenge} worth reconsidering",
+        "this is less a leap than a focused test of {challenge}",
+        "I am nudging one boundary here: {challenge}",
+        "the recommendation is familiar in spirit but adventurous around {challenge}",
+        "if this misses, {challenge} is the most likely reason",
+        "the bet is that the scene's strengths can carry {challenge}"
       ]
     },
     "explore.disagreement": {
       "boundary": [
         "some of your past choices point toward it and others away",
         "it sits on a genuine boundary in your viewing history",
-        "the interesting question is which of its mixed qualities matters more to you"
+        "the interesting question is which of its mixed qualities matters more to you",
+        "I can make an honest case both for and against this one",
+        "your history gives me conflicting clues here, which is exactly why it is interesting",
+        "this is one of those picks where I cannot settle on a single story yet",
+        "the evidence is divided rather than simply weak",
+        "I would treat this as a useful tie-breaker for two competing patterns in your taste",
+        "part of your history welcomes this while another part remains skeptical",
+        "this could show me which side of a genuine disagreement matters more",
+        "I am not fully confident, but the uncertainty itself is informative",
+        "the scene lands between two different readings of your preferences",
+        "this is a close call built from meaningful evidence on both sides",
+        "your past behavior does not give an easy verdict here",
+        "I see a split decision in the evidence rather than a random guess",
+        "this recommendation is interesting precisely because the signals disagree",
+        "one part of your history says yes and another asks for caution",
+        "I would choose this when you are willing to resolve a genuine ambiguity",
+        "there is enough support to try it, but enough friction to make the outcome useful",
+        "this sits at a fault line in what I have learned about your taste",
+        "the question is not whether it has evidence, but which evidence should win"
       ]
     },
     "explore.coverage": {
@@ -122,7 +286,21 @@
         "this is here to broaden the menu without losing the connection to things you enjoy",
         "I would treat this as a change of pace with a reason behind it",
         "this follows a familiar thread into something you have sampled less often",
-        "it offers some variety without being a blind leap"
+        "it offers some variety without being a blind leap",
+        "I picked this to open a less-traveled corner of your library while keeping a sensible route back",
+        "this is my way of widening the map without handing you a completely random scene",
+        "the point here is discovery with a compass, not novelty for its own sake",
+        "this reaches into an underused part of the catalog while preserving a thread of familiarity",
+        "I would call this a guided detour from your usual rotation",
+        "there is enough familiar ground to make this unexplored area worth a visit",
+        "this gives a quieter part of your library a fair chance",
+        "the recommendation is meant to add range, not simply surprise you",
+        "I am using a known preference as the doorway into something less familiar",
+        "this expands the menu in a direction that still makes sense for you",
+        "consider this a purposeful excursion rather than a shot in the dark",
+        "this is a chance to test an underrepresented corner of your taste",
+        "I would use this to see whether an overlooked part of the library deserves more attention",
+        "the variety is intentional, and there is still a clear reason behind the choice"
       ]
     },
     "explore.unknown": {
@@ -132,19 +310,49 @@
         "there is less history to lean on here, which makes it an exploratory choice",
         "this keeps one foot in familiar territory while trying something less predictable",
         "I would choose this when you want a little more uncertainty in the mix",
-        "this is less of a safe bet and more of a considered change of pace"
+        "this is less of a safe bet and more of a considered change of pace",
+        "I cannot promise this is your usual thing, but that is part of why it belongs here",
+        "this is where I would loosen the tie and let the library surprise us a little",
+        "the evidence is intentionally thin enough to make the outcome informative",
+        "I am offering this as a genuine unknown, not disguising it as a safe choice",
+        "this is for a mood where an interesting miss is acceptable",
+        "there is a coherent reason to try it, even though I am outside the well-mapped part of your taste",
+        "I would reach for this when the reliable options feel too predictable",
+        "this trades some certainty for the chance of finding a new direction",
+        "consider it the wildcard with at least a little homework behind it",
+        "the recommendation is exploratory by design, so uncertainty is part of the package",
+        "this asks you to lend me a bit of curiosity",
+        "I am deliberately leaving the well-worn path with this one",
+        "this is the sort of pick that could either sharpen my read or uncover a blind spot",
+        "I would not call it safe, but I would call it worth testing"
       ]
     },
     "fallback": {
       "lead": [
         "the available evidence makes this a cautious suggestion",
-        "this is a tentative catalog suggestion"
+        "this is a tentative catalog suggestion",
+        "I see just enough here to put it on the table",
+        "this is a quiet suggestion rather than a confident recommendation",
+        "my case for this one is modest but not empty",
+        "this looks worth a glance, with expectations kept sensible",
+        "I would file this under plausible rather than proven"
       ],
       "support": [
-        "the remaining evidence is limited"
+        "the remaining evidence is limited",
+        "there is not much additional history to lean on",
+        "the supporting case is still fairly light",
+        "I do not have many independent signals to add",
+        "the rest of what I know is mostly noncommittal",
+        "there is only a little corroboration beyond that",
+        "the recommendation does not have a deep evidence trail"
       ],
       "boundary": [
-        "confidence remains limited"
+        "confidence remains limited",
+        "I would keep expectations measured",
+        "this is still more suggestion than prediction",
+        "there is room for my read to be wrong here",
+        "I would treat it as optional rather than urgent",
+        "the evidence is not strong enough for a firm promise"
       ]
     }
   },
@@ -153,10 +361,24 @@
       "fused": [
         "you have enjoyed {performer}'s scenes before, and this one resembles {precedent}, {precedent_outcome}, because both feature {tags}",
         "{performer} has worked for you before; this also shares {tags} with {precedent}, {precedent_outcome}",
-        "if you are in the mood for {performer}, this looks especially promising: {tags} make it reminiscent of {precedent}, {precedent_outcome}",
-        "this brings back {performer}, whose scenes you tend to enjoy, in a setup similar to {precedent}; both include {tags}",
-        "you have enjoyed {performer} before, and {tags} give this a familiar connection to {precedent}, {precedent_outcome}",
-        "there are two good reasons to try this: {performer} has been a good pick for you before, and it shares {tags} with {precedent}, {precedent_outcome}"
+        "if you are in the mood for {performer}, this looks especially promising: the combination of {tags} makes it reminiscent of {precedent}, {precedent_outcome}",
+        "this brings back {performer}, whose scenes you tend to enjoy, in a setup similar to {precedent}; the shared content includes {tags}",
+        "you have enjoyed {performer} before, and the presence of {tags} gives this a familiar connection to {precedent}, {precedent_outcome}",
+        "there are two good reasons to try this: {performer} has been a good pick for you before, and it shares {tags} with {precedent}, {precedent_outcome}",
+        "my case starts with {performer}, who has suited you before, then gets stronger when the shared content in {tags} connects this to {precedent}, {precedent_outcome}",
+        "{performer} is already a promising sign, and the shared content in {tags} makes {precedent}, {precedent_outcome}, a useful preview of the scene's appeal",
+        "this feels well grounded rather than merely familiar: you enjoy {performer}, and the content in {tags} traces a clear line back to {precedent}, {precedent_outcome}",
+        "I would recommend this first for {performer}, then for its resemblance to {precedent}; the shared content in {tags} is the concrete link between them",
+        "your history with {performer} opens the door, while {tags} and the successful precedent of {precedent} give me a reason to push it further",
+        "{performer} has earned your attention before, and this scene borrows a winning thread from {precedent} through {tags}",
+        "if {performer} catches your eye, the rest of the recommendation holds up too: {tags} also worked in {precedent}, {precedent_outcome}",
+        "there is a personal and a content-level reason here: {performer} has worked for you, and the pattern around {tags} mirrors {precedent}, {precedent_outcome}",
+        "I like the combination of a familiar performer in {performer} and a familiar setup in {tags}, which recalls {precedent}, {precedent_outcome}",
+        "{performer} gives this a strong first impression; the shared content in {tags} from {precedent}, {precedent_outcome}, explains why the scene itself also fits",
+        "this is not riding on {performer} alone: {tags} independently connect it to {precedent}, {precedent_outcome}",
+        "your good history with {performer} combines with a content pattern you liked in {precedent}, with {tags} tying the two recommendations together",
+        "I would put this on the shortlist because {performer} has served you well and because the combination of {tags} makes it a close cousin of {precedent}, {precedent_outcome}",
+        "the recommendation has two sturdy legs: {performer}'s record with you and the {tags} it shares with {precedent}, {precedent_outcome}"
       ]
     },
     "appeal.performer_identity+direct.positive": {
@@ -164,27 +386,95 @@
         "you already know this scene works for you, and {performer} remains one of its clearest attractions",
         "this has delivered for you before, with {performer} giving it another reason to revisit",
         "you have returned to this successfully before; your history with {performer} helps explain why it is worth another look",
-        "this is a proven revisit for you, not least because {performer}'s scenes tend to work well"
+        "this is a proven revisit for you, not least because {performer}'s scenes tend to work well",
+        "your own experience already settles most of the question, and {performer}'s track record adds a little extra reassurance",
+        "this has earned another turn through direct experience, with {performer} offering a familiar reason why",
+        "you know the scene can deliver; the fact that {performer} usually suits you makes the return even easier to recommend",
+        "I would trust the successful history first and note {performer} as a welcome supporting reason",
+        "this is one of the rare cases where the recommendation is already proven, and {performer} helps make sense of that result",
+        "your past response makes this a straightforward revisit, especially given how well {performer} tends to work for you",
+        "you have first-hand evidence for this one, while {performer} gives me an independent reason to agree",
+        "the scene has already made its case to you; {performer}'s positive history simply underlines it",
+        "this return is based on more than nostalgia: it worked before, and {performer} remains a dependable draw for you",
+        "I am comfortable suggesting another look because both the exact scene and {performer} have positive histories with you",
+        "your direct result is the headline, with {performer}'s track record as useful context",
+        "this has the advantage of being tested already, plus the familiar pull of {performer}",
+        "you have already answered yes to this scene once; your broader history with {performer} points the same way",
+        "the strongest evidence is that it worked, and the supporting explanation is that {performer} often does too",
+        "this is a proven option with a familiar face: {performer} has also been a good choice for you",
+        "if I were choosing a revisit, I would give weight both to the scene's successful past and to {performer}'s reliable history"
       ]
     },
     "appeal.performer_identity+appeal.studio": {
       "fused": [
-        "both {performer} and {studio} have treated you well before",
+        "both {performer} and {studio} have positive histories with you",
         "this combines {performer}, whose scenes you enjoy, with a generally reliable studio in {studio}",
-        "your history is encouraging on both fronts: {performer} and scenes from {studio}"
+        "your history is encouraging on both fronts: {performer} and scenes from {studio}",
+        "{performer} is a familiar reason to look, and {studio}'s record gives the production a little more credibility",
+        "I like the pairing here: {performer} has worked for you, and {studio} has delivered for you often enough to matter",
+        "the performer and studio signals agree, with both {performer} and {studio} carrying positive history",
+        "{performer} gives this personal appeal while {studio} adds a modest layer of reassurance",
+        "your history with {performer} is the stronger clue, but {studio}'s track record points the same way",
+        "this brings together two familiar positives in {performer} and {studio}",
+        "I would start with {performer} as the main attraction and count {studio} as useful corroboration",
+        "{performer} has been a good choice for you, and the fact that {studio} made it does no harm to the case",
+        "there is agreement across two independent parts of your history: {performer} and {studio}",
+        "both the cast and the studio line up reasonably well, led by {performer} and supported by {studio}",
+        "{performer}'s record makes this promising; {studio}'s history makes it feel less like a one-signal guess",
+        "the combination of {performer} and {studio} has more evidence behind it than either name alone would suggest",
+        "I see a reliable performer in {performer} and a helpful production-level signal in {studio}",
+        "your history points the same way through {performer} and through {studio}",
+        "{performer} is the clearest draw, with {studio} supplying another reason not to overlook it",
+        "this gets a boost from both sides of the credits: {performer} in front of the camera and {studio} behind it",
+        "{performer} and {studio} each have enough positive history with you to make the pairing noteworthy"
       ]
     },
     "appeal.content_neighbor+appeal.studio": {
       "fused": [
         "this resembles {precedent}, {precedent_outcome}, through {tags}, and {studio} has a decent track record with you too",
-        "{studio} has worked for you before, while {tags} recall {precedent}, {precedent_outcome}"
+        "{studio} has worked for you before, while the content in {tags} recalls {precedent}, {precedent_outcome}",
+        "the scene has a useful precedent in {precedent} through {tags}, and {studio}'s history gives that comparison extra support",
+        "I would connect this to {precedent} first because of {tags}; the encouraging record from {studio} is a welcome second signal",
+        "the combination of {tags} makes {precedent}, {precedent_outcome}, a good comparison, while {studio} adds some production-level reassurance",
+        "this follows the {tags} thread from {precedent}, and it comes from {studio}, which has also had its share of successes with you",
+        "the content resembles {precedent} in {tags}, and the studio signal from {studio} agrees with that recommendation",
+        "I like that two different clues converge here: the content in {tags} recalls {precedent}, and {studio} has a positive enough history to matter",
+        "{precedent} provides the clearest map through {tags}; {studio}'s track record makes the route feel more credible",
+        "the shared content in {tags} from {precedent}, {precedent_outcome}, does most of the work, with {studio} adding a little confidence",
+        "this borrows familiar ingredients from {precedent} in {tags}, then gains another point from {studio}'s past results",
+        "{studio} alone would not sell me on it, but paired with the {tags} connection to {precedent}, the case becomes convincing",
+        "the recommendation rests on a content precedent and a studio signal: {precedent} through {tags}, and {studio} through your history",
+        "I see the same positive direction in the scene's resemblance to {precedent} and in {studio}'s earlier results",
+        "the content in {tags} ties this to {precedent}, {precedent_outcome}; {studio} gives you a second, independent reason to consider it",
+        "the familiar content from {precedent} and the familiar production hand of {studio} make a sensible pair",
+        "this has one foot in a successful scene through {tags} and another in a studio, {studio}, that has worked for you before",
+        "{precedent} is the stronger comparison because of {tags}, though {studio}'s history helps the recommendation hold together",
+        "I would describe this as {precedent}-adjacent in {tags}, with a useful assist from {studio}'s track record",
+        "the scene-level and studio-level evidence reinforce each other: the content in {tags} recalls {precedent}, and {studio} has been worthwhile before"
       ]
     },
     "appeal.performer_similar+appeal.tag_positive": {
       "fused": [
         "{target} may be new to you, but they resemble {known} in {profile}; the scene also includes {tags}, which have worked for you before",
         "this introduces {target}, whose profile is close to {known} in {profile}, alongside familiar ingredients in {tags}",
-        "{target}'s resemblance to {known}, especially in {profile}, makes them an interesting discovery, and {tags} give the scene a familiar side"
+        "{target}'s resemblance to {known}, especially in {profile}, makes them an interesting discovery, and the presence of {tags} gives the scene a familiar side",
+        "I would introduce {target} through the familiar reference of {known} in {profile}, then point to {tags} as the reason this particular scene fits",
+        "{target} is a new name with a sensible comparison in {known}, especially around {profile}; the content in {tags} keeps the scene on familiar ground",
+        "the performer discovery and the scene itself both have support: {target} resembles {known} in {profile}, while the pattern around {tags} suits your history",
+        "{known} gives me a useful way to place {target} through {profile}, and the presence of {tags} gives you a familiar reason to try the scene",
+        "this is a measured introduction to {target}: the comparison to {known} is strongest in {profile}, and the scene contains the more familiar {tags}",
+        "I like {target} as a discovery because of the connection to {known} in {profile}; the positive history around {tags} makes the choice less speculative",
+        "{target} brings the novelty, {known} provides the reference point through {profile}, and the pattern around {tags} supplies the familiar content",
+        "the recommendation works at two levels: {target} looks close to {known} in {profile}, and scenes featuring {tags} have already suited you",
+        "if {target} is the question, {known} and {profile} offer an answer; if the scene is the question, {tags} offer another",
+        "{target} is not being suggested on appearance alone: their resemblance to {known} in {profile} is backed by scene-level evidence in {tags}",
+        "I would take a chance on {target} here because {known} is a credible comparison in {profile}, and the content around {tags} is familiar territory for you",
+        "the familiar parts are doing useful work: {known} helps explain {target}, and {tags} help explain the scene",
+        "{target}'s profile sits near {known} in {profile}, while the content lands near your established preferences through {tags}",
+        "this gives you a new performer in {target} without making every part of the recommendation new; {known} and {tags} provide the guide rails",
+        "{target} looks like a thoughtful extension from {known} in {profile}, and the scene's combination of {tags} makes it a particularly good place to test that idea",
+        "my reason for trying {target} is the resemblance to {known} in {profile}; my reason for choosing this scene is {tags}",
+        "there is a clean bridge from what you know to what you do not: {known} to {target} through {profile}, and your past tag preferences through {tags}"
       ]
     }
   },
@@ -192,100 +482,151 @@
     "generic": {
       "primary": [
         "{primary_cap}.",
-        "{primary_cap}."
+        "Here is my read: {primary}.",
+        "The recommendation begins here: {primary}.",
+        "If I had to sum up the case: {primary}.",
+        "The clearest reason I see is this: {primary}."
       ],
       "primary_support": [
-        "{primary_cap}, and {support}.",
         "{primary_cap}. {support_cap}.",
-        "{primary_cap}; {support}."
+        "{primary_cap}; {support}.",
+        "My read has two parts. {primary_cap}. {support_cap}.",
+        "There is a useful second reason here. {primary_cap}. {support_cap}.",
+        "I like the overall case. {primary_cap}. On top of that, {support}."
       ],
       "primary_boundary": [
-        "{primary_cap}, although {boundary}.",
         "{primary_cap}. {boundary_cap}.",
-        "{boundary_cap}, but {primary}."
+        "My read is positive but qualified. {primary_cap}. {boundary_cap}.",
+        "There is a real case for it. {primary_cap}. The caveat is this: {boundary}.",
+        "I would keep both sides in view. {primary_cap}. {boundary_cap}.",
+        "The recommendation is not spotless. {primary_cap}. {boundary_cap}."
       ],
       "primary_support_boundary": [
-        "{primary_cap}, and {support}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}; however, {boundary}.",
-        "{primary_cap}. {support_cap}. {boundary_cap}."
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "My read is mostly positive. {primary_cap}. {support_cap}. The caveat is this: {boundary}.",
+        "There are two reasons in its favor. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "The case has depth, though it is not perfect. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "I can make a balanced recommendation here. {primary_cap}. {support_cap}. On the other hand, {boundary}."
       ]
     },
     "best_bets": {
       "primary": [
         "{primary_cap}.",
-        "{primary_cap}. It looks like one of the safer new choices for you."
+        "{primary_cap}. It looks like one of the safer new choices for you.",
+        "This is one I would put near the front. {primary_cap}.",
+        "My strongest new-scene recommendation starts here. {primary_cap}.",
+        "For a dependable choice, I would begin here. {primary_cap}."
       ],
       "primary_support": [
-        "{primary_cap}, and {support}.",
         "{primary_cap}. {support_cap}.",
-        "{primary_cap}; {support}."
+        "{primary_cap}; {support}.",
+        "This earns its place on the shortlist for two reasons. {primary_cap}. {support_cap}.",
+        "I see a reassuring amount of agreement here. {primary_cap}. {support_cap}.",
+        "This looks well supported rather than lucky. {primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
-        "{primary_cap}, although {boundary}.",
-        "{primary_cap}. {boundary_cap}, so I would keep it just behind the safest choices."
+        "{primary_cap}. {boundary_cap}, so I would keep it just behind the safest choices.",
+        "I still think this is a strong option. {primary_cap}. {boundary_cap}.",
+        "This stops just short of the very safest tier. {primary_cap}. {boundary_cap}.",
+        "I would keep it high on the list. {primary_cap}. I would also remember that {boundary}.",
+        "The main case is convincing. {primary_cap}. I would keep one caveat in mind. {boundary_cap}."
       ],
       "primary_support_boundary": [
-        "{primary_cap}, and {support}. {boundary_cap}.",
         "{primary_cap}. {support_cap}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}; still, {boundary}."
+        "There is plenty to like. {primary_cap}. {support_cap}. I would only temper that by noting {boundary}.",
+        "This has the shape of a reliable pick. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "Two independent clues put this near the front. {primary_cap}. {support_cap}. The caveat: {boundary}.",
+        "I would still call this one of the stronger choices. {primary_cap}. {support_cap}. {boundary_cap}."
       ]
     },
     "revisit": {
       "primary": [
         "{primary_cap}.",
-        "{primary_cap}; it has earned another look."
+        "{primary_cap}; it has earned another look.",
+        "I would be happy to bring this one back. {primary_cap}.",
+        "This feels like a return with a reason, not just nostalgia. {primary_cap}.",
+        "If you are revisiting something today, my case is simple. {primary_cap}."
       ],
       "primary_support": [
-        "{primary_cap}, and {support}.",
         "{primary_cap}. {support_cap}.",
-        "{primary_cap}; {support}."
+        "{primary_cap}; {support}.",
+        "This has earned another look on two fronts. {primary_cap}. {support_cap}.",
+        "I like it as a revisit for more than one reason. {primary_cap}. {support_cap}.",
+        "The return feels well supported. {primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
-        "{primary_cap}, although {boundary}.",
-        "{primary_cap}. {boundary_cap}."
+        "{primary_cap}. {boundary_cap}.",
+        "I would keep it in the revisit pile. {primary_cap}. {boundary_cap}.",
+        "The scene has earned a return. {primary_cap}. I would not rush it. {boundary_cap}.",
+        "My instinct is to bring it back. {primary_cap}. I have one reservation: {boundary}.",
+        "The memory is positive, though the timing or context is not perfect. {primary_cap}. {boundary_cap}."
       ],
       "primary_support_boundary": [
         "{primary_cap}. {support_cap}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}; still, {boundary}.",
-        "{primary_cap}, and {support}. {boundary_cap}."
+        "There is a solid reason to return. {primary_cap}. {support_cap}. I would only note that {boundary}.",
+        "I like this revisit on balance. {primary_cap}. {support_cap}. Even so, {boundary}.",
+        "This has earned another look, with one qualification. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "The positive history is well supported. {primary_cap}. {support_cap}. The caveat: {boundary}."
       ]
     },
     "discover": {
       "primary": [
-        "{primary_cap}. The rest is more of a question mark."
+        "{primary_cap}. The rest is more of a question mark.",
+        "I see a good reason to try it. {primary_cap}. Beyond that, this is a genuine discovery.",
+        "This starts from something credible. {primary_cap}. I am deliberately leaving the rest less certain.",
+        "My invitation is to follow one promising clue. {primary_cap}.",
+        "For a measured departure from the usual, I would start here. {primary_cap}."
       ],
       "primary_support": [
-        "{primary_cap}, and {support}.",
-        "{primary_cap}. {support_cap}."
+        "{primary_cap}. {support_cap}.",
+        "I think this is worth exploring. {primary_cap}. {support_cap}.",
+        "There is enough familiar ground to justify the detour. {primary_cap}. {support_cap}.",
+        "My case for taking the chance has two parts. {primary_cap}. {support_cap}.",
+        "The discovery is not starting from nothing. {primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
-        "{primary_cap}, but {boundary}.",
-        "{boundary_cap}; {primary}.",
-        "{primary_cap}. {boundary_cap}."
+        "{primary_cap}. {boundary_cap}.",
+        "I would try it, with a candid caveat. {primary_cap}. {boundary_cap}.",
+        "This is a deliberate stretch. {primary_cap}. {boundary_cap}.",
+        "There is a familiar reason and a genuine question. {primary_cap}. {boundary_cap}.",
+        "My read is curious rather than certain. {primary_cap}. {boundary_cap}."
       ],
       "primary_support_boundary": [
-        "{primary_cap}, and {support}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}, but {boundary}.",
-        "{primary_cap}. {support_cap}. {boundary_cap}."
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "The familiar side is real. {primary_cap}. {support_cap}. The experiment is this: {boundary}.",
+        "I can justify the detour. {primary_cap}. {support_cap}. Still, {boundary}.",
+        "This has enough grounding to make the uncertainty useful. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "My case is balanced rather than certain. {primary_cap}. {support_cap}. The open question: {boundary}."
       ]
     },
     "adventure": {
       "primary": [
-        "{primary_cap}. That is the thread to follow here if you want something different."
+        "{primary_cap}. That is the thread to follow here if you want something different.",
+        "For the adventurous pick, I would follow this clue. {primary_cap}.",
+        "This is where I would let curiosity take the wheel. {primary_cap}.",
+        "My wildcard has at least one good reason behind it. {primary_cap}.",
+        "If today calls for something less predictable, this is the thread I would pull. {primary_cap}."
       ],
       "primary_support": [
         "{primary_cap}. {support_cap}.",
-        "{primary_cap}, and {support}."
+        "There is more homework behind this wildcard than it may seem. {primary_cap}. {support_cap}.",
+        "I would take the adventurous route here for two reasons. {primary_cap}. {support_cap}.",
+        "This is an experiment with a foundation. {primary_cap}. On top of that, {support}.",
+        "The wildcard is not random. {primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
         "{primary_cap}. {boundary_cap}.",
-        "{primary_cap}, but {boundary}.",
-        "{boundary_cap}; what makes it worth considering is that {primary}."
+        "I am not pretending this is safe. {primary_cap}. {boundary_cap}.",
+        "This is the adventurous slot for a reason. {primary_cap}. {boundary_cap}.",
+        "There is a clue worth following and a real unknown. {primary_cap}. {boundary_cap}.",
+        "My adventurous read is candid. {primary_cap}. {boundary_cap}."
       ],
       "primary_support_boundary": [
-        "{boundary_cap}; {primary}, and {support}.",
         "{primary_cap}. {support_cap}. {boundary_cap}.",
-        "{primary_cap}. {support_cap}; even so, {boundary}."
+        "I see enough to justify the experiment. {primary_cap}. {support_cap}. Just know that {boundary}.",
+        "This is a calculated wildcard rather than a random one. {primary_cap}. {support_cap}. The risk is this: {boundary}.",
+        "The recommendation has a foundation and a genuine unknown. {primary_cap}. {support_cap}. {boundary_cap}.",
+        "Here is my case for the adventure. {primary_cap}. {support_cap}. The open question: {boundary}."
       ]
     }
   }

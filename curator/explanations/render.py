@@ -39,7 +39,10 @@ class ExplanationService:
             self.store.build(model_id)
             base = self.store.reasons(model_id, item.scene_id)
         reasons = (*base, *self._ranking_reasons(model_id, item))
-        return self._render(reasons, f"{model_id}\0{item.scene_id}\0{item.source_lane}")
+        return self._render(
+            reasons,
+            f"{model_id}\0{item.scene_id}\0{item.lane}\0{item.source_lane}",
+        )
 
     def _current_model_id(self) -> str:
         row = self.connection.execute(

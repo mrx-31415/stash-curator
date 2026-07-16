@@ -76,6 +76,10 @@ class RealizationCatalog:
                         unknown = sorted(fields - allowed_fields)
                         raise ValueError(f"unknown realization fields: {unknown}")
                 group[variant_name] = variants
+            if sum(len(variants) for variants in group.values()) < 20:
+                raise ValueError(
+                    f"realization category {group_name!r} must contain at least 20 variants"
+                )
             result[group_name] = group
         return result
 

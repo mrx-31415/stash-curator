@@ -14,6 +14,22 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
         "UPDATE feature_definition SET metadata_json=? WHERE feature_id='feature-x'",
         (json.dumps({"tag_name": "Shared scenario"}),),
     )
+    component_row = connection.execute(
+        "SELECT components_json FROM model_scene_score WHERE scene_id='a-best'"
+    ).fetchone()
+    components = json.loads(component_row[0])
+    components["content"]["top"] = [
+        {
+            "name": "tag:shared",
+            "value": 0.08,
+            "confidence": 0.9,
+            "metadata": {"tag_name": "Shared scenario", "document_frequency": 12},
+        }
+    ]
+    connection.execute(
+        "UPDATE model_scene_score SET components_json=? WHERE scene_id='a-best'",
+        (json.dumps(components),),
+    )
     connection.execute(
         "UPDATE model_scene_score SET neighbors_json=? WHERE scene_id='a-best'",
         (
@@ -50,12 +66,21 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     assert 'href="http://stash.test:9999/scenes/a-best"' in document
     assert 'src="http://stash.test:9999/scene/a-best/screenshot"' in document
     assert 'loading="lazy"' in document
-    assert "Reason graph" in document
-    assert "Supporting scenes and shared content" in document
+    assert 'id="toggle-images"' in document
+    assert "Show scene images" in document
+    assert "#toggle-images:not(:checked)" in document
+    assert "Supporting evidence" in document
+    assert "Nearby scenes that worked" in document
+    assert "Tag signals" in document
     assert 'href="http://stash.test:9999/scenes/b-best"' in document
     assert "Shared scenario" in document
     assert "direct.positive" in document and "private" in document
-    assert "Full inspector data" in document
+    assert "How the score was built" in document
+    assert "Library baseline" in document
+    assert "Tag preferences" in document
+    assert "Direct scene history" in document
+    assert "Reason records (developer view)" in document
+    assert "Raw inspector data (developer view)" in document
     assert "Appeal" in document and "Current Fit" in document and "Confidence" in document
 
 

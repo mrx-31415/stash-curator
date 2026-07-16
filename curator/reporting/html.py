@@ -170,8 +170,8 @@ class ReportGenerator:
             ],
         }
 
-    @staticmethod
     def _card(
+        self,
         metadata: dict[str, object],
         item: RecommendationItem,
         components: dict[str, object],
@@ -216,9 +216,10 @@ class ReportGenerator:
         )
         performer_values = cast(list[object], metadata["performers"])
         performers = ", ".join(map(str, performer_values))
-        supporting_scenes = ReportGenerator._supporting_scenes(
-            explanation_data, redacted, stash_base_url
+        supporting_evidence = self._supporting_evidence(
+            explanation_data, cast(dict[str, object], components_data), redacted, stash_base_url
         )
+        score_tree = self._score_tree(item_data, cast(dict[str, object], components_data), redacted)
         scene_link = ""
         title = html.escape(str(metadata["title"]))
         if stash_base_url:
@@ -239,7 +240,7 @@ class ReportGenerator:
           <p class="meta">{html.escape(performers)} · {html.escape(str(metadata["studio"]))}
             · {html.escape(str(metadata["date"] or "Unknown date"))}</p>
           <p class="why">{html.escape(str(explanation_data["summary"]))}</p>
-          {supporting_scenes}
+          {supporting_evidence}
           <div class="scores">
             <span>Appeal {float(item_data["appeal"]):+.3f}</span>
             <span>Current Fit {float(item_data["current_fit"]):+.3f}</span>
@@ -249,54 +250,308 @@ class ReportGenerator:
           </div>
           <p class="subtype">{html.escape(str(item_data["source_lane"]))}
             {("· " + html.escape(str(item_data["subtype"]))) if item_data["subtype"] else ""}</p>
-          <details><summary>Reason graph</summary><ul>{reason_rows}</ul></details>
-          <details><summary>Full inspector data</summary><pre>{debug}</pre></details>
+          {score_tree}
+          <details class="developer"><summary>Reason records (developer view)</summary>
+            <ul>{reason_rows}</ul></details>
+          <details class="developer"><summary>Raw inspector data (developer view)</summary>
+            <pre>{debug}</pre></details>
           <label class="review"><input type="checkbox"> Useful</label>
           <label class="review">Notes <input type="text"></label>
         </article>
         """
 
-    @staticmethod
-    def _supporting_scenes(
-        explanation: dict[str, Any], redacted: bool, stash_base_url: str | None
+    def _supporting_evidence(
+        self,
+        explanation: dict[str, Any],
+        components: dict[str, object],
+        redacted: bool,
+        stash_base_url: str | None,
     ) -> str:
         reasons = cast(list[dict[str, Any]], explanation.get("all_reasons", []))
         neighbor_reason = next(
             (reason for reason in reasons if reason.get("code") == "appeal.content_neighbor"),
             None,
         )
-        if not neighbor_reason:
-            return ""
-        detail = neighbor_reason.get("detail", {})
-        raw_neighbors = detail.get("neighbors", []) if isinstance(detail, dict) else []
-        if not isinstance(raw_neighbors, list):
-            return ""
-        rows: list[str] = []
-        for neighbor in raw_neighbors[:3]:
-            if not isinstance(neighbor, dict):
+        sections: list[str] = []
+        if neighbor_reason:
+            detail = neighbor_reason.get("detail", {})
+            raw_neighbors = detail.get("neighbors", []) if isinstance(detail, dict) else []
+            rows: list[str] = []
+            if isinstance(raw_neighbors, list):
+                for neighbor in raw_neighbors[:3]:
+                    if not isinstance(neighbor, dict):
+                        continue
+                    scene_id = str(neighbor.get("scene_id", ""))
+                    title = html.escape(
+                        str(neighbor.get("title") or scene_id or "Supporting scene")
+                    )
+                    if stash_base_url and not redacted and scene_id:
+                        scene_url = f"{stash_base_url}/scenes/{quote(scene_id, safe='')}"
+                        title = f'<a href="{html.escape(scene_url, quote=True)}">{title}</a>'
+                    tags = neighbor.get("shared_tags", [])
+                    tag_text = (
+                        ", ".join(html.escape(str(tag)) for tag in tags)
+                        if isinstance(tags, list)
+                        else ""
+                    )
+                    similarity = neighbor.get("similarity")
+                    similarity_text = (
+                        f" · similarity {float(similarity):.2f}"
+                        if isinstance(similarity, (int, float))
+                        else ""
+                    )
+                    shared_text = f" · shared: {tag_text}" if tag_text else ""
+                    rows.append(f"<li>{title}{shared_text}{similarity_text}</li>")
+            if rows:
+                sections.append("<h4>Nearby scenes that worked</h4><ul>" + "".join(rows) + "</ul>")
+
+        content = components.get("content")
+        tag_rows: list[str] = []
+        if isinstance(content, dict) and isinstance(content.get("top"), list):
+            for item in content["top"]:
+                if not isinstance(item, dict):
+                    continue
+                value = self._number(item.get("value"))
+                metadata = item.get("metadata")
+                metadata = metadata if isinstance(metadata, dict) else {}
+                name = html.escape(str(metadata.get("tag_name") or item.get("name") or "Tag"))
+                confidence = self._number(item.get("confidence"))
+                support = metadata.get("document_frequency")
+                support_text = (
+                    f" · seen on {int(support):,} scenes"
+                    if isinstance(support, int) and not isinstance(support, bool)
+                    else ""
+                )
+                effect = "helps" if value > 0 else "holds it back" if value < 0 else "is neutral"
+                tag_rows.append(
+                    f"<li><strong>{name}</strong> {effect} "
+                    f'<span class="number">{value:+.3f}</span> · confidence {confidence:.2f}'
+                    f"{support_text}</li>"
+                )
+        if tag_rows:
+            sections.append("<h4>Tag signals</h4><ul>" + "".join(tag_rows) + "</ul>")
+
+        reason_rows: list[str] = []
+        reasons = cast(list[dict[str, Any]], explanation.get("all_reasons", []))
+        for reason in reasons:
+            code = str(reason.get("code", ""))
+            if (
+                code
+                not in {
+                    "appeal.performer_identity",
+                    "appeal.performer_similar",
+                    "appeal.studio",
+                }
+                or reason.get("direction") != "positive"
+            ):
                 continue
-            scene_id = str(neighbor.get("scene_id", ""))
-            title = html.escape(str(neighbor.get("title") or scene_id or "Supporting scene"))
-            if stash_base_url and not redacted and scene_id:
-                scene_url = f"{stash_base_url}/scenes/{quote(scene_id, safe='')}"
-                title = f'<a href="{html.escape(scene_url, quote=True)}">{title}</a>'
-            tags = neighbor.get("shared_tags", [])
-            tag_text = (
-                ", ".join(html.escape(str(tag)) for tag in tags) if isinstance(tags, list) else ""
+            subject_id = str(reason.get("subject_id") or "")
+            entity_type = "studio" if code == "appeal.studio" else "performer"
+            subject = html.escape(self._entity_name(entity_type, subject_id, redacted))
+            magnitude = self._number(reason.get("magnitude"))
+            if code == "appeal.performer_similar":
+                detail = reason.get("detail")
+                detail = detail if isinstance(detail, dict) else {}
+                matches = detail.get("matches")
+                first = matches[0] if isinstance(matches, list) and matches else None
+                known_id = str(first.get("performer_id") or "") if isinstance(first, dict) else ""
+                known = html.escape(self._entity_name("performer", known_id, redacted))
+                aspects = detail.get("shared_aspects")
+                aspect_text = (
+                    ", ".join(html.escape(str(value)) for value in aspects)
+                    if isinstance(aspects, list)
+                    else "their profiles"
+                )
+                text = f"{subject} resembles {known}, especially in {aspect_text}"
+            elif code == "appeal.studio":
+                text = f"Your history with {subject} contributes"
+            else:
+                text = f"Your history with {subject} contributes"
+            reason_rows.append(f'<li>{text} <span class="number">{magnitude:+.3f}</span></li>')
+        if reason_rows:
+            sections.append(
+                "<h4>Performer and studio signals</h4><ul>" + "".join(reason_rows) + "</ul>"
             )
-            similarity = neighbor.get("similarity")
-            similarity_text = (
-                f" · similarity {float(similarity):.2f}"
-                if isinstance(similarity, (int, float))
-                else ""
-            )
-            shared_text = f" · shared: {tag_text}" if tag_text else ""
-            rows.append(f"<li>{title}{shared_text}{similarity_text}</li>")
-        if not rows:
+        if not sections:
             return ""
         return (
-            '<details class="supporting-scenes"><summary>Supporting scenes and shared content'
-            "</summary><ul>" + "".join(rows) + "</ul></details>"
+            '<details class="supporting-evidence"><summary>Supporting evidence</summary>'
+            + "".join(sections)
+            + "</details>"
+        )
+
+    def _score_tree(
+        self, item: dict[str, Any], components: dict[str, object], redacted: bool
+    ) -> str:
+        appeal_children: list[str] = []
+        component_labels = {
+            "baseline": "Library baseline",
+            "content": "Tag preferences",
+            "content_neighbor": "Nearby successful scenes",
+            "performer_identity": "Performer history",
+            "performer_similarity": "Similar performers",
+            "studio": "Studio history",
+            "structure": "Scene structure",
+        }
+        for key, label in component_labels.items():
+            component = components.get(key)
+            if not isinstance(component, dict):
+                continue
+            value = self._number(component.get("value"))
+            detail_rows = self._component_details(key, component, redacted)
+            appeal_children.append(self._tree_node(label, value, detail_rows))
+        direct = components.get("direct")
+        if isinstance(direct, dict):
+            confidence = self._number(direct.get("confidence"))
+            signals = direct.get("signals")
+            signal_text = ", ".join(map(str, signals)) if isinstance(signals, list) else "none"
+            appeal_children.append(
+                self._tree_node(
+                    "Direct scene history",
+                    self._number(direct.get("value")),
+                    [f"Confidence {confidence:.2f}", f"Signals: {html.escape(signal_text)}"],
+                )
+            )
+        appeal_node = self._tree_node(
+            "Appeal",
+            self._number(item.get("appeal")),
+            [
+                '<span class="hint">General preference evidence is blended with direct scene '
+                "history; these children are not always a simple sum.</span>",
+                *appeal_children,
+            ],
+        )
+
+        fit_children = [
+            self._tree_leaf("Appeal carried into Current Fit", self._number(item.get("appeal")))
+        ]
+        fit = components.get("fit")
+        if isinstance(fit, dict):
+            for key, label in (
+                ("cooldown", "Cooldown"),
+                ("satiation", "Recent satiation"),
+                ("not_now", "Not-now adjustment"),
+            ):
+                fit_children.append(self._tree_leaf(label, self._number(fit.get(key))))
+            fit_children.append(
+                f'<li><span>Recovery</span><span class="number">'
+                f"{self._number(fit.get('recovery')):.2f}</span></li>"
+            )
+        fit_node = self._tree_node(
+            "Current Fit", self._number(item.get("current_fit")), fit_children
+        )
+        qualification = item.get("qualification")
+        qualification_rows: list[str] = []
+        if isinstance(qualification, dict):
+            for key, value in qualification.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    qualification_rows.append(
+                        self._tree_leaf(key.replace("_", " ").title(), float(value))
+                    )
+        policy_inputs = [
+            '<span class="hint">The lane policy combines and ranks these inputs; they are not '
+            "an additive subtotal.</span>",
+            appeal_node,
+            fit_node,
+            self._tree_leaf("Confidence", self._number(item.get("confidence"))),
+            *qualification_rows,
+        ]
+        lane_node = self._tree_node(
+            f"{str(item.get('source_lane', 'lane')).replace('_', ' ').title()} lane score",
+            self._number(item.get("lane_value")),
+            policy_inputs,
+        )
+        adjustment_rows: list[str] = []
+        for direction, values in (
+            ("Bonus", item.get("bonuses")),
+            ("Penalty", item.get("penalties")),
+        ):
+            if not isinstance(values, dict):
+                continue
+            sign = 1.0 if direction == "Bonus" else -1.0
+            for name, value in values.items():
+                number = self._number(value) * sign
+                if abs(number) > 1e-12:
+                    adjustment_rows.append(
+                        self._tree_leaf(f"{direction}: {str(name).replace('_', ' ')}", number)
+                    )
+        children = [lane_node, *(adjustment_rows or ['<li class="hint">No page adjustments</li>'])]
+        return (
+            '<details class="score-tree"><summary>How the score was built '
+            f'<span class="number">{self._number(item.get("final_utility")):+.3f}</span>'
+            "</summary><ul>" + "".join(children) + "</ul></details>"
+        )
+
+    def _component_details(
+        self, key: str, component: dict[str, object], redacted: bool
+    ) -> list[str]:
+        rows: list[str] = []
+        top = component.get("top")
+        if isinstance(top, list):
+            for item in top[:5]:
+                if not isinstance(item, dict):
+                    continue
+                metadata = item.get("metadata")
+                metadata = metadata if isinstance(metadata, dict) else {}
+                name = str(metadata.get("tag_name") or item.get("name") or "Feature")
+                rows.append(self._tree_leaf(name, self._number(item.get("value"))))
+        entity_key = "studios" if key == "studio" else "performers"
+        entities = component.get(entity_key)
+        if isinstance(entities, list):
+            entity_type = "studio" if key == "studio" else "performer"
+            id_key = f"{entity_type}_id"
+            for item in entities[:5]:
+                if not isinstance(item, dict):
+                    continue
+                name = self._entity_name(entity_type, str(item.get(id_key) or ""), redacted)
+                rows.append(self._tree_leaf(name, self._number(item.get("value"))))
+        confidence = component.get("evidence_confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            rows.append(f"Evidence confidence {float(confidence):.2f}")
+        return rows
+
+    def _entity_name(self, entity_type: str, entity_id: str, redacted: bool) -> str:
+        if not entity_id:
+            return "Unknown"
+        if redacted and entity_id.startswith(("Performer ", "Studio ")):
+            return entity_id
+        table, id_column = (
+            ("source_performer", "performer_id")
+            if entity_type == "performer"
+            else ("source_studio", "studio_id")
+        )
+        if redacted:
+            rows = self.connection.execute(f"SELECT {id_column} FROM {table} ORDER BY {id_column}")
+            for index, row in enumerate(rows, start=1):
+                if str(row[0]) == entity_id:
+                    return f"{'Performer' if entity_type == 'performer' else 'Studio'} {index:03d}"
+            return "Unknown"
+        row = self.connection.execute(
+            f"SELECT name FROM {table} WHERE {id_column}=?", (entity_id,)
+        ).fetchone()
+        return str(row[0] or entity_id) if row else entity_id
+
+    @staticmethod
+    def _number(value: object) -> float:
+        return (
+            float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+        )
+
+    @staticmethod
+    def _tree_leaf(label: str, value: float) -> str:
+        return f'<li><span>{html.escape(label)}</span><span class="number">{value:+.3f}</span></li>'
+
+    @staticmethod
+    def _tree_node(label: str, value: float, children: list[str]) -> str:
+        return (
+            "<li><details><summary>"
+            f'<span>{html.escape(label)}</span><span class="number">{value:+.3f}</span>'
+            "</summary><ul>"
+            + "".join(
+                child if child.lstrip().startswith("<li") else f"<li>{child}</li>"
+                for child in children
+            )
+            + "</ul></details></li>"
         )
 
     @staticmethod
@@ -361,10 +616,21 @@ top:0; background:#111e; padding:1rem 0; z-index:2; }} a {{ color:#9cc8ff; }}
 .scene-image {{ display:block; margin:-1rem -1rem 1rem; overflow:hidden;
 border-radius:11px 11px 0 0; aspect-ratio:16/9; background:#09090b; }}
 .scene-image img {{ display:block; width:100%; height:100%; object-fit:cover; }}
+body:has(#toggle-images:not(:checked)) .scene-image {{ display:none; }}
 .card header {{ display:flex; gap:.7rem; align-items:baseline; }} .position {{ color:#aaa; }}
 .meta,.subtype {{ color:#aaa; }} .why {{ font-size:1.04rem; min-height:4.5em; }}
 .scores {{ display:flex; flex-wrap:wrap; gap:.4rem; }} .scores span {{ background:#292932;
 padding:.25rem .45rem; border-radius:5px; }} details {{ margin-top:.8rem; }}
+.report-controls {{ display:flex; gap:1rem; align-items:center; margin:.8rem 0; }}
+.report-controls label {{ cursor:pointer; user-select:none; }}
+.supporting-evidence h4 {{ margin:.8rem 0 .2rem; }}
+.supporting-evidence ul {{ margin-top:.25rem; }}
+.number {{ font-variant-numeric:tabular-nums; color:#b9d6ff; margin-left:auto; }}
+.score-tree > ul,.score-tree ul {{ list-style:none; padding-left:1rem; }}
+.score-tree li {{ margin:.3rem 0; }} .score-tree summary {{ display:flex; gap:.7rem; }}
+.score-tree li:not(:has(details)) {{ display:flex; gap:.7rem; }}
+.score-tree .hint,.hint {{ color:#aaa; font-size:.88rem; }}
+.developer {{ color:#bbb; }}
 pre {{ overflow:auto; font-size:.75rem; }} .review {{ display:block; margin-top:.7rem; }}
 input[type=text] {{ width:70%; }} .diagnostics {{ color:#f0c674; }}
 </style></head><body>
@@ -372,6 +638,8 @@ input[type=text] {{ width:70%; }} .diagnostics {{ color:#f0c674; }}
 <p>Navigate your library, guided by your taste.</p>
 <p>Model <code>{html.escape(model_id)}</code> ·
   {"redacted" if redacted else "private local detail"}</p>
+<div class="report-controls"><label><input id="toggle-images" type="checkbox" checked>
+Show scene images</label></div>
 <nav><a href="#for_you">For You</a><a href="#best_bets">Best Bets</a>
 <a href="#revisit">Revisit</a><a href="#discover">Discover</a>
 <a href="#adventure">Adventure</a><a href="#build">Build</a></nav>

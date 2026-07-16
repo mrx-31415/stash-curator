@@ -92,7 +92,10 @@ uv run curator --db data/curator.sqlite3 report \
 The report contains model internals and local entity names by default. Keep it in the
 ignored `reports/` directory. Add `--redacted` when producing an artifact suitable
 for sharing. When `STASH_URL` or `--stash-url` is set, report covers and titles link
-to the corresponding scene in Stash; redacted reports omit those private links. Use
+to the corresponding scene in Stash; redacted reports omit those private links. The
+report includes an image visibility toggle, supporting evidence, and an expandable
+score tree from final utility through lane inputs, Appeal, Current Fit, and individual
+model families. Use
 `explain --scene-id <id> --json` or
 `similar-performers --performer-id <id> --json` for focused inspection.
 

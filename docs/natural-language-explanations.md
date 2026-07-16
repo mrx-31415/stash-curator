@@ -280,12 +280,19 @@ The realizer chooses:
 Variation should be chosen by semantic conditions first. Stable hashing may choose
 between equivalent lexical realizations only after the structure has been determined.
 This prevents wording from changing on refresh while avoiding one universal phrase.
+The visible lane participates in that stable seed, so a scene repeated in For You and
+its dedicated source lane may use a different truthful realization rather than
+duplicating the paragraph word for word.
 
 The implementation keeps evidence selection and discourse planning in Python, while
 reviewed clause and plan variants live in
 `curator/explanations/realizations.json`. JSON keeps the runtime dependency-free and
 is included in the Python package. The loader validates every placeholder before any
-text can be rendered.
+text can be rendered. Every evidence, pairing, and lane-plan category contains at
+least twenty reviewed realizations in total; the loader enforces that floor. The
+inventory deliberately includes first-person editorial phrasing such as “my read”
+and “I would choose” so the voice feels like a curator making a recommendation, while
+all factual clauses still come from reason slots.
 
 Common evidence pairs use relation-specific realizations rather than concatenating
 independent clauses. In particular, performer history plus a content neighbor is
@@ -478,8 +485,8 @@ Implemented: semantic evidence units, deterministic lane plans, non-redundant co
 selection, external validated realizations, stable variation, direct-memory-first
 Revisit prose, and mandatory Discover/Adventure boundaries.
 
-Remaining: richer aggregation, confidence-sensitive wording, referring-expression
-and slate-local repetition handling, and persistent caching by reason signature.
+Remaining: confidence-sensitive wording, richer referring-expression and slate-local
+repetition handling, and persistent caching by reason signature.
 
 ### Phase 2: evaluation
 

@@ -44,6 +44,8 @@ def _lane(name: str) -> Reason:
 
 def test_catalog_is_deterministic_and_rejects_unknown_fields(tmp_path: Path) -> None:
     catalog = RealizationCatalog.load()
+    for section in (catalog.evidence, catalog.pairings, catalog.plans):
+        assert all(sum(map(len, group.values())) >= 20 for group in section.values())
     slots = {"performer": "Alex"}
     first = catalog.evidence_variant("appeal.performer_identity", "lead", slots, "seed")
     second = catalog.evidence_variant("appeal.performer_identity", "lead", slots, "seed")
