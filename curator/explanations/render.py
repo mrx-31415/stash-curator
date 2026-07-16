@@ -215,8 +215,8 @@ class ExplanationService:
 
     @staticmethod
     def _prose_precedent(value: object) -> str:
-        title = str(value or "")
-        return title if len(title) <= 30 else "an earlier scene"
+        del value
+        return "an earlier scene"
 
     @staticmethod
     def _outcome_phrase(neighbor: dict[str, object]) -> str:

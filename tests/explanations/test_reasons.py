@@ -84,7 +84,7 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
     assert all(not reason.code.startswith("diversity.") for reason in explanation.selected_reasons)
 
 
-def test_content_neighbor_explanation_names_scenes_and_shared_tags(tmp_path: Path) -> None:
+def test_content_neighbor_explanation_keeps_scene_names_in_evidence(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute("UPDATE source_scene SET title='Known Good Scene' WHERE scene_id='b-best'")
     connection.execute(
@@ -139,22 +139,22 @@ def test_content_neighbor_explanation_names_scenes_and_shared_tags(tmp_path: Pat
 
     assert neighbor["title"] == "Known Good Scene"
     assert neighbor["shared_tags"] == ["Shared scenario"]
-    assert "Known Good Scene" in explanation.summary
+    assert "Known Good Scene" not in explanation.summary
     assert "Shared scenario" in explanation.summary
 
 
-def test_long_neighbor_titles_stay_in_supporting_evidence_not_card_prose(tmp_path: Path) -> None:
+def test_neighbor_titles_stay_in_supporting_evidence_not_card_prose(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     service = ExplanationService(connection)
 
-    assert service._prose_precedent("A short scene title") == "A short scene title"
+    assert service._prose_precedent("A short scene title") == "an earlier scene"
     assert (
         service._prose_precedent("A deliberately long scene title for report prose")
         == "an earlier scene"
     )
 
 
-def test_fused_performer_and_neighbor_claim_preserves_entity_names(tmp_path: Path) -> None:
+def test_fused_performer_and_neighbor_claim_keeps_scene_name_in_evidence(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute("UPDATE source_performer SET name='Alex' WHERE performer_id='p1'")
     identity = Reason(
@@ -196,7 +196,7 @@ def test_fused_performer_and_neighbor_claim_preserves_entity_names(tmp_path: Pat
     explanation = ExplanationService(connection)._render((identity, neighbor), "seed")
 
     assert "Alex" in explanation.summary
-    assert "Known Scene" in explanation.summary
+    assert "Known Scene" not in explanation.summary
     assert "Office and Stockings" in explanation.summary
     assert "scene-neighbor-id" not in explanation.summary
 
