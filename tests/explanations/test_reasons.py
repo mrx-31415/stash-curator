@@ -150,7 +150,7 @@ def test_long_neighbor_titles_stay_in_supporting_evidence_not_card_prose(tmp_pat
     assert service._prose_precedent("A short scene title") == "A short scene title"
     assert (
         service._prose_precedent("A deliberately long scene title for report prose")
-        == "a past favorite"
+        == "an earlier scene"
     )
 
 

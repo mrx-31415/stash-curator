@@ -3,7 +3,7 @@
   "evidence": {
     "direct.positive": {
       "lead": [
-        "this scene has already worked well for you",
+        "this scene has already been a good choice for you",
         "your direct experience makes this worth returning to",
         "you have come back to this successfully before",
         "the strongest case is your own positive history with this scene",
@@ -93,7 +93,7 @@
         "your library history makes {tags} a genuinely encouraging combination"
       ],
       "support": [
-        "scenes with {tags} have also worked well for you before",
+        "scenes with {tags} have also tended to suit you",
         "your history gives {tags} another point in its favor",
         "it also includes {tags}, a pattern that recurs in scenes you have enjoyed",
         "the inclusion of {tags} adds another familiar reason to consider it",
@@ -367,7 +367,7 @@
         "there are two good reasons to try this: {performer} has been a good pick for you before, and it shares {tags} with {precedent}, {precedent_outcome}",
         "my case starts with {performer}, who has suited you before, then gets stronger when the shared content in {tags} connects this to {precedent}, {precedent_outcome}",
         "{performer} is already a promising sign, and the shared content in {tags} makes {precedent}, {precedent_outcome}, a useful preview of the scene's appeal",
-        "this feels well grounded rather than merely familiar: you enjoy {performer}, and the content in {tags} traces a clear line back to {precedent}, {precedent_outcome}",
+        "you enjoy {performer}, and the content in {tags} traces a clear line back to {precedent}, {precedent_outcome}",
         "I would recommend this first for {performer}, then for its resemblance to {precedent}; the shared content in {tags} is the concrete link between them",
         "your history with {performer} opens the door, while {tags} and the successful precedent of {precedent} give me a reason to push it further",
         "{performer} has earned your attention before, and this scene borrows a winning thread from {precedent} through {tags}",
@@ -378,7 +378,7 @@
         "this is not riding on {performer} alone: {tags} independently connect it to {precedent}, {precedent_outcome}",
         "your good history with {performer} combines with a content pattern you liked in {precedent}, with {tags} tying the two recommendations together",
         "I would put this on the shortlist because {performer} has served you well and because the combination of {tags} makes it a close cousin of {precedent}, {precedent_outcome}",
-        "{performer}'s record supports this, and the shared {tags} connect it to {precedent}, {precedent_outcome}"
+        "{performer}'s history supports this, and the shared {tags} connect it to {precedent}, {precedent_outcome}"
       ]
     },
     "appeal.performer_identity+direct.positive": {
@@ -512,31 +512,31 @@
     "best_bets": {
       "primary": [
         "{primary_cap}.",
-        "{primary_cap}. It looks like one of the safer new choices for you.",
-        "This is one I would put near the front. {primary_cap}.",
-        "My strongest new-scene recommendation starts here. {primary_cap}.",
-        "For a dependable choice, I would begin here. {primary_cap}."
+        "The appeal is straightforward: {primary}.",
+        "The clearest reason is {primary}.",
+        "The fit starts with {primary}.",
+        "{primary_cap}."
       ],
       "primary_support": [
         "{primary_cap}. {support_cap}.",
         "{primary_cap}; {support}.",
-        "This earns its place on the shortlist for two reasons. {primary_cap}. {support_cap}.",
-        "I see a reassuring amount of agreement here. {primary_cap}. {support_cap}.",
-        "This looks well supported rather than lucky. {primary_cap}. {support_cap}."
+        "Two reasons point the same way. {primary_cap}. {support_cap}.",
+        "The fit has more than one basis. {primary_cap}. {support_cap}.",
+        "The supporting detail matters too. {primary_cap}. {support_cap}."
       ],
       "primary_boundary": [
-        "{primary_cap}. {boundary_cap}, so I would keep it just behind the safest choices.",
-        "I still think this is a strong option. {primary_cap}. {boundary_cap}.",
-        "This stops just short of the very safest tier. {primary_cap}. {boundary_cap}.",
-        "I would keep it high on the list. {primary_cap}. I would also remember that {boundary}.",
-        "The main case is convincing. {primary_cap}. I would keep one caveat in mind. {boundary_cap}."
+        "{primary_cap}. {boundary_cap}.",
+        "{primary_cap}. One limitation is {boundary}.",
+        "{primary_cap}. The weaker point is {boundary}.",
+        "{primary_cap}. {boundary_cap}.",
+        "{primary_cap}. There is still some uncertainty around {boundary}."
       ],
       "primary_support_boundary": [
         "{primary_cap}. {support_cap}. {boundary_cap}.",
-        "There is plenty to like. {primary_cap}. {support_cap}. I would only temper that by noting {boundary}.",
-        "This has the shape of a reliable pick. {primary_cap}. {support_cap}. {boundary_cap}.",
-        "Two independent clues put this near the front. {primary_cap}. {support_cap}. The caveat: {boundary}.",
-        "I would still call this one of the stronger choices. {primary_cap}. {support_cap}. {boundary_cap}."
+        "{primary_cap}. {support_cap}. {boundary_cap}.",
+        "{primary_cap}. {support_cap}. One limitation is {boundary}.",
+        "{primary_cap}. {support_cap}. The weaker point is {boundary}.",
+        "{primary_cap}. {support_cap}. {boundary_cap}."
       ]
     },
     "revisit": {
@@ -589,7 +589,7 @@
         "I would try it, with a candid caveat. {primary_cap}. {boundary_cap}.",
         "This is a deliberate stretch. {primary_cap}. {boundary_cap}.",
         "There is a familiar reason and a genuine question. {primary_cap}. {boundary_cap}.",
-        "My read is curious rather than certain. {primary_cap}. {boundary_cap}."
+        "{primary_cap}. {boundary_cap}."
       ],
       "primary_support_boundary": [
         "{primary_cap}. {support_cap}. {boundary_cap}.",

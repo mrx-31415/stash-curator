@@ -241,11 +241,6 @@ class ReportGenerator:
             · {html.escape(str(metadata["date"] or "Unknown date"))}</p>
           <p class="why">{html.escape(str(explanation_data["summary"]))}</p>
           {supporting_evidence}
-          <div class="scores">
-            <span>Confidence {float(item_data["confidence"]):.2f}</span>
-            <span>Lane {float(item_data["lane_value"]):+.3f}</span>
-            <span>Utility {float(item_data["final_utility"]):+.3f}</span>
-          </div>
           <p class="subtype">{html.escape(str(item_data["source_lane"]))}
             {("· " + html.escape(str(item_data["subtype"]))) if item_data["subtype"] else ""}</p>
           {score_tree}
@@ -617,8 +612,7 @@ border-radius:11px 11px 0 0; aspect-ratio:16/9; background:#09090b; }}
 body:has(#toggle-images:not(:checked)) .scene-image {{ display:none; }}
 .card header {{ display:flex; gap:.7rem; align-items:baseline; }} .position {{ color:#aaa; }}
 .meta,.subtype {{ color:#aaa; }} .why {{ font-size:1.04rem; min-height:4.5em; }}
-.scores {{ display:flex; flex-wrap:wrap; gap:.4rem; }} .scores span {{ background:#292932;
-padding:.25rem .45rem; border-radius:5px; }} details {{ margin-top:.8rem; }}
+details {{ margin-top:.8rem; }}
 .report-controls {{ display:flex; gap:1rem; align-items:center; margin:.8rem 0; }}
 .report-controls label {{ cursor:pointer; user-select:none; }}
 .supporting-evidence h4 {{ margin:.8rem 0 .2rem; }}

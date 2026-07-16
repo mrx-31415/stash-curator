@@ -75,6 +75,26 @@ def test_catalog_is_deterministic_and_rejects_unknown_fields(tmp_path: Path) -> 
         RealizationCatalog.load(invalid)
 
 
+def test_plan_shapes_join_complete_evidence_sentences() -> None:
+    catalog = RealizationCatalog.load()
+
+    summary = catalog.plan_variant(
+        "best_bets",
+        "primary_support_boundary",
+        {
+            "primary": "a complete primary clause",
+            "primary_cap": "A complete primary clause",
+            "support": "a complete supporting clause",
+            "support_cap": "A complete supporting clause",
+            "boundary": "a complete caveat",
+            "boundary_cap": "A complete caveat",
+        },
+        "seed",
+    )
+
+    assert summary == "A complete primary clause. A complete supporting clause. A complete caveat."
+
+
 def test_revisit_leads_with_direct_memory_even_when_model_evidence_is_stronger() -> None:
     direct = _reason("direct.positive", magnitude=0.2)
     performer = _reason("appeal.performer_identity", magnitude=0.9)

@@ -207,10 +207,8 @@ class ExplanationService:
             )
         )[:3]
         return {
-            "precedent": titles[0] if titles else "a scene that worked for you",
-            "precedent_outcome": self._outcome_phrase(useful[0])
-            if useful
-            else "which worked for you",
+            "precedent": titles[0] if titles else "an earlier scene",
+            "precedent_outcome": self._outcome_phrase(useful[0]) if useful else "from your history",
             "precedents": self._natural_list(titles or ["nearby scenes you enjoyed"]),
             "tags": self._natural_list(tags or ["their content profile"]),
         }
@@ -218,16 +216,16 @@ class ExplanationService:
     @staticmethod
     def _prose_precedent(value: object) -> str:
         title = str(value or "")
-        return title if len(title) <= 30 else "a past favorite"
+        return title if len(title) <= 30 else "an earlier scene"
 
     @staticmethod
     def _outcome_phrase(neighbor: dict[str, object]) -> str:
         outcome = _number(neighbor.get("outcome"))
         if outcome >= 0.75:
-            return "which you particularly enjoyed"
+            return "which you enjoyed"
         if outcome >= 0.45:
-            return "which worked well for you"
-        return "which seems to have worked for you"
+            return "which you liked"
+        return "which you watched before"
 
     @staticmethod
     def _challenge_phrase(value: object) -> str:

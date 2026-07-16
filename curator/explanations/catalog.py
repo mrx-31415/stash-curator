@@ -28,6 +28,33 @@ _PLAN_FIELDS = {
     "support",
     "support_cap",
 }
+_EDITORIAL_OPENERS = (
+    "i ",
+    "my ",
+    "if i ",
+    "this is ",
+    "this has ",
+    "this brings ",
+    "this looks ",
+    "this feels ",
+    "there are ",
+    "the fit ",
+    "the recommendation ",
+    "the strongest ",
+    "the clearest ",
+    "the case ",
+)
+_EDITORIAL_PHRASES = (
+    "worked for you",
+    "worked well for you",
+    "give me ",
+    "push it further",
+    "lend me ",
+    "wildcard",
+    "strong first impression",
+    "straightforward revisit",
+    "goes beyond the parts of your taste",
+)
 
 
 @dataclass(frozen=True)
@@ -94,14 +121,22 @@ class RealizationCatalog:
         variants = group.get(position) or group.get("lead")
         if variants is None:
             raise ValueError(f"missing evidence position {position!r} for {code!r}")
-        return self._choose(variants, f"{seed}\0evidence\0{code}\0{position}").format(**slots)
+        return self._choose_factual(variants, f"{seed}\0evidence\0{code}\0{position}").format(
+            **slots
+        )
 
     def plan_variant(self, lane: str, shape: str, slots: dict[str, str], seed: str) -> str:
-        group = self.plans.get(lane) or self.plans["generic"]
-        variants = group.get(shape) or self.plans["generic"].get(shape)
-        if variants is None:
-            raise ValueError(f"missing plan shape {shape!r} for {lane!r}")
-        return self._choose(variants, f"{seed}\0plan\0{lane}\0{shape}").format(**slots)
+        del lane, seed
+        templates = {
+            "primary": "{primary_cap}.",
+            "primary_support": "{primary_cap}. {support_cap}.",
+            "primary_boundary": "{primary_cap}. {boundary_cap}.",
+            "primary_support_boundary": "{primary_cap}. {support_cap}. {boundary_cap}.",
+        }
+        try:
+            return templates[shape].format(**slots)
+        except KeyError as error:
+            raise ValueError(f"missing plan shape {shape!r}") from error
 
     def pairing_variant(
         self,
@@ -115,7 +150,17 @@ class RealizationCatalog:
         if group is None:
             return None
         variants = group["fused"]
-        return self._choose(variants, f"{seed}\0pairing\0{key}").format(**slots)
+        return self._choose_factual(variants, f"{seed}\0pairing\0{key}").format(**slots)
+
+    @classmethod
+    def _choose_factual(cls, variants: tuple[str, ...], seed: str) -> str:
+        factual = tuple(
+            variant
+            for variant in variants
+            if not variant.lstrip().lower().startswith(_EDITORIAL_OPENERS)
+            and not any(phrase in variant.lower() for phrase in _EDITORIAL_PHRASES)
+        )
+        return cls._choose(factual or variants, seed)
 
     @staticmethod
     def _choose(variants: tuple[str, ...], seed: str) -> str:

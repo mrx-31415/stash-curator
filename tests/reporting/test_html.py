@@ -83,7 +83,7 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
     assert "Reason records (developer view)" in document
     assert "Raw inspector data (developer view)" in document
     assert "Appeal" in document and "Current Fit" in document and "Confidence" in document
-    assert "<span>Appeal +" not in document and "<span>Current Fit +" not in document
+    assert '<div class="scores">' not in document
 
 
 def test_redacted_report_removes_synthetic_private_identifiers(tmp_path: Path) -> None:
