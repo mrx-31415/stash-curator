@@ -167,6 +167,19 @@ def _entities() -> dict[str, list[dict[str, object]]]:
     }
 
 
+def test_sync_deduplicates_tag_stash_ids_by_endpoint(connection: sqlite3.Connection) -> None:
+    entities = _entities()
+    entities["tag"][0]["stash_ids"] = [
+        {"endpoint": "https://stashdb.org/graphql", "stash_id": "external-t1"},
+        {"endpoint": "https://stashdb.org/graphql", "stash_id": "duplicate-t1"},
+    ]
+    SyncService(SyntheticClient(entities), SyncRepository(connection), page_size=2).sync()
+
+    assert connection.execute(
+        "SELECT stash_id FROM source_tag_stash_id WHERE tag_id='t1'"
+    ).fetchone()[0] == "external-t1"
+
+
 def test_full_sync_resumes_at_transactionally_saved_page(
     connection: sqlite3.Connection,
 ) -> None:

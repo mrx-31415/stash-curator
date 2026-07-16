@@ -261,12 +261,15 @@ class SyncRepository:
                 ((tag.id, parent.id) for parent in tag.parents),
             )
             self.connection.execute("DELETE FROM source_tag_stash_id WHERE tag_id = ?", (tag.id,))
+            stash_ids: dict[str, str] = {}
+            for item in tag.stash_ids:
+                stash_ids.setdefault(item.endpoint, item.stash_id)
             self.connection.executemany(
                 """
                 INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id)
                 VALUES (?, ?, ?)
                 """,
-                ((tag.id, item.endpoint, item.stash_id) for item in tag.stash_ids),
+                ((tag.id, endpoint, stash_id) for endpoint, stash_id in stash_ids.items()),
             )
 
     def _upsert_studio(self, studio: Studio, *, replace_details: bool = True) -> None:
