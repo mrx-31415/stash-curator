@@ -609,7 +609,7 @@ them named and configurable rather than scattering literals through code.
 - either neighbor evidence corroborated by a distinct anchor family, or reliable
   direct scene evidence;
 - no exploration-only qualification;
-- watched and unseen items allowed.
+- no recorded viewing history.
 
 Rank qualified candidates primarily by relative relevance, then Current Fit and
 confidence. This shortlist-first policy keeps diversity from promoting merely
@@ -617,6 +617,7 @@ adequate candidates over clearly stronger matches.
 
 ### Revisit
 
+- recorded viewing history;
 - direct positive evidence;
 - sufficient exact-scene recovery;
 - durable repeat, O, thumb up, or repeated meaningful viewing;

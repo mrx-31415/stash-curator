@@ -190,6 +190,9 @@ def _database(path: Path) -> sqlite3.Connection:
         content=0.1,
         signals=("o",),
     )
+    connection.execute(
+        "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES ('d-revisit', 1, 0)"
+    )
     _score(
         connection, "e-frontier", fit=0.12, appeal=0.15, confidence=0.3, metadata=0.5, content=0.12
     )
@@ -252,12 +255,26 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     assert lookup[("g-combination", "adventure")].subtype == "structured_combination_challenge"
     assert lookup[("f-stretch", "adventure")].subtype == "model_disagreement"
     assert lookup[("i-island", "adventure")].subtype == "under_covered_island"
-    assert lookup[("h-probe", "adventure")].subtype == "pure_probe"
+    assert lookup[("h-probe", "adventure")].subtype == "under_covered_island"
     assert lookup[("j-anchor", "adventure")].subtype == "anchored_model_gap"
     assert not any(item.scene_id == "x-excluded" for item in classifications)
     assert connection.execute(
         "SELECT count(*) FROM model_scene_lane WHERE model_id='model'"
     ).fetchone()[0] == len(classifications)
+
+
+def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES ('a-best', 2, 0)"
+    )
+
+    classifications = LanePolicy(connection).classify("model")
+
+    assert not any(
+        item.scene_id == "a-best" and item.lane == "best_bets" for item in classifications
+    )
+    assert any(item.scene_id == "d-revisit" and item.lane == "revisit" for item in classifications)
 
 
 def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_path: Path) -> None:

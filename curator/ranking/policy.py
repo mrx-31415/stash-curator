@@ -70,6 +70,10 @@ class LanePolicy:
             for scene_id, score in scores.items()
             if bool(score.eligibility.get("eligible", False))
         }
+        played_scene_ids = {
+            str(row[0])
+            for row in self.connection.execute("SELECT DISTINCT scene_id FROM source_play")
+        }
         content_ranks = _percentiles(
             {
                 scene_id: _component_value(score, "content")
@@ -150,6 +154,7 @@ class LanePolicy:
                 and score.metadata_confidence >= self.config.ranking.best_bet_metadata_confidence
                 and relevance >= self.config.ranking.best_bet_relevance
                 and (corroborated or direct_reliable)
+                and scene_id not in played_scene_ids
             ):
                 classifications.append(
                     LaneClassification(
@@ -169,6 +174,7 @@ class LanePolicy:
                             "studio_percentile": studio_rank,
                             "corroborated": corroborated,
                             "direct_reliable": direct_reliable,
+                            "unseen": True,
                         },
                     )
                 )
@@ -183,6 +189,7 @@ class LanePolicy:
                 and score.direct_confidence >= self.config.ranking.revisit_direct_confidence
                 and score.recovery >= 0.10
                 and durable
+                and scene_id in played_scene_ids
             ):
                 classifications.append(
                     LaneClassification(

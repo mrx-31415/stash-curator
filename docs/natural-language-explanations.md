@@ -11,6 +11,10 @@ relationship rather than randomly selecting a complete canned sentence.
 An optional small language model may later improve the surface style, but it must not
 become the source of recommendation facts.
 
+The generalized findings from the 200-record rewrite experiment are documented in
+[`prose-corpus-analysis.md`](prose-corpus-analysis.md). They refine this proposal with
+measured length/variation targets and lane-specific discourse plans.
+
 ## 1. Goals
 
 The explanation system should:

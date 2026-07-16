@@ -40,7 +40,7 @@ The plugin adds one Stash-native page containing a scene-card grid with five tab
 | Tab | User promise |
 |---|---|
 | **For You** | A varied everyday slate, weighted toward a good choice now |
-| **Best Bets** | The most reliable current matches, watched or unseen |
+| **Best Bets** | The most reliable unseen matches |
 | **Revisit** | Directly enjoyed scenes that are ready to return |
 | **Discover** | Familiar appeal with one explained deviation or unknown |
 | **Adventure** | Deliberate model-gap probes, including occasional likely misses |
@@ -344,6 +344,12 @@ Present tags/markers are positive evidence that content exists. Absence is unkno
 Sparse metadata lowers confidence, not Appeal. Marker absence is especially
 studio-conditioned.
 
+Tag evidence is scoped before feature construction. Acts, scenarios, clothing, and
+presentation belong to semantic scene content; cast physical descriptions belong to
+the provenance-aware performer-generalization design in
+[`tag-evidence.md`](tag-evidence.md). A cast-attribute tag must not simultaneously act
+as ordinary content affinity and performer similarity evidence.
+
 Use tempered IDF-like rarity weighting. Rare tags may be specific, but typos and
 one-offs receive shrinkage and a capped rarity boost. Parent tags receive damped
 credit where hierarchy exists.
@@ -508,17 +514,18 @@ Require high Appeal/Current Fit, sufficient evidence confidence, and adequate
 metadata support. Rank candidates by relative library percentiles for content
 neighbors, performer evidence, content affinity, and studio evidence. Require either
 neighbor evidence corroborated by a distinct anchor family or reliable direct scene
-evidence. An unseen favorite-performer scene can qualify, but supporting content
-raises reliability. Exploration-only uncertainty cannot qualify.
+evidence. Exclude every scene with recorded viewing history so the lane remains
+distinct from Revisit. An unseen favorite-performer scene can qualify, but supporting
+content raises reliability. Exploration-only uncertainty cannot qualify.
 
 Apply this relevance gate before slate diversity. Diversity chooses among genuinely
 strong candidates; it does not rescue an otherwise middling candidate into Top Picks.
 
 ### 11.2 Revisit
 
-Require direct positive evidence plus cooldown recovery. Strong evidence includes O,
-durable repeats, thumbs up, or meaningful repeated viewing. Apply recent performer
-and content satiation even when the exact scene is old.
+Require recorded viewing history, direct positive evidence, and cooldown recovery.
+Strong evidence includes O, durable repeats, thumbs up, or meaningful repeated
+viewing. Apply recent performer and content satiation even when the exact scene is old.
 
 ### 11.3 Discover
 
