@@ -1023,7 +1023,7 @@ Exit when:
 
 ### WP-08 — Plugin runtime spike
 
-Status: implementation complete; installed-package acceptance pending.
+Status: complete.
 
 Dependencies: Gate A.
 
@@ -1034,13 +1034,14 @@ Acceptance: restart-safe round trip and logs work from an installed plugin packa
 
 Implemented with Stash's external raw-plugin interface, authenticated read-only
 GraphQL context, an ADR, automatic sidecar migrations, process-restart persistence,
-task logging, and a self-contained dependency-free package. Package extraction,
-restart, backup, and live Stash health round trips are covered; installation in the
-target Stash remains the acceptance step.
+native task progress/logging, and a self-contained dependency-free package. Live
+acceptance on Stash v0.31.1 covered source installation, Python resolution, schema-7
+migration, sync/build, backup, process restart, update, and uninstall/reinstall. The
+published model and a sidecar counter both survived reinstall.
 
 ### WP-09 — Stash-native UI
 
-Status: implementation complete; installed UI acceptance pending.
+Status: implementation complete; installed interaction/accessibility acceptance pending.
 
 Dependencies: WP-07, WP-08.
 
@@ -1053,7 +1054,10 @@ Stash behavior; keyboard/touch access exposes essential explanations.
 Implemented with a Curator route, compass navigation item, five tabs, native scene
 cards, a three-position Familiar/Adventurous control, progressive explanations and
 score trees, image visibility control, and explicit loading, empty, stale, rebuilding,
-and error states.
+and error states. Installed assets load and all five live lanes return scene-card data
+with bundled explanations. Dedicated three-card lanes respond in roughly 1.4–2.2
+seconds and the default 20-card For You slate in roughly 4.5 seconds on the acceptance
+library. Keyboard, touch, and native-navigation behavior still need a browser pass.
 
 ### WP-10 — Events and feedback
 
@@ -1074,7 +1078,8 @@ sidecar-only pruning workflow.
 
 ### WP-11 — Jobs, configuration, and release
 
-Status: implementation and publication complete; clean-install acceptance pending.
+Status: implementation, publication, and package lifecycle acceptance complete;
+Stash-restart and browser acceptance pending.
 
 Dependencies: WP-08 through WP-10.
 
@@ -1087,7 +1092,10 @@ model, use the page, restart, update, and uninstall without losing Stash-owned d
 Implemented with serialized sync/build/backup tasks, stale-job recovery, automatic
 sync checks, job status, operational configuration, guarded reset, a checksummed
 package source, CI artifacts, GitHub Pages deployment, and Stash v0.31/Python 3.12+
-compatibility and uninstall documentation.
+compatibility and uninstall documentation. Live acceptance covered adding the source,
+clean plugin installation, an initial sync/build, visible task progress and stage logs,
+backup, repeated same-version updates, uninstall, and reinstall without loss of the
+published model or sidecar state. A Stash server restart and hands-on page pass remain.
 
 ### Gate B — Product MVP
 
