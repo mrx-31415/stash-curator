@@ -1074,7 +1074,7 @@ sidecar-only pruning workflow.
 
 ### WP-11 — Jobs, configuration, and release
 
-Status: implementation complete; publication and clean-install acceptance pending.
+Status: implementation and publication complete; clean-install acceptance pending.
 
 Dependencies: WP-08 through WP-10.
 
