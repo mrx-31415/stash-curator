@@ -175,9 +175,12 @@ def test_sync_deduplicates_tag_stash_ids_by_endpoint(connection: sqlite3.Connect
     ]
     SyncService(SyntheticClient(entities), SyncRepository(connection), page_size=2).sync()
 
-    assert connection.execute(
-        "SELECT stash_id FROM source_tag_stash_id WHERE tag_id='t1'"
-    ).fetchone()[0] == "external-t1"
+    assert (
+        connection.execute("SELECT stash_id FROM source_tag_stash_id WHERE tag_id='t1'").fetchone()[
+            0
+        ]
+        == "external-t1"
+    )
 
 
 def test_full_sync_resumes_at_transactionally_saved_page(

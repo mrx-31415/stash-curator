@@ -9,7 +9,8 @@ from tests.ranking.test_slate import _database
 
 
 def test_unknown_exploration_subtype_has_no_card_reason() -> None:
-    assert ExplanationService._exploration_code(SimpleNamespace(subtype=None)) is None
+    item = SimpleNamespace(subtype=None)
+    assert ExplanationService._exploration_code(item) is None  # type: ignore[arg-type]
 
 
 def _add_explainable_content(connection: sqlite3.Connection) -> None:
