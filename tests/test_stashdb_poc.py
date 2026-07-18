@@ -19,10 +19,19 @@ def test_external_candidates_are_deduplicated_and_use_only_allowed_features() ->
                 {
                     "performer": {
                         "id": "known-performer",
+                        "gender": "FEMALE",
                         "ethnicity": "CAUCASIAN",
                         "height": 170,
                     }
-                }
+                },
+                {
+                    "performer": {
+                        "id": "male-performer",
+                        "gender": "MALE",
+                        "ethnicity": "BLACK",
+                        "height": 190,
+                    }
+                },
             ],
         },
         {"id": "external", "tags": [], "performers": []},
@@ -37,6 +46,7 @@ def test_external_candidates_are_deduplicated_and_use_only_allowed_features() ->
             "studio:known-studio",
             "performer:known-performer",
             "profile:ethnicity:ethnicity:caucasian",
+            "profile:ethnicity:ethnicity:black",
             "profile:height:height_cm",
         },
     )
@@ -45,6 +55,7 @@ def test_external_candidates_are_deduplicated_and_use_only_allowed_features() ->
     assert "tag:appearance" not in features
     assert features["tag:content"] == 1.0
     assert features["profile:height:height_cm"] == 170
+    assert "profile:ethnicity:ethnicity:black" not in features
 
 
 def test_performer_matching_uses_profile_values(monkeypatch) -> None:
@@ -54,10 +65,12 @@ def test_performer_matching_uses_profile_values(monkeypatch) -> None:
         "CREATE TABLE direct_scene_state("
         "model_id TEXT, scene_id TEXT, direct_appeal REAL, confidence REAL)"
     )
-    connection.execute("CREATE TABLE source_performer(performer_id TEXT, name TEXT)")
+    connection.execute("CREATE TABLE source_performer(performer_id TEXT, name TEXT, gender TEXT)")
     connection.execute("INSERT INTO scene_performer VALUES ('scene', 'anchor')")
     connection.execute("INSERT INTO direct_scene_state VALUES ('model', 'scene', 1, 1)")
-    connection.execute("INSERT INTO source_performer VALUES ('anchor', 'Known performer')")
+    connection.execute(
+        "INSERT INTO source_performer VALUES ('anchor', 'Known performer', 'FEMALE')"
+    )
     profile = PerformerProfile("anchor", {"height": {"height_cm": ProfileValue(170, 1.0)}})
 
     class Store:
@@ -75,7 +88,14 @@ def test_performer_matching_uses_profile_values(monkeypatch) -> None:
         [
             {
                 "performers": [
-                    {"performer": {"id": "external", "name": "New performer", "height": 170}}
+                    {
+                        "performer": {
+                            "id": "external",
+                            "name": "New performer",
+                            "gender": "FEMALE",
+                            "height": 170,
+                        }
+                    }
                 ]
             }
         ],

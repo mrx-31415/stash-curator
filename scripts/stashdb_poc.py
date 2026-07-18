@@ -62,7 +62,7 @@ query CuratorExternalScenes($input: SceneQueryInput!) {
       images { url width height }
       performers {
         performer {
-          id name birth_date ethnicity eye_color hair_color height cup_size band_size
+          id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
           waist_size hip_size breast_type tattoos { location } piercings { location }
           images { url width height }
         }
@@ -79,6 +79,10 @@ def _external_id(rows: list[dict[str, object]]) -> str | None:
             value = row.get("stash_id")
             return str(value) if value else None
     return None
+
+
+def _is_female(performer: dict[str, Any]) -> bool:
+    return str(performer.get("gender") or "").casefold() == "female"
 
 
 def _local_links(client: GraphQLClient, page_size: int = 500) -> dict[str, dict[str, str]]:
@@ -294,9 +298,11 @@ def _local_vectors(
         SELECT sp.scene_id, fd.family, fd.name, avg(ef.value * ef.confidence)
         FROM scene_performer sp
         JOIN external_poc_scene selected ON selected.scene_id=sp.scene_id
+        JOIN source_performer performer ON performer.performer_id=sp.performer_id
         JOIN entity_feature ef ON ef.entity_id=sp.performer_id
         JOIN feature_definition fd USING(feature_id)
         WHERE ef.feature_version=? AND ef.entity_type='performer'
+          AND performer.gender='FEMALE'
           AND fd.family LIKE 'profile:%' AND fd.family != 'profile:content'
         GROUP BY sp.scene_id, fd.family, fd.name
         """,
@@ -382,6 +388,8 @@ def _external_scene_features(scene: dict[str, Any], allowed: set[str]) -> dict[s
     recorded = scene.get("production_date") or scene.get("release_date")
     for appearance in appearances:
         performer = appearance["performer"]
+        if not _is_female(performer):
+            continue
         identity = f"performer:{performer['id']}"
         if identity in allowed:
             values[identity] = 1.0
@@ -438,8 +446,18 @@ def _performer_matches(
             (model_id,),
         )
     }
+    female_ids = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT performer_id FROM source_performer WHERE gender='FEMALE'"
+        )
+    }
     anchors = sorted(
-        (item for item in profiles.values() if anchor_scores.get(item.performer_id, -1) > 0),
+        (
+            item
+            for item in profiles.values()
+            if item.performer_id in female_ids and anchor_scores.get(item.performer_id, -1) > 0
+        ),
         key=lambda item: -anchor_scores[item.performer_id],
     )[:40]
     names = {
@@ -453,6 +471,8 @@ def _performer_matches(
         recorded = scene.get("production_date") or scene.get("release_date")
         for appearance in scene.get("performers", []):
             raw = appearance["performer"]
+            if not _is_female(raw):
+                continue
             identifier = str(raw["id"])
             if identifier in local_external_ids or identifier in candidates:
                 continue
@@ -566,6 +586,17 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         model_id, version = str(model[0]), str(model[1])
         stash = GraphQLClient(args.stash_url, api_key=os.environ.get("STASH_API_KEY"))
         links = _local_links(stash)
+        female_ids = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT performer_id FROM source_performer WHERE gender='FEMALE'"
+            )
+        }
+        links["performers"] = {
+            local_id: external_id
+            for local_id, external_id in links["performers"].items()
+            if local_id in female_ids
+        }
         seed_scenes, seed_performers, seed_studios = _seed_ids(
             connection, model_id, links, args.seed_scenes
         )
