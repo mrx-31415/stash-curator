@@ -99,7 +99,8 @@ class SlateBuilder:
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
         if model_id != self._cached_model_id:
-            classifications = LanePolicy(self.connection, self.config).classify(model_id)
+            policy = LanePolicy(self.connection, self.config)
+            classifications = policy.load(model_id) or policy.classify(model_id)
             self._cached_model_id = model_id
             self._cached_candidates = tuple(self._candidates(model_id, classifications))
             self._cached_scores = RecommendationModelStore(self.connection).scores(model_id)

@@ -261,6 +261,23 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     assert connection.execute(
         "SELECT count(*) FROM model_scene_lane WHERE model_id='model'"
     ).fetchone()[0] == len(classifications)
+    assert {
+        (item.scene_id, item.lane): item for item in LanePolicy(connection).load("model")
+    } == lookup
+
+
+def test_new_slate_builder_reuses_persisted_lane_classifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    monkeypatch.setattr(
+        LanePolicy,
+        "classify",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reclassified")),
+    )
+
+    assert SlateBuilder(connection).recommend("best_bets", 1).items
 
 
 def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: Path) -> None:

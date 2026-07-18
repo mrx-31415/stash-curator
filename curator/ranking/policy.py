@@ -266,6 +266,24 @@ class LanePolicy:
         self._persist(model_id, classifications)
         return tuple(classifications)
 
+    def load(self, model_id: str) -> tuple[LaneClassification, ...]:
+        return tuple(
+            LaneClassification(
+                str(row["scene_id"]),
+                str(row["lane"]),
+                str(row["subtype"]) if row["subtype"] else None,
+                float(row["lane_value"]),
+                json.loads(str(row["qualification_json"])),
+            )
+            for row in self.connection.execute(
+                """
+                SELECT scene_id, lane, subtype, lane_value, qualification_json
+                FROM model_scene_lane WHERE model_id=? ORDER BY scene_id, lane
+                """,
+                (model_id,),
+            )
+        )
+
     @staticmethod
     def _adventure_subtype(
         score: ModelSceneScore,

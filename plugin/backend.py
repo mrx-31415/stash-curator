@@ -20,6 +20,7 @@ from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
 from curator.graphql import GraphQLClient  # noqa: E402
 from curator.model import ModelUpdateCoordinator  # noqa: E402
+from curator.ranking import LanePolicy  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
@@ -313,6 +314,9 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("source_sync")
             model = coordinator.drain(force=True, max_builds=1)[0]
+            _progress(0.94)
+            _log("i", "Organizing scenes into recommendation lanes")
+            lane_count = len(LanePolicy(connection).classify(model.model_id))
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -320,6 +324,7 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 "entity_counts": synced.entity_counts,
                 "historical_scenes": historical.scene_count,
                 "model_id": model.model_id,
+                "lane_classifications": lane_count,
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode == "build":
@@ -328,8 +333,15 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("manual_build")
             model = coordinator.drain(force=True, max_builds=1)[0]
+            _progress(0.94)
+            _log("i", "Organizing scenes into recommendation lanes")
+            lane_count = len(LanePolicy(connection).classify(model.model_id))
             _progress(0.98)
-            summary = {"model_id": model.model_id, "stage_timings_ms": model.stage_timings_ms}
+            summary = {
+                "model_id": model.model_id,
+                "lane_classifications": lane_count,
+                "stage_timings_ms": model.stage_timings_ms,
+            }
         elif mode == "backup":
             _progress(0.1)
             destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"
