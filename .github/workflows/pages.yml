@@ -26,8 +26,9 @@ jobs:
         with:
           version: "0.11.21"
           python-version: "3.12"
+      - uses: actions/configure-pages@v5
       - run: uv run --frozen python scripts/build_plugin.py
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
       - id: deployment
