@@ -109,6 +109,19 @@ uv run --group poc python scripts/latent_poc.py \
 The default deterministic 6,000-scene sample includes every labelled scene. Pass
 `--max-scenes 0` for the full library.
 
+Evaluate recommendations for StashDB scenes and performers that are not in the local
+library:
+
+```bash
+chmod 600 ~/.netrc  # once, when using netrc instead of STASHDB_API_KEY
+uv run --group poc python scripts/stashdb_poc.py \
+  --stash-url http://localhost:9999 --output reports/stashdb-poc.html
+```
+
+This disposable report expands a bounded candidate pool from strongly enjoyed linked
+scenes, then compares feature-affinity and latent rankings. It sends queries only,
+keeps external metadata in memory, and does not modify the sidecar schema.
+
 ## Privacy
 
 Do not commit library exports, GraphQL responses, SQLite databases, local reports,
