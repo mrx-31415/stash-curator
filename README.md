@@ -2,8 +2,8 @@
 
 **Navigate your library, guided by your taste.**
 
-Stash Curator is a recommendation and discovery engine intended to become a
-[Stash](https://github.com/stashapp/stash) plugin. It learns from viewing behavior and
+Stash Curator is a recommendation and discovery engine for
+[Stash](https://github.com/stashapp/stash). It learns from viewing behavior and
 explicit feedback to offer reliable choices, timely revisits, nearby discoveries,
 and deliberate adventures without letting the feed become repetitive.
 
@@ -12,8 +12,8 @@ normalize historical behavior, build a deterministic recommendation model, gener
 all five lanes with inspectable reasons, compare performers, and export a
 self-contained HTML evaluation report. It can also cache StashDB's public tag
 taxonomy so physical-description tags do not masquerade as scene-content matches.
-The Stash-native page and event collection are later work packages; no installable
-plugin is provided yet.
+An installable plugin adds the Stash-native page, feedback, direct player-session
+collection, persistent jobs, and configuration on top of the validation tools.
 
 ## Documentation
 
@@ -22,6 +22,35 @@ plugin is provided yet.
 
 The design defines user promises and model semantics. The implementation plan defines
 component boundaries, delivery gates, work packages, tests, and acceptance criteria.
+
+## Install in Stash
+
+The initial release targets Stash v0.31 and requires Python 3.12 or newer in the
+Stash plugin runtime. Add this source under **Settings → Plugins → Available
+Plugins**:
+
+```text
+https://mrx-31415.github.io/stash-curator/index.yml
+```
+
+Install **Stash Curator**, reload plugins, and open the compass button in Stash's
+top navigation. On first load, Curator schedules an incremental sync and model
+build. Jobs, configuration, backup, and reset are available from the Curator page;
+manual and full-reconciliation tasks are also available on Stash's Tasks page.
+Curator never mutates library entities: feedback and events remain in its sidecar.
+
+The sidecar defaults to `{pluginDir}/data/curator.sqlite3`. Configure **Sidecar
+database path** before first use if plugin updates or uninstallation may replace that
+directory. Back up before uninstalling. Removing Curator does not alter Stash-owned
+scenes, performers, tags, studios, or history.
+
+Build a local package source with:
+
+```bash
+uv run python scripts/build_plugin.py
+```
+
+This writes `dist/stash-curator.zip` and its checksummed `dist/index.yml`.
 
 ## Development
 
@@ -36,7 +65,7 @@ Set up and verify the project:
 uv sync --all-groups
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy curator tests
+uv run mypy curator plugin/backend.py
 uv run pytest
 ```
 
@@ -130,7 +159,7 @@ library:
 chmod 600 ~/.netrc  # once, when using netrc instead of STASHDB_API_KEY
 uv run --group poc python scripts/stashdb_poc.py \
   --stash-url http://localhost:9999 --output reports/stashdb-poc.html \
-  --similar-to "Kendra Lust"
+  --similar-to "Example Performer"
 ```
 
 This disposable report expands a bounded candidate pool from strongly enjoyed linked

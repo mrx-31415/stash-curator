@@ -11,10 +11,10 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
         runner = MigrationRunner(connection)
         before = runner.status()
         assert before.current_version == 0
-        assert before.pending_versions == (1, 2, 3, 4, 5)
+        assert before.pending_versions == (1, 2, 3, 4, 5, 6, 7)
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 5
+        assert after.current_version == 7
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -34,6 +34,8 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             "taxonomy_snapshot",
             "source_tag_stash_id",
             "model_update_state",
+            "curator_config",
+            "curator_job",
         } <= tables
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:

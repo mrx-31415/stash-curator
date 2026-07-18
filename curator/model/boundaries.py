@@ -57,8 +57,8 @@ def scene_eligibility(
             reasons.append("file_unavailable")
         if scene_id in excluded:
             reasons.append("hard_exclusion")
-        if pruning.get(scene_id) == "remove":
-            reasons.append("pruning_remove")
+        if pruning.get(scene_id) in {"review", "remove"}:
+            reasons.append(f"pruning_{pruning[scene_id]}")
         if latest_feedback.get(scene_id) == "thumb_down":
             reasons.append("current_thumb_down")
         if include_temporary and reference_at_ms - not_now.get(scene_id, -not_now_ms) < not_now_ms:

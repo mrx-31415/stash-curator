@@ -187,6 +187,28 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             assert abs(float(component["value"])) <= bound
 
 
+def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, occurred_at_ms)
+        VALUES ('metadata', 'old-good', 'metadata_wrong', ?)
+        """,
+        (REFERENCE_MS,),
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    labels = builder._scene_labels()
+
+    assert "old-good" in labels
+    assert "old-good" not in builder._training_labels(labels)
+
+    result = builder.build()
+    assert connection.execute(
+        "SELECT 1 FROM direct_scene_state WHERE model_id=? AND scene_id='old-good'",
+        (result.model_id,),
+    ).fetchone()
+
+
 def test_failed_rebuild_cannot_replace_published_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

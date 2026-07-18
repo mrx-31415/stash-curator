@@ -13,6 +13,31 @@ from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
 from curator.ranking.policy import LaneClassification, LanePolicy
 
+FAMILIAR_PATTERN = (
+    "best_bets",
+    "best_bets",
+    "revisit",
+    "best_bets",
+    "discover",
+    "best_bets",
+    "best_bets",
+    "revisit",
+    "best_bets",
+    "best_bets",
+)
+ADVENTUROUS_PATTERN = (
+    "best_bets",
+    "best_bets",
+    "revisit",
+    "discover",
+    "best_bets",
+    "discover",
+    "adventure",
+    "best_bets",
+    "discover",
+    "adventure",
+)
+
 
 @dataclass(frozen=True)
 class _Candidate:
@@ -63,11 +88,13 @@ class SlateBuilder:
         self._cached_candidates: tuple[_Candidate, ...] = ()
         self._cached_scores: dict[str, ModelSceneScore] = {}
 
-    def recommend(self, lane: str, count: int) -> Slate:
+    def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
+        if exploration not in {-1, 0, 1}:
+            raise ValueError("exploration must be -1, 0, or 1")
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
@@ -92,7 +119,7 @@ class SlateBuilder:
         diagnostics: list[str] = []
         history = self._history_context(model_id)
         for position in range(count):
-            target_lane, target_subtype = self._target(lane, position)
+            target_lane, target_subtype = self._target(lane, position, exploration)
             selected_scene_ids = {candidate.classification.scene_id for candidate in selected}
             remaining = [
                 candidate
@@ -159,9 +186,15 @@ class SlateBuilder:
             )
         return Slate(model_id, lane, tuple(items), tuple(diagnostics))
 
-    def _target(self, lane: str, position: int) -> tuple[str, str | None]:
+    def _target(self, lane: str, position: int, exploration: int) -> tuple[str, str | None]:
         if lane == "for_you":
-            pattern = self.config.ranking.for_you_pattern
+            pattern = (
+                FAMILIAR_PATTERN
+                if exploration < 0
+                else ADVENTUROUS_PATTERN
+                if exploration > 0
+                else self.config.ranking.for_you_pattern
+            )
             return pattern[position % len(pattern)], None
         if lane == "adventure":
             subtypes = (

@@ -119,6 +119,7 @@ class PreferenceModelBuilder:
         stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
+        training_labels = self._training_labels(labels)
         timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
         evidence_fingerprint = self._evidence_fingerprint(labels)
         model_digest = hashlib.sha256(
@@ -159,8 +160,8 @@ class PreferenceModelBuilder:
         try:
             stage_started = time.perf_counter()
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
-            label_mean = self._label_mean(labels)
-            affinities = self._affinities(scene_features, labels, label_mean)
+            label_mean = self._label_mean(training_labels)
+            affinities = self._affinities(scene_features, training_labels, label_mean)
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
             stage_started = time.perf_counter()
             scores = self._scores(
@@ -168,6 +169,7 @@ class PreferenceModelBuilder:
                 scene_features,
                 affinities,
                 labels,
+                training_labels,
                 label_mean,
                 reference_at_ms,
             )
@@ -250,6 +252,20 @@ class PreferenceModelBuilder:
                 tuple(signal for _, _, signal in scene_signals),
             )
         return labels
+
+    def _training_labels(self, labels: dict[str, _SceneLabel]) -> dict[str, _SceneLabel]:
+        metadata_wrong = {
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT DISTINCT scene_id FROM feedback
+                WHERE feedback_type='metadata_wrong' AND reversed_by_id IS NULL
+                """
+            )
+        }
+        return {
+            scene_id: label for scene_id, label in labels.items() if scene_id not in metadata_wrong
+        }
 
     def _evidence_fingerprint(self, labels: dict[str, _SceneLabel]) -> str:
         payload = [
@@ -370,6 +386,7 @@ class PreferenceModelBuilder:
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
         labels: dict[str, _SceneLabel],
+        training_labels: dict[str, _SceneLabel],
         label_mean: float,
         reference_at_ms: int,
     ) -> tuple[_Score, ...]:
@@ -377,11 +394,11 @@ class PreferenceModelBuilder:
         preference_vectors, discriminative_tag_count = self._preference_content_vectors(
             vectors, scene_features, affinities
         )
-        neighbors = self._content_neighbors(preference_vectors, labels, label_mean)
+        neighbors = self._content_neighbors(preference_vectors, training_labels, label_mean)
         performer_similarity_scores = self._performer_similarity_scores(
             feature_version, scene_features, affinities
         )
-        baseline_support = sum(label.confidence for label in labels.values())
+        baseline_support = sum(label.confidence for label in training_labels.values())
         baseline = (
             label_mean * baseline_support / (self.config.model.affinity_prior + baseline_support)
         )

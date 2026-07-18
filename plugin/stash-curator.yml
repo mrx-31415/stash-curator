@@ -1,0 +1,40 @@
+name: Stash Curator
+description: Navigate your library, guided by your taste.
+version: 0.1.0
+url: https://github.com/mrx-31415/stash-curator
+
+exec:
+  - python
+  - "{pluginDir}/backend.py"
+  - "{pluginDir}"
+interface: raw
+errLog: info
+
+ui:
+  javascript:
+    - stash-curator.js
+  css:
+    - stash-curator.css
+
+settings:
+  databasePath:
+    displayName: Sidecar database path
+    description: Leave empty to store data in the plugin's data directory.
+    type: STRING
+tasks:
+  - name: Sync and build recommendations
+    description: Incrementally synchronize Stash and publish a fresh model.
+    execArgs:
+      - sync-build
+  - name: Full sync and build recommendations
+    description: Reconcile the complete library and publish a fresh model.
+    execArgs:
+      - full-sync-build
+  - name: Rebuild recommendation model
+    description: Rebuild preferences from the existing sidecar cache.
+    execArgs:
+      - build
+  - name: Backup Curator data
+    description: Create a timestamped sidecar backup in the plugin data directory.
+    execArgs:
+      - backup

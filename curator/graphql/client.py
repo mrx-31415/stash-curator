@@ -40,6 +40,7 @@ class GraphQLClient:
         url: str,
         *,
         api_key: str | None = None,
+        headers: Mapping[str, str] | None = None,
         timeout: float = 30.0,
         transport: Transport = _urllib_transport,
     ) -> None:
@@ -48,6 +49,7 @@ class GraphQLClient:
         self.timeout = timeout
         self.transport = transport
         self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        self.headers.update(headers or {})
         if api_key:
             self.headers["ApiKey"] = api_key
 

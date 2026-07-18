@@ -351,6 +351,23 @@ def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path
     ]
     assert len({item.scene_id for item in for_you.items}) == len(for_you.items)
 
+    familiar = SlateBuilder(connection).recommend("for_you", 5, exploration=-1)
+    adventurous = SlateBuilder(connection).recommend("for_you", 5, exploration=1)
+    assert [item.source_lane for item in familiar.items] == [
+        "best_bets",
+        "best_bets",
+        "revisit",
+        "best_bets",
+        "discover",
+    ]
+    assert [item.source_lane for item in adventurous.items] == [
+        "best_bets",
+        "best_bets",
+        "revisit",
+        "discover",
+        "best_bets",
+    ]
+
 
 def test_recommend_cli_returns_full_score_decomposition(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

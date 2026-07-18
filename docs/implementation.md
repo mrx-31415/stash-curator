@@ -1023,6 +1023,8 @@ Exit when:
 
 ### WP-08 — Plugin runtime spike
 
+Status: implementation complete; installed-package acceptance pending.
+
 Dependencies: Gate A.
 
 Deliverables: runtime ADR, minimal manifest/task/UI bridge, persistent SQLite test,
@@ -1030,7 +1032,15 @@ packaging proof in target Docker.
 
 Acceptance: restart-safe round trip and logs work from an installed plugin package.
 
+Implemented with Stash's external raw-plugin interface, authenticated read-only
+GraphQL context, an ADR, automatic sidecar migrations, process-restart persistence,
+task logging, and a self-contained dependency-free package. Package extraction,
+restart, backup, and live Stash health round trips are covered; installation in the
+target Stash remains the acceptance step.
+
 ### WP-09 — Stash-native UI
+
+Status: implementation complete; installed UI acceptance pending.
 
 Dependencies: WP-07, WP-08.
 
@@ -1040,7 +1050,14 @@ loading/error/stale states.
 Acceptance: all five lanes work without per-card backend calls; navigation uses normal
 Stash behavior; keyboard/touch access exposes essential explanations.
 
+Implemented with a Curator route, compass navigation item, five tabs, native scene
+cards, a three-position Familiar/Adventurous control, progressive explanations and
+score trees, image visibility control, and explicit loading, empty, stale, rebuilding,
+and error states.
+
 ### WP-10 — Events and feedback
+
+Status: implementation complete; installed browser acceptance pending.
 
 Dependencies: WP-03, WP-08, WP-09.
 
@@ -1050,7 +1067,14 @@ thumb/detail feedback, exclusions, pruning queue.
 Acceptance: duplicate delivery is harmless; navigation/restart does not lose queued
 events; thumb-down and never-show semantics match the design.
 
+Implemented with one-second/50%-visible qualified impressions, global player-session
+summaries, durable idempotent browser batching, Curator origin/position attribution,
+thumbs, Not now, Never show with explicit reversal, metadata-quality feedback, and a
+sidecar-only pruning workflow.
+
 ### WP-11 — Jobs, configuration, and release
+
+Status: implementation complete; publication and clean-install acceptance pending.
 
 Dependencies: WP-08 through WP-10.
 
@@ -1059,6 +1083,11 @@ package archive, source index, release CI, compatibility declaration.
 
 Acceptance: clean Stash installation can add the source, install Curator, build a
 model, use the page, restart, update, and uninstall without losing Stash-owned data.
+
+Implemented with serialized sync/build/backup tasks, stale-job recovery, automatic
+sync checks, job status, operational configuration, guarded reset, a checksummed
+package source, CI artifacts, GitHub Pages deployment, and Stash v0.31/Python 3.12+
+compatibility and uninstall documentation.
 
 ### Gate B — Product MVP
 
