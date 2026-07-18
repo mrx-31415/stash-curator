@@ -83,6 +83,7 @@ class SyncService:
         page_size: int = 250,
         clock_ms: Callable[[], int] | None = None,
         id_factory: Callable[[], str] | None = None,
+        progress: Callable[[str, int, int, int, int], None] | None = None,
     ) -> None:
         if page_size < 1:
             raise ValueError("page_size must be positive")
@@ -91,6 +92,7 @@ class SyncService:
         self.page_size = page_size
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self.id_factory = id_factory or (lambda: str(uuid.uuid4()))
+        self.progress = progress
 
     def sync(self, *, full: bool = False) -> SyncResult:
         mode = "full" if full else "incremental"
@@ -108,9 +110,15 @@ class SyncService:
         scene_ids: set[str] = set()
         current_entity: str | None = None
         try:
-            for operation in ENTITY_OPERATIONS:
+            for position, operation in enumerate(ENTITY_OPERATIONS):
                 current_entity = operation.entity_type
-                count, ids = self._sync_entity(run_id, operation, full=full)
+                count, ids = self._sync_entity(
+                    run_id,
+                    operation,
+                    full=full,
+                    position=position,
+                    entity_count=len(ENTITY_OPERATIONS),
+                )
                 counts[current_entity] = count
                 if current_entity == "scene":
                     scene_ids.update(ids)
@@ -126,10 +134,18 @@ class SyncService:
         )
 
     def _sync_entity(
-        self, run_id: str, operation: EntityOperation, *, full: bool
+        self,
+        run_id: str,
+        operation: EntityOperation,
+        *,
+        full: bool,
+        position: int,
+        entity_count: int,
     ) -> tuple[int, tuple[str, ...]]:
         page = self.repository.prepare_entity(run_id, operation.entity_type, self.clock_ms())
         if page is None:
+            if self.progress:
+                self.progress(operation.entity_type, 1, 1, position, entity_count)
             return 0, ()
         baseline, _ = self.repository.cursor_watermarks(operation.entity_type)
         processed = 0
@@ -158,6 +174,14 @@ class SyncService:
             )
             processed += len(adapted.items)
             ids.extend(item.id for item in adapted.items)
+            if self.progress:
+                self.progress(
+                    operation.entity_type,
+                    min(processed, adapted.total),
+                    adapted.total,
+                    position,
+                    entity_count,
+                )
             reached_watermark = bool(
                 not full and baseline and timestamps and min(timestamps) <= baseline
             )

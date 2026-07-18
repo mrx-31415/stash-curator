@@ -72,6 +72,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     )
     assert json.loads(task.stdout)["output"]["backup"].endswith(".sqlite3.backup")
     assert "Stash Curator backup completed" in task.stderr
+    assert "\x01p\x021.0000" in task.stderr
 
 
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:

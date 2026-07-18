@@ -42,6 +42,10 @@ def _log(level: str, message: str) -> None:
     print(f"\x01{level}\x02{message}", file=sys.stderr, flush=True)
 
 
+def _progress(value: float) -> None:
+    _log("p", f"{max(0.0, min(value, 1.0)):.4f}")
+
+
 def _stash_connection(payload: dict[str, Any]) -> tuple[str, dict[str, str]]:
     server = payload.get("server_connection") or {}
     host = server.get("Host") or "127.0.0.1"
@@ -275,21 +279,42 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             "job_type": str(existing["job_type"]),
         }
     _log("i", f"Stash Curator {mode} started")
+    _progress(0.01)
     try:
         if mode in {"sync-build", "full-sync-build"}:
             sidecar_config = CuratorAPI(connection).config()["config"]
             assert isinstance(sidecar_config, dict)
+            logged_milestones: dict[str, int] = {}
+
+            def report_sync(
+                entity: str, processed: int, total: int, position: int, entity_count: int
+            ) -> None:
+                fraction = 1.0 if total == 0 else min(processed / total, 1.0)
+                _progress(0.05 + 0.7 * ((position + fraction) / entity_count))
+                milestone = int(fraction * 10)
+                if milestone > logged_milestones.get(entity, -1):
+                    logged_milestones[entity] = milestone
+                    _log("i", f"Synchronizing {entity}s: {processed}/{total}")
+
+            _log("i", "Synchronizing Stash metadata")
             synced = SyncService(
                 _client(payload),
                 SyncRepository(connection),
                 page_size=int(sidecar_config["sync_page_size"]),
+                progress=report_sync,
             ).sync(full=mode == "full-sync-build")
+            _progress(0.78)
+            _log("i", "Rebuilding historical preference signals")
             historical = HistoricalEventStore(connection).rebuild(
                 None if mode == "full-sync-build" or synced.resumed else synced.scene_ids
             )
+            _progress(0.86)
+            _log("i", "Building the recommendation model")
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("source_sync")
             model = coordinator.drain(force=True, max_builds=1)[0]
+            _progress(0.98)
+            _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
                 "sync_run_id": synced.run_id,
                 "entity_counts": synced.entity_counts,
@@ -298,13 +323,18 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode == "build":
+            _progress(0.1)
+            _log("i", "Building the recommendation model")
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("manual_build")
             model = coordinator.drain(force=True, max_builds=1)[0]
+            _progress(0.98)
             summary = {"model_id": model.model_id, "stage_timings_ms": model.stage_timings_ms}
         elif mode == "backup":
+            _progress(0.1)
             destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"
             backup_database(connection, destination)
+            _progress(0.98)
             summary = {"backup": str(destination)}
         else:
             raise ValueError(f"unknown Curator task: {mode}")
@@ -333,6 +363,7 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 ),
             )
         _log("i", f"Stash Curator {mode} completed")
+        _progress(1.0)
         return {"schema_version": SCHEMA_VERSION, "job_id": job_id, **summary}
     finally:
         connection.close()

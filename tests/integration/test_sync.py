@@ -183,6 +183,19 @@ def test_sync_deduplicates_tag_stash_ids_by_endpoint(connection: sqlite3.Connect
     )
 
 
+def test_sync_reports_page_progress(connection: sqlite3.Connection) -> None:
+    updates: list[tuple[str, int, int, int, int]] = []
+    SyncService(
+        SyntheticClient(_entities()),
+        SyncRepository(connection),
+        page_size=1,
+        progress=lambda *update: updates.append(update),
+    ).sync()
+
+    assert updates[-1] == ("scene", 2, 2, 3, 4)
+    assert ("tag", 1, 2, 0, 4) in updates
+
+
 def test_full_sync_resumes_at_transactionally_saved_page(
     connection: sqlite3.Connection,
 ) -> None:
