@@ -6,6 +6,7 @@ import math
 import sqlite3
 import time
 from dataclasses import dataclass
+from heapq import nsmallest
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
@@ -138,6 +139,15 @@ class SlateBuilder:
                     if candidate.classification.lane == target_lane
                 ]
                 or remaining
+            )
+            # ponytail: 500 leaves broad diversity room; raise only if real slates exhaust it.
+            pool = nsmallest(
+                max(500, count * 20),
+                pool,
+                key=lambda candidate: (
+                    -candidate.classification.lane_value,
+                    candidate.classification.scene_id,
+                ),
             )
             ranked = []
             for candidate in pool:
