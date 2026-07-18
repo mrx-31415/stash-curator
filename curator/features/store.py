@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from curator.features.profiles import (
@@ -62,17 +63,26 @@ class FeatureStore:
             )
         return {key: tuple(value) for key, value in result.items()}
 
-    def scene_content_vectors(self, feature_version: str) -> dict[str, dict[str, float]]:
+    def scene_content_vectors(
+        self, feature_version: str, scene_ids: Collection[str] | None = None
+    ) -> dict[str, dict[str, float]]:
+        if scene_ids is not None and not scene_ids:
+            return {}
+        where = "ef.feature_version=? AND ef.entity_type='scene' AND fd.family='content'"
+        parameters: list[object] = [feature_version]
+        if scene_ids is not None:
+            where += f" AND ef.entity_id IN ({','.join('?' for _ in scene_ids)})"
+            parameters.extend(scene_ids)
         vectors: dict[str, dict[str, float]] = {}
         for row in self.connection.execute(
-            """
+            f"""
             SELECT ef.entity_id, fd.name, ef.value
             FROM entity_feature ef
             JOIN feature_definition fd ON fd.feature_id=ef.feature_id
-            WHERE ef.feature_version=? AND ef.entity_type='scene' AND fd.family='content'
+            WHERE {where}
             ORDER BY ef.entity_id, fd.name
             """,
-            (feature_version,),
+            parameters,
         ):
             vectors.setdefault(str(row["entity_id"]), {})[str(row["name"])] = float(row["value"])
         return vectors

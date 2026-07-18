@@ -62,6 +62,7 @@ class CuratorAPI:
             built.lane,
             tuple(replace(item, position=position) for position, item in enumerate(selected)),
             built.diagnostics,
+            built.timings_ms,
         )
         timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
@@ -105,6 +106,7 @@ class CuratorAPI:
             "items": items,
             "diagnostics": list(slate.diagnostics),
             "timings_ms": timings,
+            "ranking_timings_ms": slate.timings_ms,
         }
 
     def inspector(self, entity_type: str, entity_id: str) -> dict[str, object]:

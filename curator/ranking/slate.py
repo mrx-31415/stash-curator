@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from heapq import nsmallest
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
@@ -75,6 +75,7 @@ class Slate:
     lane: str
     items: tuple[RecommendationItem, ...]
     diagnostics: tuple[str, ...]
+    timings_ms: dict[str, int] = field(default_factory=dict)
 
 
 class SlateBuilder:
@@ -90,6 +91,8 @@ class SlateBuilder:
         self._cached_vectors: dict[str, dict[str, float]] = {}
 
     def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
+        started = time.perf_counter()
+        timings: dict[str, int] = {}
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
@@ -101,9 +104,15 @@ class SlateBuilder:
             raise RuntimeError("no published model; run build-model first")
         if model_id != self._cached_model_id:
             policy = LanePolicy(self.connection, self.config)
-            classifications = policy.load(model_id) or policy.classify(model_id)
+            classifications = policy.load(
+                model_id, limit_per_lane=max(500, count * 20)
+            ) or policy.classify(model_id)
+            timings["classifications"] = round((time.perf_counter() - started) * 1000)
+            stage_started = time.perf_counter()
             self._cached_model_id = model_id
             self._cached_candidates = tuple(self._candidates(model_id, classifications))
+            timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         live_eligibility = scene_eligibility(
             self.connection, time.time_ns() // 1_000_000, self.config
         )
@@ -114,10 +123,14 @@ class SlateBuilder:
                 live_eligibility.get(candidate.classification.scene_id, {}).get("eligible", False)
             )
         )
+        timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         selected: list[_Candidate] = []
         selected_utilities: list[tuple[float, dict[str, float], dict[str, float]]] = []
         diagnostics: list[str] = []
         history = self._history_context(model_id)
+        timings["history"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         for position in range(count):
             target_lane, target_subtype = self._target(lane, position, exploration)
             selected_scene_ids = {candidate.classification.scene_id for candidate in selected}
@@ -170,6 +183,8 @@ class SlateBuilder:
             selected.append(chosen)
             selected_utilities.append(utility)
 
+        timings["selection"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         scores = RecommendationModelStore(self.connection).scores(
             model_id, {candidate.classification.scene_id for candidate in selected}
         )
@@ -200,7 +215,9 @@ class SlateBuilder:
                     tuple(reasons),
                 )
             )
-        return Slate(model_id, lane, tuple(items), tuple(diagnostics))
+        timings["items"] = round((time.perf_counter() - stage_started) * 1000)
+        timings["total"] = round((time.perf_counter() - started) * 1000)
+        return Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
 
     def _target(self, lane: str, position: int, exploration: int) -> tuple[str, str | None]:
         if lane == "for_you":
@@ -229,7 +246,10 @@ class SlateBuilder:
         feature_row = self.connection.execute(
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
-        vectors = FeatureStore(self.connection).scene_content_vectors(str(feature_row[0]))
+        scene_ids = {item.scene_id for item in classifications}
+        vectors = FeatureStore(self.connection).scene_content_vectors(
+            str(feature_row[0]), scene_ids
+        )
         self._cached_vectors = vectors
         performers: dict[str, list[str]] = {}
         for row in self.connection.execute(

@@ -266,7 +266,33 @@ class LanePolicy:
         self._persist(model_id, classifications)
         return tuple(classifications)
 
-    def load(self, model_id: str) -> tuple[LaneClassification, ...]:
+    def load(
+        self, model_id: str, *, limit_per_lane: int | None = None
+    ) -> tuple[LaneClassification, ...]:
+        if limit_per_lane is not None and limit_per_lane < 1:
+            raise ValueError("limit_per_lane must be positive")
+        rows: list[sqlite3.Row] = []
+        lanes: tuple[str | None, ...] = LANES if limit_per_lane else (None,)
+        for lane in lanes:
+            where = "model_id=?"
+            parameters: list[object] = [model_id]
+            if lane:
+                where += " AND lane=?"
+                parameters.append(lane)
+            limit = ""
+            if limit_per_lane:
+                limit = " LIMIT ?"
+                parameters.append(limit_per_lane)
+            rows.extend(
+                self.connection.execute(
+                    f"""
+                    SELECT scene_id, lane, subtype, lane_value, qualification_json
+                    FROM model_scene_lane WHERE {where}
+                    ORDER BY lane_value DESC, scene_id{limit}
+                    """,
+                    parameters,
+                )
+            )
         return tuple(
             LaneClassification(
                 str(row["scene_id"]),
@@ -275,13 +301,7 @@ class LanePolicy:
                 float(row["lane_value"]),
                 json.loads(str(row["qualification_json"])),
             )
-            for row in self.connection.execute(
-                """
-                SELECT scene_id, lane, subtype, lane_value, qualification_json
-                FROM model_scene_lane WHERE model_id=? ORDER BY scene_id, lane
-                """,
-                (model_id,),
-            )
+            for row in rows
         )
 
     @staticmethod
