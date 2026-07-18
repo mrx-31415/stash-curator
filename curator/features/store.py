@@ -63,13 +63,19 @@ class FeatureStore:
         return {key: tuple(value) for key, value in result.items()}
 
     def scene_content_vectors(self, feature_version: str) -> dict[str, dict[str, float]]:
-        features = self.entity_features(feature_version, "scene")
-        return {
-            entity_id: {
-                feature.name: feature.value for feature in values if feature.family == "content"
-            }
-            for entity_id, values in features.items()
-        }
+        vectors: dict[str, dict[str, float]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT ef.entity_id, fd.name, ef.value
+            FROM entity_feature ef
+            JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+            WHERE ef.feature_version=? AND ef.entity_type='scene' AND fd.family='content'
+            ORDER BY ef.entity_id, fd.name
+            """,
+            (feature_version,),
+        ):
+            vectors.setdefault(str(row["entity_id"]), {})[str(row["name"])] = float(row["value"])
+        return vectors
 
     def performer_profiles(self, feature_version: str) -> dict[str, PerformerProfile]:
         features = self.entity_features(feature_version, "performer")

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
-from curator.model import ModelSceneScore, RecommendationModelStore
+from curator.model import RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
 from curator.ranking.policy import LaneClassification, LanePolicy
 
@@ -86,7 +86,6 @@ class SlateBuilder:
         self.config = config
         self._cached_model_id: str | None = None
         self._cached_candidates: tuple[_Candidate, ...] = ()
-        self._cached_scores: dict[str, ModelSceneScore] = {}
 
     def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
@@ -103,7 +102,6 @@ class SlateBuilder:
             classifications = policy.load(model_id) or policy.classify(model_id)
             self._cached_model_id = model_id
             self._cached_candidates = tuple(self._candidates(model_id, classifications))
-            self._cached_scores = RecommendationModelStore(self.connection).scores(model_id)
         live_eligibility = scene_eligibility(
             self.connection, time.time_ns() // 1_000_000, self.config
         )
@@ -114,9 +112,8 @@ class SlateBuilder:
                 live_eligibility.get(candidate.classification.scene_id, {}).get("eligible", False)
             )
         )
-        scores = self._cached_scores
         selected: list[_Candidate] = []
-        items: list[RecommendationItem] = []
+        selected_utilities: list[tuple[float, dict[str, float], dict[str, float]]] = []
         diagnostics: list[str] = []
         history = self._history_context(model_id)
         for position in range(count):
@@ -160,14 +157,21 @@ class SlateBuilder:
                 break
             _, _, chosen, utility = sorted(ranked, key=lambda item: (-item[0], item[1]))[0]
             selected.append(chosen)
+            selected_utilities.append(utility)
+
+        scores = RecommendationModelStore(self.connection).scores(
+            model_id, {candidate.classification.scene_id for candidate in selected}
+        )
+        items: list[RecommendationItem] = []
+        selected_items = zip(selected, selected_utilities, strict=True)
+        for position, (chosen, utility) in enumerate(selected_items):
             score = scores[chosen.classification.scene_id]
-            final_lane = lane
             reasons = ["eligibility.lane"]
             reasons.extend(f"diversity.{name}" for name, value in utility[1].items() if value > 0)
             items.append(
                 RecommendationItem(
                     chosen.classification.scene_id,
-                    final_lane,
+                    lane,
                     chosen.classification.lane,
                     chosen.classification.subtype,
                     position,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 
@@ -34,12 +35,19 @@ class RecommendationModelStore:
         ).fetchone()
         return str(row[0]) if row else None
 
-    def scores(self, model_id: str) -> dict[str, ModelSceneScore]:
+    def scores(
+        self, model_id: str, scene_ids: Collection[str] | None = None
+    ) -> dict[str, ModelSceneScore]:
+        if scene_ids is not None and not scene_ids:
+            return {}
+        where = "model_id=?"
+        parameters: list[object] = [model_id]
+        if scene_ids is not None:
+            where += f" AND scene_id IN ({','.join('?' for _ in scene_ids)})"
+            parameters.extend(scene_ids)
         rows = self.connection.execute(
-            """
-            SELECT * FROM model_scene_score WHERE model_id=? ORDER BY scene_id
-            """,
-            (model_id,),
+            f"SELECT * FROM model_scene_score WHERE {where} ORDER BY scene_id",
+            parameters,
         )
         return {
             str(row["scene_id"]): ModelSceneScore(
