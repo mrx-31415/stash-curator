@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import html
 import json
 import math
@@ -16,14 +15,6 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 from typing import Any
-
-import numpy as np
-from scipy.sparse import coo_matrix, csr_matrix
-from scipy.stats import spearmanr
-from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.linear_model import Ridge
-from sklearn.preprocessing import MaxAbsScaler, normalize
 
 from curator.cli import _stashdb_api_key
 from curator.config import DEFAULT_CONFIG
@@ -251,83 +242,6 @@ def _semantic_key(
     return None
 
 
-def _local_vectors(
-    connection: sqlite3.Connection,
-    version: str,
-    scene_ids: list[str],
-    links: dict[str, dict[str, str]],
-) -> tuple[list[dict[str, float]], dict[str, str]]:
-    connection.execute("DROP TABLE IF EXISTS temp.external_poc_scene")
-    connection.execute("CREATE TEMP TABLE external_poc_scene(scene_id TEXT PRIMARY KEY)")
-    connection.executemany(
-        "INSERT INTO external_poc_scene VALUES (?)", ((item,) for item in scene_ids)
-    )
-    tag_ids = {
-        str(row[0]): str(row[1])
-        for row in connection.execute(
-            "SELECT tag_id, stash_id FROM source_tag_stash_id WHERE lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))",
-            (STASHDB,),
-        )
-    }
-    names: dict[str, str] = {}
-    vectors: dict[str, dict[str, float]] = defaultdict(dict)
-    for row in connection.execute(
-        """
-        SELECT ef.entity_id, fd.family, fd.name, fd.metadata_json,
-               ef.value * ef.confidence
-        FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-        JOIN external_poc_scene selected ON selected.scene_id=ef.entity_id
-        WHERE ef.feature_version=? AND ef.entity_type='scene'
-        """,
-        (version,),
-    ):
-        metadata = json.loads(row[3])
-        key = _semantic_key(
-            str(row[1]),
-            str(row[2]),
-            metadata,
-            tag_ids,
-            links["performers"],
-            links["studios"],
-        )
-        if key:
-            vectors[str(row[0])][key] = float(row[4])
-            names[key] = str(metadata.get("tag_name") or row[2]).replace("_", " ")
-    for row in connection.execute(
-        """
-        SELECT sp.scene_id, fd.family, fd.name, avg(ef.value * ef.confidence)
-        FROM scene_performer sp
-        JOIN external_poc_scene selected ON selected.scene_id=sp.scene_id
-        JOIN source_performer performer ON performer.performer_id=sp.performer_id
-        JOIN entity_feature ef ON ef.entity_id=sp.performer_id
-        JOIN feature_definition fd USING(feature_id)
-        WHERE ef.feature_version=? AND ef.entity_type='performer'
-          AND performer.gender='FEMALE'
-          AND fd.family LIKE 'profile:%' AND fd.family != 'profile:content'
-        GROUP BY sp.scene_id, fd.family, fd.name
-        """,
-        (version,),
-    ):
-        key = f"{row[1]}:{row[2]}"
-        vectors[str(row[0])][key] = float(row[3])
-        names[key] = (
-            f"performer {str(row[1]).removeprefix('profile:')}: {str(row[2]).replace('_', ' ')}"
-        )
-    for local_id, external_id in links["performers"].items():
-        row = connection.execute(
-            "SELECT name FROM source_performer WHERE performer_id=?", (local_id,)
-        ).fetchone()
-        if row:
-            names[f"performer:{external_id}"] = str(row[0] or local_id)
-    for local_id, external_id in links["studios"].items():
-        row = connection.execute(
-            "SELECT name FROM source_studio WHERE studio_id=?", (local_id,)
-        ).fetchone()
-        if row:
-            names[f"studio:{external_id}"] = str(row[0] or local_id)
-    return [vectors[item] for item in scene_ids], names
-
-
 def _profile_features(performer: dict[str, Any], recorded: str | None) -> dict[str, float]:
     values: dict[str, float] = {}
     for family, prefix, field, confidence in (
@@ -403,20 +317,6 @@ def _external_scene_features(scene: dict[str, Any], allowed: set[str]) -> dict[s
     return values
 
 
-def _matrix(vectors: list[dict[str, float]], keys: list[str]) -> csr_matrix:
-    columns = {key: index for index, key in enumerate(keys)}
-    rows: list[int] = []
-    cols: list[int] = []
-    values: list[float] = []
-    for row, vector in enumerate(vectors):
-        for key, value in vector.items():
-            if key in columns and value:
-                rows.append(row)
-                cols.append(columns[key])
-                values.append(value)
-    return coo_matrix((values, (rows, cols)), shape=(len(vectors), len(keys))).tocsr()
-
-
 def _external_profile(identifier: str, values: dict[str, float]) -> PerformerProfile:
     blocks: dict[str, dict[str, ProfileValue]] = defaultdict(dict)
     for key, value in values.items():
@@ -427,21 +327,72 @@ def _external_profile(identifier: str, values: dict[str, float]) -> PerformerPro
     return PerformerProfile(identifier, dict(blocks))
 
 
+def _external_profiles(
+    scenes: list[dict[str, Any]], external_to_local_tags: dict[str, str]
+) -> tuple[dict[str, PerformerProfile], dict[str, dict[str, Any]]]:
+    profiles: dict[str, PerformerProfile] = {}
+    raw_performers: dict[str, dict[str, Any]] = {}
+    content: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    scene_counts: dict[str, int] = defaultdict(int)
+    for scene in scenes:
+        recorded = scene.get("production_date") or scene.get("release_date")
+        tags = [
+            f"tag:{external_to_local_tags[str(tag['id'])]}"
+            for tag in scene.get("tags", [])
+            if str(tag["id"]) in external_to_local_tags
+        ]
+        for appearance in scene.get("performers", []):
+            raw = appearance["performer"]
+            if not _is_female(raw):
+                continue
+            identifier = str(raw["id"])
+            raw_performers.setdefault(identifier, raw)
+            profiles.setdefault(
+                identifier, _external_profile(identifier, _profile_features(raw, recorded))
+            )
+            scene_counts[identifier] += 1
+            for tag in tags:
+                content[identifier][tag] += 1.0
+    for identifier, values in content.items():
+        norm = math.sqrt(sum(value * value for value in values.values())) or 1.0
+        confidence = min(1.0, scene_counts[identifier] / 5)
+        profiles[identifier].blocks["content"] = {
+            name: ProfileValue(value / norm, confidence) for name, value in values.items()
+        }
+    return profiles, raw_performers
+
+
+def _adjusted_similarity(result, block_weights: dict[str, float]) -> float:
+    total = sum(weight for block, weight in block_weights.items() if block != "content")
+    used = sum(
+        result.block_weights[block] for block in result.block_similarities if block != "content"
+    )
+    content = result.block_weights.get("content", 0.0)
+    content_used = content if "content" in result.block_similarities else 0.0
+    coverage = (used + content_used) / max(total + content, 1e-9)
+    score = result.similarity * math.sqrt(coverage)
+    if "measurements" not in result.block_similarities:
+        score = min(score, 0.65)
+    return score
+
+
 def _performer_matches(
     connection: sqlite3.Connection,
     version: str,
     model_id: str,
     scenes: list[dict[str, Any]],
     local_external_ids: set[str],
+    external_to_local_tags: dict[str, str],
 ) -> dict[str, dict[str, Any]]:
     profiles = FeatureStore(connection).performer_profiles(version)
-    anchor_scores = {
-        str(row[0]): float(row[1])
+    anchor_evidence = {
+        str(row[0]): (int(row[1]), float(row[2]), float(row[3]))
         for row in connection.execute(
             """
-            SELECT sp.performer_id, avg(d.direct_appeal * d.confidence)
+            SELECT sp.performer_id, count(DISTINCT d.scene_id), sum(d.confidence),
+                   sum(d.direct_appeal * d.confidence) / sum(d.confidence)
             FROM scene_performer sp JOIN direct_scene_state d USING(scene_id)
-            WHERE d.model_id=? GROUP BY sp.performer_id
+            WHERE d.model_id=? GROUP BY sp.performer_id HAVING sum(d.confidence) > 0
             """,
             (model_id,),
         )
@@ -452,65 +403,322 @@ def _performer_matches(
             "SELECT performer_id FROM source_performer WHERE gender='FEMALE'"
         )
     }
+    favorites = {
+        str(row[0])
+        for row in connection.execute("SELECT performer_id FROM source_performer WHERE favorite=1")
+    }
     anchors = sorted(
         (
             item
             for item in profiles.values()
-            if item.performer_id in female_ids and anchor_scores.get(item.performer_id, -1) > 0
+            if item.performer_id in female_ids
+            and item.performer_id in anchor_evidence
+            and anchor_evidence[item.performer_id][2] > 0
+            and (
+                item.performer_id in favorites
+                or (
+                    anchor_evidence[item.performer_id][0] >= 5
+                    and anchor_evidence[item.performer_id][1] >= 2.5
+                )
+            )
         ),
-        key=lambda item: -anchor_scores[item.performer_id],
+        key=lambda item: -anchor_evidence[item.performer_id][2],
     )[:40]
     names = {
         str(row[0]): str(row[1] or row[0])
         for row in connection.execute("SELECT performer_id, name FROM source_performer")
     }
     weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
-    weights["content"] = 0.0
+    external_profiles, raw_performers = _external_profiles(scenes, external_to_local_tags)
+    local_names = {name.casefold() for name in names.values()}
     candidates: dict[str, dict[str, Any]] = {}
-    for scene in scenes:
-        recorded = scene.get("production_date") or scene.get("release_date")
-        for appearance in scene.get("performers", []):
-            raw = appearance["performer"]
-            if not _is_female(raw):
-                continue
-            identifier = str(raw["id"])
-            if identifier in local_external_ids or identifier in candidates:
-                continue
-            profile = _external_profile(identifier, _profile_features(raw, recorded))
-            matches = sorted(
-                ((performer_similarity(profile, anchor, weights), anchor) for anchor in anchors),
-                key=lambda item: -item[0].similarity,
-            )[:3]
-            candidates[identifier] = {
+    for identifier, profile in external_profiles.items():
+        raw = raw_performers[identifier]
+        if identifier in local_external_ids or str(raw.get("name", "")).casefold() in local_names:
+            continue
+        matches = sorted(
+            (
+                (_adjusted_similarity(result, weights), result, anchor)
+                for anchor in anchors
+                if (result := performer_similarity(profile, anchor, weights)).similarity > 0
+            ),
+            key=lambda item: -item[0],
+        )[:5]
+        denominator = sum(score**3 for score, _, _ in matches)
+        taste = (
+            sum(anchor_evidence[anchor.performer_id][2] * score**3 for score, _, anchor in matches)
+            / denominator
+            if denominator
+            else 0.0
+        )
+        candidates[identifier] = {
+            "id": identifier,
+            "name": str(raw.get("name") or identifier),
+            "image": next(
+                (image["url"] for image in raw.get("images", []) if image.get("url")), ""
+            ),
+            "score": matches[0][0] if matches else 0.0,
+            "taste": taste,
+            "matches": [
+                {
+                    "name": names.get(anchor.performer_id, anchor.performer_id),
+                    "score": score,
+                    "blocks": sorted(
+                        result.block_similarities,
+                        key=lambda block: (
+                            -result.block_weights[block] * result.block_similarities[block]
+                        ),
+                    )[:4],
+                }
+                for score, result, anchor in matches[:3]
+            ],
+        }
+    return candidates
+
+
+def _similar_to(
+    connection: sqlite3.Connection,
+    version: str,
+    name: str,
+    scenes: list[dict[str, Any]],
+    local_external_ids: set[str],
+    external_to_local_tags: dict[str, str],
+) -> list[dict[str, Any]]:
+    target_row = connection.execute(
+        "SELECT performer_id FROM source_performer WHERE lower(name)=lower(?) AND gender='FEMALE'",
+        (name,),
+    ).fetchone()
+    if not target_row:
+        raise RuntimeError(f"female local performer not found: {name}")
+    target = FeatureStore(connection).performer_profiles(version).get(str(target_row[0]))
+    if not target:
+        raise RuntimeError(f"performer has no feature profile: {name}")
+    profiles, raw_performers = _external_profiles(scenes, external_to_local_tags)
+    local_names = {
+        str(row[0]).casefold()
+        for row in connection.execute("SELECT name FROM source_performer WHERE name IS NOT NULL")
+    }
+    weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
+    rows = []
+    for identifier, profile in profiles.items():
+        raw = raw_performers[identifier]
+        if identifier in local_external_ids or str(raw.get("name", "")).casefold() in local_names:
+            continue
+        result = performer_similarity(profile, target, weights)
+        score = _adjusted_similarity(result, weights)
+        rows.append(
+            {
                 "id": identifier,
                 "name": str(raw.get("name") or identifier),
                 "image": next(
                     (image["url"] for image in raw.get("images", []) if image.get("url")), ""
                 ),
-                "score": matches[0][0].similarity if matches else 0.0,
+                "score": score,
                 "matches": [
                     {
-                        "name": names.get(anchor.performer_id, anchor.performer_id),
-                        "score": result.similarity,
+                        "name": name,
                         "blocks": sorted(
                             result.block_similarities,
                             key=lambda block: (
                                 -result.block_weights[block] * result.block_similarities[block]
                             ),
-                        )[:4],
+                        )[:5],
                     }
-                    for result, anchor in matches
                 ],
             }
-    return candidates
+        )
+    return sorted(rows, key=lambda row: (-row["score"], row["name"]))
+
+
+def _clamp(value: float, bound: float) -> float:
+    return max(-bound, min(bound, value))
+
+
+def _asymmetric(values: list[float]) -> float:
+    positives = sorted((value for value in values if value > 0), reverse=True)
+    negatives = [value for value in values if value < 0]
+    positive = positives[0] + 0.25 * sum(positives[1:]) if positives else 0.0
+    friction = 0.25 * sum(negatives) / len(negatives) if negatives else 0.0
+    return positive + friction
+
+
+def _content_vector(
+    scene: dict[str, Any], external_to_local_tags: dict[str, str]
+) -> dict[str, float]:
+    values = {
+        f"tag:{external_to_local_tags[str(tag['id'])]}": 1.0
+        for tag in scene.get("tags", [])
+        if str(tag["id"]) in external_to_local_tags
+    }
+    norm = math.sqrt(len(values)) or 1.0
+    return {key: value / norm for key, value in values.items()}
+
+
+def _neighbor_evidence(
+    candidate: dict[str, float],
+    local_vectors: dict[str, dict[str, float]],
+    labels: dict[str, tuple[float, float]],
+    strengths: dict[str, float],
+) -> tuple[float, list[str]]:
+    maximum = max(strengths.values(), default=0.0)
+
+    def weighted(vector: dict[str, float]) -> dict[str, float]:
+        values = {
+            key: value * strengths.get(key, 0.0) / maximum
+            for key, value in vector.items()
+            if maximum and strengths.get(key, 0.0) > 0
+        }
+        norm = math.sqrt(sum(value * value for value in values.values())) or 1.0
+        return {key: value / norm for key, value in values.items()}
+
+    target = weighted(candidate)
+    evidence = []
+    for scene_id, vector in local_vectors.items():
+        if scene_id not in labels:
+            continue
+        other = weighted(vector)
+        shared = set(target) & set(other)
+        cosine = sum(target[key] * other[key] for key in shared)
+        similarity = cosine * (1 - math.exp(-len(shared) / 4))
+        if similarity < DEFAULT_CONFIG.model.minimum_neighbor_similarity:
+            continue
+        outcome, confidence = labels[scene_id]
+        evidence.append((similarity**3 * confidence, outcome, scene_id))
+    evidence.sort(reverse=True)
+    selected = evidence[: DEFAULT_CONFIG.model.neighbor_count]
+    denominator = sum(item[0] for item in selected)
+    if not denominator:
+        return 0.0, []
+    label_support = sum(confidence for _, confidence in labels.values())
+    label_mean = (
+        sum(outcome * confidence for outcome, confidence in labels.values()) / label_support
+    )
+    outcome = sum(weight * value for weight, value, _ in selected) / denominator
+    confidence = 1 - math.exp(-denominator / DEFAULT_CONFIG.model.neighbor_confidence_scale)
+    return (outcome - label_mean) * confidence, [item[2] for item in selected[:3]]
+
+
+def _score_candidates(
+    connection: sqlite3.Connection,
+    version: str,
+    model_id: str,
+    scenes: list[dict[str, Any]],
+    performer_matches: dict[str, dict[str, Any]],
+    affinity_weights: dict[str, float],
+    external_to_local_tags: dict[str, str],
+) -> list[dict[str, Any]]:
+    config = DEFAULT_CONFIG.model
+    labels = {
+        str(row[0]): (float(row[1]), float(row[2]))
+        for row in connection.execute(
+            "SELECT scene_id, direct_appeal, confidence FROM direct_scene_state WHERE model_id=?",
+            (model_id,),
+        )
+    }
+    support = sum(confidence for _, confidence in labels.values())
+    label_mean = sum(value * confidence for value, confidence in labels.values()) / support
+    baseline = _clamp(
+        label_mean * support / (config.affinity_prior + support), config.baseline_bound
+    )
+    local_content = FeatureStore(connection).scene_content_vectors(version)
+    strengths = {
+        str(row[0]): max(0.0, float(row[1]))
+        for row in connection.execute(
+            """
+            SELECT fd.name, fa.affinity * fa.confidence
+            FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+            WHERE fa.model_id=? AND fd.family='content'
+            """,
+            (model_id,),
+        )
+    }
+    local_titles = {
+        str(row[0]): str(row[1] or row[0])
+        for row in connection.execute("SELECT scene_id, title FROM source_scene")
+    }
+    allowed = set(affinity_weights)
+    results = []
+    for scene in scenes:
+        features = _external_scene_features(scene, allowed)
+        contributions = {
+            key: value * affinity_weights.get(key, 0.0) for key, value in features.items()
+        }
+        content = _clamp(
+            sum(value for key, value in contributions.items() if key.startswith("tag:")),
+            config.content_bound,
+        )
+        identities = [value for key, value in contributions.items() if key.startswith("performer:")]
+        identity = _clamp(_asymmetric(identities), config.performer_identity_bound)
+        studio = _clamp(
+            sum(value for key, value in contributions.items() if key.startswith("studio:")),
+            config.studio_bound,
+        )
+        structure = _clamp(
+            sum(value for key, value in contributions.items() if key.startswith("structure:")),
+            config.structure_bound,
+        )
+        similarity_values = []
+        for appearance in scene.get("performers", []):
+            match = performer_matches.get(str(appearance["performer"]["id"]))
+            if match:
+                similarity_values.append(float(match["taste"]) * float(match["score"]))
+        performer = _clamp(_asymmetric(similarity_values), config.performer_similarity_bound)
+        neighbor, neighbor_ids = _neighbor_evidence(
+            _content_vector(scene, external_to_local_tags), local_content, labels, strengths
+        )
+        neighbor = _clamp(neighbor, config.neighbor_bound)
+        score = baseline + content + identity + performer + studio + structure + neighbor
+        evidence = sorted(
+            (
+                (value, key)
+                for key, value in contributions.items()
+                if value > 0 and (key.startswith("tag:") or key.startswith("performer:"))
+            ),
+            reverse=True,
+        )[:4]
+        display = {
+            **{f"tag:{tag['id']}": str(tag["name"]) for tag in scene.get("tags", [])},
+            **{
+                f"performer:{item['performer']['id']}": str(item["performer"]["name"])
+                for item in scene.get("performers", [])
+            },
+        }
+        match_names = [
+            match["matches"][0]["name"]
+            for appearance in scene.get("performers", [])
+            if (match := performer_matches.get(str(appearance["performer"]["id"])))
+            and match["matches"]
+        ]
+        mapped = len(_content_vector(scene, external_to_local_tags))
+        results.append(
+            {
+                "scene": scene,
+                "score": score,
+                "evidence": [display.get(key, key) for _, key in evidence],
+                "anchors": match_names[:2],
+                "neighbors": [local_titles[item] for item in neighbor_ids],
+                "coverage": mapped / max(1, len(scene.get("tags", []))),
+                "components": {
+                    "baseline": baseline,
+                    "content": content,
+                    "neighbor": neighbor,
+                    "performer identity": identity,
+                    "performer similarity": performer,
+                    "studio": studio,
+                    "structure": structure,
+                },
+            }
+        )
+    return sorted(results, key=lambda item: (-item["score"], str(item["scene"]["id"])))
 
 
 def _render(
     output: Path,
     metrics: dict[str, object],
-    affinity: list[dict[str, Any]],
-    latent: list[dict[str, Any]],
+    scenes: list[dict[str, Any]],
     performers: list[dict[str, Any]],
+    similar_to: str | None,
+    targeted: list[dict[str, Any]],
 ) -> None:
     def scene_cards(rows: list[dict[str, Any]]) -> str:
         cards = []
@@ -519,31 +727,39 @@ def _render(
             image = next((item["url"] for item in scene.get("images", []) if item.get("url")), "")
             people = ", ".join(item["performer"]["name"] for item in scene.get("performers", []))
             evidence = ", ".join(row["evidence"]) or "limited shared metadata"
+            anchors = ", ".join(row["anchors"])
+            neighbors = ", ".join(row["neighbors"])
+            components = " · ".join(
+                f"{name} {value:+.3f}" for name, value in row["components"].items()
+            )
             cards.append(f"""<article>{f'<img loading="lazy" src="{html.escape(image, quote=True)}">' if image else ""}
 <h3><a href="https://stashdb.org/scenes/{scene["id"]}">{html.escape(scene.get("title") or scene["id"])}</a></h3>
 <p class="muted">{html.escape(people)} · {html.escape((scene.get("studio") or {}).get("name", ""))}</p>
 <p><b>Score:</b> {row["score"]:+.3f} · <b>Coverage:</b> {row["coverage"]:.0%}</p>
-<p><b>Why:</b> {html.escape(evidence)}. It is closest to {html.escape(row["neighbor"])}, which has positive history.</p>
+<p><b>Why:</b> {html.escape(evidence)}{html.escape("; similar to " + anchors) if anchors else ""}{html.escape("; supported by " + neighbors) if neighbors else ""}.</p>
+<details><summary>Score components</summary><p>{html.escape(components)}</p></details>
 <p class="muted">Candidate source: {html.escape(", ".join(scene["candidate_sources"]))}</p></article>""")
         return "".join(cards)
 
-    performer_cards = "".join(
-        f"""<article>{
-            f'<img loading="lazy" src="{html.escape(row["image"], quote=True)}">'
-            if row["image"]
-            else ""
-        }
+    def performer_cards(rows: list[dict[str, Any]]) -> str:
+        return "".join(
+            f"""<article>{
+                f'<img loading="lazy" src="{html.escape(row["image"], quote=True)}">'
+                if row["image"]
+                else ""
+            }
 <h3><a href="https://stashdb.org/performers/{row["id"]}">{html.escape(row["name"])}</a></h3>
 <p><b>Similarity:</b> {row["score"]:.2f}</p><p>{
-            html.escape(
-                "; ".join(
-                    f"Similar to {match['name']} in {', '.join(block.replace('_', ' ') for block in match['blocks'])}"
-                    for match in row["matches"][:2]
+                html.escape(
+                    "; ".join(
+                        f"Similar to {match['name']} in {', '.join(block.replace('_', ' ') for block in match['blocks'])}"
+                        for match in row["matches"][:2]
+                    )
                 )
-            )
-        }</p></article>"""
-        for row in performers
-    )
+            }</p></article>"""
+            for row in rows
+        )
+
     metric_rows = "".join(
         f"<tr><th>{html.escape(key.replace('_', ' ').title())}</th><td>{html.escape(str(value))}</td></tr>"
         for key, value in metrics.items()
@@ -558,10 +774,10 @@ article{{background:#24242a;border-radius:10px;padding:1rem}}img{{width:100%;asp
 body.hide-images img{{display:none}}button{{padding:.5rem .8rem}}</style>
 <h1>External StashDB recommendation PoC</h1>
 <button onclick="document.body.classList.toggle('hide-images')">Show / hide images</button>
-<p>This report compares the same external candidate pool using current feature affinities and a latent taste model. Diversity is intentionally not applied.</p>
-<table>{metric_rows}</table><h2>Feature-affinity baseline</h2><div class="grid">{scene_cards(affinity)}</div>
-<h2>Latent model</h2><div class="grid">{scene_cards(latent)}</div>
-<h2>Similar unseen performers</h2><div class="grid">{performer_cards}</div>""",
+<p>This report extends Curator's v1 appeal signals to external metadata. Diversity is intentionally not applied.</p>
+<table>{metric_rows}</table><h2>External v1 recommendations</h2><div class="grid">{scene_cards(scenes)}</div>
+<h2>Similar unseen performers</h2><div class="grid">{performer_cards(performers)}</div>
+{f'<h2>Similar to {html.escape(similar_to)}</h2><div class="grid">{performer_cards(targeted)}</div>' if similar_to else ""}""",
         encoding="utf-8",
     )
 
@@ -611,56 +827,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         if len(candidates) < args.count:
             raise RuntimeError(f"only {len(candidates)} unseen candidates were found")
 
-        raw_labels = [
-            (str(row[0]), float(row[1]), float(row[2]))
-            for row in connection.execute(
-                "SELECT scene_id, direct_appeal, confidence FROM direct_scene_state WHERE model_id=?",
-                (model_id,),
-            )
-        ]
-        all_scene_ids = [
-            str(row[0]) for row in connection.execute("SELECT scene_id FROM source_scene")
-        ]
-        labelled = {row[0] for row in raw_labels}
-        remaining = sorted(
-            (item for item in all_scene_ids if item not in labelled),
-            key=lambda item: hashlib.sha256(item.encode()).digest(),
-        )
-        local_ids = sorted(labelled) + remaining[: max(0, args.max_scenes - len(labelled))]
-        local_vectors, names = _local_vectors(connection, version, local_ids, links)
-        keys = sorted(set().union(*(vector.keys() for vector in local_vectors)))
-        external_vectors = [_external_scene_features(scene, set(keys)) for scene in candidates]
-        local_raw, external_raw = _matrix(local_vectors, keys), _matrix(external_vectors, keys)
-
-        scaler = MaxAbsScaler().fit(local_raw)
-        tfidf = TfidfTransformer().fit(scaler.transform(local_raw))
-        local_matrix = tfidf.transform(scaler.transform(local_raw))
-        external_matrix = tfidf.transform(scaler.transform(external_raw))
-        dimensions = min(args.dimensions, local_matrix.shape[0] - 1, local_matrix.shape[1] - 1)
-        svd = TruncatedSVD(dimensions, random_state=42).fit(local_matrix)
-        local_embedding = normalize(svd.transform(local_matrix))
-        external_embedding = normalize(svd.transform(external_matrix))
-        index = {scene_id: row for row, scene_id in enumerate(local_ids)}
-        labels = [
-            (index[s], value, confidence) for s, value, confidence in raw_labels if s in index
-        ]
-        label_rows = np.array([item[0] for item in labels])
-        outcomes = np.array([item[1] for item in labels])
-        weights = np.array([item[2] for item in labels])
-        rng = np.random.default_rng(42)
-        order = rng.permutation(len(labels))
-        split = max(1, int(len(labels) * 0.8))
-        validation = Ridge(alpha=args.alpha).fit(
-            local_embedding[label_rows[order[:split]]],
-            outcomes[order[:split]],
-            sample_weight=weights[order[:split]],
-        )
-        held_out = validation.predict(local_embedding[label_rows[order[split:]]])
-        taste = Ridge(alpha=args.alpha).fit(
-            local_embedding[label_rows], outcomes, sample_weight=weights
-        )
-        latent_scores = taste.predict(external_embedding)
-
         affinity_weights: dict[str, float] = {}
         tag_ids = {
             str(item[0]): str(item[1])
@@ -690,94 +856,49 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             )
             if key:
                 affinity_weights[key] = float(row[3])
-        affinity_scores = np.array(
-            [
-                sum(value * affinity_weights.get(key, 0.0) for key, value in vector.items())
-                for vector in external_vectors
-            ]
+        external_to_local_tags = {external: local for local, external in tag_ids.items()}
+        all_performer_matches = _performer_matches(
+            connection,
+            version,
+            model_id,
+            candidates,
+            set(links["performers"].values()),
+            external_to_local_tags,
         )
-        positive_rows = label_rows[outcomes >= np.quantile(outcomes, 0.75)]
-        local_titles = {
-            str(row[0]): str(row[1] or row[0])
-            for row in connection.execute("SELECT scene_id, title FROM source_scene")
-        }
-        latent_feature_weights = svd.components_.T @ taste.coef_
-
-        def ranked(scores: np.ndarray, *, latent: bool) -> list[dict[str, Any]]:
-            result = []
-            for row in np.argsort(-scores)[: args.count]:
-                if latent:
-                    vector = external_matrix.getrow(int(row))
-                    contributions = vector.data * latent_feature_weights[vector.indices]
-                    evidence = [
-                        names.get(keys[vector.indices[pos]], keys[vector.indices[pos]])
-                        for pos in np.argsort(-contributions)[:5]
-                        if contributions[pos] > 0
-                    ]
-                else:
-                    contributions = sorted(
-                        (
-                            (value * affinity_weights.get(key, 0.0), key)
-                            for key, value in external_vectors[int(row)].items()
-                        ),
-                        reverse=True,
-                    )
-                    evidence = [
-                        names.get(key, key) for value, key in contributions[:5] if value > 0
-                    ]
-                similarities = local_embedding[positive_rows] @ external_embedding[int(row)]
-                neighbor_row = int(positive_rows[int(np.argmax(similarities))])
-                result.append(
-                    {
-                        "scene": candidates[int(row)],
-                        "score": float(scores[int(row)]),
-                        "evidence": evidence,
-                        "neighbor": local_titles[local_ids[neighbor_row]],
-                        "coverage": min(
-                            1.0,
-                            len(external_vectors[int(row)])
-                            / max(
-                                1,
-                                len(candidates[int(row)].get("tags", []))
-                                + len(candidates[int(row)].get("performers", []))
-                                + 1,
-                            ),
-                        ),
-                    }
-                )
-            return result
-
         performer_rows = sorted(
-            _performer_matches(
-                connection, version, model_id, candidates, set(links["performers"].values())
-            ).values(),
-            key=lambda item: (-item["score"], item["name"]),
+            all_performer_matches.values(),
+            key=lambda item: (-item["taste"] * item["score"], item["name"]),
         )[: args.count]
-        overlap = len(
-            {str(item["scene"]["id"]) for item in ranked(affinity_scores, latent=False)}
-            & {str(item["scene"]["id"]) for item in ranked(latent_scores, latent=True)}
-        )
+        ranked = _score_candidates(
+            connection,
+            version,
+            model_id,
+            candidates,
+            all_performer_matches,
+            affinity_weights,
+            external_to_local_tags,
+        )[: args.count]
         metrics: dict[str, object] = {
             "model": model_id,
             "linked_seed_scenes": len(seed_scenes),
             "candidate_scenes_fetched": len(fetched),
             "unseen_candidates": len(candidates),
-            "shared_feature_columns": len(keys),
-            "top_result_overlap": f"{overlap}/{args.count}",
-            "latent_held_out_mae": round(
-                float(np.mean(np.abs(outcomes[order[split:]] - held_out))), 4
-            ),
-            "latent_held_out_spearman": round(
-                float(spearmanr(outcomes[order[split:]], held_out).statistic), 4
-            ),
+            "mapped_content_tags": len(external_to_local_tags),
+            "trusted_performer_matches": len(all_performer_matches),
         }
-        _render(
-            args.output,
-            metrics,
-            ranked(affinity_scores, latent=False),
-            ranked(latent_scores, latent=True),
-            performer_rows,
+        targeted = (
+            _similar_to(
+                connection,
+                version,
+                args.similar_to,
+                candidates,
+                set(links["performers"].values()),
+                external_to_local_tags,
+            )[: args.count]
+            if args.similar_to
+            else []
         )
+        _render(args.output, metrics, ranked, performer_rows, args.similar_to, targeted)
         return {"output": str(args.output.resolve()), **metrics}
     finally:
         connection.close()
@@ -796,9 +917,7 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=12)
     parser.add_argument("--seed-scenes", type=int, default=25)
     parser.add_argument("--candidate-limit", type=int, default=1000)
-    parser.add_argument("--max-scenes", type=int, default=6000)
-    parser.add_argument("--dimensions", type=int, default=48)
-    parser.add_argument("--alpha", type=float, default=10.0)
+    parser.add_argument("--similar-to", help="Add external matches for a local performer name")
     print(json.dumps(run(parser.parse_args()), sort_keys=True))
 
 

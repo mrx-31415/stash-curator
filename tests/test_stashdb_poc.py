@@ -65,11 +65,13 @@ def test_performer_matching_uses_profile_values(monkeypatch) -> None:
         "CREATE TABLE direct_scene_state("
         "model_id TEXT, scene_id TEXT, direct_appeal REAL, confidence REAL)"
     )
-    connection.execute("CREATE TABLE source_performer(performer_id TEXT, name TEXT, gender TEXT)")
+    connection.execute(
+        "CREATE TABLE source_performer(performer_id TEXT, name TEXT, gender TEXT, favorite INTEGER)"
+    )
     connection.execute("INSERT INTO scene_performer VALUES ('scene', 'anchor')")
     connection.execute("INSERT INTO direct_scene_state VALUES ('model', 'scene', 1, 1)")
     connection.execute(
-        "INSERT INTO source_performer VALUES ('anchor', 'Known performer', 'FEMALE')"
+        "INSERT INTO source_performer VALUES ('anchor', 'Known performer', 'FEMALE', 1)"
     )
     profile = PerformerProfile("anchor", {"height": {"height_cm": ProfileValue(170, 1.0)}})
 
@@ -95,11 +97,22 @@ def test_performer_matching_uses_profile_values(monkeypatch) -> None:
                             "gender": "FEMALE",
                             "height": 170,
                         }
-                    }
+                    },
+                    {
+                        "performer": {
+                            "id": "duplicate",
+                            "name": "Known performer",
+                            "gender": "FEMALE",
+                            "height": 170,
+                        }
+                    },
                 ]
             }
         ],
         set(),
+        {},
     )
 
     assert matches["external"]["matches"][0]["name"] == "Known performer"
+    assert matches["external"]["score"] <= 0.65
+    assert "duplicate" not in matches

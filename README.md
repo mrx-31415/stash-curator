@@ -115,12 +115,14 @@ library:
 ```bash
 chmod 600 ~/.netrc  # once, when using netrc instead of STASHDB_API_KEY
 uv run --group poc python scripts/stashdb_poc.py \
-  --stash-url http://localhost:9999 --output reports/stashdb-poc.html
+  --stash-url http://localhost:9999 --output reports/stashdb-poc.html \
+  --similar-to "Kendra Lust"
 ```
 
 This disposable report expands a bounded candidate pool from strongly enjoyed linked
-scenes, then compares feature-affinity and latent rankings. It sends queries only,
-keeps external metadata in memory, and does not modify the sidecar schema.
+scenes, then applies Curator's v1 affinities, content neighbors, bounded components,
+and coverage-aware performer similarity. It sends queries only, keeps external
+metadata in memory, and does not modify the sidecar schema.
 
 ## Privacy
 
