@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import time
 from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
+from curator.model.boundaries import scene_eligibility
 from curator.ranking.policy import LaneClassification, LanePolicy
 
 
@@ -74,7 +76,16 @@ class SlateBuilder:
             self._cached_model_id = model_id
             self._cached_candidates = tuple(self._candidates(model_id, classifications))
             self._cached_scores = RecommendationModelStore(self.connection).scores(model_id)
-        candidates = self._cached_candidates
+        live_eligibility = scene_eligibility(
+            self.connection, time.time_ns() // 1_000_000, self.config
+        )
+        candidates = tuple(
+            candidate
+            for candidate in self._cached_candidates
+            if bool(
+                live_eligibility.get(candidate.classification.scene_id, {}).get("eligible", False)
+            )
+        )
         scores = self._cached_scores
         selected: list[_Candidate] = []
         items: list[RecommendationItem] = []

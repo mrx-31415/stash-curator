@@ -16,8 +16,10 @@ from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
 from curator.features.profiles import performer_similarity
 from curator.features.store import StoredFeature
+from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
 from curator.storage import ModelStore, transaction
+from curator.storage.retention import prune_snapshots
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class ModelBuildResult:
     scene_count: int
     labeled_scene_count: int
     reused: bool
+    stage_timings_ms: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,9 @@ class PreferenceModelBuilder:
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
 
     def build(self) -> ModelBuildResult:
+        started = time.perf_counter()
+        stage_started = started
+        timings: dict[str, int] = {}
         # FeatureBuilder is deterministic and reuses an existing version when neither
         # source data nor feature configuration changed. Always ask it for the current
         # version so a feature-only configuration change cannot silently train against
@@ -109,8 +115,11 @@ class PreferenceModelBuilder:
             .build()
             .feature_version
         )
+        timings["features"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
+        timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
         evidence_fingerprint = self._evidence_fingerprint(labels)
         model_digest = hashlib.sha256(
             (
@@ -123,7 +132,10 @@ class PreferenceModelBuilder:
             "SELECT status FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         if existing and existing["status"] == "published":
-            return self._result(model_id, feature_version, len(labels), reused=True)
+            timings["total"] = round((time.perf_counter() - started) * 1000)
+            return self._result(
+                model_id, feature_version, len(labels), reused=True, timings=timings
+            )
 
         model_config_json = json.dumps(
             {"config": asdict(self.config), "reference_at_ms": reference_at_ms},
@@ -145,9 +157,12 @@ class PreferenceModelBuilder:
                     "UPDATE model_version SET status='building' WHERE model_id=?", (model_id,)
                 )
         try:
+            stage_started = time.perf_counter()
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
             label_mean = self._label_mean(labels)
             affinities = self._affinities(scene_features, labels, label_mean)
+            timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
+            stage_started = time.perf_counter()
             scores = self._scores(
                 feature_version,
                 scene_features,
@@ -156,21 +171,32 @@ class PreferenceModelBuilder:
                 label_mean,
                 reference_at_ms,
             )
+            timings["scores"] = round((time.perf_counter() - stage_started) * 1000)
+            stage_started = time.perf_counter()
             self._publish(model_id, feature_version, affinities, labels, scores)
+            timings["publish"] = round((time.perf_counter() - stage_started) * 1000)
         except Exception:
             model_store.fail(model_id)
             raise
-        return self._result(model_id, feature_version, len(labels), reused=False)
+        prune_snapshots(self.connection)
+        timings["total"] = round((time.perf_counter() - started) * 1000)
+        return self._result(model_id, feature_version, len(labels), reused=False, timings=timings)
 
     def _result(
-        self, model_id: str, feature_version: str, labeled: int, *, reused: bool
+        self,
+        model_id: str,
+        feature_version: str,
+        labeled: int,
+        *,
+        reused: bool,
+        timings: dict[str, int],
     ) -> ModelBuildResult:
         count = int(
             self.connection.execute(
                 "SELECT count(*) FROM model_scene_score WHERE model_id=?", (model_id,)
             ).fetchone()[0]
         )
-        return ModelBuildResult(model_id, feature_version, count, labeled, reused)
+        return ModelBuildResult(model_id, feature_version, count, labeled, reused, timings)
 
     def _scene_labels(self) -> dict[str, _SceneLabel]:
         signals: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
@@ -938,49 +964,9 @@ class PreferenceModelBuilder:
         return self.config.model.not_now_penalty * (1 - age_days / self.config.model.not_now_days)
 
     def _eligibility(self, reference_at_ms: int) -> dict[str, dict[str, object]]:
-        result: dict[str, dict[str, object]] = {}
-        latest_feedback: dict[str, str] = {}
-        for row in self.connection.execute(
-            """
-            SELECT scene_id, feedback_type FROM feedback
-            WHERE reversed_by_id IS NULL AND feedback_type IN ('thumb_up', 'thumb_down')
-            ORDER BY scene_id, occurred_at_ms
-            """
-        ):
-            latest_feedback[str(row["scene_id"])] = str(row["feedback_type"])
-        excluded = {
-            str(row["entity_id"])
-            for row in self.connection.execute(
-                """
-                SELECT entity_id FROM exclusion WHERE entity_type='scene'
-                AND reversed_at_ms IS NULL AND (expires_at_ms IS NULL OR expires_at_ms > ?)
-                """,
-                (reference_at_ms,),
-            )
-        }
-        pruning = {
-            str(row["scene_id"]): str(row["state"])
-            for row in self.connection.execute("SELECT scene_id, state FROM pruning_candidate")
-        }
-        for row in self.connection.execute("SELECT scene_id FROM source_scene ORDER BY scene_id"):
-            scene_id = str(row["scene_id"])
-            reasons = []
-            available = bool(
-                self.connection.execute(
-                    "SELECT 1 FROM source_file WHERE scene_id=? AND available=1 LIMIT 1",
-                    (scene_id,),
-                ).fetchone()
-            )
-            if not available:
-                reasons.append("file_unavailable")
-            if scene_id in excluded:
-                reasons.append("hard_exclusion")
-            if pruning.get(scene_id) == "remove":
-                reasons.append("pruning_remove")
-            if latest_feedback.get(scene_id) == "thumb_down":
-                reasons.append("current_thumb_down")
-            result[scene_id] = {"eligible": not reasons, "reasons": reasons}
-        return result
+        return scene_eligibility(
+            self.connection, reference_at_ms, self.config, include_temporary=False
+        )
 
     def _publish(
         self,
@@ -990,6 +976,7 @@ class PreferenceModelBuilder:
         labels: dict[str, _SceneLabel],
         scores: tuple[_Score, ...],
     ) -> None:
+        scores_by_scene = {score.scene_id: score for score in scores}
         with transaction(self.connection):
             self.connection.execute("DELETE FROM feature_affinity WHERE model_id=?", (model_id,))
             self.connection.execute("DELETE FROM direct_scene_state WHERE model_id=?", (model_id,))
@@ -1028,12 +1015,7 @@ class PreferenceModelBuilder:
                         label.effective_evidence,
                         direct_confidence(label.effective_evidence, config=self.config.model),
                         _clamp(
-                            label.outcome
-                            - next(
-                                score.general_appeal
-                                for score in scores
-                                if score.scene_id == scene_id
-                            ),
+                            label.outcome - scores_by_scene[scene_id].general_appeal,
                             -2,
                             2,
                         ),

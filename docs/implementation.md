@@ -953,8 +953,17 @@ Implemented with baseline-centered feature affinities, lift-based sparse
 content-neighbor evidence, performer identity and profile similarity,
 studio/structure contributions, family clamps, evidence-family confidence,
 exact-scene evidence blending, smooth cooldown and satiation, hard eligibility state,
-and atomic publication. `build-model` rebuilds the historical projection and
-publishes a deterministic model without replacing the prior model on failure.
+and atomic publication. `build-model` rebuilds the historical projection by default;
+`--preferences-only` skips that import for recorded actions. Publication is atomic
+and cannot replace the prior model on failure.
+
+Continuous updates use a durable generation counter rather than an event queue.
+Actions mark the model dirty in their own transaction, a plugin-owned worker waits
+for a configurable two-second quiet period, and the coordinator publishes at most
+two consecutive builds when new activity arrives during a build. Explicit boundaries
+are rechecked while building each slate, so exclusions, pruning, thumbs down, and
+Not now take effect before retraining. The sidecar retains the current and previous
+model snapshots; bounded cleanup drains older models and unreferenced feature versions.
 
 ### WP-06 — Lanes and slate builder
 

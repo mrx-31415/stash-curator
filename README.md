@@ -82,6 +82,20 @@ uv run curator --db data/curator.sqlite3 recommend --lane discover --count 12
 uv run curator --db data/curator.sqlite3 recommend --lane adventure --count 12
 ```
 
+Sync reconstructs historical evidence only for the scenes it receives and marks the
+model dirty. A resident plugin can call the update coordinator after its two-second
+quiet period; from the CLI, publish pending work with:
+
+```bash
+uv run curator --db data/curator.sqlite3 update-model --force --json
+```
+
+Recorded actions only require the faster preference rebuild. For direct maintenance,
+`build-model --preferences-only` skips historical reconstruction. Model publication
+keeps the current and previous snapshots and removes one older snapshot per build.
+Preview or accelerate the backlog cleanup with `db gc`; add `--apply` to delete and
+optionally `--vacuum` to reclaim file space. Vacuum is never automatic.
+
 Generate the local evaluation report:
 
 ```bash

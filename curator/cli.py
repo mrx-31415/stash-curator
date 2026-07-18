@@ -17,10 +17,13 @@ from curator.events import HistoricalEventStore
 from curator.explanations import ExplanationService, ReasonGraphStore
 from curator.features import FeatureBuilder, FeatureStore
 from curator.graphql import GraphQLClient
-from curator.model import PreferenceModelBuilder, RecommendationModelStore
+from curator.model import (
+    ModelUpdateCoordinator,
+    RecommendationModelStore,
+)
 from curator.ranking import SlateBuilder
 from curator.reporting import ReportGenerator
-from curator.storage import MigrationRunner, backup_database, connect_database
+from curator.storage import MigrationRunner, backup_database, connect_database, prune_snapshots
 from curator.storage.migrations import MigrationStatus
 from curator.sync import SyncService
 from curator.sync.repository import SyncRepository
@@ -108,7 +111,18 @@ def build_parser() -> argparse.ArgumentParser:
     build_model = subparsers.add_parser(
         "build-model", help="Build and atomically publish the recommendation model"
     )
+    build_model.add_argument(
+        "--preferences-only",
+        action="store_true",
+        help="Skip historical reconstruction (normal path after recorded actions)",
+    )
     build_model.add_argument("--json", action="store_true", help="Emit structured JSON")
+
+    update_model = subparsers.add_parser(
+        "update-model", help="Publish a pending debounced model update"
+    )
+    update_model.add_argument("--force", action="store_true", help="Ignore the quiet period")
+    update_model.add_argument("--json", action="store_true", help="Emit structured JSON")
 
     recommend = subparsers.add_parser("recommend", help="Build a recommendation slate")
     recommend.add_argument(
@@ -146,6 +160,10 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("destination", type=Path)
     backup.add_argument("--overwrite", action="store_true")
     backup.add_argument("--json", action="store_true", help="Emit structured JSON")
+    gc = db_commands.add_parser("gc", help="Remove obsolete model and feature snapshots")
+    gc.add_argument("--apply", action="store_true", help="Apply cleanup (default is dry-run)")
+    gc.add_argument("--vacuum", action="store_true", help="Reclaim file space after cleanup")
+    gc.add_argument("--json", action="store_true", help="Emit structured JSON")
     return parser
 
 
@@ -193,6 +211,10 @@ def run(argv: Sequence[str] | None = None) -> int:
                 page_size=int(args.page_size),
             )
             synced = service.sync(full=bool(args.full))
+            synced_historical = HistoricalEventStore(connection).rebuild(
+                None if args.full or synced.resumed else synced.scene_ids
+            )
+            ModelUpdateCoordinator(connection).request("source_sync")
         finally:
             connection.close()
         _print_result(
@@ -202,6 +224,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "server_version": synced.server_version,
                 "resumed": synced.resumed,
                 "entity_counts": synced.entity_counts,
+                "historical_scenes": synced_historical.scene_count,
+                "model_update_pending": True,
             },
             as_json=bool(args.json),
         )
@@ -219,6 +243,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             published = TaxonomyStore(connection).publish(
                 taxonomy, fetched_at_ms=time.time_ns() // 1_000_000
             )
+            ModelUpdateCoordinator(connection).request("taxonomy_sync")
         finally:
             connection.close()
         _print_result(asdict(published), as_json=bool(args.json))
@@ -228,8 +253,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         connection = connect_database(args.db)
         try:
             MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
-            historical = HistoricalEventStore(connection).rebuild()
-            model = PreferenceModelBuilder(connection).build()
+            historical = (
+                None if args.preferences_only else HistoricalEventStore(connection).rebuild()
+            )
+            coordinator = ModelUpdateCoordinator(connection)
+            coordinator.request("manual_build")
+            model = coordinator.drain(force=True, max_builds=1)[0]
         finally:
             connection.close()
         _print_result(
@@ -238,9 +267,34 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "feature_version": model.feature_version,
                 "scene_count": model.scene_count,
                 "labeled_scene_count": model.labeled_scene_count,
-                "historical_sessions": historical.session_count,
-                "historical_outcomes": historical.outcome_count,
+                "historical_sessions": historical.session_count if historical else 0,
+                "historical_outcomes": historical.outcome_count if historical else 0,
                 "reused": model.reused,
+                "stage_timings_ms": model.stage_timings_ms,
+            },
+            as_json=bool(args.json),
+        )
+        return 0
+
+    if args.command == "update-model":
+        connection = connect_database(args.db)
+        try:
+            MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
+            coordinator = ModelUpdateCoordinator(connection)
+            models = coordinator.drain(force=bool(args.force))
+            update_status = coordinator.status()
+        finally:
+            connection.close()
+        _print_result(
+            {
+                "build_count": len(models),
+                "model_ids": [model.model_id for model in models],
+                "pending": update_status.pending,
+                "requested_generation": update_status.requested_generation,
+                "published_generation": update_status.published_generation,
+                "last_duration_ms": update_status.last_duration_ms,
+                "stage_timings_ms": update_status.stage_timings_ms,
+                "last_error": update_status.last_error,
             },
             as_json=bool(args.json),
         )
@@ -363,17 +417,33 @@ def run(argv: Sequence[str] | None = None) -> int:
                 connection.close()
             _print_result({"backup": str(destination)}, as_json=bool(args.json))
             return 0
+        if args.db_command == "gc":
+            if args.vacuum and not args.apply:
+                parser.error("db gc --vacuum requires --apply")
+            connection = connect_database(args.db)
+            try:
+                MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
+                retention = prune_snapshots(connection, limit=None, dry_run=not bool(args.apply))
+                if args.vacuum:
+                    connection.execute("VACUUM")
+            finally:
+                connection.close()
+            gc_payload: dict[str, object] = asdict(retention)
+            gc_payload["dry_run"] = not bool(args.apply)
+            gc_payload["vacuumed"] = bool(args.vacuum)
+            _print_result(gc_payload, as_json=bool(args.json))
+            return 0
 
         connection = connect_database(args.db)
         try:
             runner = MigrationRunner(connection)
             if args.db_command == "migrate":
-                status = runner.migrate(applied_at_ms=time.time_ns() // 1_000_000)
+                migration_status = runner.migrate(applied_at_ms=time.time_ns() // 1_000_000)
             else:
-                status = runner.status()
+                migration_status = runner.status()
         finally:
             connection.close()
-        _print_result(_status_payload(status), as_json=bool(args.json))
+        _print_result(_status_payload(migration_status), as_json=bool(args.json))
         return 0
 
     parser.print_help()

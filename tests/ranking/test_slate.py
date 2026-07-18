@@ -296,6 +296,40 @@ def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_pat
     assert all(item.eligibility["eligible"] is True for item in slate.items)
 
 
+def test_slate_applies_feedback_added_after_model_publication(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = SlateBuilder(connection)
+    assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, occurred_at_ms)
+        VALUES ('late-feedback', 'a-best', 'thumb_down', 2)
+        """
+    )
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id != "a-best"
+
+
+def test_not_now_expires_without_rebuilding_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    now_ms = 100 * 86_400_000
+    monkeypatch.setattr("curator.ranking.slate.time.time_ns", lambda: now_ms * 1_000_000)
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, occurred_at_ms)
+        VALUES ('not-now', 'a-best', 'not_now', ?)
+        """,
+        (now_ms,),
+    )
+    builder = SlateBuilder(connection)
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id != "a-best"
+    now_ms += 31 * 86_400_000
+    assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
+
+
 def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     adventure = SlateBuilder(connection).recommend("adventure", 5)

@@ -31,6 +31,7 @@ class SyncResult:
     server_version: str
     resumed: bool
     entity_counts: dict[str, int]
+    scene_ids: tuple[str, ...]
 
 
 def probe_capabilities(client: QueryClient) -> Capabilities:
@@ -104,11 +105,15 @@ class SyncService:
             self.repository.resume_run(run_id)
 
         counts: dict[str, int] = {}
+        scene_ids: set[str] = set()
         current_entity: str | None = None
         try:
             for operation in ENTITY_OPERATIONS:
                 current_entity = operation.entity_type
-                counts[current_entity] = self._sync_entity(run_id, operation, full=full)
+                count, ids = self._sync_entity(run_id, operation, full=full)
+                counts[current_entity] = count
+                if current_entity == "scene":
+                    scene_ids.update(ids)
             current_entity = None
             if full:
                 self.repository.reconcile(run_id)
@@ -116,14 +121,19 @@ class SyncService:
         except Exception as error:
             self.repository.fail_run(run_id, current_entity, str(error), self.clock_ms())
             raise
-        return SyncResult(run_id, mode, capabilities.server_version, resumed, counts)
+        return SyncResult(
+            run_id, mode, capabilities.server_version, resumed, counts, tuple(sorted(scene_ids))
+        )
 
-    def _sync_entity(self, run_id: str, operation: EntityOperation, *, full: bool) -> int:
+    def _sync_entity(
+        self, run_id: str, operation: EntityOperation, *, full: bool
+    ) -> tuple[int, tuple[str, ...]]:
         page = self.repository.prepare_entity(run_id, operation.entity_type, self.clock_ms())
         if page is None:
-            return 0
+            return 0, ()
         baseline, _ = self.repository.cursor_watermarks(operation.entity_type)
         processed = 0
+        ids: list[str] = []
         sort = "id" if full else "updated_at"
         direction = "ASC" if full else "DESC"
         while True:
@@ -147,13 +157,14 @@ class SyncService:
                 record_seen=full,
             )
             processed += len(adapted.items)
+            ids.extend(item.id for item in adapted.items)
             reached_watermark = bool(
                 not full and baseline and timestamps and min(timestamps) <= baseline
             )
             exhausted = not adapted.items or page * self.page_size >= adapted.total
             if reached_watermark or exhausted:
                 self.repository.complete_entity(run_id, operation.entity_type, self.clock_ms())
-                return processed
+                return processed, tuple(ids)
             page += 1
 
     @staticmethod
