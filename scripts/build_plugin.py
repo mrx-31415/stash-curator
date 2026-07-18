@@ -41,7 +41,7 @@ def build(output: Path = OUTPUT) -> Path:
                 "- id: stash-curator",
                 "  name: Stash Curator",
                 f"  version: {VERSION}",
-                f"  date: {datetime.now(UTC).date().isoformat()}",
+                f"  date: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}",
                 f"  path: {output.name}",
                 f"  sha256: {digest}",
                 "  metadata:",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import zipfile
@@ -58,6 +59,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")
     assert "id: stash-curator" in index
     assert "sha256:" in index
+    assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
 
     installed = tmp_path / "installed"
     assert _run(installed / "backend.py", installed)["round_trips"] == 1
