@@ -48,3 +48,23 @@ def test_failed_update_remains_pending(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert coordinator.status().pending is True
     assert coordinator.status().last_error == "build failed"
+
+
+def test_coordinator_does_not_duplicate_an_active_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    coordinator = ModelUpdateCoordinator(connection, clock_ms=lambda: 2_000)
+    coordinator.request("feedback")
+    connection.execute(
+        "UPDATE model_update_state SET last_started_at_ms=1500, last_finished_at_ms=1000"
+    )
+    monkeypatch.setattr(
+        PreferenceModelBuilder,
+        "build",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("duplicate build")),
+    )
+
+    assert coordinator.drain(force=True) == ()
+    assert coordinator.status().pending is True

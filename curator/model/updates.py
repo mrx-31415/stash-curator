@@ -102,15 +102,25 @@ class ModelUpdateCoordinator:
         """Publish ready work; cap the loop so a busy producer cannot starve callers."""
         built: list[ModelBuildResult] = []
         for _ in range(max_builds):
-            status = self.status()
-            if not status.pending:
-                break
-            now = self.clock_ms()
-            requested_at_ms = status.requested_at_ms if status.requested_at_ms is not None else now
-            if not force and now - requested_at_ms < self.debounce_ms:
-                break
-            generation = status.requested_generation
             with transaction(self.connection):
+                status = self.status()
+                now = self.clock_ms()
+                requested_at_ms = (
+                    status.requested_at_ms if status.requested_at_ms is not None else now
+                )
+                building = (
+                    status.last_started_at_ms is not None
+                    and status.last_started_at_ms > (status.last_finished_at_ms or -1)
+                    and status.last_error is None
+                    and now - status.last_started_at_ms < 6 * 3_600_000
+                )
+                if (
+                    not status.pending
+                    or building
+                    or (not force and now - requested_at_ms < self.debounce_ms)
+                ):
+                    break
+                generation = status.requested_generation
                 self.connection.execute(
                     """
                     UPDATE model_update_state SET last_started_at_ms=?, last_error=NULL
