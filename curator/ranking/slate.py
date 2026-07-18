@@ -104,8 +104,21 @@ class SlateBuilder:
             raise RuntimeError("no published model; run build-model first")
         if model_id != self._cached_model_id:
             policy = LanePolicy(self.connection, self.config)
+            source_lanes = (
+                set(
+                    FAMILIAR_PATTERN
+                    if exploration < 0
+                    else ADVENTUROUS_PATTERN
+                    if exploration > 0
+                    else self.config.ranking.for_you_pattern
+                )
+                if lane == "for_you"
+                else {lane}
+            )
             classifications = policy.load(
-                model_id, limit_per_lane=max(500, count * 20)
+                model_id,
+                lanes=source_lanes,
+                limit_per_lane=max(500, count * 20),
             ) or policy.classify(model_id)
             timings["classifications"] = round((time.perf_counter() - started) * 1000)
             stage_started = time.perf_counter()
@@ -252,8 +265,13 @@ class SlateBuilder:
         )
         self._cached_vectors = vectors
         performers: dict[str, list[str]] = {}
+        placeholders = ",".join("?" for _ in scene_ids)
         for row in self.connection.execute(
-            "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, position"
+            f"""
+            SELECT scene_id, performer_id FROM scene_performer
+            WHERE scene_id IN ({placeholders}) ORDER BY scene_id, position
+            """,
+            tuple(scene_ids),
         ):
             performers.setdefault(str(row["scene_id"]), []).append(str(row["performer_id"]))
         studios = {
@@ -261,10 +279,12 @@ class SlateBuilder:
                 str(row["parent_studio_id"] or row["studio_id"]) if row["studio_id"] else None
             )
             for row in self.connection.execute(
-                """
+                f"""
                 SELECT s.scene_id, s.studio_id, st.parent_studio_id
                 FROM source_scene s LEFT JOIN source_studio st ON st.studio_id=s.studio_id
-                """
+                WHERE s.scene_id IN ({placeholders})
+                """,
+                tuple(scene_ids),
             )
         }
         return [

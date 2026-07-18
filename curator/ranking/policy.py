@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
@@ -267,13 +268,19 @@ class LanePolicy:
         return tuple(classifications)
 
     def load(
-        self, model_id: str, *, limit_per_lane: int | None = None
+        self,
+        model_id: str,
+        *,
+        lanes: Collection[str] | None = None,
+        limit_per_lane: int | None = None,
     ) -> tuple[LaneClassification, ...]:
         if limit_per_lane is not None and limit_per_lane < 1:
             raise ValueError("limit_per_lane must be positive")
         rows: list[sqlite3.Row] = []
-        lanes: tuple[str | None, ...] = LANES if limit_per_lane else (None,)
-        for lane in lanes:
+        selected_lanes: tuple[str | None, ...] = (
+            tuple(lanes or LANES) if limit_per_lane else (None,)
+        )
+        for lane in selected_lanes:
             where = "model_id=?"
             parameters: list[object] = [model_id]
             if lane:
