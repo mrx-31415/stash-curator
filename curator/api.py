@@ -42,12 +42,16 @@ class CuratorAPI:
         exclude_scene_ids: set[str] | None = None,
         exploration: int = 0,
     ) -> dict[str, object]:
+        started = time.perf_counter()
+        timings: dict[str, int] = {}
         config = self.config()["config"]
         assert isinstance(config, dict)
         coordinator = ModelUpdateCoordinator(
             self.connection, debounce_ms=int(config["debounce_ms"])
         )
         coordinator.drain()
+        timings["model_update"] = round((time.perf_counter() - started) * 1000)
+        stage_started = time.perf_counter()
         excluded = exclude_scene_ids or set()
         built = SlateBuilder(self.connection).recommend(
             lane, count + len(excluded), exploration=exploration
@@ -59,9 +63,13 @@ class CuratorAPI:
             tuple(replace(item, position=position) for position, item in enumerate(selected)),
             built.diagnostics,
         )
+        timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         impression_id = impression_id or str(uuid4())
         now_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
         InteractionStore(self.connection).record_impression(impression_id, slate, now_ms, context)
+        timings["impression"] = round((time.perf_counter() - stage_started) * 1000)
+        stage_started = time.perf_counter()
         explanations = ExplanationService(self.connection)
         items = []
         for item in slate.items:
@@ -81,6 +89,8 @@ class CuratorAPI:
                 for reason in explanation.selected_reasons
             ]
             items.append(payload)
+        timings["explanations"] = round((time.perf_counter() - stage_started) * 1000)
+        timings["total"] = round((time.perf_counter() - started) * 1000)
         return {
             "schema_version": API_SCHEMA_VERSION,
             "model_id": slate.model_id,
@@ -94,6 +104,7 @@ class CuratorAPI:
             "lane": lane,
             "items": items,
             "diagnostics": list(slate.diagnostics),
+            "timings_ms": timings,
         }
 
     def inspector(self, entity_type: str, entity_id: str) -> dict[str, object]:

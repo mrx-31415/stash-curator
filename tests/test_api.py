@@ -19,6 +19,13 @@ def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -
     assert result["config_updated_at_ms"] == 0
     assert result["model_pending"] is False
     assert result["rebuilding"] is False
+    assert set(result["timings_ms"]) == {
+        "model_update",
+        "ranking",
+        "impression",
+        "explanations",
+        "total",
+    }
     assert len(result["items"]) == 3
     assert all(item["explanation"] for item in result["items"])
     assert (

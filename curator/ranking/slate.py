@@ -86,6 +86,7 @@ class SlateBuilder:
         self.config = config
         self._cached_model_id: str | None = None
         self._cached_candidates: tuple[_Candidate, ...] = ()
+        self._cached_vectors: dict[str, dict[str, float]] = {}
 
     def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
@@ -155,7 +156,7 @@ class SlateBuilder:
             if not ranked:
                 diagnostics.append(f"position {position}: candidate pool exhausted")
                 break
-            _, _, chosen, utility = sorted(ranked, key=lambda item: (-item[0], item[1]))[0]
+            _, _, chosen, utility = min(ranked, key=lambda item: (-item[0], item[1]))
             selected.append(chosen)
             selected_utilities.append(utility)
 
@@ -219,6 +220,7 @@ class SlateBuilder:
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         vectors = FeatureStore(self.connection).scene_content_vectors(str(feature_row[0]))
+        self._cached_vectors = vectors
         performers: dict[str, list[str]] = {}
         for row in self.connection.execute(
             "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, position"
@@ -328,14 +330,14 @@ class SlateBuilder:
                 scene_ids,
             )
         }
-        feature_row = self.connection.execute(
-            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
-        ).fetchone()
-        vectors = FeatureStore(self.connection).scene_content_vectors(str(feature_row[0]))
         return (
             performers,
             studios,
-            tuple(vectors[scene_id] for scene_id in scene_ids if scene_id in vectors),
+            tuple(
+                self._cached_vectors[scene_id]
+                for scene_id in scene_ids
+                if scene_id in self._cached_vectors
+            ),
         )
 
     @staticmethod
