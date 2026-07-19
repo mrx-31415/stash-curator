@@ -87,20 +87,32 @@ class FeatureStore:
             vectors.setdefault(str(row["entity_id"]), {})[str(row["name"])] = float(row["value"])
         return vectors
 
-    def performer_profiles(self, feature_version: str) -> dict[str, PerformerProfile]:
-        features = self.entity_features(feature_version, "performer")
-        profiles: dict[str, PerformerProfile] = {}
-        for performer_id, values in features.items():
-            blocks: dict[str, dict[str, ProfileValue]] = {}
-            for feature in values:
-                if not feature.family.startswith("profile:"):
-                    continue
-                block = feature.family.removeprefix("profile:")
-                blocks.setdefault(block, {})[feature.name] = ProfileValue(
-                    feature.value, feature.confidence
-                )
-            profiles[performer_id] = PerformerProfile(performer_id, blocks)
-        return profiles
+    def performer_profiles(
+        self, feature_version: str, performer_ids: Collection[str] | None = None
+    ) -> dict[str, PerformerProfile]:
+        if performer_ids is not None and not performer_ids:
+            return {}
+        where = "ef.feature_version=? AND ef.entity_type='performer' AND fd.family LIKE 'profile:%'"
+        parameters: list[object] = [feature_version]
+        if performer_ids is not None:
+            where += f" AND ef.entity_id IN ({','.join('?' for _ in performer_ids)})"
+            parameters.extend(performer_ids)
+        blocks: dict[str, dict[str, dict[str, ProfileValue]]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
+            FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
+            WHERE {where} ORDER BY ef.entity_id, fd.family, fd.name
+            """,
+            parameters,
+        ):
+            blocks.setdefault(str(row["entity_id"]), {}).setdefault(
+                str(row["family"]).removeprefix("profile:"), {}
+            )[str(row["name"])] = ProfileValue(float(row["value"]), float(row["confidence"]))
+        return {
+            performer_id: PerformerProfile(performer_id, values)
+            for performer_id, values in blocks.items()
+        }
 
     def similar_performers(
         self,

@@ -127,6 +127,27 @@ def test_local_similarity_filters_gender(tmp_path: Path) -> None:
     assert [item["entity_id"] for item in result["items"]] == ["p3"]
 
 
+def test_local_scene_similarity_filters_candidates(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+
+    tagged = api.similar("scene", "old-good", include_tags=("Familiar Scenario",))
+    assert [item["entity_id"] for item in tagged["items"]] == [
+        "recent-good",
+        "unlabeled",
+        "unseen-good",
+    ]
+    performer = api.similar("scene", "old-good", performer_ids=("p3",))
+    assert [item["entity_id"] for item in performer["items"]] == [
+        "unlabeled",
+        "unseen-good",
+    ]
+    assert api.similar("scene", "old-good", exclude_tags=("Familiar Scenario",))["items"] == [
+        item for item in api.similar("scene", "old-good")["items"] if item["entity_id"] == "unusual"
+    ]
+
+
 def test_similar_scene_does_not_wait_for_impression_write_lock(tmp_path: Path) -> None:
     path = tmp_path / "curator.sqlite3"
     connection = _database(path)

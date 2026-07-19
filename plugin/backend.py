@@ -401,6 +401,9 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 studio_query=str(args.get("studio_query") or ""),
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
+                minimum_score=(
+                    float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
+                ),
                 count=int(args.get("count") or 50),
             )
         if operation == "get_shortlist":
@@ -414,6 +417,15 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
                 gender=str(args.get("gender", config["expand_gender"])),
+                include_tags=_string_list(args.get("include_tags")),
+                exclude_tags=_string_list(args.get("exclude_tags")),
+                performer_names=_string_list(args.get("performer_names")),
+                studio_names=_string_list(args.get("studio_names")),
+                minimum_similarity=(
+                    float(args["minimum_similarity"])
+                    if args.get("minimum_similarity") is not None
+                    else 0.15
+                ),
             )
         if operation == "update_shortlist":
             entity_type = str(args.get("entity_type") or "")
@@ -549,6 +561,15 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 int(args.get("count") or 20),
                 impression_id=(str(args["impression_id"]) if args.get("impression_id") else None),
                 gender=str(args.get("gender") or ""),
+                include_tags=_string_list(args.get("include_tags")),
+                exclude_tags=_string_list(args.get("exclude_tags")),
+                performer_ids=_string_list(args.get("performer_ids")),
+                studio_ids=_string_list(args.get("studio_ids")),
+                minimum_similarity=(
+                    float(args["minimum_similarity"])
+                    if args.get("minimum_similarity") is not None
+                    else 0.18
+                ),
             )
         raise ValueError(f"unknown Curator API operation: {operation}")
     finally:
@@ -652,7 +673,13 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             _log("i", "Building the recommendation model")
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("source_sync")
-            model = coordinator.drain(force=True, max_builds=1)[0]
+            model = coordinator.drain(
+                force=True,
+                max_builds=1,
+                progress=lambda processed, total: _progress(
+                    0.86 + 0.08 * (processed / max(1, total))
+                ),
+            )[0]
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
             lane_count = len(LanePolicy(connection).classify(model.model_id))

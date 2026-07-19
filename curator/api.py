@@ -181,12 +181,28 @@ class CuratorAPI:
         impression_id: str | None = None,
         now_ms: int | None = None,
         gender: str = "",
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_ids: tuple[str, ...] = (),
+        studio_ids: tuple[str, ...] = (),
+        minimum_similarity: float = 0.18,
     ) -> dict[str, object]:
         if not 1 <= count <= 100:
             raise ValueError("count must be between 1 and 100")
+        if not 0 <= minimum_similarity <= 1:
+            raise ValueError("minimum_similarity must be between 0 and 1")
         service = SimilarityService(self.connection)
         if entity_type == "scene":
-            results = service.scenes(entity_id, count, gender)
+            results = service.scenes(
+                entity_id,
+                count,
+                gender,
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                performer_ids=performer_ids,
+                studio_ids=studio_ids,
+                minimum_similarity=minimum_similarity,
+            )
             table, id_column, label_column = "source_scene", "scene_id", "title"
         elif entity_type == "performer":
             results = service.performers(entity_id, count, gender)
@@ -256,6 +272,7 @@ class CuratorAPI:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        minimum_score: float = -1.0,
         count: int = 50,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
@@ -270,6 +287,7 @@ class CuratorAPI:
             studio_query=studio_query,
             performer_names=performer_names,
             studio_names=studio_names,
+            minimum_score=minimum_score,
             count=count,
         )
 

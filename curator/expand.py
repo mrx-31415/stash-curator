@@ -155,10 +155,13 @@ class ExpandService:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        minimum_score: float = -1.0,
         count: int = 50,
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
             raise ValueError("invalid Expand query")
+        if not -1 <= minimum_score <= 1:
+            raise ValueError("minimum_score must be between -1 and 1")
         cache = self.connection.execute("SELECT * FROM expand_cache WHERE singleton=1").fetchone()
         if cache is None:
             return {"ready": False, "items": []}
@@ -173,6 +176,8 @@ class ExpandService:
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=?", (entity_type,)
         ):
+            if float(row["score"]) < minimum_score:
+                continue
             payload = json.loads(row["payload_json"])
             if (
                 performer_id
@@ -192,35 +197,16 @@ class ExpandService:
                 continue
             if gender and not self._payload_matches_gender(payload, entity_type, gender):
                 continue
-            if entity_type == "scene":
-                tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
-                if include_tags and not all(value.casefold() in tags for value in include_tags):
-                    continue
-                if exclude_tags and any(value.casefold() in tags for value in exclude_tags):
-                    continue
-                if performer_query and performer_query.casefold() not in " ".join(
-                    str(item.get("performer", {}).get("name") or "").casefold()
-                    for item in payload.get("performers", [])
-                ):
-                    continue
-                cast_names = {
-                    str(item.get("performer", {}).get("name") or "").casefold()
-                    for item in payload.get("performers", [])
-                }
-                if performer_names and not all(
-                    value.casefold() in cast_names for value in performer_names
-                ):
-                    continue
-                if (
-                    studio_query
-                    and studio_query.casefold()
-                    not in str((payload.get("studio") or {}).get("name") or "").casefold()
-                ):
-                    continue
-                if studio_names and str(
-                    (payload.get("studio") or {}).get("name") or ""
-                ).casefold() not in {value.casefold() for value in studio_names}:
-                    continue
+            if entity_type == "scene" and not self._scene_matches(
+                payload,
+                include_tags,
+                exclude_tags,
+                performer_names,
+                studio_names,
+                performer_query,
+                studio_query,
+            ):
+                continue
             rows.append(
                 {
                     "id": str(row["external_id"]),
@@ -245,6 +231,31 @@ class ExpandService:
             "expires_at_ms": int(cache["expires_at_ms"]),
             "items": rows[:count],
         }
+
+    @staticmethod
+    def _scene_matches(
+        payload: dict[str, Any],
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_names: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
+        performer_query: str = "",
+        studio_query: str = "",
+    ) -> bool:
+        tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
+        cast = {
+            str(item.get("performer", {}).get("name") or "").casefold()
+            for item in payload.get("performers", [])
+        }
+        studio = str((payload.get("studio") or {}).get("name") or "").casefold()
+        return (
+            (not include_tags or all(value.casefold() in tags for value in include_tags))
+            and not any(value.casefold() in tags for value in exclude_tags)
+            and (not performer_names or all(value.casefold() in cast for value in performer_names))
+            and (not studio_names or studio in {value.casefold() for value in studio_names})
+            and (not performer_query or performer_query.casefold() in " ".join(cast))
+            and (not studio_query or studio_query.casefold() in studio)
+        )
 
     @staticmethod
     def _diverse_scenes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -333,7 +344,14 @@ class ExpandService:
         count: int = 50,
         *,
         candidate_ids: set[str] | None = None,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_names: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
+        minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
+        if not 0 <= minimum_similarity <= 1:
+            raise ValueError("minimum_similarity must be between 0 and 1")
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -363,6 +381,10 @@ class ExpandService:
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
                 payload = json.loads(row["payload_json"])
+                if not self._scene_matches(
+                    payload, include_tags, exclude_tags, performer_names, studio_names
+                ):
+                    continue
                 tags = {
                     key: str(tag["name"])
                     for tag in payload.get("tags", [])
@@ -395,7 +417,7 @@ class ExpandService:
                     default=0,
                 )
                 similarity = (0.85 * content + 0.15 * performer) if target_tags else performer
-                if similarity < 0.15 or (target_tags and not shared):
+                if similarity < minimum_similarity or (target_tags and not shared):
                     continue
                 appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
                 items.append(
@@ -483,6 +505,11 @@ class ExpandService:
         *,
         gender: str = "FEMALE",
         count: int = 50,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_names: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
+        minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         feature_version = FeatureStore(self.connection).current_version()
@@ -570,7 +597,17 @@ class ExpandService:
             )
         else:
             raise ValueError("invalid external similarity entity type")
-        result = self.similar(entity_type, entity_id, count=count * 2, candidate_ids=candidate_ids)
+        result = self.similar(
+            entity_type,
+            entity_id,
+            count=count * 2,
+            candidate_ids=candidate_ids,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            performer_names=performer_names,
+            studio_names=studio_names,
+            minimum_similarity=minimum_similarity,
+        )
         raw_items = result["items"]
         assert isinstance(raw_items, list)
         result["items"] = [
@@ -791,16 +828,20 @@ class ExpandService:
         performer_rows: dict[str, dict[str, Any]] = {}
         scene_rows = []
         for scene in scenes:
-            tag_value = math.tanh(
-                sum(self._tag_value(tag, tag_affinity) for tag in scene.get("tags", []))
-            )
+            tag_signals = sorted(
+                (self._tag_value(tag, tag_affinity) for tag in scene.get("tags", [])),
+                key=abs,
+                reverse=True,
+            )[:5]
+            tag_value = math.tanh(sum(tag_signals))
             cast = [item["performer"] for item in scene.get("performers", [])]
+            cast_weight = self._cast_weight(len(cast))
             identity_evidence = max(
                 (evidence.get(str(item["id"]), {}) for item in cast),
                 default={},
                 key=lambda item: float(item.get("strength", 0)),
             )
-            identity = float(identity_evidence.get("strength", 0))
+            identity = float(identity_evidence.get("strength", 0)) * cast_weight
             studio = scene.get("studio") or {}
             studio_value = external_studio_appeal.get(str(studio.get("id") or ""), 0)
             similarity_value = 0.0
@@ -820,7 +861,9 @@ class ExpandService:
                 )
                 match = max(matches, key=lambda item: item[0]) if matches else None
                 strength = float(match[3].get("strength", 0)) if match else 0.0
-                similarity_value = max(similarity_value, (match[0] if match else 0.0) * strength)
+                similarity_value = max(
+                    similarity_value, (match[0] if match else 0.0) * strength * cast_weight
+                )
                 performer_payload = {**performer}
                 if local:
                     performer_payload["curator_local"] = {
@@ -864,7 +907,7 @@ class ExpandService:
                 "performers": [
                     {"performer": performer_rows[str(item["id"])]["payload"]} for item in cast
                 ],
-                "why": self._why(scene, tag_affinity, identity, similarity_value),
+                "why": self._why(scene, tag_affinity, identity, similarity_value, len(cast)),
             }
             scene_rows.append(
                 {
@@ -1018,8 +1061,16 @@ class ExpandService:
         )
 
     @staticmethod
+    def _cast_weight(count: int) -> float:
+        return min(1.0, math.sqrt(4 / max(1, count)))
+
+    @staticmethod
     def _why(
-        scene: dict[str, Any], tag_affinity: dict[str, float], identity: float, similarity: float
+        scene: dict[str, Any],
+        tag_affinity: dict[str, float],
+        identity: float,
+        similarity: float,
+        cast_count: int = 1,
     ) -> list[str]:
         tags = sorted(
             (
@@ -1034,4 +1085,6 @@ class ExpandService:
             reasons.append("a performer you already enjoy")
         elif similarity > 0:
             reasons.append("a performer close to your preferences")
+        if cast_count > 8:
+            reasons.append("performer evidence reduced for the large compilation cast")
         return reasons

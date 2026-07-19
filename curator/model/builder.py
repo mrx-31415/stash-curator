@@ -118,11 +118,13 @@ class PreferenceModelBuilder:
             .build()
             .feature_version
         )
+        self._report(0.05)
         timings["features"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
         training_labels = self._training_labels(labels)
+        self._report(0.10)
         timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
         evidence_fingerprint = self._evidence_fingerprint(labels)
         model_digest = hashlib.sha256(
@@ -136,6 +138,7 @@ class PreferenceModelBuilder:
             "SELECT status FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         if existing and existing["status"] == "published":
+            self._report(1.0)
             timings["total"] = round((time.perf_counter() - started) * 1000)
             return self._result(
                 model_id, feature_version, len(labels), reused=True, timings=timings
@@ -165,6 +168,7 @@ class PreferenceModelBuilder:
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
             label_mean = self._label_mean(training_labels)
             affinities = self._affinities(scene_features, training_labels, label_mean)
+            self._report(0.20)
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
             stage_started = time.perf_counter()
             scores = self._scores(
@@ -179,13 +183,19 @@ class PreferenceModelBuilder:
             timings["scores"] = round((time.perf_counter() - stage_started) * 1000)
             stage_started = time.perf_counter()
             self._publish(model_id, feature_version, affinities, labels, scores)
+            self._report(0.97)
             timings["publish"] = round((time.perf_counter() - stage_started) * 1000)
         except Exception:
             model_store.fail(model_id)
             raise
         prune_snapshots(self.connection)
+        self._report(1.0)
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return self._result(model_id, feature_version, len(labels), reused=False, timings=timings)
+
+    def _report(self, fraction: float) -> None:
+        if self.progress:
+            self.progress(round(fraction * 1_000), 1_000)
 
     def _result(
         self,
@@ -691,7 +701,7 @@ class PreferenceModelBuilder:
             )
             progress_index = len(preference_vectors) + scene_index
             if self.progress and (scene_index == total_scenes or scene_index % 250 == 0):
-                self.progress(progress_index, progress_total)
+                self._report(0.20 + 0.70 * progress_index / max(1, progress_total))
         return tuple(scores)
 
     def _preference_content_vectors(
@@ -787,7 +797,7 @@ class PreferenceModelBuilder:
                 ),
             )
             if self.progress and (vector_index == vector_count or vector_index % 250 == 0):
-                self.progress(vector_index, progress_total)
+                self._report(0.20 + 0.70 * vector_index / max(1, progress_total))
         return result
 
     def _performer_similarity_scores(

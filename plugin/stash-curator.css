@@ -47,13 +47,21 @@
 }
 
 .curator-tabs {
-  align-self: stretch;
+  align-items: center;
+  align-self: center;
   border-bottom: 0;
   flex: 1 1 34rem;
   flex-wrap: nowrap;
+  height: 3rem;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   white-space: nowrap;
+}
+
+.curator-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .curator-tabs .nav-link {
@@ -61,6 +69,7 @@
   color: inherit;
   display: inline-flex;
   gap: 0.4rem;
+  height: 100%;
   padding: 0.55rem 0.7rem;
 }
 
@@ -87,13 +96,14 @@
   flex: 0 1 auto;
   flex-wrap: nowrap;
   gap: 0.35rem 0.6rem;
+  height: 3rem;
   justify-content: space-between;
   margin-left: auto;
 }
 
 .curator-task-buttons {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.4rem;
 }
 
@@ -510,13 +520,82 @@
   align-items: end;
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: repeat(4, minmax(10rem, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(9rem, 1fr)) auto;
   margin-top: 0.5rem;
 }
 
 .curator-expand-filters label {
   font-size: 0.78rem;
   margin: 0;
+}
+
+.curator-token-filter {
+  position: relative;
+}
+
+.curator-token-filter > span,
+.curator-match-filter > span {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.curator-token-input {
+  align-items: center;
+  background: var(--input-bg, #fff);
+  border: 1px solid var(--input-border-color, #ced4da);
+  border-radius: 0.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  min-height: 2rem;
+  padding: 0.2rem;
+}
+
+.curator-token-input button {
+  background: #495057;
+  border: 0;
+  border-radius: 0.2rem;
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.curator-token-input input {
+  background: transparent;
+  border: 0;
+  flex: 1 1 5rem;
+  min-width: 4rem;
+  outline: 0;
+}
+
+.curator-token-options {
+  background: #252a30;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+}
+
+.curator-token-options button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.curator-token-options button:hover {
+  background: #343a40;
+}
+
+.curator-match-filter input {
+  width: 100%;
 }
 
 .curator-icon-action {
@@ -669,7 +748,6 @@
 
   .curator-tabs {
     flex-basis: 100%;
-    flex-wrap: wrap;
     overflow-x: auto;
   }
 
@@ -680,6 +758,7 @@
   .curator-controls {
     align-items: start;
     flex-direction: column;
+    height: auto;
   }
 
   .curator-active-job {

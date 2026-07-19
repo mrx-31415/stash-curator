@@ -245,18 +245,19 @@
     );
   }
 
-  function ExternalCard({ item, kind, onShortlist, onShowScenes, onWhisparr }) {
+  function ExternalCard({ item, kind, gender, onShortlist, onShowScenes, onWhisparr }) {
     const payload = item.payload;
     if (!payload) return null;
     const image = payload.images?.find((value) => value.url)?.url;
     const href = `https://stashdb.org/${kind === "scene" ? "scenes" : "performers"}/${item.id}`;
-    const people = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
+    const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
+    const people = gender ? cast.filter((person) => person.gender === gender) : cast;
     return React.createElement(
       "article",
       { className: `curator-card curator-external-card curator-external-${kind} ${kind}-card` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       image && React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })),
-      React.createElement("div", { className: "curator-card-body" }, React.createElement("h3", null, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name))), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
+      React.createElement("div", { className: "curator-card-body" }, React.createElement("h3", null, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name)), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
       React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Copy StashDB ID", "aria-label": "Copy StashDB ID", onClick: () => navigator.clipboard.writeText(item.id) }, React.createElement(FontAwesomeIcon, { icon: faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "primary", title: "Send to Whisparr", "aria-label": "Send to Whisparr", onClick: () => onWhisparr(item.id) }, React.createElement(FontAwesomeIcon, { icon: faDownload })))
     );
   }
@@ -425,6 +426,30 @@
     );
   }
 
+  function FilterTokens({ kind, label, values, onChange }) {
+    const [query, setQuery] = React.useState("");
+    const variables = { filter: { q: query, per_page: 8 } };
+    const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query });
+    const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query });
+    const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query });
+    const options = kind === "tag"
+      ? tags.data?.findTags?.tags || []
+      : kind === "studio"
+        ? studios.data?.findStudios?.studios || []
+        : performers.data?.findPerformers?.performers || [];
+    function add(item) {
+      if (!values.some((value) => String(value.id) === String(item.id))) onChange([...values, item]);
+      setQuery("");
+    }
+    return React.createElement(
+      "label",
+      { className: "curator-token-filter" },
+      React.createElement("span", null, label),
+      React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
+      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, item.name)))
+    );
+  }
+
   function SimilarityPanel({ initialType = "scene", initialId = null, initialLabel = null }) {
     const { SceneCard, PerformerCard } = Api.components;
     const [entityType, setEntityType] = React.useState(initialType);
@@ -436,6 +461,11 @@
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(false);
     const [gender, setGender] = React.useState("FEMALE");
+    const [includeTags, setIncludeTags] = React.useState([]);
+    const [excludeTags, setExcludeTags] = React.useState([]);
+    const [filterPerformers, setFilterPerformers] = React.useState([]);
+    const [filterStudios, setFilterStudios] = React.useState([]);
+    const [minimumSimilarity, setMinimumSimilarity] = React.useState(0.18);
     const sceneSearch = GQL.useFindScenesQuery({
       variables: { filter: { q: search, per_page: 8 } },
       skip: entityType !== "scene" || !search,
@@ -471,7 +501,7 @@
       setSelected({ id: String(id), label: label || `#${id}` });
       setLoading(true);
       setError("");
-      operation({ operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender }).then(
+      operation({ operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_ids: filterPerformers.map((item) => String(item.id)), performer_names: filterPerformers.map((item) => item.name), studio_ids: filterStudios.map((item) => String(item.id)), studio_names: filterStudios.map((item) => item.name), minimum_similarity: minimumSimilarity }).then(
         (data) => (setResult(data), setLoading(false)),
         (failure) => (setError(failure.message), setLoading(false))
       );
@@ -550,6 +580,7 @@
         !sceneSearch.loading && !performerSearch.loading && candidates.length === 0 && React.createElement("p", null, "No matches found.")
       ),
       selected && React.createElement("div", { className: "curator-similar-reference" }, React.createElement("strong", null, "Comparing from"), React.createElement(SourceReference, { entity: sourceEntity, type: entityType, fallback: selected })),
+      selected && entityType === "scene" && React.createElement("details", { className: "curator-expand-filters" }, React.createElement("summary", null, "Filters"), React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => load(selected.id, selected.label) }, "Apply"))),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       result && source === "library" && React.createElement(
@@ -571,7 +602,7 @@
       result && source === "stashdb" && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
-        items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, onShortlist: shortlistExternal, onShowScenes: (id) => location.assign(`/plugins/stash-curator?view=expand&performer=${id}`), onWhisparr: sendWhisparr }))
+        items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (id) => location.assign(`/plugins/stash-curator?view=expand&performer=${id}`), onWhisparr: sendWhisparr }))
       )
     );
   }
@@ -655,16 +686,16 @@
   }
 
   function ExpandPanel({ initialPerformerId = null }) {
-    const { PerformerSelect } = Api.components;
     const [entityType, setEntityType] = React.useState("scene");
     const [sort, setSort] = React.useState("match");
     const [performerId, setPerformerId] = React.useState(initialPerformerId);
     const [favoriteOnly, setFavoriteOnly] = React.useState(false);
     const [gender, setGender] = React.useState("FEMALE");
-    const [includeTags, setIncludeTags] = React.useState("");
-    const [excludeTags, setExcludeTags] = React.useState("");
+    const [includeTags, setIncludeTags] = React.useState([]);
+    const [excludeTags, setExcludeTags] = React.useState([]);
     const [performers, setPerformers] = React.useState([]);
-    const [studioQuery, setStudioQuery] = React.useState("");
+    const [studios, setStudios] = React.useState([]);
+    const [minimumScore, setMinimumScore] = React.useState(0);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
@@ -674,8 +705,7 @@
     React.useEffect(() => {
       let active = true;
       setLoading(true);
-      const terms = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
-      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: terms(includeTags), exclude_tags: terms(excludeTags), performer_names: performers.map((item) => item.name).filter(Boolean), studio_query: studioQuery.trim() }).then(
+      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore }).then(
         (result) => active && (setData(result), setLoading(false)),
         (failure) => active && (setError(failure.message), setLoading(false))
       );
@@ -721,7 +751,7 @@
         React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
-      entityType === "scene" && React.createElement("details", { className: "curator-expand-filters" }, React.createElement("summary", null, "Filters"), React.createElement("div", null, React.createElement("label", null, "Include tags", React.createElement("input", { className: "form-control form-control-sm", value: includeTags, onChange: (event) => setIncludeTags(event.target.value), placeholder: "Tag A, Tag B" })), React.createElement("label", null, "Exclude tags", React.createElement("input", { className: "form-control form-control-sm", value: excludeTags, onChange: (event) => setExcludeTags(event.target.value), placeholder: "Tag C" })), React.createElement("label", null, "Performers", React.createElement(PerformerSelect, { values: performers, onSelect: setPerformers, isMulti: true })), React.createElement("label", null, "Studio", React.createElement("input", { className: "form-control form-control-sm", value: studioQuery, onChange: (event) => setStudioQuery(event.target.value) })), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setFilterVersion((value) => value + 1) }, "Apply"))),
+      entityType === "scene" && React.createElement("details", { className: "curator-expand-filters" }, React.createElement("summary", null, "Filters"), React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setFilterVersion((value) => value + 1) }, "Apply"))),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
@@ -732,7 +762,7 @@
         { className: "curator-grid curator-external-grid" },
         data.items.map((item) => {
           const kind = entityType === "shortlist" ? item.entity_type : entityType;
-          return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr });
+          return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr });
         })
       )
     );
@@ -828,7 +858,7 @@
   function CuratorPage() {
     const route = new URLSearchParams(location.search);
     const requestedView = route.get("view") || "for_you";
-    const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard, Api.loadableComponents.PerformerSelect]);
+    const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
     const [lane, setLane] = React.useState(() => NAV_ITEMS.some((item) => item.value === requestedView) ? requestedView : "for_you");
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");

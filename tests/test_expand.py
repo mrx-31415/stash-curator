@@ -99,6 +99,7 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         for item in ExpandService(connection).results("scene", favorite_only=True)["items"]
     ] == ["new-external-scene"]
     assert result["items"][0]["payload"]["why"][-1] == "a performer you already enjoy"
+    assert ExpandService(connection).results("scene", minimum_score=1)["items"] == []
     assert [
         item["id"]
         for item in ExpandService(connection).results(
@@ -212,6 +213,8 @@ def test_external_scene_similarity_requires_shared_content(tmp_path: Path) -> No
     assert [item["id"] for item in service.similar("scene", "old-good")["items"]] == [
         "new-external-scene"
     ]
+    assert service.similar("scene", "old-good", exclude_tags=("Useful",))["items"] == []
+    assert service.similar("scene", "old-good", minimum_similarity=1)["items"] == []
     payload = connection.execute(
         "SELECT payload_json FROM external_entity WHERE external_id='new-external-scene'"
     ).fetchone()[0]
@@ -284,3 +287,5 @@ def test_external_profile_normalizes_age_augmentation_and_tag_names() -> None:
     assert (
         ExpandService._tag_value({"id": "unmapped", "name": "Useful"}, {"name:useful": 0.4}) == 0.4
     )
+    assert ExpandService._cast_weight(4) == 1
+    assert ExpandService._cast_weight(100) == 0.2

@@ -32,14 +32,39 @@ class SimilarityService:
             "SELECT feature_version FROM model_version WHERE model_id=?", (self.model_id,)
         ).fetchone()
         self.feature_version = str(row[0])
-        self.scores = model.scores(self.model_id)
+        self.appeals = {
+            str(row["scene_id"]): float(row["appeal"])
+            for row in connection.execute(
+                """
+                SELECT scene_id, appeal FROM model_scene_score
+                WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
+                """,
+                (self.model_id,),
+            )
+        }
 
     def scenes(
-        self, scene_id: str, count: int = 20, gender: str = ""
+        self,
+        scene_id: str,
+        count: int = 20,
+        gender: str = "",
+        *,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_ids: tuple[str, ...] = (),
+        studio_ids: tuple[str, ...] = (),
+        minimum_similarity: float = 0.18,
     ) -> tuple[SimilarityResult, ...]:
-        if scene_id not in self.scores:
+        if (
+            self.connection.execute(
+                "SELECT 1 FROM model_scene_score WHERE model_id=? AND scene_id=?",
+                (self.model_id, scene_id),
+            ).fetchone()
+            is None
+        ):
             raise ValueError(f"unknown scene: {scene_id}")
         features = FeatureStore(self.connection)
+        candidate_ids = set(self.appeals)
         content = features.scene_content_vectors(self.feature_version)
         target_content = content.get(scene_id, {})
         performers = self._scene_performers()
@@ -64,9 +89,12 @@ class SimilarityService:
             f"tag:{row['tag_id']}": str(row["name"])
             for row in self.connection.execute("SELECT tag_id, name FROM source_tag")
         }
+        included = {value.casefold() for value in include_tags}
+        excluded = {value.casefold() for value in exclude_tags}
         results: list[SimilarityResult] = []
-        for candidate_id, score in self.scores.items():
-            if candidate_id == scene_id or not score.eligibility.get("eligible"):
+        for candidate_id in candidate_ids:
+            candidate_appeal = self.appeals[candidate_id]
+            if candidate_id == scene_id:
                 continue
             candidate_performers = performers.get(candidate_id, set())
             if gender and not any(genders.get(value) == gender for value in candidate_performers):
@@ -77,6 +105,17 @@ class SimilarityService:
             )
             performer_value = 1.0 if same else profile_value
             candidate_content = content.get(candidate_id, {})
+            candidate_tags = {
+                names.get(key, key.removeprefix("tag:")).casefold() for key in candidate_content
+            }
+            if included and not included <= candidate_tags:
+                continue
+            if excluded & candidate_tags:
+                continue
+            if performer_ids and not set(performer_ids) <= candidate_performers:
+                continue
+            if studio_ids and studios.get(candidate_id) not in studio_ids:
+                continue
             shared = set(target_content) & set(candidate_content)
             content_value = sum(target_content[key] * candidate_content[key] for key in shared)
             structure = 1 - abs(
@@ -89,7 +128,7 @@ class SimilarityService:
                 + 0.1 * structure
                 + 0.1 * float(same_studio)
             )
-            if similarity < 0.18:
+            if similarity < minimum_similarity:
                 continue
             relationships: list[str] = []
             if same:
@@ -106,7 +145,7 @@ class SimilarityService:
                 shared,
                 key=lambda key: -(target_content[key] * candidate_content[key]),
             )[:5]
-            appeal = (score.appeal + 1) / 2
+            appeal = (candidate_appeal + 1) / 2
             results.append(
                 SimilarityResult(
                     candidate_id,
@@ -150,11 +189,11 @@ class SimilarityService:
         scene_performers = self._scene_performers()
         scenes_by_performer: dict[str, list[float]] = {}
         for scene_id, performer_ids in scene_performers.items():
-            score = self.scores.get(scene_id)
-            if score is None or not score.eligibility.get("eligible"):
+            appeal = self.appeals.get(scene_id)
+            if appeal is None:
                 continue
             for candidate_id in performer_ids:
-                scenes_by_performer.setdefault(candidate_id, []).append((score.appeal + 1) / 2)
+                scenes_by_performer.setdefault(candidate_id, []).append((appeal + 1) / 2)
         results = []
         genders = self._performer_genders()
         for candidate_id, match in matches:

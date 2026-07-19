@@ -187,6 +187,20 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             assert abs(float(component["value"])) <= bound
 
 
+def test_model_build_reports_stage_progress(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    progress: list[tuple[int, int]] = []
+
+    PreferenceModelBuilder(
+        connection,
+        clock_ms=lambda: REFERENCE_MS,
+        progress=lambda processed, total: progress.append((processed, total)),
+    ).build()
+
+    assert {(50, 1_000), (100, 1_000), (200, 1_000), (1_000, 1_000)} <= set(progress)
+    assert progress[-1] == (1_000, 1_000)
+
+
 def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(
