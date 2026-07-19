@@ -6,7 +6,7 @@
   const { Button, Nav } = libraries.Bootstrap;
   const { NavLink } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBullseye, faCog, faCompass, faHistory, faSearch, faStar, faSync, faThumbsDown, faThumbsUp, faWrench } = libraries.FontAwesomeSolid;
+  const { faBullseye, faCheckCircle, faClock, faCog, faCompass, faDatabase, faHistory, faPlay, faSearch, faStar, faSync, faThumbsDown, faThumbsUp, faWrench } = libraries.FontAwesomeSolid;
   const LANES = [
     {
       value: "for_you",
@@ -83,8 +83,8 @@
     }
   }
 
-  function slateKey(lane, exploration) {
-    return `${lane}:${lane === "for_you" ? exploration : 0}`;
+  function slateKey(lane) {
+    return `${lane}:0`;
   }
 
   function readSlateCache() {
@@ -117,15 +117,15 @@
     cacheGeneration += 1;
   }
 
-  function loadSlate(lane, exploration, prefetched = false) {
-    const key = slateKey(lane, exploration);
+  function loadSlate(lane, prefetched = false) {
+    const key = slateKey(lane);
     if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
     if (slateRequests.has(key)) return slateRequests.get(key);
     const generation = cacheGeneration;
     const request = operation({
       operation: "get_slate",
       lane,
-      exploration,
+      exploration: 0,
       context: { route: location.pathname, prefetched },
     })
       .then((data) => {
@@ -141,13 +141,13 @@
     return request;
   }
 
-  async function prefetchLanes(activeLane, exploration) {
+  async function prefetchLanes(activeLane) {
     const generation = cacheGeneration;
     for (const option of LANES) {
       if (generation !== cacheGeneration) return;
       if (option.value === activeLane) continue;
       try {
-        await loadSlate(option.value, option.value === "for_you" ? exploration : 0, true);
+        await loadSlate(option.value, true);
       } catch (_) {
         // Opening the lane will retry and show any error in context.
       }
@@ -448,12 +448,12 @@
     );
     const hasSynced = Boolean(health?.last_sync_at_ms);
     const modelStatus = health?.model_rebuilding
-      ? "Model rebuilding"
+      ? "Rebuilding"
       : health?.model_pending
-        ? `${health.model_pending_events} preference update${health.model_pending_events === 1 ? "" : "s"} waiting`
+        ? `${health.model_pending_events} waiting`
         : health?.ready
-          ? "Model ready"
-          : "Model not built";
+          ? "Ready"
+          : "Not built";
     const activeJob = health?.active_job;
     const progress = typeof activeJob?.progress === "number" ? activeJob.progress : null;
 
@@ -463,10 +463,10 @@
       React.createElement(
         "div",
         { className: "curator-status", role: "status" },
-        React.createElement("span", null, running ? `Running: ${running.job_type}` : hasSynced ? "Library synced" : "Library not synced"),
-        React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : undefined }, modelStatus),
-        React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`),
-        health?.last_sync_at_ms && React.createElement("span", { title: "Last completed library synchronization" }, `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}`)
+        React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
+        React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
+        React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
+        health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
       ),
       activeJob &&
         React.createElement(
@@ -526,28 +526,27 @@
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
-    const [exploration, setExploration] = React.useState(0);
     const [refreshKey, setRefreshKey] = React.useState(0);
 
     React.useEffect(() => {
       let active = true;
-      const cached = slateCache.get(slateKey(lane, exploration));
+      const cached = slateCache.get(slateKey(lane));
       setSlate(cached || null);
       setLoading(!cached);
       setError("");
-      loadSlate(lane, exploration).then(
+      loadSlate(lane).then(
         (data) => {
           if (!active) return;
           setSlate(data);
           setLoading(false);
-          prefetchLanes(lane, exploration);
+          prefetchLanes(lane);
         },
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => {
         active = false;
       };
-    }, [lane, exploration, refreshKey]);
+    }, [lane, refreshKey]);
 
     const laneOption = LANES.find((option) => option.value === lane);
 
@@ -566,7 +565,7 @@
       const excluded = slate.items.map((item) => item.scene_id);
       clearSlateCache();
       setSlate((current) => ({ ...current, items: current.items.filter((item) => item.scene_id !== sceneId) }));
-      operation({ operation: "replace_item", lane, exploration, exclude_scene_ids: excluded }).then(
+      operation({ operation: "replace_item", lane, exploration: 0, exclude_scene_ids: excluded }).then(
         (replacement) =>
           setSlate((current) => ({
             ...current,
@@ -604,24 +603,8 @@
             )
           )
         ),
-        lane === "for_you" &&
-          React.createElement(
-            "label",
-            { className: "curator-exploration", title: "Continuously adjust the balance between dependable and adventurous picks." },
-            React.createElement("span", null, "Familiar"),
-            React.createElement("input", {
-              type: "range",
-              min: -1,
-              max: 1,
-              step: 0.25,
-              value: exploration,
-              "aria-label": "For You exploration level",
-              onChange: (event) => setExploration(Number(event.target.value)),
-            }),
-            React.createElement("span", null, "Adventurous")
-          )
+        React.createElement(CuratorControls, { onRefresh: refresh })
       ),
-      React.createElement(CuratorControls, { onRefresh: refresh }),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(
           "div",

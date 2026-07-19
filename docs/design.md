@@ -62,7 +62,8 @@ initial 20-card page, use soft targets of approximately:
 
 Roughly 25% may contain mild friction, but only about 5% should be a true Adventure.
 Early positions are conservative. Unused lane capacity may be borrowed by another
-lane. A **Familiar ←→ Adventurous** control shifts these targets.
+lane. Users choose Discover or Adventure when they want a more exploratory shelf;
+For You keeps a stable balanced composition.
 
 ### 2.3 Feedback
 
@@ -661,7 +662,7 @@ advanced/debug settings.
 
 | Group | User-facing controls |
 |---|---|
-| Feed | page size, For You mixture, position conservatism |
+| Feed | page size |
 | Cooldown | recovery center/width, Revisit strength |
 | Diversity | adjacent performer rule, studio/content penalties, history horizon |
 | Exploration | Discover/Adventure shares, intensity, soft-boundary challenges |

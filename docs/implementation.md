@@ -748,7 +748,6 @@ After the validation gate:
 - normal Stash scene cards and navigation;
 - progressive Why-this drawer;
 - thumbs and detail feedback;
-- Familiar/Adventurous control;
 - inspector, compact task status, and configuration through Stash's plugin settings;
 - loading, empty, stale-model, rebuilding, and error states.
 
@@ -1059,7 +1058,7 @@ Acceptance: all five lanes work without per-card backend calls; navigation uses 
 Stash behavior; keyboard/touch access exposes essential explanations.
 
 Implemented with a Curator route, compass navigation item, five tabs, native scene
-cards, a continuous Familiar/Adventurous control, progressive explanations and
+cards, a balanced For You mix, progressive explanations and
 score trees, lane descriptions, joined recommendation/feedback card bodies, and
 explicit progress, empty, stale, rebuilding, and error states. Curator sits with the
 main library sections in Stash navigation. Published models prepare source-lane
