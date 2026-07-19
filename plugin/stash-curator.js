@@ -39,6 +39,7 @@
   const slateRequests = new Map();
   let cachedModelId = null;
   let cacheGeneration = 0;
+  let modelUpdateTimer = null;
 
   function uuid() {
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -129,6 +130,14 @@
     return payload.data.runPluginTask;
   }
 
+  function scheduleModelUpdate(delay = 2500) {
+    clearTimeout(modelUpdateTimer);
+    modelUpdateTimer = setTimeout(
+      () => runTask("Apply recent Curator feedback").catch(() => {}),
+      delay
+    );
+  }
+
   function idFilter(ids) {
     return ids.reduce(
       (filter, id) => ({ id: { value: Number(id), modifier: "EQUALS" }, ...(filter && { OR: filter }) }),
@@ -180,6 +189,7 @@
             },
           ],
         });
+        scheduleModelUpdate();
         setSaved(feedbackType === "thumb_up" ? "Saved" : "Removed from this view");
         if (feedbackType !== "thumb_up") onRemove(item.scene_id);
       } catch (error) {
@@ -616,6 +626,9 @@
     flushing = true;
     try {
       await operation({ operation: "submit_events", entries });
+      if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
+        scheduleModelUpdate();
+      }
       const sent = new Set(entries.map(queueId));
       localStorage.setItem(EVENT_QUEUE_KEY, JSON.stringify(readQueue().filter((entry) => !sent.has(queueId(entry)))));
     } catch (_) {
@@ -749,7 +762,11 @@
   flushQueue();
   function scheduleSync() {
     operation({ operation: "health" })
-      .then((health) => health.sync_due && runTask("Sync and build recommendations"))
+      .then((health) => {
+        if (health.sync_due) return runTask("Sync and build recommendations");
+        if (health.model_pending && !health.model_rebuilding) scheduleModelUpdate(0);
+        return null;
+      })
       .catch(() => {});
   }
   scheduleSync();

@@ -34,6 +34,10 @@ tasks:
     description: Rebuild preferences from the existing sidecar cache.
     execArgs:
       - build
+  - name: Apply recent Curator feedback
+    description: Publish pending feedback and playback signals without blocking the Curator page.
+    execArgs:
+      - update-model
   - name: Backup Curator data
     description: Create a timestamped sidecar backup in the plugin data directory.
     execArgs:

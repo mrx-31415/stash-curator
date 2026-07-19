@@ -111,6 +111,18 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
             "SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms>? LIMIT 1",
             (time.time_ns() // 1_000_000 - 6 * 3_600_000,),
         ).fetchone()
+        model_rebuilding = connection.execute(
+            """
+            SELECT 1 FROM curator_job
+            WHERE state='running' AND started_at_ms>? AND job_type IN (
+                'build', 'update-model', 'sync-build', 'full-sync-build'
+            ) LIMIT 1
+            """,
+            (time.time_ns() // 1_000_000 - 6 * 3_600_000,),
+        ).fetchone()
+        model_update = ModelUpdateCoordinator(
+            connection, debounce_ms=int(config["debounce_ms"])
+        ).status()
         capture = {
             "direct_playback_sessions": connection.execute(
                 "SELECT count(*) FROM play_session WHERE provenance='direct_player'"
@@ -137,6 +149,8 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "model_id": str(current[0]) if current else None,
         "ready": current is not None,
         "capture": capture,
+        "model_pending": model_update.pending,
+        "model_rebuilding": model_rebuilding is not None,
         "sync_due": (
             not running
             and float(config["auto_sync_hours"]) > 0
@@ -346,25 +360,33 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 "lane_candidate_caches": lane_caches,
                 "stage_timings_ms": model.stage_timings_ms,
             }
-        elif mode == "build":
+        elif mode in {"build", "update-model"}:
             _progress(0.1)
             _log("i", "Building the recommendation model")
             coordinator = ModelUpdateCoordinator(connection)
-            coordinator.request("manual_build")
-            model = coordinator.drain(force=True, max_builds=1)[0]
-            _progress(0.94)
-            _log("i", "Organizing scenes into recommendation lanes")
-            lane_count = len(LanePolicy(connection).classify(model.model_id))
-            _progress(0.96)
-            _log("i", "Preparing fast lane caches")
-            lane_caches = SlateBuilder(connection).prepare(model.model_id)
-            _progress(0.98)
-            summary = {
-                "model_id": model.model_id,
-                "lane_classifications": lane_count,
-                "lane_candidate_caches": lane_caches,
-                "stage_timings_ms": model.stage_timings_ms,
-            }
+            if mode == "build":
+                coordinator.request("manual_build")
+            models = coordinator.drain(force=True)
+            if not models:
+                summary = {"updated": False}
+                _progress(0.98)
+                _log("i", "No pending preference changes")
+            else:
+                model = models[-1]
+                _progress(0.94)
+                _log("i", "Organizing scenes into recommendation lanes")
+                lane_count = len(LanePolicy(connection).classify(model.model_id))
+                _progress(0.96)
+                _log("i", "Preparing fast lane caches")
+                lane_caches = SlateBuilder(connection).prepare(model.model_id)
+                _progress(0.98)
+                summary = {
+                    "updated": True,
+                    "model_id": model.model_id,
+                    "lane_classifications": lane_count,
+                    "lane_candidate_caches": lane_caches,
+                    "stage_timings_ms": model.stage_timings_ms,
+                }
         elif mode == "backup":
             _progress(0.1)
             destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"

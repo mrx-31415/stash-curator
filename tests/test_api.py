@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from curator.api import CuratorAPI
-from curator.model import PreferenceModelBuilder
+from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
 
 
@@ -39,6 +39,24 @@ def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -
         "for_you", 1, exclude_scene_ids=excluded, now_ms=REFERENCE_MS
     )
     assert replacement["items"][0]["scene_id"] not in excluded
+
+
+def test_slate_api_never_builds_a_pending_model_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    ModelUpdateCoordinator(connection, clock_ms=lambda: REFERENCE_MS).request("feedback")
+    monkeypatch.setattr(
+        PreferenceModelBuilder,
+        "build",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("inline model build")),
+    )
+
+    result = CuratorAPI(connection).get_slate("for_you", 1, now_ms=REFERENCE_MS)
+
+    assert result["model_pending"] is True
+    assert result["items"]
 
 
 def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:

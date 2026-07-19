@@ -61,8 +61,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "id: stash-curator" in index
     assert "sha256:" in index
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
-
     installed = tmp_path / "installed"
+    assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()
     assert _run(installed / "backend.py", installed)["round_trips"] == 1
     task = subprocess.run(
         [sys.executable, str(installed / "backend.py"), str(installed), "backup"],

@@ -753,14 +753,19 @@ After the validation gate:
 - loading, empty, stale-model, rebuilding, and error states.
 
 The UI requests one complete slate operation and then current card facts through
-Stash GraphQL. Never make one backend process call per card.
+Stash GraphQL. Never make one backend process call per card. Published models include
+a prepared candidate snapshot per source lane; the UI caches opened slates and
+prefetches unopened tabs. Eligibility, cooldown, history, and slate diversity remain
+live request-time decisions.
 
 ### 17.2 Browser events
 
 The global extension records qualified impressions and compact player summaries for
 all Stash web plays while active. Events receive client UUIDs, enter a durable retry
 queue, and are acknowledged in batches. No essential event depends on unload-time
-network delivery.
+network delivery. Feedback and completed player sessions mark the model pending; the
+browser debounces them into a native background Stash task. A slate request never
+waits for model training and continues to use the last published complete model.
 
 ### 17.3 Backend operations
 
@@ -1035,7 +1040,7 @@ Acceptance: restart-safe round trip and logs work from an installed plugin packa
 Implemented with Stash's external raw-plugin interface, authenticated read-only
 GraphQL context, an ADR, automatic sidecar migrations, process-restart persistence,
 native task progress/logging, and a self-contained dependency-free package. Live
-acceptance on Stash v0.31.1 covered source installation, Python resolution, schema-7
+acceptance on Stash v0.31.1 covered source installation, Python resolution, schema-8
 migration, sync/build, backup, process restart, update, and uninstall/reinstall. The
 published model and a sidecar counter both survived reinstall.
 
@@ -1053,11 +1058,13 @@ Stash behavior; keyboard/touch access exposes essential explanations.
 
 Implemented with a Curator route, compass navigation item, five tabs, native scene
 cards, a three-position Familiar/Adventurous control, progressive explanations and
-score trees, image visibility control, and explicit loading, empty, stale, rebuilding,
-and error states. Installed assets load and all five live lanes return scene-card data
-with bundled explanations. Dedicated three-card lanes respond in roughly 1.4–2.2
-seconds and the default 20-card For You slate in roughly 4.5 seconds on the acceptance
-library. Keyboard, touch, and native-navigation behavior still need a browser pass.
+score trees, lane descriptions, joined recommendation/feedback card bodies, and
+explicit progress, empty, stale, rebuilding, and error states. Curator sits with the
+main library sections in Stash navigation. Published models prepare source-lane
+candidate snapshots during sync/build; opened slates are cached in the browser and
+the remaining tabs are prefetched sequentially. Installed assets load and all five
+live lanes return scene-card data with bundled explanations. Keyboard, touch, and
+native-navigation behavior still need a browser pass.
 
 ### WP-10 — Events and feedback
 
@@ -1074,7 +1081,10 @@ events; thumb-down and never-show semantics match the design.
 Implemented with one-second/50%-visible qualified impressions, global player-session
 summaries, durable idempotent browser batching, Curator origin/position attribution,
 thumbs, Not now, Never show with explicit reversal, metadata-quality feedback, and a
-sidecar-only pruning workflow.
+sidecar-only pruning workflow. Health output exposes direct-session, behavior-event,
+and qualified-impression counts so installed playback capture can be verified. Model
+updates run as debounced native tasks rather than inside latency-sensitive slate
+requests.
 
 ### WP-11 — Jobs, configuration, and release
 

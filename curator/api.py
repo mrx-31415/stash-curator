@@ -14,7 +14,7 @@ from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
-from curator.ranking import LanePolicy, SlateBuilder
+from curator.ranking import SlateBuilder
 from curator.ranking.slate import Slate
 from curator.storage import transaction
 
@@ -49,10 +49,8 @@ class CuratorAPI:
         coordinator = ModelUpdateCoordinator(
             self.connection, debounce_ms=int(config["debounce_ms"])
         )
-        built_models = coordinator.drain()
-        for model in built_models:
-            LanePolicy(self.connection).classify(model.model_id)
-            SlateBuilder(self.connection).prepare(model.model_id)
+        # Model builds can take minutes on a large library. The plugin schedules them as
+        # native background tasks; slate requests always use the last published model.
         timings["model_update"] = round((time.perf_counter() - started) * 1000)
         stage_started = time.perf_counter()
         excluded = exclude_scene_ids or set()
@@ -101,7 +99,12 @@ class CuratorAPI:
             "config_updated_at_ms": self.config()["updated_at_ms"],
             "model_pending": coordinator.status().pending,
             "rebuilding": self.connection.execute(
-                "SELECT 1 FROM curator_job WHERE state='running' LIMIT 1"
+                """
+                SELECT 1 FROM curator_job
+                WHERE state='running' AND job_type IN (
+                    'build', 'update-model', 'sync-build', 'full-sync-build'
+                ) LIMIT 1
+                """
             ).fetchone()
             is not None,
             "impression_id": impression_id,
