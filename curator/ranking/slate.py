@@ -13,6 +13,7 @@ from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
 from curator.model import RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
+from curator.model.curves import scene_recovery
 from curator.ranking.policy import LANES, LaneClassification, LanePolicy
 from curator.storage import transaction
 
@@ -94,6 +95,8 @@ class SlateBuilder:
         self._cached_vectors: dict[str, dict[str, float]] = {}
         self._pair_similarities: dict[tuple[str, str], float] = {}
         self._history_similarities: dict[str, float] = {}
+        self._live_fit: dict[str, float] = {}
+        self._live_cooldown: dict[str, float] = {}
 
     def prepare(self, model_id: str, *, limit_per_lane: int = 500) -> dict[str, int]:
         policy = LanePolicy(self.connection, self.config)
@@ -173,15 +176,30 @@ class SlateBuilder:
             self._cached_candidates = prepared or tuple(self._candidates(model_id, classifications))
             timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
-        live_eligibility = scene_eligibility(
-            self.connection, time.time_ns() // 1_000_000, self.config
-        )
+        now_ms = time.time_ns() // 1_000_000
+        live_eligibility = scene_eligibility(self.connection, now_ms, self.config)
+        direct_plays = {
+            str(row["scene_id"]): int(row["last_played"])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
+                WHERE provenance='direct_player' GROUP BY scene_id
+                """
+            )
+        }
         candidates = tuple(
             candidate
             for candidate in self._cached_candidates
             if bool(
                 live_eligibility.get(candidate.classification.scene_id, {}).get("eligible", False)
             )
+            and not (
+                candidate.classification.lane == "best_bets"
+                and candidate.classification.scene_id in direct_plays
+            )
+        )
+        self._live_fit, self._live_cooldown = self._live_current_fit(
+            model_id, direct_plays, now_ms
         )
         timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
@@ -269,7 +287,7 @@ class SlateBuilder:
                     chosen.classification.subtype,
                     position,
                     score.appeal,
-                    score.current_fit,
+                    self._live_fit.get(score.scene_id, score.current_fit),
                     score.confidence,
                     chosen.classification.lane_value,
                     utility[0],
@@ -398,7 +416,16 @@ class SlateBuilder:
             and set(candidate.performers) & set(selected[-1].performers)
         ):
             return None
-        penalties = {"performer": 0.0, "studio": 0.0, "content": 0.0, "history": 0.0}
+        penalties = {
+            "performer": 0.0,
+            "studio": 0.0,
+            "content": 0.0,
+            "history": 0.0,
+            "live_cooldown": 0.0,
+        }
+        penalties["live_cooldown"] = self._live_cooldown.get(
+            candidate.classification.scene_id, 0.0
+        )
         for previous in selected:
             if set(candidate.performers) & set(previous.performers):
                 penalties["performer"] = max(
@@ -434,6 +461,32 @@ class SlateBuilder:
             candidate.classification.lane_value + sum(bonuses.values()) - sum(penalties.values())
         )
         return final, penalties, bonuses
+
+    def _live_current_fit(
+        self, model_id: str, direct_plays: dict[str, int], now_ms: int
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        if not direct_plays:
+            return {}, {}
+        placeholders = ",".join("?" for _ in direct_plays)
+        rows = self.connection.execute(
+            f"""
+            SELECT scene_id, appeal, current_fit FROM model_scene_score
+            WHERE model_id=? AND scene_id IN ({placeholders})
+            """,
+            (model_id, *direct_plays),
+        )
+        result: dict[str, float] = {}
+        penalties: dict[str, float] = {}
+        for row in rows:
+            scene_id = str(row["scene_id"])
+            appeal = float(row["appeal"])
+            days = max(0.0, (now_ms - direct_plays[scene_id]) / 86_400_000)
+            recovery = scene_recovery(days, config=self.config.model)
+            live_fit = appeal - max(0.0, appeal) * (1 - recovery)
+            stored_fit = float(row["current_fit"])
+            result[scene_id] = min(stored_fit, live_fit)
+            penalties[scene_id] = max(0.0, stored_fit - live_fit)
+        return result, penalties
 
     def _candidate_similarity(self, left: _Candidate, right: _Candidate) -> float:
         left_id = left.classification.scene_id

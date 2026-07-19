@@ -29,6 +29,30 @@ class ModelUpdateStatus:
     def pending(self) -> bool:
         return self.requested_generation > self.published_generation
 
+    @property
+    def pending_count(self) -> int:
+        return max(0, self.requested_generation - self.published_generation)
+
+    def ready(
+        self,
+        now_ms: int,
+        *,
+        event_threshold: int,
+        max_wait_ms: int,
+        min_interval_ms: int,
+    ) -> bool:
+        if not self.pending:
+            return False
+        enough_events = self.pending_count >= event_threshold
+        waited_long_enough = (
+            self.requested_at_ms is not None and now_ms - self.requested_at_ms >= max_wait_ms
+        )
+        interval_elapsed = (
+            self.last_finished_at_ms is None
+            or now_ms - self.last_finished_at_ms >= min_interval_ms
+        )
+        return interval_elapsed and (enough_events or waited_long_enough)
+
 
 class ModelUpdateCoordinator:
     """Coalesce durable update requests; a resident plugin supplies the wake-up loop."""
@@ -56,7 +80,11 @@ class ModelUpdateCoordinator:
                 """
                 UPDATE model_update_state SET
                     requested_generation=requested_generation+1,
-                    requested_at_ms=?, last_cause=?, last_error=NULL
+                    requested_at_ms=CASE
+                        WHEN requested_generation=published_generation THEN ?
+                        ELSE requested_at_ms
+                    END,
+                    last_cause=?, last_error=NULL
                 WHERE singleton=1
                 """,
                 (self.clock_ms(), cause),
@@ -98,7 +126,13 @@ class ModelUpdateCoordinator:
             },
         )
 
-    def drain(self, *, force: bool = False, max_builds: int = 2) -> tuple[ModelBuildResult, ...]:
+    def drain(
+        self,
+        *,
+        force: bool = False,
+        max_builds: int = 2,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[ModelBuildResult, ...]:
         """Publish ready work; cap the loop so a busy producer cannot starve callers."""
         built: list[ModelBuildResult] = []
         for _ in range(max_builds):
@@ -131,7 +165,10 @@ class ModelUpdateCoordinator:
             started = time.perf_counter()
             try:
                 result = PreferenceModelBuilder(
-                    self.connection, self.config, clock_ms=self.clock_ms
+                    self.connection,
+                    self.config,
+                    clock_ms=self.clock_ms,
+                    progress=progress,
                 ).build()
             except Exception as error:
                 with transaction(self.connection):

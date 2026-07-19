@@ -763,9 +763,11 @@ live request-time decisions.
 The global extension records qualified impressions and compact player summaries for
 all Stash web plays while active. Events receive client UUIDs, enter a durable retry
 queue, and are acknowledged in batches. No essential event depends on unload-time
-network delivery. Feedback and completed player sessions mark the model pending; the
-browser debounces them into a native background Stash task. A slate request never
-waits for model training and continues to use the last published complete model.
+network delivery. Feedback and completed player sessions mark the model pending.
+Direct plays affect Best Bets and the smooth scene cooldown immediately. The browser
+starts a native background Stash task after five pending actions or 30 minutes, with
+at most one automatic rebuild per hour. A slate request never waits for model training
+and continues to use the last published complete model.
 
 ### 17.3 Backend operations
 

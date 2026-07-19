@@ -68,3 +68,30 @@ def test_coordinator_does_not_duplicate_an_active_build(
 
     assert coordinator.drain(force=True) == ()
     assert coordinator.status().pending is True
+
+
+def test_update_readiness_batches_events_and_limits_rebuild_frequency(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    now = [1_000]
+    coordinator = ModelUpdateCoordinator(connection, clock_ms=lambda: now[0])
+
+    coordinator.request("session_outcome")
+    first_requested_at = coordinator.status().requested_at_ms
+    for _ in range(4):
+        now[0] += 1_000
+        coordinator.request("session_outcome")
+
+    status = coordinator.status()
+    assert status.requested_at_ms == first_requested_at
+    assert status.pending_count == 5
+    assert status.ready(
+        now[0], event_threshold=5, max_wait_ms=30_000, min_interval_ms=60_000
+    )
+
+    connection.execute(
+        "UPDATE model_update_state SET last_finished_at_ms=? WHERE singleton=1", (now[0],)
+    )
+    assert not coordinator.status().ready(
+        now[0], event_threshold=5, max_wait_ms=30_000, min_interval_ms=60_000
+    )

@@ -84,6 +84,10 @@ class MigrationRunner:
         self.migrations = _load_migrations()
 
     def _ensure_history(self) -> None:
+        if self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migration'"
+        ).fetchone():
+            return
         with transaction(self.connection):
             self.connection.execute(
                 """

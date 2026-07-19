@@ -28,15 +28,15 @@ def connect_database(path: Path, *, readonly: bool = False) -> sqlite3.Connectio
             f"file:{path}?mode=ro",
             uri=True,
             isolation_level=None,
-            timeout=5,
+            timeout=30,
         )
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, isolation_level=None, timeout=5)
+        connection = sqlite3.connect(path, isolation_level=None, timeout=30)
 
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA busy_timeout = 30000")
     if not readonly:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")

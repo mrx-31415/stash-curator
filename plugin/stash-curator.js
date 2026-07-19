@@ -134,7 +134,11 @@
   function scheduleModelUpdate(delay = 2500) {
     clearTimeout(modelUpdateTimer);
     modelUpdateTimer = setTimeout(
-      () => runTask("Apply recent Curator feedback").catch(() => {}),
+      () => operation({ operation: "health" })
+        .then((health) => health.model_update_ready && !health.model_rebuilding
+          ? runTask("Apply recent Curator feedback")
+          : null)
+        .catch(() => {}),
       delay
     );
   }
@@ -764,7 +768,9 @@
     operation({ operation: "health" })
       .then((health) => {
         if (health.sync_due) return runTask("Sync and build recommendations");
-        if (health.model_pending && !health.model_rebuilding) scheduleModelUpdate(0);
+        if (health.model_update_ready && !health.model_rebuilding) {
+          return runTask("Apply recent Curator feedback");
+        }
         return null;
       })
       .catch(() => {});

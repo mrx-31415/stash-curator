@@ -24,6 +24,9 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "sync_page_size": 250,
     "debounce_ms": 2_000,
     "auto_sync_hours": 24,
+    "model_update_event_threshold": 5,
+    "model_update_max_wait_minutes": 30,
+    "model_update_min_interval_minutes": 60,
 }
 
 
@@ -265,7 +268,15 @@ class CuratorAPI:
     def update_config(
         self, values: dict[str, object], now_ms: int | None = None
     ) -> dict[str, object]:
-        allowed = {"page_size", "sync_page_size", "debounce_ms", "auto_sync_hours"}
+        allowed = {
+            "page_size",
+            "sync_page_size",
+            "debounce_ms",
+            "auto_sync_hours",
+            "model_update_event_threshold",
+            "model_update_max_wait_minutes",
+            "model_update_min_interval_minutes",
+        }
         unknown = set(values) - allowed
         if unknown:
             raise ValueError(f"unknown configuration keys: {sorted(unknown)}")
@@ -297,3 +308,14 @@ class CuratorAPI:
             not isinstance(auto_sync, (int, float)) or not 0 <= float(auto_sync) <= 24 * 30
         ):
             raise ValueError("auto_sync_hours must be between 0 and 720")
+        threshold = values.get("model_update_event_threshold")
+        if threshold is not None and (
+            not isinstance(threshold, int) or not 1 <= threshold <= 100
+        ):
+            raise ValueError("model_update_event_threshold must be an integer from 1 to 100")
+        for key in ("model_update_max_wait_minutes", "model_update_min_interval_minutes"):
+            value = values.get(key)
+            if value is not None and (
+                not isinstance(value, (int, float)) or not 1 <= float(value) <= 24 * 60
+            ):
+                raise ValueError(f"{key} must be between 1 and 1440")

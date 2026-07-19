@@ -123,6 +123,15 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         model_update = ModelUpdateCoordinator(
             connection, debounce_ms=int(config["debounce_ms"])
         ).status()
+        now_ms = time.time_ns() // 1_000_000
+        model_update_ready = model_update.ready(
+            now_ms,
+            event_threshold=int(config["model_update_event_threshold"]),
+            max_wait_ms=round(float(config["model_update_max_wait_minutes"]) * 60_000),
+            min_interval_ms=round(
+                float(config["model_update_min_interval_minutes"]) * 60_000
+            ),
+        )
         capture = {
             "direct_playback_sessions": connection.execute(
                 "SELECT count(*) FROM play_session WHERE provenance='direct_player'"
@@ -150,6 +159,8 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "ready": current is not None,
         "capture": capture,
         "model_pending": model_update.pending,
+        "model_pending_events": model_update.pending_count,
+        "model_update_ready": model_update_ready,
         "model_rebuilding": model_rebuilding is not None,
         "sync_due": (
             not running
@@ -363,10 +374,21 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
         elif mode in {"build", "update-model"}:
             _progress(0.1)
             _log("i", "Building the recommendation model")
+            model_milestone = -1
+
+            def report_model(processed: int, total: int) -> None:
+                nonlocal model_milestone
+                fraction = 1.0 if total == 0 else min(processed / total, 1.0)
+                _progress(0.12 + 0.78 * fraction)
+                milestone = int(fraction * 10)
+                if milestone > model_milestone:
+                    model_milestone = milestone
+                    _log("i", f"Scoring scenes: {processed}/{total}")
+
             coordinator = ModelUpdateCoordinator(connection)
             if mode == "build":
                 coordinator.request("manual_build")
-            models = coordinator.drain(force=True)
+            models = coordinator.drain(force=True, max_builds=1, progress=report_model)
             if not models:
                 summary = {"updated": False}
                 _progress(0.98)

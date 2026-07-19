@@ -70,3 +70,18 @@ def test_unknown_future_migration_is_rejected(tmp_path: Path) -> None:
             runner.status()
     finally:
         connection.close()
+
+
+def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
+    database = tmp_path / "curator.sqlite3"
+    writer = connect_database(database)
+    MigrationRunner(writer).migrate(applied_at_ms=1234)
+    reader = connect_database(database)
+    reader.execute("PRAGMA busy_timeout=1")
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        assert MigrationRunner(reader).status().current_version == 8
+    finally:
+        writer.rollback()
+        reader.close()
+        writer.close()

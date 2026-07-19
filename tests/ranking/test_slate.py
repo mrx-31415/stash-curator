@@ -310,6 +310,22 @@ def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: 
     assert any(item.scene_id == "d-revisit" and item.lane == "revisit" for item in classifications)
 
 
+def test_direct_play_removes_a_prebuilt_best_bet_without_rebuilding(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = SlateBuilder(connection)
+    assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
+    connection.execute(
+        """
+        INSERT INTO play_session(
+            session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
+            provenance, confidence, summary_json
+        ) VALUES ('direct', 'a-best', 1, 2, 1, 'direct_player', 1, '{}')
+        """
+    )
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id != "a-best"
+
+
 def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     slate = SlateBuilder(connection).recommend("best_bets", 4)

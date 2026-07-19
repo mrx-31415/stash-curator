@@ -8,8 +8,9 @@ import math
 import sqlite3
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from itertools import batched
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
@@ -97,10 +98,12 @@ class PreferenceModelBuilder:
         config: CuratorConfig = DEFAULT_CONFIG,
         *,
         clock_ms: Callable[[], int] | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> None:
         self.connection = connection
         self.config = config
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self.progress = progress
 
     def build(self) -> ModelBuildResult:
         started = time.perf_counter()
@@ -391,10 +394,19 @@ class PreferenceModelBuilder:
         reference_at_ms: int,
     ) -> tuple[_Score, ...]:
         vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
+        all_scene_ids = [
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT scene_id FROM source_scene ORDER BY scene_id"
+            )
+        ]
         preference_vectors, discriminative_tag_count = self._preference_content_vectors(
             vectors, scene_features, affinities
         )
-        neighbors = self._content_neighbors(preference_vectors, training_labels, label_mean)
+        progress_total = len(preference_vectors) + len(all_scene_ids)
+        neighbors = self._content_neighbors(
+            preference_vectors, training_labels, label_mean, progress_total
+        )
         performer_similarity_scores = self._performer_similarity_scores(
             feature_version, scene_features, affinities
         )
@@ -419,14 +431,9 @@ class PreferenceModelBuilder:
         performer_priors = self._performer_priors()
         studio_priors = self._studio_priors()
         scores: list[_Score] = []
-        all_scene_ids = [
-            str(row[0])
-            for row in self.connection.execute(
-                "SELECT scene_id FROM source_scene ORDER BY scene_id"
-            )
-        ]
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
-        for scene_id in all_scene_ids:
+        total_scenes = len(all_scene_ids)
+        for scene_index, scene_id in enumerate(all_scene_ids, 1):
             features = scene_features.get(scene_id, ())
             components: dict[str, object] = {
                 "baseline": {
@@ -682,6 +689,9 @@ class PreferenceModelBuilder:
                     eligibility.get(scene_id, {"eligible": False, "reasons": ["missing"]}),
                 )
             )
+            progress_index = len(preference_vectors) + scene_index
+            if self.progress and (scene_index == total_scenes or scene_index % 250 == 0):
+                self.progress(progress_index, progress_total)
         return tuple(scores)
 
     def _preference_content_vectors(
@@ -721,15 +731,17 @@ class PreferenceModelBuilder:
         vectors: dict[str, dict[str, float]],
         labels: dict[str, _SceneLabel],
         label_mean: float,
+        progress_total: int,
     ) -> dict[str, _NeighborEvidence]:
         inverted: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        vector_count = len(vectors)
         for scene_id, vector in vectors.items():
             if scene_id not in labels:
                 continue
             for name, value in vector.items():
                 inverted[name].append((scene_id, value))
         result: dict[str, _NeighborEvidence] = {}
-        for scene_id, vector in vectors.items():
+        for vector_index, (scene_id, vector) in enumerate(vectors.items(), 1):
             dots: dict[str, float] = defaultdict(float)
             shared: dict[str, int] = defaultdict(int)
             for name, value in vector.items():
@@ -774,6 +786,8 @@ class PreferenceModelBuilder:
                     for item in selected[:5]
                 ),
             )
+            if self.progress and (vector_index == vector_count or vector_index % 250 == 0):
+                self.progress(vector_index, progress_total)
         return result
 
     def _performer_similarity_scores(
@@ -998,75 +1012,78 @@ class PreferenceModelBuilder:
             self.connection.execute("DELETE FROM feature_affinity WHERE model_id=?", (model_id,))
             self.connection.execute("DELETE FROM direct_scene_state WHERE model_id=?", (model_id,))
             self.connection.execute("DELETE FROM model_scene_score WHERE model_id=?", (model_id,))
-            self.connection.executemany(
-                """
-                INSERT INTO feature_affinity(
-                    model_id, feature_id, affinity, confidence, effective_support,
-                    distinct_scene_count, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+
+        def insert_rows(sql: str, rows: Iterable[tuple[object, ...]]) -> None:
+            for batch in batched(rows, 1_000):
+                with transaction(self.connection):
+                    self.connection.executemany(sql, batch)
+
+        insert_rows(
+            """
+            INSERT INTO feature_affinity(
+                model_id, feature_id, affinity, confidence, effective_support,
+                distinct_scene_count, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
                 (
-                    (
-                        model_id,
-                        affinity.feature_id,
-                        affinity.affinity,
-                        affinity.confidence,
-                        affinity.support,
-                        affinity.scene_count,
-                        json.dumps(affinity.contexts, sort_keys=True, separators=(",", ":")),
-                    )
-                    for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
-                ),
-            )
-            self.connection.executemany(
-                """
-                INSERT INTO direct_scene_state(
-                    model_id, scene_id, direct_appeal, effective_evidence, confidence, residual
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                    model_id,
+                    affinity.feature_id,
+                    affinity.affinity,
+                    affinity.confidence,
+                    affinity.support,
+                    affinity.scene_count,
+                    json.dumps(affinity.contexts, sort_keys=True, separators=(",", ":")),
+                )
+                for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
+            ),
+        )
+        insert_rows(
+            """
+            INSERT INTO direct_scene_state(
+                model_id, scene_id, direct_appeal, effective_evidence, confidence, residual
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
                 (
-                    (
-                        model_id,
-                        scene_id,
-                        label.outcome,
-                        label.effective_evidence,
-                        direct_confidence(label.effective_evidence, config=self.config.model),
-                        _clamp(
-                            label.outcome - scores_by_scene[scene_id].general_appeal,
-                            -2,
-                            2,
-                        ),
-                    )
-                    for scene_id, label in sorted(labels.items())
-                ),
-            )
-            self.connection.executemany(
-                """
-                INSERT INTO model_scene_score(
-                    model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
-                    appeal, current_fit, confidence, metadata_confidence, recovery,
-                    components_json, neighbors_json, eligibility_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                    model_id,
+                    scene_id,
+                    label.outcome,
+                    label.effective_evidence,
+                    direct_confidence(label.effective_evidence, config=self.config.model),
+                    _clamp(label.outcome - scores_by_scene[scene_id].general_appeal, -2, 2),
+                )
+                for scene_id, label in sorted(labels.items())
+            ),
+        )
+        insert_rows(
+            """
+            INSERT INTO model_scene_score(
+                model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
+                appeal, current_fit, confidence, metadata_confidence, recovery,
+                components_json, neighbors_json, eligibility_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
                 (
-                    (
-                        model_id,
-                        score.scene_id,
-                        score.general_appeal,
-                        score.direct_appeal,
-                        score.direct_confidence,
-                        score.appeal,
-                        score.current_fit,
-                        score.confidence,
-                        score.metadata_confidence,
-                        score.recovery,
-                        json.dumps(score.components, sort_keys=True, separators=(",", ":")),
-                        json.dumps(score.neighbors, sort_keys=True, separators=(",", ":")),
-                        json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
-                    )
-                    for score in scores
-                ),
-            )
+                    model_id,
+                    score.scene_id,
+                    score.general_appeal,
+                    score.direct_appeal,
+                    score.direct_confidence,
+                    score.appeal,
+                    score.current_fit,
+                    score.confidence,
+                    score.metadata_confidence,
+                    score.recovery,
+                    json.dumps(score.components, sort_keys=True, separators=(",", ":")),
+                    json.dumps(score.neighbors, sort_keys=True, separators=(",", ":")),
+                    json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
+                )
+                for score in scores
+            ),
+        )
+        with transaction(self.connection):
             self.connection.execute(
                 "UPDATE model_version SET status='superseded' WHERE status='published'"
             )
