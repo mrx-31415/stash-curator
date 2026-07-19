@@ -5,6 +5,7 @@
   const { React, GQL, libraries } = Api;
   const { Button, Nav } = libraries.Bootstrap;
   const { NavLink } = libraries.ReactRouterDOM;
+  const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faCompass } = libraries.FontAwesomeSolid;
   const LANES = [
     {
@@ -733,14 +734,13 @@
 
   Api.register.route("/plugins/stash-curator", CuratorPage);
   function CuratorNavItem() {
-    const { Icon } = Api.components;
     return React.createElement(
       Nav.Link,
       { as: "div", eventKey: "/plugins/stash-curator", className: "col-4 col-sm-3 col-md-2 col-lg-auto" },
       React.createElement(
         NavLink,
-        { exact: true, to: "/plugins/stash-curator", activeClassName: "active", className: "btn minimal p-4 p-xl-2 d-flex flex-column flex-xl-row align-items-center" },
-        React.createElement(Icon, { icon: faCompass, className: "fa-icon nav-menu-icon mr-xl-2" }),
+        { exact: true, to: "/plugins/stash-curator", activeClassName: "active", className: "btn minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center" },
+        React.createElement(FontAwesomeIcon, { icon: faCompass, className: "fa-icon nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" }),
         React.createElement("span", null, "Curator")
       )
     );
