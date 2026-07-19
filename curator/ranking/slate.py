@@ -171,7 +171,10 @@ class SlateBuilder:
             timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         now_ms = time.time_ns() // 1_000_000
-        live_eligibility = scene_eligibility(self.connection, now_ms, self.config)
+        candidate_ids = {item.classification.scene_id for item in self._cached_candidates}
+        live_eligibility = scene_eligibility(
+            self.connection, now_ms, self.config, scene_ids=candidate_ids
+        )
         direct_plays = {
             str(row["scene_id"]): int(row["last_played"])
             for row in self.connection.execute(
@@ -531,9 +534,11 @@ class SlateBuilder:
         return (
             performers,
             studios,
+            # Content repetition is about the immediate run; performer and studio
+            # repetition still use the full history window above.
             tuple(
                 self._cached_vectors[scene_id]
-                for scene_id in scene_ids
+                for scene_id in scene_ids[:10]
                 if scene_id in self._cached_vectors
             ),
         )

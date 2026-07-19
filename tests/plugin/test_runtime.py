@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import zipfile
@@ -65,6 +66,11 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     installed = tmp_path / "installed"
     assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()
     assert _run(installed / "backend.py", installed)["round_trips"] == 1
+    with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
+        connection.execute(
+            "UPDATE model_update_state SET last_started_at_ms=2, "
+            "last_finished_at_ms=1, last_error=NULL"
+        )
     task = subprocess.run(
         [sys.executable, str(installed / "backend.py"), str(installed), "backup"],
         input=json.dumps(_payload(installed)),
@@ -75,6 +81,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert json.loads(task.stdout)["output"]["backup"].endswith(".sqlite3.backup")
     assert "Stash Curator backup completed" in task.stderr
     assert "\x01p\x021.0000" in task.stderr
+    with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
+        assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
 
 
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:

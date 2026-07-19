@@ -362,6 +362,14 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
         if existing is None:
             connection.execute(
                 """
+                UPDATE model_update_state SET last_error='interrupted before task completion'
+                WHERE last_started_at_ms IS NOT NULL
+                AND last_started_at_ms>COALESCE(last_finished_at_ms, -1)
+                AND last_error IS NULL
+                """
+            )
+            connection.execute(
+                """
                 INSERT INTO curator_job(job_id, job_type, state, started_at_ms)
                 VALUES (?, ?, 'running', ?)
                 """,

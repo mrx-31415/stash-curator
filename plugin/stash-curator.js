@@ -6,7 +6,7 @@
   const { Button, Nav } = libraries.Bootstrap;
   const { NavLink } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBullseye, faCompass, faHistory, faSearch, faStar } = libraries.FontAwesomeSolid;
+  const { faBullseye, faCog, faCompass, faHistory, faSearch, faStar, faSync, faThumbsDown, faThumbsUp, faWrench } = libraries.FontAwesomeSolid;
   const LANES = [
     {
       value: "for_you",
@@ -238,8 +238,8 @@
     return React.createElement(
       "div",
       { className: "curator-feedback" },
-      React.createElement(Button, { size: "sm", disabled: busy, title: "Strengthen recommendations like this one.", onClick: () => send("thumb_up") }, "Useful 👍"),
-      React.createElement(Button, { size: "sm", disabled: busy, title: "Treat this recommendation as a poor match.", onClick: () => send("thumb_down") }, "Not for me 👎"),
+      React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Useful: strengthen recommendations like this one.", "aria-label": "Useful", onClick: () => send("thumb_up") }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp })),
+      React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Not for me: treat this recommendation as a poor match.", "aria-label": "Not for me", onClick: () => send("thumb_down") }, React.createElement(FontAwesomeIcon, { icon: faThumbsDown })),
       React.createElement(
         "details",
         { className: "curator-more" },
@@ -325,7 +325,6 @@
               laneByValue.get(item.source_lane)?.label || item.source_lane
             )
         ),
-        React.createElement("p", { className: "curator-explanation" }, item.explanation),
         React.createElement(
           "div",
           { className: "curator-card-details" },
@@ -333,6 +332,7 @@
             "details",
             { className: "curator-evidence" },
             React.createElement("summary", null, "Why this?"),
+            React.createElement("p", { className: "curator-explanation" }, item.explanation),
             React.createElement(
               "ul",
               null,
@@ -425,10 +425,12 @@
       }
     }
     const running = health?.active_job ? jobs.find((job) => job.state === "running") : null;
-    const lastError = jobs[0]?.state === "failed" ? jobs[0] : null;
-    const hasSynced = jobs.some(
-      (job) => ["sync-build", "full-sync-build"].includes(job.job_type) && job.state === "complete"
+    const lastError = jobs.find(
+      (job) => job.state === "failed"
+        && ["sync-build", "full-sync-build"].includes(job.job_type)
+        && job.finished_at_ms > (health?.last_sync_at_ms || 0)
     );
+    const hasSynced = Boolean(health?.last_sync_at_ms);
     const modelStatus = health?.model_rebuilding
       ? "Model rebuilding"
       : health?.model_pending
@@ -462,10 +464,9 @@
       React.createElement(
         "div",
         { className: "curator-task-buttons" },
-        React.createElement(Button, { size: "sm", title: "Fetch changed Stash metadata, then refresh recommendations.", onClick: () => start("Sync and build recommendations") }, "Sync library"),
-        React.createElement(Button, { size: "sm", title: "Recalculate recommendations from the existing synchronized data.", onClick: () => start("Rebuild recommendation model") }, "Rebuild model"),
-        React.createElement(Button, { size: "sm", title: "Create a timestamped backup of Curator's sidecar database.", onClick: () => start("Backup Curator data") }, "Back up"),
-        React.createElement(NavLink, { className: "btn btn-secondary btn-sm", title: "Open Stash's plugin settings for Curator configuration.", to: "/settings?tab=plugins" }, "Plugin settings")
+        React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Sync library: fetch changed Stash metadata and refresh recommendations.", "aria-label": "Sync library", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
+        React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Rebuild model from the existing synchronized data.", "aria-label": "Rebuild model", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+        React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
       ),
       lastError && React.createElement("small", { className: "text-danger" }, lastError.error),
       pruning.length > 0 &&

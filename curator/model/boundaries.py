@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 
@@ -13,6 +14,7 @@ def scene_eligibility(
     config: CuratorConfig = DEFAULT_CONFIG,
     *,
     include_temporary: bool = True,
+    scene_ids: Collection[str] | None = None,
 ) -> dict[str, dict[str, object]]:
     latest_feedback: dict[str, str] = {}
     not_now: dict[str, int] = {}
@@ -44,14 +46,32 @@ def scene_eligibility(
         str(row["scene_id"]): str(row["state"])
         for row in connection.execute("SELECT scene_id, state FROM pruning_candidate")
     }
-    available = {
-        str(row[0])
-        for row in connection.execute("SELECT DISTINCT scene_id FROM source_file WHERE available=1")
-    }
+    if scene_ids is None:
+        scenes = [str(row[0]) for row in connection.execute("SELECT scene_id FROM source_scene")]
+        available = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT scene_id FROM source_file WHERE available=1"
+            )
+        }
+    else:
+        scenes = sorted(map(str, scene_ids))
+        placeholders = ",".join("?" for _ in scenes)
+        available = (
+            {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT scene_id FROM source_file "
+                    f"WHERE available=1 AND scene_id IN ({placeholders})",
+                    scenes,
+                )
+            }
+            if scenes
+            else set()
+        )
     not_now_ms = int(config.model.not_now_days * 86_400_000)
     result: dict[str, dict[str, object]] = {}
-    for row in connection.execute("SELECT scene_id FROM source_scene ORDER BY scene_id"):
-        scene_id = str(row[0])
+    for scene_id in scenes:
         reasons: list[str] = []
         if scene_id not in available:
             reasons.append("file_unavailable")
