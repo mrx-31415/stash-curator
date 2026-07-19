@@ -171,7 +171,7 @@
 }
 
 .curator-card {
-  background: rgba(0, 0, 0, 0.18);
+  background: #182126;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 0.55rem;
   box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
@@ -179,6 +179,7 @@
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  position: relative;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -197,10 +198,33 @@
 }
 
 .curator-card > .scene-card {
+  background: #182126;
   border: 0;
   border-radius: 0;
   margin: 0;
+  position: relative;
   width: 100%;
+}
+
+.curator-card .card-section {
+  background: #182126;
+  padding-bottom: 0.35rem;
+}
+
+.curator-card > .scene-card > hr {
+  display: none;
+}
+
+.curator-card .card-popovers {
+  bottom: 0.2rem;
+  margin: 0;
+  position: absolute;
+  right: 0.6rem;
+}
+
+.curator-card .scene-card__details {
+  min-height: 1.9rem;
+  padding-right: 10rem;
 }
 
 .curator-card .card-section-title {
@@ -216,33 +240,27 @@
 }
 
 .curator-card-body {
-  border-top: 2px solid var(--primary, #7952b3);
+  background: #182126;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
   flex: 1;
-  padding: 0.8rem 0.9rem 0;
-}
-
-.curator-take-label {
-  color: var(--text-muted, #adb5bd);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.curator-take-heading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
+  padding: 0.45rem 0.7rem;
 }
 
 .curator-source-badge {
   align-items: center;
-  color: var(--text-muted, #adb5bd);
+  background: rgba(18, 24, 28, 0.88);
+  border-radius: 0.3rem;
   display: inline-flex;
-  font-size: 0.72rem;
-  gap: 0.3rem;
+  font-size: 0.9rem;
+  height: 1.8rem;
+  justify-content: center;
+  left: 0.5rem;
+  position: absolute;
+  top: 0.5rem;
+  width: 1.8rem;
+  z-index: 3;
 }
 
 .curator-evidence .curator-explanation {
@@ -251,9 +269,10 @@
 }
 
 .curator-card-details {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 1rem;
+  gap: 0.35rem 0.8rem;
 }
 
 .curator-evidence,
@@ -285,13 +304,13 @@
 
 .curator-feedback {
   align-items: center;
-  background: rgba(0, 0, 0, 0.15);
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: transparent;
+  border: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin: auto -0.9rem 0;
-  padding: 0.65rem 0.9rem;
+  margin-left: auto;
+  padding: 0;
 }
 
 .curator-feedback-button.btn-link {

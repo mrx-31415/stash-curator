@@ -317,24 +317,17 @@
     return React.createElement(
       "article",
       { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
+      React.createElement(
+        "span",
+        { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}`, "aria-label": `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
+        React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass })
+      ),
       scene
         ? React.createElement(SceneCard, { scene })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
       React.createElement(
         "div",
         { className: "curator-card-body" },
-        React.createElement(
-          "div",
-          { className: "curator-take-heading" },
-          React.createElement("div", { className: "curator-take-label" }, "Curator's take"),
-          slate.lane === "for_you" &&
-            React.createElement(
-              "span",
-              { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
-              React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
-              laneByValue.get(item.source_lane)?.label || item.source_lane
-            )
-        ),
         React.createElement(
           "div",
           { className: "curator-card-details" },
@@ -358,16 +351,16 @@
           React.createElement(
             "details",
             { className: "curator-score" },
-            React.createElement("summary", null, `How the score was built · ${item.final_utility.toFixed(2)}`),
+            React.createElement("summary", null, `Score · ${item.final_utility.toFixed(2)}`),
             React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
             React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
             React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
             React.createElement(ScoreNode, { name: "components", value: item.components }),
             React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
             React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
-          )
-        ),
-        React.createElement(Feedback, { item, onRemove })
+          ),
+          React.createElement(Feedback, { item, onRemove })
+        )
       )
     );
   }
