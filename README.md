@@ -13,7 +13,8 @@ all five lanes with inspectable reasons, compare performers, and export a
 self-contained HTML evaluation report. It can also cache StashDB's public tag
 taxonomy so physical-description tags do not masquerade as scene-content matches.
 An installable plugin adds the Stash-native page, feedback, direct player-session
-collection, persistent jobs, and configuration on top of the validation tools.
+collection, persistent jobs, local similarity, conservative pruning, and optional
+StashDB discovery on top of the validation tools.
 
 ## Documentation
 
@@ -36,7 +37,9 @@ https://mrx-31415.github.io/stash-curator/index.yml
 Install **Stash Curator**, reload plugins, open the compass button in Stash's
 top navigation, and run **Sync library** once. Jobs, configuration, backup, and reset are available from the Curator page;
 manual and full-reconciliation tasks are also available on Stash's Tasks page.
-Curator never mutates library entities: feedback and events remain in its sidecar.
+Curator keeps feedback and events in its sidecar. Its only library mutation is the
+explicit, reversible Prune action, which adds or removes the configured tag; Curator
+never deletes media.
 
 For a nightly background sync, let the host scheduler invoke Stash's task API; no
 browser needs to be open. For example, this crontab entry runs at 03:00:
@@ -47,6 +50,12 @@ browser needs to be open. For example, this crontab entry runs at 03:00:
 
 Change the URL when Stash is not reachable on the host loopback interface, and add
 an `ApiKey` header when authentication is enabled.
+
+StashDB discovery is opt-in. Configure a StashDB stash-box in Stash, then run
+**Refresh Expand cache** manually or from the same host scheduler. The cache remains
+usable during StashDB outages and is marked stale after 12 hours. Preference history
+is scored locally and is never sent to StashDB. Popularity-wildcard candidates are
+disabled by default and visibly badged when enabled.
 
 The sidecar defaults to `{pluginDir}/data/curator.sqlite3`. Configure **Sidecar
 database path** before first use if plugin updates or uninstallation may replace that

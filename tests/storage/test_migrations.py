@@ -11,10 +11,10 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
         runner = MigrationRunner(connection)
         before = runner.status()
         assert before.current_version == 0
-        assert before.pending_versions == (1, 2, 3, 4, 5, 6, 7, 8)
+        assert before.pending_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 8
+        assert after.current_version == 10
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -80,7 +80,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 8
+        assert MigrationRunner(reader).status().current_version == 10
     finally:
         writer.rollback()
         reader.close()

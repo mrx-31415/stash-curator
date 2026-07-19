@@ -848,6 +848,10 @@ secrets and avoid dumping full library objects.
 
 Each package is independently assignable after its dependencies are complete.
 
+The post-MVP packages below extend the same local model rather than creating a
+second recommendation system. Implement them in order; each remains useful without
+the later packages.
+
 ### WP-00 — Repository foundation
 
 Status: complete.
@@ -1113,6 +1117,108 @@ published model or sidecar state. A Stash server restart and hands-on page pass 
 Exit when all product-MVP bullets in the design are implemented, integration and
 privacy tests pass, upgrade/uninstall behavior is documented, and a private end-to-end
 trial produces useful recommendations from newly collected events.
+
+### WP-12 — Local Similar
+
+Status: implemented; installed-page acceptance pending.
+
+Dependencies: WP-04 through WP-10.
+
+Deliverables:
+
+- preference-aware similar scenes and performers from the local library;
+- a Curator Similar view with scene and performer modes;
+- relationship labels: same performer, similar performer, shared content, similar
+  structure, and same studio;
+- `similar` provenance on impressions opened from this view.
+
+Scene results first satisfy a meaningful similarity floor, then rank by an initial
+70% similarity / 30% predicted-Appeal blend. Performer results reuse the existing
+missing-aware weighted profile comparison. Diversity remains a slate concern.
+
+Acceptance: synthetic tests prove the floor, blend, labels, stable ordering, and
+separation from ordinary lane history.
+
+### WP-13 — Prune
+
+Status: implemented; installed tagging acceptance pending.
+
+Dependencies: WP-10.
+
+Deliverables:
+
+- a Prune tab with Candidates, Tagged, Explicit dislikes, and Model suspects;
+- one-click creation/application of configurable `[Prune]`, plus tag-only undo;
+- page-scoped bulk tagging with confirmation and a visible tag badge;
+- high-confidence Appeal-based suspects with a Broader threshold option;
+- permanent dismissal until later explicit negative evidence reopens a suspect.
+
+Thumbs down excludes immediately but never applies the tag. Curator never deletes a
+scene. Undo removes only `[Prune]`; it does not reverse feedback or exclusions.
+
+Acceptance: mutations affect only the configured tag; requests are idempotent; the
+default page is 20 scenes; tagged scenes stay excluded after sync; dismissal and
+reopening semantics have integration tests.
+
+### WP-14 — Expand
+
+Status: implemented; live StashDB acceptance pending.
+
+Dependencies: WP-12 and a configured StashDB stash-box endpoint.
+
+Deliverables:
+
+- an Expand area with Scenes, Performers, and Shortlist tabs;
+- bounded StashDB candidates from known performers, studio bridges, high-affinity
+  content, and an opt-in popularity wildcard, scored with coarse performer profiles;
+- local scoring, owned-item exclusion by StashDB ID, remote images, Best match/Newest
+  sorting, and a configurable 90-day default horizon;
+- a separate refresh task and 12-hour cache isolated from library sync failures.
+
+Preferences and behavior never leave Curator. Female performers are the configurable
+default. Wildcard results carry a clear badge and explanation.
+
+Acceptance: fixture-backed GraphQL tests cover paging, deduplication, owned-item
+exclusion, cache reuse/refresh, outage isolation, filters, and wildcard opt-in. CI
+does not require live StashDB.
+
+### WP-15 — Shortlist and Whisparr
+
+Status: implemented; live Whisparr acceptance pending.
+
+Dependencies: WP-14.
+
+Deliverables:
+
+- durable scene and performer shortlists;
+- Open StashDB and Copy ID actions;
+- optional Whisparr v3 configuration and scene-only Send action;
+- duplicate detection by StashDB ID and optional immediate search, enabled by default.
+
+Acceptance: shortlist changes are idempotent; secrets never reach UI or logs; mocked
+Whisparr tests cover send, duplicate, authentication error, and search toggle.
+
+### WP-16 — Context entry points
+
+Status: implemented; installed context-navigation acceptance pending.
+
+Dependencies: WP-12; WP-14 for external tabs.
+
+Deliverables:
+
+- Curator buttons on Stash scene and performer pages;
+- scene routes open Similar scenes; performer routes open Similar performers;
+- Library and StashDB tabs stay separate;
+- an external performer links to Expand scenes filtered to that performer.
+
+Acceptance: buttons preserve the source entity, work without Expand configured, and
+expose no essential action only through hover.
+
+### Gate C — Library exploration and maintenance
+
+Exit when WP-12 through WP-16 pass unit/integration tests, installed UI acceptance
+covers tagging and contextual navigation, external failures leave local Curator
+usable, and no mutation can delete library media.
 
 ## 21. Open decisions before WP-00
 

@@ -15,7 +15,7 @@ def test_database_cli_migrate_status_and_backup(
 
     assert run(["--db", str(database), "db", "migrate", "--json"]) == 0
     migrated = json.loads(capsys.readouterr().out)
-    assert migrated["current_version"] == migrated["latest_version"] == 8
+    assert migrated["current_version"] == migrated["latest_version"] == 10
 
     assert run(["--db", str(database), "db", "status", "--json"]) == 0
     status = json.loads(capsys.readouterr().out)

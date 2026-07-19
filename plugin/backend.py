@@ -18,6 +18,7 @@ for package_root in (PLUGIN_DIR, PLUGIN_DIR.parent):
 from curator import __version__  # noqa: E402
 from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
+from curator.expand import STASHDB, ExpandService  # noqa: E402
 from curator.graphql import GraphQLClient  # noqa: E402
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore  # noqa: E402
 from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
@@ -29,6 +30,7 @@ from curator.storage import (  # noqa: E402
 )
 from curator.sync import SyncService  # noqa: E402
 from curator.sync.repository import SyncRepository  # noqa: E402
+from curator.whisparr import WhisparrClient  # noqa: E402
 
 SCHEMA_VERSION = 1
 RUNTIME_QUERY = """
@@ -40,6 +42,46 @@ query CuratorPluginRuntime {
 SETTINGS_QUERY = """
 query CuratorPluginSettings {
   configuration { plugins(include: ["stash-curator"]) }
+}
+"""
+STASHBOX_QUERY = """
+query CuratorStashBoxes {
+  configuration { general { stashBoxes { endpoint api_key name } } }
+}
+"""
+EXTERNAL_LINKS_QUERY = """
+query CuratorExternalLinks($page: Int!, $perPage: Int!) {
+  scenes: findScenes(
+    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count scenes { id stash_ids { endpoint stash_id } } }
+  performers: findPerformers(
+    performer_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count performers { id stash_ids { endpoint stash_id } } }
+  studios: findStudios(
+    studio_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count studios { id stash_ids { endpoint stash_id } } }
+}
+"""
+FIND_PRUNE_TAG = """
+query CuratorFindPruneTag($name: String!) {
+  findTags(filter: {q: $name, per_page: 20}) { tags { id name } }
+}
+"""
+CREATE_PRUNE_TAG = """
+mutation CuratorCreatePruneTag($input: TagCreateInput!) {
+  tagCreate(input: $input) { id name }
+}
+"""
+UPDATE_PRUNE_TAG = """
+mutation CuratorUpdatePruneTag($input: BulkSceneUpdateInput!) {
+  bulkSceneUpdate(input: $input) { id }
 }
 """
 
@@ -71,6 +113,48 @@ def _client(payload: dict[str, Any]) -> GraphQLClient:
     return GraphQLClient(stash_url, headers=headers)
 
 
+def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
+    boxes = _client(payload).execute(STASHBOX_QUERY)["configuration"]["general"]["stashBoxes"]
+    box = next(
+        (
+            item
+            for item in boxes
+            if str(item.get("endpoint") or "").rstrip("/").casefold()
+            == STASHDB.rstrip("/").casefold()
+        ),
+        None,
+    )
+    if box is None or not box.get("api_key"):
+        raise RuntimeError("configure StashDB with an API key in Stash settings")
+    return GraphQLClient(str(box["endpoint"]), api_key=str(box["api_key"]))
+
+
+def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {"scenes": {}, "performers": {}, "studios": {}}
+    page = 1
+    while True:
+        data = _client(payload).execute(EXTERNAL_LINKS_QUERY, {"page": page, "perPage": 500})
+        more = False
+        for kind in result:
+            collection = data[kind]
+            for row in collection[kind]:
+                external = next(
+                    (
+                        str(item["stash_id"])
+                        for item in row.get("stash_ids", [])
+                        if str(item.get("endpoint") or "").rstrip("/").casefold()
+                        == STASHDB.rstrip("/").casefold()
+                    ),
+                    None,
+                )
+                if external:
+                    result[kind][str(row["id"])] = external
+            more |= page * 500 < int(collection["count"])
+        if not more:
+            return result
+        page += 1
+
+
 def _settings(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         result = _client(payload).execute(SETTINGS_QUERY)
@@ -96,6 +180,10 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         "modelUpdateEventThreshold": ("model_update_event_threshold", int),
         "modelUpdateMaxWaitMinutes": ("model_update_max_wait_minutes", float),
         "modelUpdateMinIntervalMinutes": ("model_update_min_interval_minutes", float),
+        "pruneTagName": ("prune_tag_name", str),
+        "expandHorizonDays": ("expand_horizon_days", int),
+        "expandGender": ("expand_gender", str),
+        "expandWildcard": ("expand_wildcard", bool),
     }
     overrides = {
         key: convert(settings[source])
@@ -139,6 +227,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Apply recent Curator feedback",
         "Prepare recommendation pages",
         "Backup Curator data",
+        "Refresh Expand cache",
     }
     active_job = next(
         (
@@ -256,7 +345,8 @@ def _round_trip(payload: dict[str, Any]) -> dict[str, object]:
 
 
 def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
-    connection = _open(payload, _settings(payload))
+    settings = _settings(payload)
+    connection = _open(payload, settings)
     args = payload.get("args") or {}
     try:
         api = CuratorAPI(connection)
@@ -286,6 +376,60 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
             )
         if operation == "get_explanation":
             return api.explanation(str(args.get("scene_id") or ""))
+        if operation == "get_expand":
+            return api.expand(
+                str(args.get("entity_type") or "scene"),
+                sort=str(args.get("sort") or "match"),
+                performer_id=str(args["performer_id"]) if args.get("performer_id") else None,
+                count=int(args.get("count") or 50),
+            )
+        if operation == "get_shortlist":
+            return api.expand_shortlist()
+        if operation == "get_external_similar":
+            return api.external_similar(
+                str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
+            )
+        if operation == "update_shortlist":
+            entity_type = str(args.get("entity_type") or "")
+            external_id = str(args.get("external_id") or "")
+            selected = bool(args.get("selected"))
+            api.update_shortlist(entity_type, external_id, selected)
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "entity_type": entity_type,
+                "external_id": external_id,
+                "selected": selected,
+            }
+        if operation == "send_whisparr":
+            external_id = str(args.get("external_id") or "")
+            row = connection.execute(
+                """
+                SELECT payload_json FROM external_shortlist
+                WHERE entity_type='scene' AND external_id=?
+                UNION ALL
+                SELECT payload_json FROM external_entity
+                WHERE entity_type='scene' AND external_id=? LIMIT 1
+                """,
+                (external_id, external_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("scene is not in Expand")
+            payload_json = json.loads(str(row[0]))
+            url = str(settings.get("whisparrUrl") or "").strip()
+            key = str(settings.get("whisparrApiKey") or "").strip()
+            root = str(settings.get("whisparrRootFolder") or "").strip()
+            profile = int(settings.get("whisparrQualityProfileId") or 0)
+            if not root or profile < 1:
+                raise ValueError(
+                    "configure Whisparr root folder and quality profile in plugin settings"
+                )
+            return WhisparrClient(url, key).send_scene(
+                external_id,
+                str(payload_json.get("title") or "Added by Stash Curator"),
+                root,
+                profile,
+                search=bool(settings.get("whisparrSearchImmediately", True)),
+            )
         if operation == "submit_feedback":
             entries = args.get("entries")
             if not isinstance(entries, list):
@@ -298,6 +442,61 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
             return api.submit_events(entries)
         if operation == "get_pruning_queue":
             return api.pruning_queue()
+        if operation == "get_prune_candidates":
+            config = api.config()["config"]
+            assert isinstance(config, dict)
+            return api.prune_candidates(
+                str(args.get("view") or "candidates"),
+                broader=bool(args.get("broader")),
+                page=int(args.get("page") or 1),
+                page_size=int(args.get("page_size") or 20),
+                tag_name=str(config["prune_tag_name"]),
+            )
+        if operation == "dismiss_prune_candidate":
+            scene_id = str(args.get("scene_id") or "")
+            api.dismiss_prune_candidate(scene_id)
+            return {"schema_version": SCHEMA_VERSION, "scene_id": scene_id, "dismissed": True}
+        if operation == "set_prune_tag":
+            scene_ids = args.get("scene_ids")
+            if not isinstance(scene_ids, list) or not 1 <= len(scene_ids) <= 100:
+                raise ValueError("scene_ids must contain 1 to 100 scenes")
+            scene_ids = list(dict.fromkeys(str(value) for value in scene_ids))
+            config = api.config()["config"]
+            assert isinstance(config, dict)
+            tag_name = str(config["prune_tag_name"])
+            client = _client(payload)
+            found = client.execute(FIND_PRUNE_TAG, {"name": tag_name})["findTags"]["tags"]
+            tag = next(
+                (
+                    item
+                    for item in found
+                    if str(item.get("name", "")).casefold() == tag_name.casefold()
+                ),
+                None,
+            )
+            if tag is None:
+                tag = client.mutate(CREATE_PRUNE_TAG, {"input": {"name": tag_name}})["tagCreate"]
+            tagged = bool(args.get("tagged"))
+            client.mutate(
+                UPDATE_PRUNE_TAG,
+                {
+                    "input": {
+                        "ids": scene_ids,
+                        "tag_ids": {
+                            "ids": [str(tag["id"])],
+                            "mode": "ADD" if tagged else "REMOVE",
+                        },
+                    }
+                },
+            )
+            api.record_prune_tags(scene_ids, tagged, str(tag["id"]), tag_name)
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "scene_ids": scene_ids,
+                "tagged": tagged,
+                "tag_id": str(tag["id"]),
+                "tag_name": tag_name,
+            }
         if operation == "update_pruning":
             return api.update_pruning(str(args.get("scene_id") or ""), str(args.get("state") or ""))
         if operation == "get_exclusions":
@@ -316,6 +515,13 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
         if operation == "get_inspector_entity":
             return api.inspector(
                 str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
+            )
+        if operation == "get_similar":
+            return api.similar(
+                str(args.get("entity_type") or ""),
+                str(args.get("entity_id") or ""),
+                int(args.get("count") or 20),
+                impression_id=(str(args["impression_id"]) if args.get("impression_id") else None),
             )
         raise ValueError(f"unknown Curator API operation: {operation}")
     finally:
@@ -409,6 +615,7 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 page_size=int(sidecar_config["sync_page_size"]),
                 progress=report_sync,
             ).sync(full=mode == "full-sync-build")
+            CuratorAPI(connection).reconcile_prune_tag(str(sidecar_config["prune_tag_name"]))
             _progress(0.78)
             _log("i", "Rebuilding historical preference signals")
             historical = HistoricalEventStore(connection).rebuild(
@@ -499,6 +706,20 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             backup_database(connection, destination)
             _progress(0.98)
             summary = {"backup": str(destination)}
+        elif mode == "expand-refresh":
+            _progress(0.1)
+            config = CuratorAPI(connection).config()["config"]
+            assert isinstance(config, dict)
+            _log("i", "Collecting bounded StashDB candidates")
+            _progress(0.25)
+            summary = ExpandService(connection).refresh(
+                _stashdb(payload),
+                _external_links(payload),
+                horizon_days=int(config["expand_horizon_days"]),
+                gender=str(config["expand_gender"]),
+                wildcard=bool(config["expand_wildcard"]),
+            )
+            _progress(0.98)
         else:
             raise ValueError(f"unknown Curator task: {mode}")
     except Exception as error:

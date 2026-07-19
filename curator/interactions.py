@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict
 from typing import Any
 
@@ -39,6 +40,27 @@ class InteractionStore:
         requested_at_ms: int,
         context: dict[str, object] | None = None,
     ) -> None:
+        self.record_ranked_impression(
+            impression_id,
+            slate.lane,
+            slate.model_id,
+            (
+                (item.scene_id, item.position, item.final_utility, item.reason_ids)
+                for item in slate.items
+            ),
+            requested_at_ms,
+            context,
+        )
+
+    def record_ranked_impression(
+        self,
+        impression_id: str,
+        lane: str,
+        model_id: str,
+        items: Iterable[tuple[str, int, float, tuple[str, ...]]],
+        requested_at_ms: int,
+        context: dict[str, object] | None = None,
+    ) -> None:
         with transaction(self.connection):
             cursor = self.connection.execute(
                 """
@@ -50,8 +72,8 @@ class InteractionStore:
                 (
                     impression_id,
                     requested_at_ms,
-                    slate.lane,
-                    slate.model_id,
+                    lane,
+                    model_id,
                     json.dumps(context or {}, sort_keys=True, separators=(",", ":")),
                 ),
             )
@@ -66,12 +88,12 @@ class InteractionStore:
                 (
                     (
                         impression_id,
-                        item.scene_id,
-                        item.position,
-                        item.final_utility,
-                        json.dumps(item.reason_ids, separators=(",", ":")),
+                        scene_id,
+                        position,
+                        policy_score,
+                        json.dumps(reason_ids, separators=(",", ":")),
                     )
-                    for item in slate.items
+                    for scene_id, position, policy_score, reason_ids in items
                 ),
             )
 
@@ -189,6 +211,9 @@ class InteractionStore:
                 """,
                 (f"exclusion:{entry['scene_id']}", entry["scene_id"], entry["occurred_at_ms"]),
             )
+            self._reopen_pruning(entry, "Never show")
+        elif feedback_type == "thumb_down":
+            self._reopen_pruning(entry, "Thumbs down")
         elif feedback_type == "prune":
             self.connection.execute(
                 """
@@ -205,6 +230,17 @@ class InteractionStore:
                     entry["value"],
                 ),
             )
+
+    def _reopen_pruning(self, entry: dict[str, Any], reason: str) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO pruning_candidate(scene_id, state, created_at_ms, updated_at_ms, reason)
+            VALUES (?, 'review', ?, ?, ?)
+            ON CONFLICT(scene_id) DO UPDATE SET state='review',
+                updated_at_ms=excluded.updated_at_ms, reason=excluded.reason
+            """,
+            (entry["scene_id"], entry["occurred_at_ms"], entry["occurred_at_ms"], reason),
+        )
 
     def _insert_replacement(self, replacement: DirectSessionInput) -> None:
         row = self.connection.execute(

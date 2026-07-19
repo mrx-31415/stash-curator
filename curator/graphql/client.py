@@ -33,7 +33,7 @@ def _urllib_transport(url: str, headers: Mapping[str, str], body: bytes, timeout
 
 
 class GraphQLClient:
-    """Send GraphQL queries to Stash; mutation documents are rejected locally."""
+    """Send GraphQL operations to Stash; mutations require the explicit method."""
 
     def __init__(
         self,
@@ -57,6 +57,15 @@ class GraphQLClient:
         """Execute one explicitly declared query and return its data object."""
         if _operation_type(document) != "query":
             raise GraphQLError("Curator's validation client accepts query operations only")
+        return self._send(document, variables)
+
+    def mutate(self, document: str, variables: Mapping[str, object] | None = None) -> JsonObject:
+        """Execute an explicitly declared mutation."""
+        if _operation_type(document) != "mutation":
+            raise GraphQLError("Curator's mutation client accepts mutation operations only")
+        return self._send(document, variables)
+
+    def _send(self, document: str, variables: Mapping[str, object] | None) -> JsonObject:
         body = json.dumps(
             {"query": document, "variables": dict(variables or {})},
             separators=(",", ":"),

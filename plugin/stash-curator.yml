@@ -41,6 +41,42 @@ settings:
     displayName: Minimum model update interval (minutes)
     description: Minimum time between automatic preference-model rebuilds. Default 60.
     type: NUMBER
+  pruneTagName:
+    displayName: Prune tag
+    description: Tag applied by the Prune page. Default [Prune].
+    type: STRING
+  expandHorizonDays:
+    displayName: Expand recent-release horizon (days)
+    description: Recent-release window used by Expand. Default 90.
+    type: NUMBER
+  expandGender:
+    displayName: Expand performer gender
+    description: StashDB performer gender filter. Default FEMALE; leave empty for all.
+    type: STRING
+  expandWildcard:
+    displayName: Expand popularity wildcard
+    description: Include a small trending/popular sample outside preference-derived seeds.
+    type: BOOLEAN
+  whisparrUrl:
+    displayName: Whisparr v3 URL
+    description: Optional Whisparr base URL used by Expand scene actions.
+    type: STRING
+  whisparrApiKey:
+    displayName: Whisparr API key
+    description: Optional Whisparr API key. It is used only by the plugin backend.
+    type: STRING
+  whisparrRootFolder:
+    displayName: Whisparr root folder
+    description: Default root folder path for scenes sent from Expand.
+    type: STRING
+  whisparrQualityProfileId:
+    displayName: Whisparr quality profile ID
+    description: Default numeric quality profile ID for scenes sent from Expand.
+    type: NUMBER
+  whisparrSearchImmediately:
+    displayName: Search Whisparr immediately
+    description: Start a release search after adding a scene. Enabled by default.
+    type: BOOLEAN
 tasks:
   - name: Sync and build recommendations
     description: Incrementally synchronize Stash and publish a fresh model.
@@ -66,3 +102,7 @@ tasks:
     description: Create a timestamped sidecar backup in the plugin data directory.
     execArgs:
       - backup
+  - name: Refresh Expand cache
+    description: Refresh promising StashDB scenes and performers without affecting library sync.
+    execArgs:
+      - expand-refresh

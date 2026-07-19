@@ -70,6 +70,43 @@ def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
     assert inspected["explanation"]["summary"]
 
 
+def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    result = CuratorAPI(connection).similar(
+        "scene", "old-good", 5, impression_id="similar-impression", now_ms=REFERENCE_MS
+    )
+
+    assert result["entity_type"] == "scene"
+    assert result["items"]
+    assert result["items"][0]["entity_id"] != "old-good"
+    assert all(
+        item["rank_score"] == pytest.approx(0.7 * item["similarity"] + 0.3 * item["appeal"])
+        for item in result["items"]
+    )
+    assert any("shared_content" in item["relationships"] for item in result["items"])
+    assert all(item["label"] for item in result["items"])
+    impression = connection.execute(
+        "SELECT lane, request_context_json FROM impression WHERE impression_id='similar-impression'"
+    ).fetchone()
+    assert impression["lane"] == "similar"
+    assert '"provenance":"similar"' in impression["request_context_json"]
+
+
+def test_similar_performers_are_preference_aware_and_inspectable(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    result = CuratorAPI(connection).similar("performer", "p1", 2)
+
+    assert [item["entity_id"] for item in result["items"]] == ["p3", "p2"]
+    assert result["items"][0]["rank_score"] > result["items"][1]["rank_score"]
+    assert result["items"][0]["details"]["blocks"]
+
+
 def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     api = CuratorAPI(connection)
@@ -95,6 +132,54 @@ def test_pruning_queue_requires_an_explicit_keep_or_remove_decision(tmp_path: Pa
     assert api.pruning_queue()["items"][0]["scene_id"] == "old-good"
     assert api.update_pruning("old-good", "keep", now_ms=2)["state"] == "keep"
     assert api.pruning_queue()["items"] == []
+
+
+def test_prune_candidates_are_reversible_tags_not_deletions(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+
+    candidates = api.prune_candidates("explicit")
+    assert [item["scene_id"] for item in candidates["items"]] == ["disliked"]
+    assert "Explicit negative feedback" in candidates["items"][0]["evidence"]
+
+    api.record_prune_tags(["disliked"], True, "prune-tag", "[Prune]")
+    assert api.prune_candidates("tagged")["items"][0]["scene_id"] == "disliked"
+    assert (
+        connection.execute(
+            "SELECT state FROM pruning_candidate WHERE scene_id='disliked'"
+        ).fetchone()[0]
+        == "remove"
+    )
+
+    api.record_prune_tags(["disliked"], False, "prune-tag", "[Prune]")
+    assert api.prune_candidates("tagged")["items"] == []
+    assert (
+        connection.execute("SELECT 1 FROM pruning_candidate WHERE scene_id='disliked'").fetchone()
+        is None
+    )
+
+
+def test_explicit_negative_feedback_reopens_a_dismissed_prune_suspect(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+    api.dismiss_prune_candidate("unusual", now_ms=10)
+
+    api.submit_feedback(
+        [
+            {
+                "feedback_id": "later-down",
+                "scene_id": "unusual",
+                "feedback_type": "thumb_down",
+                "occurred_at_ms": 20,
+            }
+        ]
+    )
+
+    row = connection.execute(
+        "SELECT state, reason FROM pruning_candidate WHERE scene_id='unusual'"
+    ).fetchone()
+    assert tuple(row) == ("review", "Thumbs down")
 
 
 def test_never_show_can_be_reversed_explicitly(tmp_path: Path) -> None:
