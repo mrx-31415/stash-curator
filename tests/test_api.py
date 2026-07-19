@@ -77,10 +77,13 @@ def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
     config = api.update_config({"page_size": 30}, now_ms=10)["config"]
     assert config["page_size"] == 30
     assert config["auto_sync_hours"] == 24
+    assert config["auto_sync_time"] == "03:00"
     with pytest.raises(ValueError, match="page_size"):
         api.update_config({"page_size": 0})
     with pytest.raises(ValueError, match="unknown"):
         api.update_config({"mystery": True})
+    with pytest.raises(ValueError, match="auto_sync_time"):
+        api.update_config({"auto_sync_time": "25:00"})
 
 
 def test_pruning_queue_requires_an_explicit_keep_or_remove_decision(tmp_path: Path) -> None:

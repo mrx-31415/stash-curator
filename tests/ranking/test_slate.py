@@ -411,7 +411,9 @@ def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path
     assert len({item.scene_id for item in for_you.items}) == len(for_you.items)
 
     familiar = SlateBuilder(connection).recommend("for_you", 5, exploration=-1)
+    balanced = SlateBuilder(connection).recommend("for_you", 5, exploration=0.5)
     adventurous = SlateBuilder(connection).recommend("for_you", 5, exploration=1)
+    assert balanced.items
     assert [item.source_lane for item in familiar.items] == [
         "best_bets",
         "best_bets",

@@ -58,6 +58,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     } <= names
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")
+    assert (tmp_path / "index.html").is_file()
     assert "id: stash-curator" in index
     assert "sha256:" in index
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
@@ -97,6 +98,7 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
             "databasePath": str(tmp_path / "curator.sqlite3"),
             "pageSize": 12,
             "modelUpdateEventThreshold": 7,
+            "automaticSyncTime": "02:30",
         },
     )
     try:
@@ -107,5 +109,6 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         )
         assert config["page_size"] == 12
         assert config["model_update_event_threshold"] == 7
+        assert config["auto_sync_time"] == "02:30"
     finally:
         connection.close()

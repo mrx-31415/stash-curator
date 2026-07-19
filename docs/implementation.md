@@ -1059,7 +1059,7 @@ Acceptance: all five lanes work without per-card backend calls; navigation uses 
 Stash behavior; keyboard/touch access exposes essential explanations.
 
 Implemented with a Curator route, compass navigation item, five tabs, native scene
-cards, a three-position Familiar/Adventurous control, progressive explanations and
+cards, a continuous Familiar/Adventurous control, progressive explanations and
 score trees, lane descriptions, joined recommendation/feedback card bodies, and
 explicit progress, empty, stale, rebuilding, and error states. Curator sits with the
 main library sections in Stash navigation. Published models prepare source-lane

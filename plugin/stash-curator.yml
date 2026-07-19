@@ -29,10 +29,10 @@ settings:
     displayName: Sync page size
     description: Number of Stash records fetched per synchronization request. Default 250.
     type: NUMBER
-  autoSyncHours:
-    displayName: Automatic sync interval (hours)
-    description: Hours between library synchronizations. Default 24; set to 0 to disable.
-    type: NUMBER
+  automaticSyncTime:
+    displayName: Automatic sync time
+    description: Daily server-local time in HH:MM format. Default 03:00; use off to disable.
+    type: STRING
   modelUpdateEventThreshold:
     displayName: Actions before model update
     description: Rebuild after this many new playback or feedback actions. Default 5.

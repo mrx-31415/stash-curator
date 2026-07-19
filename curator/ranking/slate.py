@@ -135,29 +135,23 @@ class SlateBuilder:
             )
         return {lane: count for lane, _, count in prepared}
 
-    def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
+    def recommend(self, lane: str, count: int, *, exploration: float = 0) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
-        if exploration not in {-1, 0, 1}:
-            raise ValueError("exploration must be -1, 0, or 1")
+        if not math.isfinite(exploration) or not -1 <= exploration <= 1:
+            raise ValueError("exploration must be between -1 and 1")
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
-        source_lanes = (
-            set(
-                FAMILIAR_PATTERN
-                if exploration < 0
-                else ADVENTUROUS_PATTERN
-                if exploration > 0
-                else self.config.ranking.for_you_pattern
-            )
-            if lane == "for_you"
-            else {lane}
-        )
+        source_lanes = {lane}
+        if lane == "for_you":
+            source_lanes = set(self.config.ranking.for_you_pattern)
+            if exploration:
+                source_lanes.update(FAMILIAR_PATTERN if exploration < 0 else ADVENTUROUS_PATTERN)
         source_lane_key = frozenset(source_lanes)
         if model_id != self._cached_model_id or source_lane_key != self._cached_source_lanes:
             policy = LanePolicy(self.connection, self.config)
@@ -346,15 +340,13 @@ class SlateBuilder:
         }
         return candidates
 
-    def _target(self, lane: str, position: int, exploration: int) -> tuple[str, str | None]:
+    def _target(self, lane: str, position: int, exploration: float) -> tuple[str, str | None]:
         if lane == "for_you":
-            pattern = (
-                FAMILIAR_PATTERN
-                if exploration < 0
-                else ADVENTUROUS_PATTERN
-                if exploration > 0
-                else self.config.ranking.for_you_pattern
-            )
+            base = self.config.ranking.for_you_pattern
+            alternative = FAMILIAR_PATTERN if exploration < 0 else ADVENTUROUS_PATTERN
+            mixed_slots = round(abs(exploration) * len(base))
+            use_alternative = (position * 7) % len(base) < mixed_slots
+            pattern = alternative if use_alternative else base
             return pattern[position % len(pattern)], None
         if lane == "adventure":
             subtypes = (

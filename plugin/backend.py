@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -31,7 +32,12 @@ from curator.sync import SyncService  # noqa: E402
 from curator.sync.repository import SyncRepository  # noqa: E402
 
 SCHEMA_VERSION = 1
-VERSION_QUERY = "query CuratorPluginVersion { version { version } }"
+RUNTIME_QUERY = """
+query CuratorPluginRuntime {
+  version { version }
+  jobQueue { id status description progress startTime }
+}
+"""
 SETTINGS_QUERY = """
 query CuratorPluginSettings {
   configuration { plugins(include: ["stash-curator"]) }
@@ -88,7 +94,7 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
     mapping = {
         "pageSize": ("page_size", int),
         "syncPageSize": ("sync_page_size", int),
-        "autoSyncHours": ("auto_sync_hours", float),
+        "automaticSyncTime": ("auto_sync_time", str),
         "modelUpdateEventThreshold": ("model_update_event_threshold", int),
         "modelUpdateMaxWaitMinutes": ("model_update_max_wait_minutes", float),
         "modelUpdateMinIntervalMinutes": ("model_update_min_interval_minutes", float),
@@ -127,8 +133,40 @@ def _open(payload: dict[str, Any], settings: dict[str, Any] | None = None):  # t
 
 def _health(payload: dict[str, Any]) -> dict[str, object]:
     settings = _settings(payload)
+    stash = _client(payload).execute(RUNTIME_QUERY)
+    task_names = {
+        "Sync and build recommendations",
+        "Full sync and build recommendations",
+        "Rebuild recommendation model",
+        "Apply recent Curator feedback",
+        "Backup Curator data",
+    }
+    active_job = next(
+        (
+            job
+            for job in (stash.get("jobQueue") or [])
+            if any(name in str(job.get("description") or "") for name in task_names)
+        ),
+        None,
+    )
     connection = _open(payload, settings)
     try:
+        now_ms = time.time_ns() // 1_000_000
+        if active_job is None:
+            interrupted = connection.execute(
+                "SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms<? LIMIT 1",
+                (now_ms - 120_000,),
+            ).fetchone()
+            if interrupted:
+                with transaction(connection):
+                    connection.execute(
+                        """
+                    UPDATE curator_job SET state='failed', finished_at_ms=?,
+                        error='interrupted before task completion'
+                    WHERE state='running' AND started_at_ms<?
+                    """,
+                        (now_ms, now_ms - 120_000),
+                    )
         migration = MigrationRunner(connection).status()
         current = connection.execute(
             "SELECT model_id FROM model_version WHERE status='published'"
@@ -158,7 +196,6 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         model_update = ModelUpdateCoordinator(
             connection, debounce_ms=int(config["debounce_ms"])
         ).status()
-        now_ms = time.time_ns() // 1_000_000
         model_update_ready = model_update.ready(
             now_ms,
             event_threshold=int(config["model_update_event_threshold"]),
@@ -181,7 +218,27 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         }
     finally:
         connection.close()
-    stash = _client(payload).execute(VERSION_QUERY)
+    sync_time = str(config["auto_sync_time"])
+    next_sync_at_ms: int | None = None
+    sync_due = False
+    if sync_time != "off":
+        hour, minute = map(int, sync_time.split(":"))
+        now = datetime.now().astimezone()
+        scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        latest_scheduled = (
+            scheduled_today if now >= scheduled_today else scheduled_today - timedelta(days=1)
+        )
+        next_scheduled = scheduled_today + (
+            timedelta(days=1) if now >= scheduled_today else timedelta()
+        )
+        next_sync_at_ms = round(next_scheduled.timestamp() * 1_000)
+        sync_due = (
+            active_job is None
+            and not running
+            and (
+                last_sync is None or int(last_sync[0]) < round(latest_scheduled.timestamp() * 1_000)
+            )
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "curator_version": __version__,
@@ -194,16 +251,10 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "model_pending": model_update.pending,
         "model_pending_events": model_update.pending_count,
         "model_update_ready": model_update_ready,
-        "model_rebuilding": model_rebuilding is not None,
-        "sync_due": (
-            not running
-            and float(config["auto_sync_hours"]) > 0
-            and (
-                last_sync is None
-                or time.time_ns() // 1_000_000 - int(last_sync[0])
-                >= float(config["auto_sync_hours"]) * 3_600_000
-            )
-        ),
+        "model_rebuilding": model_rebuilding is not None and active_job is not None,
+        "active_job": active_job,
+        "sync_due": sync_due,
+        "next_sync_at_ms": next_sync_at_ms,
     }
 
 
@@ -247,7 +298,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 count,
                 impression_id=str(args["impression_id"]) if args.get("impression_id") else None,
                 context=args.get("context") if isinstance(args.get("context"), dict) else None,
-                exploration=int(args.get("exploration") or 0),
+                exploration=float(args.get("exploration") or 0),
             )
         if operation == "replace_item":
             excluded = args.get("exclude_scene_ids")
@@ -258,7 +309,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 1,
                 context={"replacement": True},
                 exclude_scene_ids={str(value) for value in excluded},
-                exploration=int(args.get("exploration") or 0),
+                exploration=float(args.get("exploration") or 0),
             )
         if operation == "get_explanation":
             return api.explanation(str(args.get("scene_id") or ""))

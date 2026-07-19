@@ -39,6 +39,7 @@
       description: "Deliberate long shots that explore gaps in the model—and possible pruning candidates.",
     },
   ];
+  const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const slateCache = new Map();
@@ -279,14 +280,25 @@
     }
     return React.createElement(
       "article",
-      { className: "curator-card", onClickCapture: rememberOrigin, ref: card },
+      { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
       scene
         ? React.createElement(SceneCard, { scene })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
       React.createElement(
         "div",
         { className: "curator-card-body" },
-        React.createElement("div", { className: "curator-take-label" }, "Curator's take"),
+        React.createElement(
+          "div",
+          { className: "curator-take-heading" },
+          React.createElement("div", { className: "curator-take-label" }, "Curator's take"),
+          slate.lane === "for_you" &&
+            React.createElement(
+              "span",
+              { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
+              React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
+              laneByValue.get(item.source_lane)?.label || item.source_lane
+            )
+        ),
         React.createElement("p", { className: "curator-explanation" }, item.explanation),
         React.createElement(
           "div",
@@ -382,7 +394,7 @@
         setMessage(error.message);
       }
     }
-    const running = jobs.find((job) => job.state === "running");
+    const running = health?.active_job ? jobs.find((job) => job.state === "running") : null;
     const lastError = jobs[0]?.state === "failed" ? jobs[0] : null;
     const hasSynced = jobs.some(
       (job) => ["sync-build", "full-sync-build"].includes(job.job_type) && job.state === "complete"
@@ -394,6 +406,8 @@
         : health?.ready
           ? "Model ready"
           : "Model not built";
+    const activeJob = health?.active_job;
+    const progress = typeof activeJob?.progress === "number" ? activeJob.progress : null;
 
     return React.createElement(
       "section",
@@ -403,8 +417,18 @@
         { className: "curator-status", role: "status" },
         React.createElement("span", null, running ? `Running: ${running.job_type}` : hasSynced ? "Library synced" : "Library not synced"),
         React.createElement("span", null, modelStatus),
-        React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`)
+        React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`),
+        health?.next_sync_at_ms && React.createElement("span", { title: "Next automatic library synchronization" }, `Next sync ${new Date(health.next_sync_at_ms).toLocaleString()}`)
       ),
+      activeJob &&
+        React.createElement(
+          "div",
+          { className: "curator-active-job" },
+          React.createElement("span", null, activeJob.description),
+          progress !== null && React.createElement("strong", null, `${Math.round(progress * 100)}%`),
+          React.createElement("div", { className: "curator-job-progress" }, React.createElement("span", { style: { width: `${Math.round((progress || 0) * 100)}%` } })),
+          React.createElement(NavLink, { to: "/settings?tab=tasks" }, "View tasks")
+        ),
       React.createElement(
         "div",
         { className: "curator-task-buttons" },
@@ -527,29 +551,29 @@
           LANES.map((option) =>
             React.createElement(
               Nav.Link,
-              { key: option.value, as: "button", active: lane === option.value, onClick: () => setLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => setLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
               React.createElement(FontAwesomeIcon, { icon: option.icon }),
               React.createElement("span", null, option.label)
             )
           )
-        )
-      ),
-      lane === "for_you" &&
-        React.createElement(
-          "label",
-          { className: "curator-exploration" },
-          React.createElement("span", null, "Familiar"),
-          React.createElement("input", {
-            type: "range",
-            min: -1,
-            max: 1,
-            step: 1,
-            value: exploration,
-            "aria-label": "For You exploration level",
-            onChange: (event) => setExploration(Number(event.target.value)),
-          }),
-          React.createElement("span", null, "Adventurous")
         ),
+        lane === "for_you" &&
+          React.createElement(
+            "label",
+            { className: "curator-exploration", title: "Continuously adjust the balance between dependable and adventurous picks." },
+            React.createElement("span", null, "Familiar"),
+            React.createElement("input", {
+              type: "range",
+              min: -1,
+              max: 1,
+              step: 0.25,
+              value: exploration,
+              "aria-label": "For You exploration level",
+              onChange: (event) => setExploration(Number(event.target.value)),
+            }),
+            React.createElement("span", null, "Adventurous")
+          )
+      ),
       React.createElement(CuratorControls, { onRefresh: refresh }),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(
@@ -558,8 +582,6 @@
           React.createElement("span", null, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…"),
           React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })
         ),
-      slate?.rebuilding && React.createElement("div", { className: "alert alert-info", role: "status" }, "Curator is rebuilding its model. These recommendations use the previous completed model."),
-      slate?.model_pending && !slate.rebuilding && React.createElement("div", { className: "alert alert-info", role: "status" }, "Your recent choices are waiting to be folded into the model."),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet.")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       slate && !loading &&

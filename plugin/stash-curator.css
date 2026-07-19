@@ -44,6 +44,17 @@
   padding: 0.55rem 0.9rem;
 }
 
+.curator-lane-for_you { --lane-color: #4dabf7; }
+.curator-lane-best_bets { --lane-color: #20c997; }
+.curator-lane-revisit { --lane-color: #b197fc; }
+.curator-lane-discover { --lane-color: #ffd43b; }
+.curator-lane-adventure { --lane-color: #ff922b; }
+
+.curator-tabs .nav-link svg,
+.curator-source-badge svg {
+  color: var(--lane-color);
+}
+
 .curator-controls {
   align-items: center;
   background: rgba(255, 255, 255, 0.035);
@@ -70,6 +81,28 @@
   gap: 0.35rem 1rem;
 }
 
+.curator-active-job {
+  align-items: center;
+  display: grid;
+  flex: 1 0 100%;
+  gap: 0.25rem 0.6rem;
+  grid-template-columns: minmax(12rem, auto) auto minmax(8rem, 1fr) auto;
+}
+
+.curator-job-progress {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  height: 0.45rem;
+  overflow: hidden;
+}
+
+.curator-job-progress span {
+  background: var(--primary, #7952b3);
+  display: block;
+  height: 100%;
+  transition: width 200ms ease;
+}
+
 .curator-pruning > div {
   align-items: center;
   display: flex;
@@ -92,7 +125,8 @@
   font-size: 0.85rem;
   gap: 0.5rem;
   justify-content: flex-end;
-  margin: 0.4rem 0;
+  margin: 0 0 0 auto;
+  white-space: nowrap;
 }
 
 .curator-loading {
@@ -146,6 +180,15 @@
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
+.curator-source-best_bets { --lane-color: #20c997; }
+.curator-source-revisit { --lane-color: #b197fc; }
+.curator-source-discover { --lane-color: #ffd43b; }
+.curator-source-adventure { --lane-color: #ff922b; }
+
+.curator-card[class*="curator-source-"] {
+  border-left: 3px solid var(--lane-color, rgba(255, 255, 255, 0.12));
+}
+
 .curator-card:hover {
   border-color: rgba(255, 255, 255, 0.22);
   box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
@@ -184,6 +227,20 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.curator-take-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.curator-source-badge {
+  align-items: center;
+  color: var(--text-muted, #adb5bd);
+  display: inline-flex;
+  font-size: 0.72rem;
+  gap: 0.3rem;
 }
 
 .curator-explanation {
@@ -275,6 +332,15 @@
   .curator-controls {
     align-items: start;
     flex-direction: column;
+  }
+
+  .curator-active-job {
+    grid-template-columns: 1fr auto;
+    width: 100%;
+  }
+
+  .curator-job-progress {
+    grid-column: 1 / -1;
   }
 
   .curator-grid {
