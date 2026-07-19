@@ -6,8 +6,9 @@ import json
 import math
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from heapq import nsmallest
+from typing import Any
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
@@ -98,7 +99,9 @@ class SlateBuilder:
         self._live_fit: dict[str, float] = {}
         self._live_cooldown: dict[str, float] = {}
 
-    def prepare(self, model_id: str, *, limit_per_lane: int = 500) -> dict[str, int]:
+    def prepare(
+        self, model_id: str, *, limit_per_lane: int = 500, slate_size: int = 60
+    ) -> dict[str, int]:
         policy = LanePolicy(self.connection, self.config)
         prepared: list[tuple[str, str, int]] = []
         for lane in LANES:
@@ -122,6 +125,7 @@ class SlateBuilder:
             self.connection.execute(
                 "DELETE FROM model_lane_candidate_cache WHERE model_id=?", (model_id,)
             )
+            self.connection.execute("DELETE FROM application_meta WHERE key LIKE 'slate:%'")
             self.connection.executemany(
                 """
                 INSERT INTO model_lane_candidate_cache(
@@ -133,6 +137,25 @@ class SlateBuilder:
                     for lane, payload, count in prepared
                 ),
             )
+        for lane in (*LANES, "for_you"):
+            slate = self.recommend(lane, slate_size)
+            with transaction(self.connection):
+                self.connection.execute(
+                    """
+                    INSERT INTO application_meta(key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                    """,
+                    (
+                        f"slate:{model_id}:{lane}",
+                        json.dumps(
+                            {
+                                "created_at_ms": time.time_ns() // 1_000_000,
+                                "items": [asdict(item) for item in slate.items],
+                            },
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
         return {lane: count for lane, _, count in prepared}
 
     def recommend(self, lane: str, count: int, *, exploration: float = 0) -> Slate:
@@ -147,6 +170,10 @@ class SlateBuilder:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
+        if exploration == 0:
+            prepared_slate = self._load_prepared_slate(model_id, lane, count)
+            if prepared_slate is not None:
+                return prepared_slate
         source_lanes = {lane}
         if lane == "for_you":
             source_lanes = set(self.config.ranking.for_you_pattern)
@@ -310,6 +337,74 @@ class SlateBuilder:
         timings["items"] = round((time.perf_counter() - stage_started) * 1000)
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
+
+    def _load_prepared_slate(self, model_id: str, lane: str, count: int) -> Slate | None:
+        started = time.perf_counter()
+        row = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key=?",
+            (f"slate:{model_id}:{lane}",),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(str(row[0]))
+        created_at_ms = int(payload["created_at_ms"])
+        items = tuple(self._recommendation_item(item) for item in payload["items"])
+        if not items:
+            return Slate(model_id, lane, (), (), {"precomputed": 1, "total": 0})
+        scene_ids = {item.scene_id for item in items}
+        eligibility = scene_eligibility(
+            self.connection,
+            time.time_ns() // 1_000_000,
+            self.config,
+            scene_ids=scene_ids,
+        )
+        placeholders = ",".join("?" for _ in scene_ids)
+        changed = {
+            str(row[0])
+            for row in self.connection.execute(
+                f"""
+                SELECT scene_id FROM play_session
+                WHERE ended_at_ms>=? AND scene_id IN ({placeholders})
+                UNION
+                SELECT scene_id FROM recommendation_history
+                WHERE shown_at_ms>=? AND scene_id IN ({placeholders})
+                """,
+                (created_at_ms, *scene_ids, created_at_ms, *scene_ids),
+            )
+        }
+        selected = tuple(
+            replace(item, position=position)
+            for position, item in enumerate(
+                item
+                for item in items
+                if item.scene_id not in changed
+                and bool(eligibility.get(item.scene_id, {}).get("eligible", False))
+            )
+        )[:count]
+        elapsed = round((time.perf_counter() - started) * 1_000)
+        return Slate(model_id, lane, selected, (), {"precomputed": 1, "total": elapsed})
+
+    @staticmethod
+    def _recommendation_item(payload: dict[str, Any]) -> RecommendationItem:
+        return RecommendationItem(
+            scene_id=str(payload["scene_id"]),
+            lane=str(payload["lane"]),
+            source_lane=str(payload["source_lane"]),
+            subtype=str(payload["subtype"]) if payload.get("subtype") else None,
+            position=int(payload["position"]),
+            appeal=float(payload["appeal"]),
+            current_fit=float(payload["current_fit"]),
+            confidence=float(payload["confidence"]),
+            lane_value=float(payload["lane_value"]),
+            final_utility=float(payload["final_utility"]),
+            penalties={str(k): float(v) for k, v in dict(payload["penalties"]).items()},
+            bonuses={str(k): float(v) for k, v in dict(payload["bonuses"]).items()},
+            components=dict(payload["components"]),
+            neighbors=tuple(dict(item) for item in payload["neighbors"]),
+            eligibility=dict(payload["eligibility"]),
+            qualification=dict(payload["qualification"]),
+            reason_ids=tuple(map(str, payload["reason_ids"])),
+        )
 
     def _load_prepared(self, model_id: str, lanes: set[str]) -> tuple[_Candidate, ...]:
         placeholders = ",".join("?" for _ in lanes)

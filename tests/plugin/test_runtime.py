@@ -65,6 +65,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
     installed = tmp_path / "installed"
     assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()
+    assert "Prepare recommendation pages" in (installed / "stash-curator.yml").read_text()
     assert _run(installed / "backend.py", installed)["round_trips"] == 1
     with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
         connection.execute(

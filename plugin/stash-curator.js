@@ -55,22 +55,32 @@
   }
 
   async function operation(args) {
-    const response = await fetch("/graphql", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query:
-          "mutation CuratorOperation($args: Map!) { " +
-          "runPluginOperation(plugin_id: \"stash-curator\", args: $args) }",
-        variables: { args },
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok || payload.errors) {
-      throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch("/graphql", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          query:
+            "mutation CuratorOperation($args: Map!) { " +
+            "runPluginOperation(plugin_id: \"stash-curator\", args: $args) }",
+          variables: { args },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.errors) {
+        throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+      }
+      return payload.data.runPluginOperation;
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("Curator operation timed out");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return payload.data.runPluginOperation;
   }
 
   function slateKey(lane, exploration) {
@@ -425,10 +435,16 @@
       }
     }
     const running = health?.active_job ? jobs.find((job) => job.state === "running") : null;
+    const latestModelSuccess = jobs.find(
+      (job) => job.state === "complete"
+        && ["sync-build", "full-sync-build", "build", "update-model"].includes(job.job_type)
+        && job.summary?.model_id
+    );
     const lastError = jobs.find(
       (job) => job.state === "failed"
         && ["sync-build", "full-sync-build"].includes(job.job_type)
         && job.finished_at_ms > (health?.last_sync_at_ms || 0)
+        && job.finished_at_ms > (latestModelSuccess?.finished_at_ms || 0)
     );
     const hasSynced = Boolean(health?.last_sync_at_ms);
     const modelStatus = health?.model_rebuilding

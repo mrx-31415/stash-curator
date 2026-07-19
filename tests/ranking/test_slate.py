@@ -293,7 +293,9 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
         "_candidates",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("rehydrated")),
     )
-    assert SlateBuilder(connection).recommend("best_bets", 1).items
+    slate = SlateBuilder(connection).recommend("best_bets", 1)
+    assert slate.items
+    assert slate.timings_ms["precomputed"] == 1
 
 
 def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: Path) -> None:
@@ -317,6 +319,7 @@ def test_direct_play_updates_prebuilt_lanes_without_rebuilding(
     builder = SlateBuilder(connection)
     now_ms = 100 * 86_400_000
     monkeypatch.setattr("curator.ranking.slate.time.time_ns", lambda: now_ms * 1_000_000)
+    builder.prepare("model")
     assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
     assert any(item.scene_id == "d-revisit" for item in builder.recommend("revisit", 5).items)
     connection.executemany(

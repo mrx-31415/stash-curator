@@ -58,6 +58,10 @@ tasks:
     description: Publish pending feedback and playback signals without blocking the Curator page.
     execArgs:
       - update-model
+  - name: Prepare recommendation pages
+    description: Warm the fast page cache for the current model without rebuilding it.
+    execArgs:
+      - prepare
   - name: Backup Curator data
     description: Create a timestamped sidecar backup in the plugin data directory.
     execArgs:

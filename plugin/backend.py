@@ -19,7 +19,7 @@ from curator import __version__  # noqa: E402
 from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
 from curator.graphql import GraphQLClient  # noqa: E402
-from curator.model import ModelUpdateCoordinator  # noqa: E402
+from curator.model import ModelUpdateCoordinator, RecommendationModelStore  # noqa: E402
 from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
@@ -137,6 +137,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Full sync and build recommendations",
         "Rebuild recommendation model",
         "Apply recent Curator feedback",
+        "Prepare recommendation pages",
         "Backup Curator data",
     }
     active_job = next(
@@ -423,7 +424,9 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             lane_count = len(LanePolicy(connection).classify(model.model_id))
             _progress(0.96)
             _log("i", "Preparing fast lane caches")
-            lane_caches = SlateBuilder(connection).prepare(model.model_id)
+            lane_caches = SlateBuilder(connection).prepare(
+                model.model_id, slate_size=max(60, int(sidecar_config["page_size"]) * 3)
+            )
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -464,7 +467,11 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 lane_count = len(LanePolicy(connection).classify(model.model_id))
                 _progress(0.96)
                 _log("i", "Preparing fast lane caches")
-                lane_caches = SlateBuilder(connection).prepare(model.model_id)
+                config = CuratorAPI(connection).config()["config"]
+                assert isinstance(config, dict)
+                lane_caches = SlateBuilder(connection).prepare(
+                    model.model_id, slate_size=max(60, int(config["page_size"]) * 3)
+                )
                 _progress(0.98)
                 summary = {
                     "updated": True,
@@ -473,6 +480,19 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                     "lane_candidate_caches": lane_caches,
                     "stage_timings_ms": model.stage_timings_ms,
                 }
+        elif mode == "prepare":
+            _progress(0.1)
+            model_id = RecommendationModelStore(connection).current_model_id()
+            if model_id is None:
+                raise RuntimeError("no published model; build recommendations first")
+            config = CuratorAPI(connection).config()["config"]
+            assert isinstance(config, dict)
+            _log("i", "Preparing recommendation pages")
+            lane_caches = SlateBuilder(connection).prepare(
+                model_id, slate_size=max(60, int(config["page_size"]) * 3)
+            )
+            _progress(0.98)
+            summary = {"model_id": model_id, "lane_candidate_caches": lane_caches}
         elif mode == "backup":
             _progress(0.1)
             destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"
