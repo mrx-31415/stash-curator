@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from curator.features import FeatureStore
@@ -41,21 +42,34 @@ class ReasonGraphStore:
         self._content_preference: dict[str, float] = {}
         self._scene_titles: dict[str, str] = {}
 
-    def build(self, model_id: str) -> None:
-        scores = RecommendationModelStore(self.connection).scores(model_id)
+    def build(self, model_id: str, scene_ids: Collection[str] | None = None) -> None:
+        selected = set(map(str, scene_ids)) if scene_ids is not None else None
+        scores = RecommendationModelStore(self.connection).scores(model_id, selected)
         row = self.connection.execute(
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         if row is None:
             raise RuntimeError(f"unknown model: {model_id}")
         feature_version = str(row[0])
-        self._prepare_neighbor_context(model_id, feature_version)
+        self._prepare_neighbor_context(
+            model_id, feature_version, scores, targeted=selected is not None
+        )
         graphs = {
             scene_id: self._scene_reasons(score, feature_version)
             for scene_id, score in scores.items()
         }
         with transaction(self.connection):
-            self.connection.execute("DELETE FROM model_scene_reason WHERE model_id=?", (model_id,))
+            if selected is None:
+                self.connection.execute(
+                    "DELETE FROM model_scene_reason WHERE model_id=?", (model_id,)
+                )
+            elif selected:
+                placeholders = ",".join("?" for _ in selected)
+                self.connection.execute(
+                    f"DELETE FROM model_scene_reason WHERE model_id=? "
+                    f"AND scene_id IN ({placeholders})",
+                    (model_id, *selected),
+                )
             self.connection.executemany(
                 """
                 INSERT INTO model_scene_reason(
@@ -84,30 +98,87 @@ class ReasonGraphStore:
                 ),
             )
 
-    def ensure(self, model_id: str) -> None:
-        row = self.connection.execute(
-            "SELECT 1 FROM model_scene_reason WHERE model_id=? LIMIT 1", (model_id,)
-        ).fetchone()
-        if row is None:
-            self.build(model_id)
+    def ensure(self, model_id: str, scene_ids: Collection[str] | None = None) -> None:
+        if scene_ids is None:
+            if (
+                self.connection.execute(
+                    "SELECT 1 FROM model_scene_reason WHERE model_id=? LIMIT 1", (model_id,)
+                ).fetchone()
+                is None
+            ):
+                self.build(model_id)
+            return
+        selected = set(map(str, scene_ids))
+        if not selected:
+            return
+        placeholders = ",".join("?" for _ in selected)
+        existing = {
+            str(row[0])
+            for row in self.connection.execute(
+                f"SELECT DISTINCT scene_id FROM model_scene_reason WHERE model_id=? "
+                f"AND scene_id IN ({placeholders})",
+                (model_id, *selected),
+            )
+        }
+        if missing := selected - existing:
+            self.build(model_id, missing)
 
-    def _prepare_neighbor_context(self, model_id: str, feature_version: str) -> None:
-        scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
-        self._content_features = {
-            scene_id: {
-                feature.name: (
-                    feature.value,
-                    str(feature.metadata.get("tag_name", "")).strip(),
+    def _prepare_neighbor_context(
+        self,
+        model_id: str,
+        feature_version: str,
+        scores: dict[str, ModelSceneScore],
+        *,
+        targeted: bool,
+    ) -> None:
+        context_ids = set(scores)
+        context_ids.update(
+            str(neighbor.get("scene_id"))
+            for score in scores.values()
+            for neighbor in score.neighbors
+            if neighbor.get("scene_id")
+        )
+        vectors = FeatureStore(self.connection).scene_content_vectors(
+            feature_version, context_ids if targeted else None
+        )
+        names = {name for vector in vectors.values() for name in vector}
+        name_filter = ""
+        parameters: list[object] = [feature_version]
+        if targeted and names:
+            name_filter = f" AND name IN ({','.join('?' for _ in names)})"
+            parameters.extend(names)
+        tag_names = (
+            {
+                str(row["name"]): str(json.loads(row["metadata_json"]).get("tag_name", ""))
+                for row in self.connection.execute(
+                    "SELECT name, metadata_json FROM feature_definition "
+                    "WHERE feature_version=? AND family='content'" + name_filter,
+                    parameters,
                 )
-                for feature in features
-                if feature.family == "content"
             }
-            for scene_id, features in scene_features.items()
+            if names or not targeted
+            else {}
+        )
+        self._content_features = {
+            scene_id: {name: (value, tag_names.get(name, "")) for name, value in vector.items()}
+            for scene_id, vector in vectors.items()
         }
-        self._scene_titles = {
-            str(row["scene_id"]): str(row["title"] or row["scene_id"])
-            for row in self.connection.execute("SELECT scene_id, title FROM source_scene")
-        }
+        if targeted and context_ids:
+            placeholders = ",".join("?" for _ in context_ids)
+            self._scene_titles = {
+                str(row["scene_id"]): str(row["title"] or row["scene_id"])
+                for row in self.connection.execute(
+                    f"SELECT scene_id, title FROM source_scene WHERE scene_id IN ({placeholders})",
+                    tuple(context_ids),
+                )
+            }
+        elif targeted:
+            self._scene_titles = {}
+        else:
+            self._scene_titles = {
+                str(row["scene_id"]): str(row["title"] or row["scene_id"])
+                for row in self.connection.execute("SELECT scene_id, title FROM source_scene")
+            }
         self._content_preference = {
             str(row["name"]): max(0.0, float(row["affinity"]) * float(row["confidence"]))
             for row in self.connection.execute(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from curator.explanations.catalog import RealizationCatalog
@@ -24,19 +25,26 @@ class ExplanationService:
         self.store = ReasonGraphStore(connection)
         self.planner = Microplanner()
         self.catalog = RealizationCatalog.load()
+        self._ensured: set[str] = set()
+
+    def ensure(self, model_id: str, scene_ids: Collection[str]) -> None:
+        self.store.ensure(model_id, scene_ids)
+        self._ensured.update(map(str, scene_ids))
 
     def explain_scene(self, model_id: str, scene_id: str) -> Explanation:
         reasons = self.store.reasons(model_id, scene_id)
-        if not reasons:
-            self.store.build(model_id)
+        if not reasons and scene_id not in self._ensured:
+            self.store.build(model_id, {scene_id})
+            self._ensured.add(scene_id)
             reasons = self.store.reasons(model_id, scene_id)
         return self._render(reasons, f"{model_id}\0{scene_id}")
 
     def explain_recommendation(self, item: RecommendationItem) -> Explanation:
         model_id = self._current_model_id()
         base = self.store.reasons(model_id, item.scene_id)
-        if not base:
-            self.store.build(model_id)
+        if not base and item.scene_id not in self._ensured:
+            self.store.build(model_id, {item.scene_id})
+            self._ensured.add(item.scene_id)
             base = self.store.reasons(model_id, item.scene_id)
         reasons = (*base, *self._ranking_reasons(model_id, item))
         return self._render(

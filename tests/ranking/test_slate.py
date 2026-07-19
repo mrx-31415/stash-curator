@@ -298,6 +298,24 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
     assert slate.timings_ms["precomputed"] == 1
 
 
+def test_qualified_impressions_do_not_consume_prepared_slate(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection)
+    builder.prepare("model")
+    first = builder.recommend("best_bets", 1)
+    scene_id = first.items[0].scene_id
+    connection.execute(
+        """
+        INSERT INTO recommendation_history(history_id, scene_id, lane, shown_at_ms)
+        VALUES ('shown', ?, 'best_bets', 9999999999999)
+        """,
+        (scene_id,),
+    )
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id == scene_id
+
+
 def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(

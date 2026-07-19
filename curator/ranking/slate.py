@@ -365,11 +365,8 @@ class SlateBuilder:
                 f"""
                 SELECT scene_id FROM play_session
                 WHERE ended_at_ms>=? AND scene_id IN ({placeholders})
-                UNION
-                SELECT scene_id FROM recommendation_history
-                WHERE shown_at_ms>=? AND scene_id IN ({placeholders})
                 """,
-                (created_at_ms, *scene_ids, created_at_ms, *scene_ids),
+                (created_at_ms, *scene_ids),
             )
         }
         selected = tuple(

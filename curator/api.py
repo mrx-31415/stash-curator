@@ -81,6 +81,7 @@ class CuratorAPI:
         timings["impression"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         explanations = ExplanationService(self.connection)
+        explanations.ensure(slate.model_id, {item.scene_id for item in slate.items})
         items = []
         for item in slate.items:
             explanation = explanations.explain_recommendation(item)

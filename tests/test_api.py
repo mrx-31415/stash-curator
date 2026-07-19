@@ -28,6 +28,14 @@ def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -
     }
     assert len(result["items"]) == 3
     assert all(item["explanation"] for item in result["items"])
+    explained = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT scene_id FROM model_scene_reason WHERE model_id=?",
+            (result["model_id"],),
+        )
+    }
+    assert explained <= {str(item["scene_id"]) for item in result["items"]}
     assert (
         connection.execute(
             "SELECT count(*) FROM impression WHERE impression_id='api-impression'"
