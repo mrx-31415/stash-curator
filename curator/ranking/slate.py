@@ -92,6 +92,8 @@ class SlateBuilder:
         self._cached_source_lanes: frozenset[str] = frozenset()
         self._cached_candidates: tuple[_Candidate, ...] = ()
         self._cached_vectors: dict[str, dict[str, float]] = {}
+        self._pair_similarities: dict[tuple[str, str], float] = {}
+        self._history_similarities: dict[str, float] = {}
 
     def prepare(self, model_id: str, *, limit_per_lane: int = 500) -> dict[str, int]:
         policy = LanePolicy(self.connection, self.config)
@@ -187,6 +189,13 @@ class SlateBuilder:
         selected_utilities: list[tuple[float, dict[str, float], dict[str, float]]] = []
         diagnostics: list[str] = []
         history = self._history_context(model_id)
+        self._pair_similarities.clear()
+        self._history_similarities = {
+            candidate.classification.scene_id: max(
+                (self._cosine(candidate.content, vector) for vector in history[2]), default=0.0
+            )
+            for candidate in candidates
+        }
         timings["history"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         for position in range(count):
@@ -400,7 +409,7 @@ class SlateBuilder:
             penalties["content"] = max(
                 penalties["content"],
                 self.config.ranking.content_penalty
-                * self._cosine(candidate.content, previous.content),
+                * self._candidate_similarity(candidate, previous),
             )
         history_performers, history_studios, history_vectors = history
         if set(candidate.performers) & history_performers:
@@ -408,8 +417,9 @@ class SlateBuilder:
         if candidate.studio_group and candidate.studio_group in history_studios:
             penalties["history"] += self.config.ranking.history_studio_penalty
         if history_vectors:
-            penalties["history"] += self.config.ranking.history_content_penalty * max(
-                self._cosine(candidate.content, vector) for vector in history_vectors
+            penalties["history"] += (
+                self.config.ranking.history_content_penalty
+                * self._history_similarities[candidate.classification.scene_id]
             )
         covered = {name for previous in selected for name in previous.content}
         uncovered_share = (
@@ -424,6 +434,14 @@ class SlateBuilder:
             candidate.classification.lane_value + sum(bonuses.values()) - sum(penalties.values())
         )
         return final, penalties, bonuses
+
+    def _candidate_similarity(self, left: _Candidate, right: _Candidate) -> float:
+        left_id = left.classification.scene_id
+        right_id = right.classification.scene_id
+        key = (left_id, right_id) if left_id <= right_id else (right_id, left_id)
+        if key not in self._pair_similarities:
+            self._pair_similarities[key] = self._cosine(left.content, right.content)
+        return self._pair_similarities[key]
 
     def _history_context(
         self, model_id: str
