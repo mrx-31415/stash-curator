@@ -33,11 +33,20 @@ Plugins**:
 https://mrx-31415.github.io/stash-curator/index.yml
 ```
 
-Install **Stash Curator**, reload plugins, and open the compass button in Stash's
-top navigation. On first load, Curator schedules an incremental sync and model
-build. Jobs, configuration, backup, and reset are available from the Curator page;
+Install **Stash Curator**, reload plugins, open the compass button in Stash's
+top navigation, and run **Sync library** once. Jobs, configuration, backup, and reset are available from the Curator page;
 manual and full-reconciliation tasks are also available on Stash's Tasks page.
 Curator never mutates library entities: feedback and events remain in its sidecar.
+
+For a nightly background sync, let the host scheduler invoke Stash's task API; no
+browser needs to be open. For example, this crontab entry runs at 03:00:
+
+```cron
+0 3 * * * curl -fsS -H 'Content-Type: application/json' --data '{"query":"mutation { runPluginTask(plugin_id: \"stash-curator\", task_name: \"Sync and build recommendations\") }"}' http://127.0.0.1:9999/graphql >/dev/null
+```
+
+Change the URL when Stash is not reachable on the host loopback interface, and add
+an `ApiKey` header when authentication is enabled.
 
 The sidecar defaults to `{pluginDir}/data/curator.sqlite3`. Configure **Sidecar
 database path** before first use if plugin updates or uninstallation may replace that

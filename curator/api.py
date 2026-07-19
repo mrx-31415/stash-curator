@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import time
 from dataclasses import asdict, replace
@@ -24,8 +23,6 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
     "sync_page_size": 250,
     "debounce_ms": 2_000,
-    "auto_sync_hours": 24,
-    "auto_sync_time": "03:00",
     "model_update_event_threshold": 5,
     "model_update_max_wait_minutes": 30,
     "model_update_min_interval_minutes": 60,
@@ -274,8 +271,6 @@ class CuratorAPI:
             "page_size",
             "sync_page_size",
             "debounce_ms",
-            "auto_sync_hours",
-            "auto_sync_time",
             "model_update_event_threshold",
             "model_update_max_wait_minutes",
             "model_update_min_interval_minutes",
@@ -306,17 +301,6 @@ class CuratorAPI:
         debounce = values.get("debounce_ms")
         if debounce is not None and (not isinstance(debounce, int) or not 0 <= debounce <= 60_000):
             raise ValueError("debounce_ms must be an integer from 0 to 60000")
-        auto_sync = values.get("auto_sync_hours")
-        if auto_sync is not None and (
-            not isinstance(auto_sync, (int, float)) or not 0 <= float(auto_sync) <= 24 * 30
-        ):
-            raise ValueError("auto_sync_hours must be between 0 and 720")
-        auto_sync_time = values.get("auto_sync_time")
-        if auto_sync_time is not None and (
-            not isinstance(auto_sync_time, str)
-            or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d|off", auto_sync_time)
-        ):
-            raise ValueError("auto_sync_time must be HH:MM or off")
         threshold = values.get("model_update_event_threshold")
         if threshold is not None and (not isinstance(threshold, int) or not 1 <= threshold <= 100):
             raise ValueError("model_update_event_threshold must be an integer from 1 to 100")

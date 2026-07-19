@@ -98,7 +98,6 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
             "databasePath": str(tmp_path / "curator.sqlite3"),
             "pageSize": 12,
             "modelUpdateEventThreshold": 7,
-            "automaticSyncTime": "02:30",
         },
     )
     try:
@@ -109,6 +108,5 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         )
         assert config["page_size"] == 12
         assert config["model_update_event_threshold"] == 7
-        assert config["auto_sync_time"] == "02:30"
     finally:
         connection.close()

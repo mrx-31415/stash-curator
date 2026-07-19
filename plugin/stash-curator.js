@@ -418,7 +418,7 @@
         React.createElement("span", null, running ? `Running: ${running.job_type}` : hasSynced ? "Library synced" : "Library not synced"),
         React.createElement("span", null, modelStatus),
         React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`),
-        health?.next_sync_at_ms && React.createElement("span", { title: "Next automatic library synchronization" }, `Next sync ${new Date(health.next_sync_at_ms).toLocaleString()}`)
+        health?.last_sync_at_ms && React.createElement("span", { title: "Last completed library synchronization" }, `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}`)
       ),
       activeJob &&
         React.createElement(
@@ -753,10 +753,9 @@
   window.addEventListener("pagehide", () => finishTracker(false));
   attachPlayer(location.pathname);
   flushQueue();
-  function scheduleSync() {
+  function scheduleModelMaintenance() {
     operation({ operation: "health" })
       .then((health) => {
-        if (health.sync_due) return runTask("Sync and build recommendations");
         if (health.model_update_ready && !health.model_rebuilding) {
           return runTask("Apply recent Curator feedback");
         }
@@ -764,6 +763,6 @@
       })
       .catch(() => {});
   }
-  scheduleSync();
-  setInterval(scheduleSync, 15 * 60 * 1000);
+  scheduleModelMaintenance();
+  setInterval(scheduleModelMaintenance, 15 * 60 * 1000);
 })();

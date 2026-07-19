@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -94,7 +93,6 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
     mapping = {
         "pageSize": ("page_size", int),
         "syncPageSize": ("sync_page_size", int),
-        "automaticSyncTime": ("auto_sync_time", str),
         "modelUpdateEventThreshold": ("model_update_event_threshold", int),
         "modelUpdateMaxWaitMinutes": ("model_update_max_wait_minutes", float),
         "modelUpdateMinIntervalMinutes": ("model_update_min_interval_minutes", float),
@@ -180,10 +178,6 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
             ORDER BY finished_at_ms DESC LIMIT 1
             """
         ).fetchone()
-        running = connection.execute(
-            "SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms>? LIMIT 1",
-            (time.time_ns() // 1_000_000 - 6 * 3_600_000,),
-        ).fetchone()
         model_rebuilding = connection.execute(
             """
             SELECT 1 FROM curator_job
@@ -218,27 +212,6 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         }
     finally:
         connection.close()
-    sync_time = str(config["auto_sync_time"])
-    next_sync_at_ms: int | None = None
-    sync_due = False
-    if sync_time != "off":
-        hour, minute = map(int, sync_time.split(":"))
-        now = datetime.now().astimezone()
-        scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        latest_scheduled = (
-            scheduled_today if now >= scheduled_today else scheduled_today - timedelta(days=1)
-        )
-        next_scheduled = scheduled_today + (
-            timedelta(days=1) if now >= scheduled_today else timedelta()
-        )
-        next_sync_at_ms = round(next_scheduled.timestamp() * 1_000)
-        sync_due = (
-            active_job is None
-            and not running
-            and (
-                last_sync is None or int(last_sync[0]) < round(latest_scheduled.timestamp() * 1_000)
-            )
-        )
     return {
         "schema_version": SCHEMA_VERSION,
         "curator_version": __version__,
@@ -253,8 +226,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "model_update_ready": model_update_ready,
         "model_rebuilding": model_rebuilding is not None and active_job is not None,
         "active_job": active_job,
-        "sync_due": sync_due,
-        "next_sync_at_ms": next_sync_at_ms,
+        "last_sync_at_ms": int(last_sync[0]) if last_sync else None,
     }
 
 
