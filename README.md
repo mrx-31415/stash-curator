@@ -1,20 +1,22 @@
-# Stash Curator
+<p align="center">
+  <img src="docs/assets/stash-curator.svg" alt="Stash Curator" width="112">
+</p>
+<h1 align="center">Stash Curator</h1>
+<p align="center"><strong>Navigate your library, guided by your taste.</strong></p>
+<p align="center">
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
+  <a href="https://github.com/mrx-31415/stash-curator/actions"><img alt="Build status" src="https://github.com/mrx-31415/stash-curator/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
-**Navigate your library, guided by your taste.**
+Stash Curator is a recommendation and discovery plugin for
+[Stash](https://github.com/stashapp/stash). It learns locally from viewing behavior
+and explicit feedback, then explains why each suggestion fits.
 
-Stash Curator is a recommendation and discovery engine for
-[Stash](https://github.com/stashapp/stash). It learns from viewing behavior and
-explicit feedback to offer reliable choices, timely revisits, nearby discoveries,
-and deliberate adventures without letting the feed become repetitive.
-
-The read-only validation slice is implemented. It can synchronize Stash metadata,
-normalize historical behavior, build a deterministic recommendation model, generate
-all five lanes with inspectable reasons, compare performers, and export a
-self-contained HTML evaluation report. It can also cache StashDB's public tag
-taxonomy so physical-description tags do not masquerade as scene-content matches.
-An installable plugin adds the Stash-native page, feedback, direct player-session
-collection, persistent jobs, local similarity, conservative pruning, and optional
-StashDB discovery on top of the validation tools.
+| Explore | Understand | Improve |
+| --- | --- | --- |
+| Five recommendation lanes | Inspectable score breakdowns | Feedback updates the model |
+| Similar scenes and performers | Supporting scenes and shared content | Prune candidates without deleting media |
+| Optional StashDB discovery | Natural-language recommendations | Variety-aware ranking |
 
 ## Documentation
 

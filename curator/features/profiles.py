@@ -93,4 +93,12 @@ def performer_similarity(
         if denominator
         else 0.0
     )
+    left_cup = left.blocks.get("measurements", {}).get("cup_index")
+    right_cup = right.blocks.get("measurements", {}).get("cup_index")
+    if left_cup and right_cup:
+        total *= math.exp(-0.18 * max(0.0, abs(left_cup.value - right_cup.value) - 1))
+    left_aug = set(left.blocks.get("augmentation", {}))
+    right_aug = set(right.blocks.get("augmentation", {}))
+    if left_aug and right_aug and not left_aug & right_aug:
+        total *= 0.65
     return SimilarityResult(total, similarities, used_weights)

@@ -399,6 +399,8 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_query=str(args.get("performer_query") or ""),
                 studio_query=str(args.get("studio_query") or ""),
+                performer_names=_string_list(args.get("performer_names")),
+                studio_names=_string_list(args.get("studio_names")),
                 count=int(args.get("count") or 50),
             )
         if operation == "get_shortlist":

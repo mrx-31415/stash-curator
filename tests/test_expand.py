@@ -102,12 +102,21 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
     assert [
         item["id"]
         for item in ExpandService(connection).results(
-            "scene", include_tags=("Useful",), performer_query="External", studio_query="Studio"
+            "scene",
+            include_tags=("Useful",),
+            performer_names=("External Performer",),
+            studio_names=("Studio",),
         )["items"]
     ] == ["new-external-scene"]
     assert ExpandService(connection).results("scene", exclude_tags=("Useful",))["items"] == []
     assert ExpandService(connection).similar("performer", "p1")["items"][0]["id"] == (
         "external-performer"
+    )
+    assert (
+        ExpandService(connection).similar("performer", "p1", candidate_ids={"not-in-this-search"})[
+            "items"
+        ]
+        == []
     )
     assert (
         ExpandService(connection)
@@ -237,3 +246,21 @@ def test_sparse_external_performer_profile_has_low_confidence() -> None:
     )
     assert coverage < 0.25
     assert similarity < 0.4
+
+
+def test_external_profile_normalizes_age_augmentation_and_tag_names() -> None:
+    profile = ExpandService._profile(
+        {
+            "id": "performer",
+            "birth_date": "1985-04-07",
+            "breast_type": "FAKE",
+        }
+    )
+
+    assert "age_recording" in profile.blocks["age"]
+    assert "augmented" in profile.blocks["augmentation"]
+    recorded = ExpandService._profile({"id": "performer", "birth_date": "1985-04-07"}, "2020-04-07")
+    assert round(recorded.blocks["age"]["age_recording"].value) == 35
+    assert (
+        ExpandService._tag_value({"id": "unmapped", "name": "Useful"}, {"name:useful": 0.4}) == 0.4
+    )

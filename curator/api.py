@@ -245,6 +245,8 @@ class CuratorAPI:
         exclude_tags: tuple[str, ...] = (),
         performer_query: str = "",
         studio_query: str = "",
+        performer_names: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
         count: int = 50,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
@@ -257,6 +259,8 @@ class CuratorAPI:
             exclude_tags=exclude_tags,
             performer_query=performer_query,
             studio_query=studio_query,
+            performer_names=performer_names,
+            studio_names=studio_names,
             count=count,
         )
 

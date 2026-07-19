@@ -1,6 +1,12 @@
 from curator.features.profiles import PerformerProfile, ProfileValue, performer_similarity
 
-WEIGHTS = {"height": 0.7, "eyes": 0.1, "tattoos": 0.35}
+WEIGHTS = {
+    "measurements": 1.0,
+    "augmentation": 0.9,
+    "height": 0.7,
+    "eyes": 0.1,
+    "tattoos": 0.35,
+}
 
 
 def test_missing_blocks_add_no_similarity_or_weight() -> None:
@@ -31,3 +37,25 @@ def test_known_category_mismatch_is_zero_while_numeric_closeness_is_smooth() -> 
     assert result.block_similarities["eyes"] == 0
     assert 0 < result.block_similarities["height"] < 1
     assert result.block_weights == {"eyes": 0.1, "height": 0.7}
+
+
+def test_cup_and_augmentation_conflicts_reduce_similarity() -> None:
+    close = PerformerProfile(
+        "close",
+        {
+            "measurements": {"cup_index": ProfileValue(4, 1)},
+            "augmentation": {"augmented": ProfileValue(1, 1)},
+        },
+    )
+    conflict = PerformerProfile(
+        "conflict",
+        {
+            "measurements": {"cup_index": ProfileValue(0, 1)},
+            "augmentation": {"natural": ProfileValue(1, 1)},
+        },
+    )
+
+    assert (
+        performer_similarity(close, close, WEIGHTS).similarity
+        > performer_similarity(close, conflict, WEIGHTS).similarity
+    )

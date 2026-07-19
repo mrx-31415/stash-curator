@@ -13,7 +13,7 @@ from typing import Any
 
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, PerformerProfile, performer_similarity
-from curator.features.measurements import CUP_ALIASES
+from curator.features.measurements import CUP_ALIASES, augmentation_category
 from curator.features.profiles import ProfileValue
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
@@ -153,6 +153,8 @@ class ExpandService:
         exclude_tags: tuple[str, ...] = (),
         performer_query: str = "",
         studio_query: str = "",
+        performer_names: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
         count: int = 50,
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
@@ -201,11 +203,23 @@ class ExpandService:
                     for item in payload.get("performers", [])
                 ):
                     continue
+                cast_names = {
+                    str(item.get("performer", {}).get("name") or "").casefold()
+                    for item in payload.get("performers", [])
+                }
+                if performer_names and not all(
+                    value.casefold() in cast_names for value in performer_names
+                ):
+                    continue
                 if (
                     studio_query
                     and studio_query.casefold()
                     not in str((payload.get("studio") or {}).get("name") or "").casefold()
                 ):
+                    continue
+                if studio_names and str(
+                    (payload.get("studio") or {}).get("name") or ""
+                ).casefold() not in {value.casefold() for value in studio_names}:
                     continue
             rows.append(
                 {
@@ -312,7 +326,14 @@ class ExpandService:
         ]
         return {"ready": True, "items": items}
 
-    def similar(self, entity_type: str, entity_id: str, count: int = 50) -> dict[str, object]:
+    def similar(
+        self,
+        entity_type: str,
+        entity_id: str,
+        count: int = 50,
+        *,
+        candidate_ids: set[str] | None = None,
+    ) -> dict[str, object]:
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -339,8 +360,17 @@ class ExpandService:
             for row in self.connection.execute(
                 "SELECT * FROM external_entity WHERE entity_type='scene'"
             ):
+                if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
+                    continue
                 payload = json.loads(row["payload_json"])
-                tags = {str(tag["id"]): str(tag["name"]) for tag in payload.get("tags", [])}
+                tags = {
+                    key: str(tag["name"])
+                    for tag in payload.get("tags", [])
+                    for key in (
+                        f"id:{tag['id']}",
+                        f"name:{str(tag['name']).casefold()}",
+                    )
+                }
                 shared = set(target_tags) & set(tags)
                 content = (
                     sum(target_tags[value] for value in shared)
@@ -351,7 +381,14 @@ class ExpandService:
                 )
                 performer = max(
                     (
-                        self._profile_match(self._profile(item["performer"]), target, weights)[0]
+                        self._profile_match(
+                            self._profile(
+                                item["performer"],
+                                payload.get("production_date") or payload.get("release_date"),
+                            ),
+                            target,
+                            weights,
+                        )[0]
                         for item in payload.get("performers", [])
                         for target in targets
                     ),
@@ -390,15 +427,20 @@ class ExpandService:
             )
             if target is None:
                 raise ValueError(f"unknown performer: {entity_id}")
+            birthdate = self.connection.execute(
+                "SELECT birthdate FROM source_performer WHERE performer_id=?", (entity_id,)
+            ).fetchone()
+            target = self._with_age(target, birthdate[0] if birthdate else None)
             weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
             items = []
             for row in self.connection.execute(
                 "SELECT * FROM external_entity WHERE entity_type='performer'"
             ):
+                if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
+                    continue
                 payload = json.loads(row["payload_json"])
-                similarity, match, coverage = self._profile_match(
-                    self._profile(payload), target, weights
-                )
+                candidate = self._profile(payload)
+                similarity, match, coverage = self._profile_match(candidate, target, weights)
                 if similarity < 0.25 or coverage < 0.25:
                     continue
                 appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
@@ -406,6 +448,7 @@ class ExpandService:
                     match.block_similarities,
                     key=lambda block: -match.block_similarities[block] * match.block_weights[block],
                 )[:3]
+                conflicts = self._profile_conflicts(candidate, target)
                 items.append(
                     {
                         "id": str(row["external_id"]),
@@ -421,7 +464,8 @@ class ExpandService:
                                 + ", ".join(
                                     block.replace("augmentation", "breast type") for block in blocks
                                 )
-                            ],
+                            ]
+                            + (["Differs in " + ", ".join(conflicts)] if conflicts else []),
                         },
                     }
                 )
@@ -444,6 +488,7 @@ class ExpandService:
         feature_version = FeatureStore(self.connection).current_version()
         if model_id is None or feature_version is None:
             raise RuntimeError("no published model")
+        candidate_ids: set[str]
         if entity_type == "scene":
             rows: dict[str, dict[str, Any]] = {}
             sources: dict[str, set[str]] = defaultdict(set)
@@ -465,6 +510,7 @@ class ExpandService:
                 for key, value in rows.items()
                 if key not in set(links["scenes"].values()) and self._matches_gender(value, gender)
             ]
+            candidate_ids = {str(value["id"]) for value in candidates}
             scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
             self._merge_external("scene", scenes)
         elif entity_type == "performer":
@@ -499,6 +545,9 @@ class ExpandService:
                 "performers"
             ]
             owned = set(links["performers"].values())
+            candidate_ids = {
+                str(payload["id"]) for payload in candidates if str(payload["id"]) not in owned
+            }
             self._merge_external(
                 "performer",
                 (
@@ -514,7 +563,7 @@ class ExpandService:
             )
         else:
             raise ValueError("invalid external similarity entity type")
-        result = self.similar(entity_type, entity_id, count=count * 2)
+        result = self.similar(entity_type, entity_id, count=count * 2, candidate_ids=candidate_ids)
         raw_items = result["items"]
         assert isinstance(raw_items, list)
         result["items"] = [
@@ -560,11 +609,16 @@ class ExpandService:
             .get(scene_id, {})
         )
         external = {
-            str(row["tag_id"]): str(row["stash_id"])
+            str(row["tag_id"]): (
+                f"id:{row['stash_id']}"
+                if row["stash_id"]
+                else f"name:{str(row['name']).casefold()}"
+            )
             for row in self.connection.execute(
                 """
-                SELECT tag_id, stash_id FROM source_tag_stash_id
-                WHERE lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))
+                SELECT t.tag_id, t.name, ids.stash_id FROM source_tag t
+                LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
+                  AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
                 """,
                 (STASHDB,),
             )
@@ -690,18 +744,22 @@ class ExpandService:
         feature_version: str,
         links: dict[str, dict[str, str]],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        tag_affinity = {
-            str(row["stash_id"]): float(row["value"])
-            for row in self.connection.execute(
-                """
-                SELECT ids.stash_id, a.affinity * a.confidence AS value
-                FROM feature_affinity a JOIN feature_definition d USING(feature_id)
-                JOIN source_tag_stash_id ids ON d.name='tag:' || ids.tag_id
-                WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
-                """,
-                (model_id, feature_version),
-            )
-        }
+        tag_affinity: dict[str, float] = {}
+        for row in self.connection.execute(
+            """
+            SELECT ids.stash_id, t.name, a.affinity * a.confidence AS value
+            FROM feature_affinity a JOIN feature_definition d USING(feature_id)
+            JOIN source_tag t ON d.name='tag:' || t.tag_id
+            LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
+              AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
+            WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
+            """,
+            (STASHDB, model_id, feature_version),
+        ):
+            value = float(row["value"])
+            tag_affinity[f"name:{str(row['name']).casefold()}"] = value
+            if row["stash_id"]:
+                tag_affinity[f"id:{row['stash_id']}"] = value
         external_studio_appeal = {
             links["studios"][str(row["studio_id"])]: float(row["appeal"])
             for row in self.connection.execute(
@@ -726,7 +784,9 @@ class ExpandService:
         performer_rows: dict[str, dict[str, Any]] = {}
         scene_rows = []
         for scene in scenes:
-            tag_value = sum(tag_affinity.get(str(tag["id"]), 0) for tag in scene.get("tags", []))
+            tag_value = math.tanh(
+                sum(self._tag_value(tag, tag_affinity) for tag in scene.get("tags", []))
+            )
             cast = [item["performer"] for item in scene.get("performers", [])]
             identity_evidence = max(
                 (evidence.get(str(item["id"]), {}) for item in cast),
@@ -740,7 +800,9 @@ class ExpandService:
             for performer in cast:
                 external_id = str(performer["id"])
                 local = evidence.get(external_id)
-                profile = self._profile(performer)
+                profile = self._profile(
+                    performer, scene.get("production_date") or scene.get("release_date")
+                )
                 matches = (
                     [
                         (*self._profile_match(profile, anchor, weights), anchor_evidence)
@@ -864,7 +926,48 @@ class ExpandService:
         return match.similarity * math.sqrt(coverage), match, coverage
 
     @staticmethod
-    def _profile(raw: dict[str, Any]) -> PerformerProfile:
+    def _profile_conflicts(left: PerformerProfile, right: PerformerProfile) -> list[str]:
+        conflicts: list[str] = []
+        left_cup = left.blocks.get("measurements", {}).get("cup_index")
+        right_cup = right.blocks.get("measurements", {}).get("cup_index")
+        if left_cup and right_cup and abs(left_cup.value - right_cup.value) >= 2:
+            conflicts.append("cup size")
+        left_aug = set(left.blocks.get("augmentation", {}))
+        right_aug = set(right.blocks.get("augmentation", {}))
+        if left_aug and right_aug and not left_aug & right_aug:
+            conflicts.append("augmentation")
+        left_age = left.blocks.get("age", {}).get("age_recording")
+        right_age = right.blocks.get("age", {}).get("age_recording")
+        if left_age and right_age and abs(left_age.value - right_age.value) >= 12:
+            conflicts.append("age")
+        return conflicts
+
+    @staticmethod
+    def _age(value: object, recorded: object = None) -> float | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parts = [int(part) for part in raw.split("-")]
+            born = date(
+                parts[0], parts[1] if len(parts) > 1 else 7, parts[2] if len(parts) > 2 else 1
+            )
+            reference = date.fromisoformat(str(recorded)) if recorded else date.today()
+        except (ValueError, IndexError):
+            return None
+        return max(0.0, (reference - born).days / 365.2425)
+
+    @staticmethod
+    def _with_age(profile: PerformerProfile, birthdate: object) -> PerformerProfile:
+        age = ExpandService._age(birthdate)
+        if age is None:
+            return profile
+        blocks = {name: dict(values) for name, values in profile.blocks.items()}
+        blocks["age"] = {"age_recording": ProfileValue(age, 0.9)}
+        return PerformerProfile(profile.performer_id, blocks)
+
+    @staticmethod
+    def _profile(raw: dict[str, Any], recorded: object = None) -> PerformerProfile:
         blocks: dict[str, dict[str, ProfileValue]] = defaultdict(dict)
         for block, prefix, field, confidence in (
             ("ethnicity", "ethnicity", "ethnicity", 0.9),
@@ -890,8 +993,10 @@ class ExpandService:
                 blocks["measurements"][name] = ProfileValue(float(value), 1)
         if raw.get("height"):
             blocks["height"]["height_cm"] = ProfileValue(float(raw["height"]), 1)
-        if raw.get("breast_type"):
-            blocks["augmentation"][str(raw["breast_type"]).casefold()] = ProfileValue(1, 1)
+        if (age := ExpandService._age(raw.get("birth_date"), recorded)) is not None:
+            blocks["age"]["age_recording"] = ProfileValue(age, 0.9)
+        if augmentation := augmentation_category(str(raw.get("breast_type") or "")):
+            blocks["augmentation"][augmentation] = ProfileValue(1, 1)
         if raw.get("tattoos"):
             blocks["tattoos"]["present"] = ProfileValue(1, 0.8)
         if raw.get("piercings"):
@@ -899,14 +1004,21 @@ class ExpandService:
         return PerformerProfile(str(raw["id"]), dict(blocks))
 
     @staticmethod
+    def _tag_value(tag: dict[str, Any], affinities: dict[str, float]) -> float:
+        return affinities.get(
+            f"id:{tag.get('id')}",
+            affinities.get(f"name:{str(tag.get('name') or '').casefold()}", 0.0),
+        )
+
+    @staticmethod
     def _why(
         scene: dict[str, Any], tag_affinity: dict[str, float], identity: float, similarity: float
     ) -> list[str]:
         tags = sorted(
             (
-                (tag_affinity.get(str(tag["id"]), 0), str(tag["name"]))
+                (ExpandService._tag_value(tag, tag_affinity), str(tag["name"]))
                 for tag in scene.get("tags", [])
-                if tag_affinity.get(str(tag["id"]), 0) > 0
+                if ExpandService._tag_value(tag, tag_affinity) > 0
             ),
             reverse=True,
         )[:3]
