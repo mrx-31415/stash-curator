@@ -187,6 +187,14 @@ class SlateBuilder:
                 """
             )
         }
+        unrecovered_direct_plays = {
+            scene_id
+            for scene_id, played_at_ms in direct_plays.items()
+            if scene_recovery(
+                max(0.0, (now_ms - played_at_ms) / 86_400_000), config=self.config.model
+            )
+            < 0.10
+        }
         candidates = tuple(
             candidate
             for candidate in self._cached_candidates
@@ -196,6 +204,10 @@ class SlateBuilder:
             and not (
                 candidate.classification.lane == "best_bets"
                 and candidate.classification.scene_id in direct_plays
+            )
+            and not (
+                candidate.classification.lane == "revisit"
+                and candidate.classification.scene_id in unrecovered_direct_plays
             )
         )
         self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)

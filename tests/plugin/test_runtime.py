@@ -83,3 +83,29 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.SCHEMA_VERSION == 1
+
+
+def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_settings", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    connection = module._open(
+        {"args": {}},
+        {
+            "databasePath": str(tmp_path / "curator.sqlite3"),
+            "pageSize": 12,
+            "modelUpdateEventThreshold": 7,
+        },
+    )
+    try:
+        config = json.loads(
+            connection.execute(
+                "SELECT config_json FROM curator_config WHERE singleton=1"
+            ).fetchone()[0]
+        )
+        assert config["page_size"] == 12
+        assert config["model_update_event_threshold"] == 7
+    finally:
+        connection.close()

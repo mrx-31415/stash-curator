@@ -310,20 +310,30 @@ def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: 
     assert any(item.scene_id == "d-revisit" and item.lane == "revisit" for item in classifications)
 
 
-def test_direct_play_removes_a_prebuilt_best_bet_without_rebuilding(tmp_path: Path) -> None:
+def test_direct_play_updates_prebuilt_lanes_without_rebuilding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     builder = SlateBuilder(connection)
+    now_ms = 100 * 86_400_000
+    monkeypatch.setattr("curator.ranking.slate.time.time_ns", lambda: now_ms * 1_000_000)
     assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
-    connection.execute(
+    assert any(item.scene_id == "d-revisit" for item in builder.recommend("revisit", 5).items)
+    connection.executemany(
         """
         INSERT INTO play_session(
             session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
             provenance, confidence, summary_json
-        ) VALUES ('direct', 'a-best', 1, 2, 1, 'direct_player', 1, '{}')
-        """
+        ) VALUES (?, ?, ?, ?, 1, 'direct_player', 1, '{}')
+        """,
+        (
+            ("direct-best", "a-best", now_ms - 1_000, now_ms),
+            ("direct-revisit", "d-revisit", now_ms - 1_000, now_ms),
+        ),
     )
 
     assert builder.recommend("best_bets", 1).items[0].scene_id != "a-best"
+    assert not any(item.scene_id == "d-revisit" for item in builder.recommend("revisit", 5).items)
 
 
 def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_path: Path) -> None:

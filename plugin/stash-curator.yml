@@ -21,6 +21,30 @@ settings:
     displayName: Sidecar database path
     description: Leave empty to store data in the plugin's data directory.
     type: STRING
+  pageSize:
+    displayName: Scenes per lane
+    description: Number of recommendations shown on each Curator lane. Default 20.
+    type: NUMBER
+  syncPageSize:
+    displayName: Sync page size
+    description: Number of Stash records fetched per synchronization request. Default 250.
+    type: NUMBER
+  autoSyncHours:
+    displayName: Automatic sync interval (hours)
+    description: Hours between library synchronizations. Default 24; set to 0 to disable.
+    type: NUMBER
+  modelUpdateEventThreshold:
+    displayName: Actions before model update
+    description: Rebuild after this many new playback or feedback actions. Default 5.
+    type: NUMBER
+  modelUpdateMaxWaitMinutes:
+    displayName: Maximum model update delay (minutes)
+    description: Rebuild pending preference changes after this delay. Default 30.
+    type: NUMBER
+  modelUpdateMinIntervalMinutes:
+    displayName: Minimum model update interval (minutes)
+    description: Minimum time between automatic preference-model rebuilds. Default 60.
+    type: NUMBER
 tasks:
   - name: Sync and build recommendations
     description: Incrementally synchronize Stash and publish a fresh model.

@@ -6,31 +6,36 @@
   const { Button, Nav } = libraries.Bootstrap;
   const { NavLink } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faCompass } = libraries.FontAwesomeSolid;
+  const { faBullseye, faCompass, faHistory, faSearch, faStar } = libraries.FontAwesomeSolid;
   const LANES = [
     {
       value: "for_you",
       label: "For You",
+      icon: faStar,
       description: "A balanced shelf of strong matches, timely revisits, and a little discovery.",
     },
     {
       value: "best_bets",
       label: "Best Bets",
+      icon: faBullseye,
       description: "The strongest unwatched matches for when you want a dependable choice now.",
     },
     {
       value: "revisit",
       label: "Revisit",
+      icon: faHistory,
       description: "Scenes you have enjoyed before, brought back after enough time away.",
     },
     {
       value: "discover",
       label: "Discover",
+      icon: faSearch,
       description: "Mostly your taste, with one boundary gently challenged to find something new.",
     },
     {
       value: "adventure",
       label: "Adventure",
+      icon: faCompass,
       description: "Deliberate long shots that explore gaps in the model—and possible pruning candidates.",
     },
   ];
@@ -206,19 +211,19 @@
     return React.createElement(
       "div",
       { className: "curator-feedback" },
-      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_up") }, "Useful 👍"),
-      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_down") }, "Not for me 👎"),
+      React.createElement(Button, { size: "sm", disabled: busy, title: "Strengthen recommendations like this one.", onClick: () => send("thumb_up") }, "Useful 👍"),
+      React.createElement(Button, { size: "sm", disabled: busy, title: "Treat this recommendation as a poor match.", onClick: () => send("thumb_down") }, "Not for me 👎"),
       React.createElement(
         "details",
         { className: "curator-more" },
-        React.createElement("summary", { className: "btn btn-secondary btn-sm" }, "More"),
+        React.createElement("summary", { className: "btn btn-secondary btn-sm", title: "More ways to refine this recommendation." }, "More"),
         React.createElement(
           "div",
           { className: "curator-more-menu" },
-          React.createElement(Button, { size: "sm", onClick: () => send("not_now") }, "Not now"),
-          React.createElement(Button, { size: "sm", onClick: () => send("never_show") }, "Never show"),
-          React.createElement(Button, { size: "sm", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
-          React.createElement(Button, { size: "sm", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
+          React.createElement(Button, { size: "sm", title: "Hide this scene temporarily without treating it as a dislike.", onClick: () => send("not_now") }, "Not now"),
+          React.createElement(Button, { size: "sm", title: "Permanently exclude this scene from Curator.", onClick: () => send("never_show") }, "Never show"),
+          React.createElement(Button, { size: "sm", title: "Keep the scene, but do not learn from its current metadata.", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
+          React.createElement(Button, { size: "sm", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
         )
       ),
       saved && React.createElement("small", { role: "status" }, saved)
@@ -305,19 +310,13 @@
           React.createElement(
             "details",
             { className: "curator-score" },
-            React.createElement("summary", null, "How the score was built"),
-            React.createElement(ScoreNode, {
-              name: "total",
-              value: {
-                final_utility: item.final_utility,
-                appeal: item.appeal,
-                current_fit: item.current_fit,
-                confidence: item.confidence,
-                components: item.components,
-                diversity_penalties: item.penalties,
-                diversity_bonuses: item.bonuses,
-              },
-            })
+            React.createElement("summary", null, `How the score was built · ${item.final_utility.toFixed(2)}`),
+            React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
+            React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
+            React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
+            React.createElement(ScoreNode, { name: "components", value: item.components }),
+            React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
+            React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
           )
         ),
         React.createElement(Feedback, { item, onRemove })
@@ -326,21 +325,21 @@
   }
 
   function CuratorControls({ onRefresh }) {
-    const [config, setConfig] = React.useState(null);
     const [jobs, setJobs] = React.useState([]);
+    const [health, setHealth] = React.useState(null);
     const [pruning, setPruning] = React.useState([]);
     const [exclusions, setExclusions] = React.useState([]);
     const [message, setMessage] = React.useState("");
 
     async function refreshStatus() {
       try {
-        const [configuration, jobStatus, pruningQueue, exclusionList] = await Promise.all([
-          operation({ operation: "get_config" }),
+        const [currentHealth, jobStatus, pruningQueue, exclusionList] = await Promise.all([
+          operation({ operation: "health" }),
           operation({ operation: "get_job_status" }),
           operation({ operation: "get_pruning_queue" }),
           operation({ operation: "get_exclusions" }),
         ]);
-        setConfig(configuration.config);
+        setHealth(currentHealth);
         setJobs(jobStatus.jobs);
         setPruning(pruningQueue.items);
         setExclusions(exclusionList.items);
@@ -359,27 +358,6 @@
         const id = await runTask(taskName);
         setMessage(`Started Stash job ${id}`);
         setTimeout(refreshStatus, 1000);
-      } catch (error) {
-        setMessage(error.message);
-      }
-    }
-    async function save(event) {
-      event.preventDefault();
-      try {
-        const result = await operation({ operation: "update_config", values: config });
-        setConfig(result.config);
-        setMessage("Settings saved");
-        onRefresh();
-      } catch (error) {
-        setMessage(error.message);
-      }
-    }
-    async function reset() {
-      if (!confirm("Reset all Curator sidecar data? Your Stash library is not changed.")) return;
-      try {
-        await operation({ operation: "reset", confirmation: "RESET" });
-        setMessage("Curator data reset");
-        onRefresh();
       } catch (error) {
         setMessage(error.message);
       }
@@ -404,50 +382,38 @@
         setMessage(error.message);
       }
     }
-    function numberField(key, label, step) {
-      return React.createElement(
-        "label",
-        null,
-        label,
-        React.createElement("input", {
-          className: "form-control",
-          type: "number",
-          min: 0,
-          step: step || 1,
-          value: config?.[key] ?? "",
-          onChange: (event) => setConfig({ ...config, [key]: Number(event.target.value) }),
-        })
-      );
-    }
+    const running = jobs.find((job) => job.state === "running");
+    const lastError = jobs[0]?.state === "failed" ? jobs[0] : null;
+    const hasSynced = jobs.some(
+      (job) => ["sync-build", "full-sync-build"].includes(job.job_type) && job.state === "complete"
+    );
+    const modelStatus = health?.model_rebuilding
+      ? "Model rebuilding"
+      : health?.model_pending
+        ? `${health.model_pending_events} change${health.model_pending_events === 1 ? "" : "s"} queued`
+        : health?.ready
+          ? "Model ready"
+          : "Model not built";
 
     return React.createElement(
-      "details",
+      "section",
       { className: "curator-controls" },
-      React.createElement("summary", null, "Jobs and settings"),
+      React.createElement(
+        "div",
+        { className: "curator-status", role: "status" },
+        React.createElement("span", null, running ? `Running: ${running.job_type}` : hasSynced ? "Library synced" : "Library not synced"),
+        React.createElement("span", null, modelStatus),
+        React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`)
+      ),
       React.createElement(
         "div",
         { className: "curator-task-buttons" },
-        React.createElement(Button, { onClick: () => start("Sync and build recommendations") }, "Sync + build"),
-        React.createElement(Button, { onClick: () => start("Rebuild recommendation model") }, "Rebuild"),
-        React.createElement(Button, { onClick: () => start("Backup Curator data") }, "Backup")
+        React.createElement(Button, { size: "sm", title: "Fetch changed Stash metadata, then refresh recommendations.", onClick: () => start("Sync and build recommendations") }, "Sync library"),
+        React.createElement(Button, { size: "sm", title: "Recalculate recommendations from the existing synchronized data.", onClick: () => start("Rebuild recommendation model") }, "Rebuild model"),
+        React.createElement(Button, { size: "sm", title: "Create a timestamped backup of Curator's sidecar database.", onClick: () => start("Backup Curator data") }, "Back up"),
+        React.createElement(NavLink, { className: "btn btn-secondary btn-sm", title: "Open Stash's plugin settings for Curator configuration.", to: "/settings?tab=plugins" }, "Plugin settings")
       ),
-      config &&
-        React.createElement(
-          "form",
-          { className: "curator-config", onSubmit: save },
-          numberField("page_size", "Scenes per lane"),
-          numberField("sync_page_size", "Sync page size"),
-          numberField("debounce_ms", "Model quiet period (ms)"),
-          numberField("auto_sync_hours", "Automatic sync interval (hours; 0 disables)", 0.5),
-          React.createElement(Button, { type: "submit", variant: "primary" }, "Save settings"),
-          React.createElement(Button, { type: "button", variant: "danger", onClick: reset }, "Reset Curator data")
-        ),
-      jobs.length > 0 &&
-        React.createElement(
-          "table",
-          { className: "table table-sm curator-jobs" },
-          React.createElement("tbody", null, jobs.map((job) => React.createElement("tr", { key: job.job_id }, React.createElement("td", null, job.job_type), React.createElement("td", null, job.state), React.createElement("td", null, job.error || ""))))
-        ),
+      lastError && React.createElement("small", { className: "text-danger" }, lastError.error),
       pruning.length > 0 &&
         React.createElement(
           "section",
@@ -554,21 +520,21 @@
       React.createElement(
         "header",
         { className: "curator-header" },
-        React.createElement("div", null, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste.")),
-        React.createElement(CuratorControls, { onRefresh: refresh })
-      ),
-      React.createElement(
-        Nav,
-        { variant: "tabs", role: "tablist", className: "curator-tabs" },
-        LANES.map((option) =>
-          React.createElement(Nav.Link, { key: option.value, as: "button", active: lane === option.value, onClick: () => setLane(option.value), role: "tab", "aria-selected": lane === option.value }, option.label)
+        React.createElement("div", { className: "curator-brand" }, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste.")),
+        React.createElement(
+          Nav,
+          { variant: "tabs", role: "tablist", className: "curator-tabs" },
+          LANES.map((option) =>
+            React.createElement(
+              Nav.Link,
+              { key: option.value, as: "button", active: lane === option.value, onClick: () => setLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+              React.createElement(FontAwesomeIcon, { icon: option.icon }),
+              React.createElement("span", null, option.label)
+            )
+          )
         )
       ),
-      React.createElement(
-        "section",
-        { className: "curator-lane-intro" },
-        React.createElement("p", null, laneOption?.description),
-        lane === "for_you" &&
+      lane === "for_you" &&
         React.createElement(
           "label",
           { className: "curator-exploration" },
@@ -584,7 +550,7 @@
           }),
           React.createElement("span", null, "Adventurous")
         ),
-      ),
+      React.createElement(CuratorControls, { onRefresh: refresh }),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(
           "div",
@@ -632,6 +598,7 @@
     try {
       await operation({ operation: "submit_events", entries });
       if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
+        clearSlateCache();
         scheduleModelUpdate();
       }
       const sent = new Set(entries.map(queueId));

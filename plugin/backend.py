@@ -84,9 +84,44 @@ def _database_path(payload: dict[str, Any], settings: dict[str, Any] | None = No
     return Path(configured).expanduser() if configured else PLUGIN_DIR / "data" / "curator.sqlite3"
 
 
+def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
+    mapping = {
+        "pageSize": ("page_size", int),
+        "syncPageSize": ("sync_page_size", int),
+        "autoSyncHours": ("auto_sync_hours", float),
+        "modelUpdateEventThreshold": ("model_update_event_threshold", int),
+        "modelUpdateMaxWaitMinutes": ("model_update_max_wait_minutes", float),
+        "modelUpdateMinIntervalMinutes": ("model_update_min_interval_minutes", float),
+    }
+    overrides = {
+        key: convert(settings[source])
+        for source, (key, convert) in mapping.items()
+        if settings.get(source) not in (None, "")
+    }
+    if not overrides:
+        return
+    row = connection.execute("SELECT config_json FROM curator_config WHERE singleton=1").fetchone()
+    current = json.loads(str(row[0]))
+    merged = {**current, **overrides}
+    effective = CuratorAPI(connection).config()["config"]
+    assert isinstance(effective, dict)
+    CuratorAPI._validate_config({**effective, **overrides})
+    if merged == current:
+        return
+    with transaction(connection):
+        connection.execute(
+            "UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1",
+            (
+                json.dumps(merged, sort_keys=True, separators=(",", ":")),
+                time.time_ns() // 1_000_000,
+            ),
+        )
+
+
 def _open(payload: dict[str, Any], settings: dict[str, Any] | None = None):  # type: ignore[no-untyped-def]
     connection = connect_database(_database_path(payload, settings))
     MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
+    _apply_plugin_settings(connection, settings or {})
     return connection
 
 

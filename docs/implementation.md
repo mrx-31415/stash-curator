@@ -749,7 +749,7 @@ After the validation gate:
 - progressive Why-this drawer;
 - thumbs and detail feedback;
 - Familiar/Adventurous control;
-- inspector and advanced configuration;
+- inspector, compact task status, and configuration through Stash's plugin settings;
 - loading, empty, stale-model, rebuilding, and error states.
 
 The UI requests one complete slate operation and then current card facts through
