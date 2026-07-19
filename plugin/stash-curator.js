@@ -42,9 +42,11 @@
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
-  const slateCache = new Map();
+  const SLATE_CACHE_KEY = "stash-curator:slates:v1";
+  const restoredCache = readSlateCache();
+  const slateCache = new Map(restoredCache.entries);
   const slateRequests = new Map();
-  let cachedModelId = null;
+  let cachedModelId = restoredCache.modelId;
   let cacheGeneration = 0;
   let modelUpdateTimer = null;
 
@@ -75,10 +77,33 @@
     return `${lane}:${lane === "for_you" ? exploration : 0}`;
   }
 
+  function readSlateCache() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(SLATE_CACHE_KEY) || "null");
+      return value && Array.isArray(value.entries)
+        ? { modelId: value.modelId || null, entries: value.entries.filter((entry) => Array.isArray(entry) && entry.length === 2) }
+        : { modelId: null, entries: [] };
+    } catch (_) {
+      return { modelId: null, entries: [] };
+    }
+  }
+
+  function persistSlateCache() {
+    try {
+      sessionStorage.setItem(
+        SLATE_CACHE_KEY,
+        JSON.stringify({ modelId: cachedModelId, entries: [...slateCache.entries()] })
+      );
+    } catch (_) {
+      // The in-memory cache still works if browser storage is unavailable or full.
+    }
+  }
+
   function clearSlateCache() {
     slateCache.clear();
     slateRequests.clear();
     cachedModelId = null;
+    sessionStorage.removeItem(SLATE_CACHE_KEY);
     cacheGeneration += 1;
   }
 
@@ -98,6 +123,7 @@
         if (cachedModelId && cachedModelId !== data.model_id) clearSlateCache();
         cachedModelId = data.model_id;
         slateCache.set(key, data);
+        persistSlateCache();
         return data;
       })
       .finally(() => slateRequests.delete(key));
@@ -352,6 +378,10 @@
           operation({ operation: "get_exclusions" }),
         ]);
         setHealth(currentHealth);
+        if (cachedModelId && currentHealth.model_id !== cachedModelId) {
+          clearSlateCache();
+          onRefresh();
+        }
         setJobs(jobStatus.jobs);
         setPruning(pruningQueue.items);
         setExclusions(exclusionList.items);
@@ -402,7 +432,7 @@
     const modelStatus = health?.model_rebuilding
       ? "Model rebuilding"
       : health?.model_pending
-        ? `${health.model_pending_events} change${health.model_pending_events === 1 ? "" : "s"} queued`
+        ? `${health.model_pending_events} preference update${health.model_pending_events === 1 ? "" : "s"} waiting`
         : health?.ready
           ? "Model ready"
           : "Model not built";
@@ -416,7 +446,7 @@
         "div",
         { className: "curator-status", role: "status" },
         React.createElement("span", null, running ? `Running: ${running.job_type}` : hasSynced ? "Library synced" : "Library not synced"),
-        React.createElement("span", null, modelStatus),
+        React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : undefined }, modelStatus),
         React.createElement("span", null, `${health?.capture?.direct_playback_sessions || 0} plays captured`),
         health?.last_sync_at_ms && React.createElement("span", { title: "Last completed library synchronization" }, `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}`)
       ),
