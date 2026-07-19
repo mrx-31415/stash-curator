@@ -4,6 +4,7 @@ import pytest
 
 from curator.api import CuratorAPI
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
+from curator.storage import connect_database
 from tests.model.test_builder import REFERENCE_MS, _database
 
 
@@ -113,6 +114,41 @@ def test_similar_performers_are_preference_aware_and_inspectable(tmp_path: Path)
     assert [item["entity_id"] for item in result["items"]] == ["p3", "p2"]
     assert result["items"][0]["rank_score"] > result["items"][1]["rank_score"]
     assert result["items"][0]["details"]["blocks"]
+
+
+def test_local_similarity_filters_gender(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("UPDATE source_performer SET gender='FEMALE' WHERE performer_id='p3'")
+    connection.execute("UPDATE source_performer SET gender='MALE' WHERE performer_id='p2'")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    result = CuratorAPI(connection).similar("performer", "p1", gender="FEMALE")
+
+    assert [item["entity_id"] for item in result["items"]] == ["p3"]
+
+
+def test_similar_scene_does_not_wait_for_impression_write_lock(tmp_path: Path) -> None:
+    path = tmp_path / "curator.sqlite3"
+    connection = _database(path)
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    locker = connect_database(path)
+    locker.execute("BEGIN IMMEDIATE")
+    try:
+        result = CuratorAPI(connection).similar(
+            "scene", "old-good", impression_id="locked-impression"
+        )
+    finally:
+        locker.rollback()
+        locker.close()
+
+    assert result["items"]
+    assert result["impression_id"] is None
+    assert (
+        connection.execute(
+            "SELECT 1 FROM impression WHERE impression_id='locked-impression'"
+        ).fetchone()
+        is None
+    )
 
 
 def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:

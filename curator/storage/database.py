@@ -38,7 +38,8 @@ def connect_database(path: Path, *, readonly: bool = False) -> sqlite3.Connectio
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 30000")
     if not readonly:
-        connection.execute("PRAGMA journal_mode = WAL")
+        if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).casefold() != "wal":
+            connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = NORMAL")
     return connection
 

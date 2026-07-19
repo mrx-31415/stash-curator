@@ -501,7 +501,14 @@ class ExpandService:
                 if str(row[0]) in links["performers"]
             ]
             if content:
-                tag_ids = sorted(content, key=content.__getitem__, reverse=True)[:20]
+                tag_ids = [
+                    key.removeprefix("id:")
+                    for key in sorted(content, key=content.__getitem__, reverse=True)
+                    if key.startswith("id:")
+                ][:20]
+            else:
+                tag_ids = []
+            if tag_ids:
                 self._fetch(client, rows, sources, "tags", tag_ids, 500)
             if performers:
                 self._fetch(client, rows, sources, "performers", performers, 250)

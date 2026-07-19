@@ -223,6 +223,26 @@ def test_external_scene_similarity_requires_shared_content(tmp_path: Path) -> No
     assert service.similar("scene", "old-good")["items"] == []
 
 
+def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    connection.execute(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        ("good", "https://stashdb.org/graphql", "external-tag"),
+    )
+    client = FakeStashDB()
+
+    ExpandService(connection).targeted_similar(
+        client,
+        {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}},
+        "scene",
+        "old-good",
+    )
+
+    tag_query = next(value for value in client.inputs if "tags" in value)
+    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
+
+
 def test_sparse_external_performer_profile_has_low_confidence() -> None:
     service = ExpandService
     sparse = service._profile({"id": "sparse", "ethnicity": "Caucasian"})

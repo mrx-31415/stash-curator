@@ -180,15 +180,16 @@ class CuratorAPI:
         *,
         impression_id: str | None = None,
         now_ms: int | None = None,
+        gender: str = "",
     ) -> dict[str, object]:
         if not 1 <= count <= 100:
             raise ValueError("count must be between 1 and 100")
         service = SimilarityService(self.connection)
         if entity_type == "scene":
-            results = service.scenes(entity_id, count)
+            results = service.scenes(entity_id, count, gender)
             table, id_column, label_column = "source_scene", "scene_id", "title"
         elif entity_type == "performer":
-            results = service.performers(entity_id, count)
+            results = service.performers(entity_id, count, gender)
             table, id_column, label_column = "source_performer", "performer_id", "name"
         else:
             raise ValueError(f"unsupported similar entity type: {entity_type}")
@@ -198,17 +199,25 @@ class CuratorAPI:
         }
         impression_id = impression_id or str(uuid4())
         if entity_type == "scene":
-            InteractionStore(self.connection).record_ranked_impression(
-                impression_id,
-                "similar",
-                service.model_id,
-                (
-                    (item.entity_id, position, item.rank_score, item.relationships)
-                    for position, item in enumerate(results)
-                ),
-                now_ms if now_ms is not None else time.time_ns() // 1_000_000,
-                {"provenance": "similar", "source_scene_id": entity_id},
-            )
+            self.connection.execute("PRAGMA busy_timeout = 100")
+            try:
+                InteractionStore(self.connection).record_ranked_impression(
+                    impression_id,
+                    "similar",
+                    service.model_id,
+                    (
+                        (item.entity_id, position, item.rank_score, item.relationships)
+                        for position, item in enumerate(results)
+                    ),
+                    now_ms if now_ms is not None else time.time_ns() // 1_000_000,
+                    {"provenance": "similar", "source_scene_id": entity_id},
+                )
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).casefold():
+                    raise
+                impression_id = None
+            finally:
+                self.connection.execute("PRAGMA busy_timeout = 30000")
         return {
             "schema_version": API_SCHEMA_VERSION,
             "model_id": service.model_id,

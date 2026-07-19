@@ -499,7 +499,7 @@
     }
     function switchGender(value) {
       setGender(value);
-      if (selected && source === "stashdb") load(selected.id, selected.label, entityType, source, value);
+      if (selected) load(selected.id, selected.label, entityType, source, value);
     }
     async function shortlistExternal(item, kind) {
       try {
@@ -541,7 +541,7 @@
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
         selected && React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "StashDB", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
-        selected && source === "stashdb" && React.createElement("label", { className: "curator-toolbar-select", title: "Limit external results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => switchGender(event.target.value), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders")))
+        selected && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => switchGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders")))
       ),
       search && !selected && React.createElement(
         "div",
@@ -655,16 +655,16 @@
   }
 
   function ExpandPanel({ initialPerformerId = null }) {
-    const { PerformerSelect, StudioSelect, TagSelect } = Api.components;
+    const { PerformerSelect } = Api.components;
     const [entityType, setEntityType] = React.useState("scene");
     const [sort, setSort] = React.useState("match");
     const [performerId, setPerformerId] = React.useState(initialPerformerId);
     const [favoriteOnly, setFavoriteOnly] = React.useState(false);
     const [gender, setGender] = React.useState("FEMALE");
-    const [includeTags, setIncludeTags] = React.useState([]);
-    const [excludeTags, setExcludeTags] = React.useState([]);
+    const [includeTags, setIncludeTags] = React.useState("");
+    const [excludeTags, setExcludeTags] = React.useState("");
     const [performers, setPerformers] = React.useState([]);
-    const [studios, setStudios] = React.useState([]);
+    const [studioQuery, setStudioQuery] = React.useState("");
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
@@ -674,8 +674,8 @@
     React.useEffect(() => {
       let active = true;
       setLoading(true);
-      const names = (values) => values.map((item) => item.name).filter(Boolean);
-      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: names(includeTags), exclude_tags: names(excludeTags), performer_names: names(performers), studio_names: names(studios) }).then(
+      const terms = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: terms(includeTags), exclude_tags: terms(excludeTags), performer_names: performers.map((item) => item.name).filter(Boolean), studio_query: studioQuery.trim() }).then(
         (result) => active && (setData(result), setLoading(false)),
         (failure) => active && (setError(failure.message), setLoading(false))
       );
@@ -721,7 +721,7 @@
         React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
-      entityType === "scene" && React.createElement("details", { className: "curator-expand-filters" }, React.createElement("summary", null, "Filters"), React.createElement("div", null, React.createElement("label", null, "Include tags", React.createElement(TagSelect, { values: includeTags, onSelect: setIncludeTags, isMulti: true, creatable: false, noSelectionString: "Select tags…" })), React.createElement("label", null, "Exclude tags", React.createElement(TagSelect, { values: excludeTags, onSelect: setExcludeTags, isMulti: true, creatable: false, noSelectionString: "Select excluded tags…" })), React.createElement("label", null, "Performers", React.createElement(PerformerSelect, { values: performers, onSelect: setPerformers, isMulti: true, creatable: false, noSelectionString: "Select performers…" })), React.createElement("label", null, "Studios", React.createElement(StudioSelect, { values: studios, onSelect: setStudios, isMulti: true, creatable: false, noSelectionString: "Select studios…" })), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setFilterVersion((value) => value + 1) }, "Apply"))),
+      entityType === "scene" && React.createElement("details", { className: "curator-expand-filters" }, React.createElement("summary", null, "Filters"), React.createElement("div", null, React.createElement("label", null, "Include tags", React.createElement("input", { className: "form-control form-control-sm", value: includeTags, onChange: (event) => setIncludeTags(event.target.value), placeholder: "Tag A, Tag B" })), React.createElement("label", null, "Exclude tags", React.createElement("input", { className: "form-control form-control-sm", value: excludeTags, onChange: (event) => setExcludeTags(event.target.value), placeholder: "Tag C" })), React.createElement("label", null, "Performers", React.createElement(PerformerSelect, { values: performers, onSelect: setPerformers, isMulti: true })), React.createElement("label", null, "Studio", React.createElement("input", { className: "form-control form-control-sm", value: studioQuery, onChange: (event) => setStudioQuery(event.target.value) })), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setFilterVersion((value) => value + 1) }, "Apply"))),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
@@ -798,41 +798,37 @@
     const progress = typeof activeJob?.progress === "number" ? activeJob.progress : null;
 
     return React.createElement(
-      "section",
-      { className: "curator-controls" },
+      React.Fragment,
+      null,
       React.createElement(
-        "div",
-        { className: "curator-status", role: "status" },
-        React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
-        React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
-        React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
-        health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
-      ),
-      activeJob &&
+        "section",
+        { className: "curator-controls" },
         React.createElement(
           "div",
-          { className: "curator-active-job" },
-          React.createElement("span", null, activeJob.description),
-          progress !== null && React.createElement("strong", null, `${Math.round(progress * 100)}%`),
-          React.createElement("div", { className: "curator-job-progress" }, React.createElement("span", { style: { width: `${Math.round((progress || 0) * 100)}%` } })),
-          React.createElement(NavLink, { to: "/settings?tab=tasks" }, "View tasks")
+          { className: "curator-status", role: "status" },
+          React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
+          React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
+          React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
+          health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
         ),
-      React.createElement(
-        "div",
-        { className: "curator-task-buttons" },
-        React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Sync library: fetch changed Stash metadata and refresh recommendations.", "aria-label": "Sync library", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
-        React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Rebuild model from the existing synchronized data.", "aria-label": "Rebuild model", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
-        React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
+        React.createElement(
+          "div",
+          { className: "curator-task-buttons" },
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Sync library: fetch changed Stash metadata and refresh recommendations.", "aria-label": "Sync library", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Rebuild model from the existing synchronized data.", "aria-label": "Rebuild model", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+          React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
+        )
       ),
-      lastError && React.createElement("small", { className: "text-danger" }, lastError.error),
-      message && React.createElement("p", { role: "status" }, message)
+      activeJob && React.createElement("div", { className: "curator-active-job" }, React.createElement("span", null, activeJob.description), progress !== null && React.createElement("strong", null, `${Math.round(progress * 100)}%`), React.createElement("div", { className: "curator-job-progress" }, React.createElement("span", { style: { width: `${Math.round((progress || 0) * 100)}%` } })), React.createElement(NavLink, { to: "/settings?tab=tasks" }, "View tasks")),
+      lastError && React.createElement("small", { className: "curator-header-message text-danger" }, lastError.error),
+      message && React.createElement("p", { className: "curator-header-message", role: "status" }, message)
     );
   }
 
   function CuratorPage() {
     const route = new URLSearchParams(location.search);
     const requestedView = route.get("view") || "for_you";
-    const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
+    const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard, Api.loadableComponents.PerformerSelect]);
     const [lane, setLane] = React.useState(() => NAV_ITEMS.some((item) => item.value === requestedView) ? requestedView : "for_you");
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");

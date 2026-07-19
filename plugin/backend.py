@@ -548,6 +548,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 str(args.get("entity_id") or ""),
                 int(args.get("count") or 20),
                 impression_id=(str(args["impression_id"]) if args.get("impression_id") else None),
+                gender=str(args.get("gender") or ""),
             )
         raise ValueError(f"unknown Curator API operation: {operation}")
     finally:

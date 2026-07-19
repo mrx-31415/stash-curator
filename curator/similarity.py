@@ -34,13 +34,16 @@ class SimilarityService:
         self.feature_version = str(row[0])
         self.scores = model.scores(self.model_id)
 
-    def scenes(self, scene_id: str, count: int = 20) -> tuple[SimilarityResult, ...]:
+    def scenes(
+        self, scene_id: str, count: int = 20, gender: str = ""
+    ) -> tuple[SimilarityResult, ...]:
         if scene_id not in self.scores:
             raise ValueError(f"unknown scene: {scene_id}")
         features = FeatureStore(self.connection)
         content = features.scene_content_vectors(self.feature_version)
         target_content = content.get(scene_id, {})
         performers = self._scene_performers()
+        genders = self._performer_genders()
         target_performers = performers.get(scene_id, set())
         profiles = features.performer_profiles(self.feature_version)
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
@@ -66,6 +69,8 @@ class SimilarityService:
             if candidate_id == scene_id or not score.eligibility.get("eligible"):
                 continue
             candidate_performers = performers.get(candidate_id, set())
+            if gender and not any(genders.get(value) == gender for value in candidate_performers):
+                continue
             same = target_performers & candidate_performers
             profile_value = max(
                 (performer_scores.get(value, 0) for value in candidate_performers), default=0
@@ -124,7 +129,9 @@ class SimilarityService:
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
         return self._diverse_scenes(ranked, performers, count)
 
-    def performers(self, performer_id: str, count: int = 20) -> tuple[SimilarityResult, ...]:
+    def performers(
+        self, performer_id: str, count: int = 20, gender: str = ""
+    ) -> tuple[SimilarityResult, ...]:
         features = FeatureStore(self.connection)
         matches = features.similar_performers(
             self.feature_version,
@@ -149,7 +156,10 @@ class SimilarityService:
             for candidate_id in performer_ids:
                 scenes_by_performer.setdefault(candidate_id, []).append((score.appeal + 1) / 2)
         results = []
+        genders = self._performer_genders()
         for candidate_id, match in matches:
+            if gender and genders.get(candidate_id) != gender:
+                continue
             values = sorted(scenes_by_performer.get(candidate_id, ()), reverse=True)[:5]
             appeal = sum(values) / len(values) if values else 0.5
             results.append(
@@ -166,6 +176,12 @@ class SimilarityService:
                 )
             )
         return tuple(sorted(results, key=lambda item: (-item.rank_score, item.entity_id))[:count])
+
+    def _performer_genders(self) -> dict[str, str]:
+        return {
+            str(row["performer_id"]): str(row["gender"] or "")
+            for row in self.connection.execute("SELECT performer_id, gender FROM source_performer")
+        }
 
     def _scene_performers(self) -> dict[str, set[str]]:
         result: dict[str, set[str]] = {}
