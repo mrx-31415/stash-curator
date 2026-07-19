@@ -381,6 +381,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 str(args.get("entity_type") or "scene"),
                 sort=str(args.get("sort") or "match"),
                 performer_id=str(args["performer_id"]) if args.get("performer_id") else None,
+                favorite_only=bool(args.get("favorite_only")),
                 count=int(args.get("count") or 50),
             )
         if operation == "get_shortlist":
@@ -447,7 +448,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
             assert isinstance(config, dict)
             return api.prune_candidates(
                 str(args.get("view") or "candidates"),
-                broader=bool(args.get("broader")),
+                aggressiveness=float(args.get("aggressiveness") or 0),
                 page=int(args.get("page") or 1),
                 page_size=int(args.get("page_size") or 20),
                 tag_name=str(config["prune_tag_name"]),

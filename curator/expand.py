@@ -14,6 +14,7 @@ from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, PerformerProfile, performer_similarity
 from curator.features.measurements import CUP_ALIASES
 from curator.features.profiles import ProfileValue
+from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
 from curator.model import RecommendationModelStore
 from curator.storage import transaction
@@ -134,6 +135,7 @@ class ExpandService:
         *,
         sort: str = "match",
         performer_id: str | None = None,
+        favorite_only: bool = False,
         count: int = 50,
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
@@ -160,6 +162,15 @@ class ExpandService:
                 not in {str(item["performer"]["id"]) for item in payload.get("performers", [])}
             ):
                 continue
+            if (
+                favorite_only
+                and entity_type == "scene"
+                and not any(
+                    item.get("performer", {}).get("curator_local", {}).get("favorite")
+                    for item in payload.get("performers", [])
+                )
+            ):
+                continue
             rows.append(
                 {
                     "id": str(row["external_id"]),
@@ -176,12 +187,42 @@ class ExpandService:
             )
         else:
             rows.sort(key=lambda item: (-item["score"], item["id"]))
+            if entity_type == "scene":
+                rows = self._diverse_scenes(rows)
         return {
             "ready": True,
             "fetched_at_ms": int(cache["fetched_at_ms"]),
             "expires_at_ms": int(cache["expires_at_ms"]),
             "items": rows[:count],
         }
+
+    @staticmethod
+    def _diverse_scenes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        selected: list[dict[str, Any]] = []
+        remaining = rows[:]
+        while remaining:
+            previous = (
+                {
+                    str(item["performer"]["id"])
+                    for item in selected[-1]["payload"].get("performers", [])
+                }
+                if selected
+                else set()
+            )
+            index = next(
+                (
+                    i
+                    for i, row in enumerate(remaining)
+                    if not previous
+                    & {
+                        str(item["performer"]["id"])
+                        for item in row["payload"].get("performers", [])
+                    }
+                ),
+                0,
+            )
+            selected.append(remaining.pop(index))
+        return selected
 
     def shortlist(self, entity_type: str, external_id: str, selected: bool) -> None:
         if entity_type not in {"scene", "performer"}:
@@ -340,15 +381,14 @@ class ExpandService:
                 (model_id,),
             )
         ]
-        performers = {
-            links["performers"][str(row[0])]
-            for row in self.connection.execute(
-                f"SELECT DISTINCT performer_id FROM scene_performer WHERE scene_id IN "
-                f"({','.join('?' for _ in top)})",
-                top,
+        evidence = self._performer_evidence(model_id, links)
+        performers = [
+            external_id
+            for external_id, item in sorted(
+                evidence.items(), key=lambda value: (-float(value[1]["strength"]), value[0])
             )
-            if str(row[0]) in links["performers"]
-        }
+            if float(item["strength"]) > 0
+        ]
         studios = {
             links["studios"][str(row[0])]
             for row in self.connection.execute(
@@ -373,7 +413,7 @@ class ExpandService:
             )
         ]
         return {
-            "performers": sorted(performers)[:50],
+            "performers": performers[:50],
             "studios": sorted(studios)[:30],
             "tags": tags,
         }
@@ -449,34 +489,25 @@ class ExpandService:
                 (model_id, feature_version),
             )
         }
-        scores = RecommendationModelStore(self.connection).scores(model_id)
-        performer_appeal: dict[str, list[float]] = defaultdict(list)
-        studio_appeal: dict[str, list[float]] = defaultdict(list)
-        for scene_id, scene_score in scores.items():
-            for row in self.connection.execute(
-                "SELECT performer_id FROM scene_performer WHERE scene_id=?", (scene_id,)
-            ):
-                performer_appeal[str(row[0])].append(scene_score.appeal)
-            studio = self.connection.execute(
-                "SELECT studio_id FROM source_scene WHERE scene_id=?", (scene_id,)
-            ).fetchone()
-            if studio and studio[0]:
-                studio_appeal[str(studio[0])].append(scene_score.appeal)
-        external_performer_appeal = {
-            links["performers"][key]: sum(values) / len(values)
-            for key, values in performer_appeal.items()
-            if key in links["performers"]
-        }
         external_studio_appeal = {
-            links["studios"][key]: sum(values) / len(values)
-            for key, values in studio_appeal.items()
-            if key in links["studios"]
+            links["studios"][str(row["studio_id"])]: float(row["appeal"])
+            for row in self.connection.execute(
+                """
+                SELECT s.studio_id, AVG(m.appeal) AS appeal
+                FROM source_scene s JOIN model_scene_score m USING(scene_id)
+                WHERE m.model_id=? AND s.studio_id IS NOT NULL GROUP BY s.studio_id
+                """,
+                (model_id,),
+            )
+            if str(row["studio_id"]) in links["studios"]
         }
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
+        evidence = self._performer_evidence(model_id, links)
+        evidence_by_local = {str(item["local_id"]): item for item in evidence.values()}
         anchors = [
-            (profiles[key], sum(values) / len(values))
-            for key, values in performer_appeal.items()
-            if key in profiles and sum(values) / len(values) > 0.1
+            (profiles[key], item)
+            for key, item in evidence_by_local.items()
+            if key in profiles and float(item["strength"]) > 0
         ]
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
         performer_rows: dict[str, dict[str, Any]] = {}
@@ -484,38 +515,71 @@ class ExpandService:
         for scene in scenes:
             tag_value = sum(tag_affinity.get(str(tag["id"]), 0) for tag in scene.get("tags", []))
             cast = [item["performer"] for item in scene.get("performers", [])]
-            identity = max(
-                (external_performer_appeal.get(str(item["id"]), 0) for item in cast), default=0
+            identity_evidence = max(
+                (evidence.get(str(item["id"]), {}) for item in cast),
+                default={},
+                key=lambda item: float(item.get("strength", 0)),
             )
+            identity = float(identity_evidence.get("strength", 0))
             studio = scene.get("studio") or {}
             studio_value = external_studio_appeal.get(str(studio.get("id") or ""), 0)
             similarity_value = 0.0
             for performer in cast:
                 profile = self._profile(performer)
                 matches = [
-                    (performer_similarity(profile, anchor, weights).similarity, appeal)
-                    for anchor, appeal in anchors
+                    (*self._profile_match(profile, anchor, weights), anchor_evidence)
+                    for anchor, anchor_evidence in anchors
                 ]
-                match = max(matches, default=(0.0, 0.0), key=lambda item: item[0])
-                similarity_value = max(similarity_value, match[0] * max(0, match[1]))
+                match = max(matches, key=lambda item: item[0]) if matches else None
+                strength = float(match[3].get("strength", 0)) if match else 0.0
+                similarity_value = max(similarity_value, (match[0] if match else 0.0) * strength)
+                external_id = str(performer["id"])
+                local = evidence.get(external_id)
+                performer_payload = {**performer}
+                if local:
+                    performer_payload["curator_local"] = {
+                        "id": local["local_id"],
+                        "favorite": local["favorite"],
+                        "play_count": local["play_count"],
+                    }
+                if match and match[0] > 0:
+                    blocks = sorted(
+                        match[1].block_similarities,
+                        key=lambda block: (
+                            -match[1].block_similarities[block] * match[1].block_weights[block]
+                        ),
+                    )[:3]
+                    attributes = ", ".join(
+                        block.replace("augmentation", "breast type") for block in blocks
+                    )
+                    performer_payload["why"] = [
+                        f"Similar to {match[3].get('name', 'a performer you enjoy')}"
+                        f" in {attributes}"
+                    ]
                 performer_rows.setdefault(
-                    str(performer["id"]),
+                    external_id,
                     {
-                        "id": str(performer["id"]),
-                        "payload": performer,
+                        "id": external_id,
+                        "payload": performer_payload,
                         "score": 0.0,
                         "sources": set(),
                     },
                 )
-                performer_rows[str(performer["id"])]["score"] = max(
-                    performer_rows[str(performer["id"])]["score"],
-                    match[0] * 0.7 + max(0, match[1]) * 0.3,
+                performer_rows[external_id]["score"] = max(
+                    performer_rows[external_id]["score"],
+                    (match[0] if match else 0.0) * (0.7 + 0.3 * strength),
                 )
-                performer_rows[str(performer["id"])]["sources"].update(sources[str(scene["id"])])
+                performer_rows[external_id]["sources"].update(sources[str(scene["id"])])
             score = (
                 0.45 * tag_value + 0.25 * identity + 0.10 * studio_value + 0.20 * similarity_value
             )
-            payload = {**scene, "why": self._why(scene, tag_affinity, identity, similarity_value)}
+            payload = {
+                **scene,
+                "performers": [
+                    {"performer": performer_rows[str(item["id"])]["payload"]} for item in cast
+                ],
+                "why": self._why(scene, tag_affinity, identity, similarity_value),
+            }
             scene_rows.append(
                 {
                     "id": str(scene["id"]),
@@ -531,6 +595,56 @@ class ExpandService:
             if identifier not in owned_performers
         ]
         return scene_rows, performers
+
+    def _performer_evidence(
+        self, model_id: str, links: dict[str, dict[str, str]]
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT p.performer_id, p.name, p.favorite,
+              COALESCE(SUM(s.play_count), 0) AS play_count,
+              COALESCE(SUM(CASE WHEN s.play_count > 0 THEN m.appeal * s.play_count END)
+                / NULLIF(SUM(CASE WHEN s.play_count > 0 THEN s.play_count END), 0), 0)
+                AS observed_appeal
+            FROM source_performer p
+            LEFT JOIN scene_performer sp USING(performer_id)
+            LEFT JOIN source_scene s USING(scene_id)
+            LEFT JOIN model_scene_score m ON m.scene_id=s.scene_id AND m.model_id=?
+            GROUP BY p.performer_id
+            """,
+            (model_id,),
+        ):
+            local_id = str(row["performer_id"])
+            external_id = links["performers"].get(local_id)
+            if not external_id:
+                continue
+            plays = int(row["play_count"])
+            observed_appeal = float(row["observed_appeal"])
+            strength = min(
+                1.0,
+                (0.55 if row["favorite"] else 0.0)
+                + min(0.35, 0.12 * math.log1p(plays))
+                * max(0.0, min(1.0, (observed_appeal + 1) / 2))
+                + 0.10 * max(0.0, observed_appeal),
+            )
+            result[external_id] = {
+                "local_id": local_id,
+                "name": str(row["name"] or local_id),
+                "favorite": bool(row["favorite"]),
+                "play_count": plays,
+                "strength": strength,
+            }
+        return result
+
+    @staticmethod
+    def _profile_match(
+        left: PerformerProfile, right: PerformerProfile, weights: dict[str, float]
+    ) -> tuple[float, ProfileSimilarityResult, float]:
+        match = performer_similarity(left, right, weights)
+        relevant = sum(value for key, value in weights.items() if key != "content")
+        coverage = min(1.0, sum(match.block_weights.values()) / relevant) if relevant else 0.0
+        return match.similarity * math.sqrt(coverage), match, coverage
 
     @staticmethod
     def _profile(raw: dict[str, Any]) -> PerformerProfile:

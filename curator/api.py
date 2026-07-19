@@ -238,10 +238,15 @@ class CuratorAPI:
         *,
         sort: str = "match",
         performer_id: str | None = None,
+        favorite_only: bool = False,
         count: int = 50,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
-            entity_type, sort=sort, performer_id=performer_id, count=count
+            entity_type,
+            sort=sort,
+            performer_id=performer_id,
+            favorite_only=favorite_only,
+            count=count,
         )
 
     def expand_shortlist(self) -> dict[str, object]:
@@ -284,7 +289,7 @@ class CuratorAPI:
         self,
         view: str = "candidates",
         *,
-        broader: bool = False,
+        aggressiveness: float = 0.0,
         page: int = 1,
         page_size: int = 20,
         tag_name: str = "[Prune]",
@@ -293,16 +298,11 @@ class CuratorAPI:
             raise ValueError("unknown prune view")
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("invalid prune page")
+        if not 0 <= aggressiveness <= 1:
+            raise ValueError("aggressiveness must be between 0 and 1")
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model")
-        scores = RecommendationModelStore(self.connection).scores(model_id)
-        rows = {
-            str(row["scene_id"]): dict(row)
-            for row in self.connection.execute(
-                "SELECT scene_id, title, play_count FROM source_scene"
-            )
-        }
         tagged = {
             str(row[0])
             for row in self.connection.execute(
@@ -331,12 +331,29 @@ class CuratorAPI:
                 """
             )
         } | {scene_id for scene_id, state in states.items() if state == "review"}
-        appeal_limit, confidence_limit = (-0.05, 0.35) if broader else (-0.18, 0.55)
+        appeal_limit = -0.18 + 0.13 * aggressiveness
+        confidence_limit = 0.55 - 0.20 * aggressiveness
+        scores = (
+            {
+                str(row["scene_id"]): row
+                for row in self.connection.execute(
+                    """
+                    SELECT scene_id, appeal, confidence FROM model_scene_score
+                    WHERE model_id=? AND (scene_id IN (
+                      SELECT scene_id FROM pruning_candidate WHERE state='review'
+                    ) OR appeal<=? AND confidence>=?)
+                    """,
+                    (model_id, appeal_limit, confidence_limit),
+                )
+            }
+            if view != "tagged"
+            else {}
+        )
         suspects = {
             scene_id
             for scene_id, score in scores.items()
-            if score.appeal <= appeal_limit
-            and score.confidence >= confidence_limit
+            if float(score["appeal"]) <= appeal_limit
+            and float(score["confidence"]) >= confidence_limit
             and states.get(scene_id) != "keep"
         }
         selected = {
@@ -349,13 +366,22 @@ class CuratorAPI:
             selected,
             key=lambda scene_id: (
                 scene_id not in explicit,
-                scores[scene_id].appeal if scene_id in scores else 0,
+                float(scores[scene_id]["appeal"]) if scene_id in scores else 0,
                 scene_id,
             ),
         )
         start = (page - 1) * page_size
+        page_ids = ordered[start : start + page_size]
+        rows = {
+            str(row["scene_id"]): dict(row)
+            for row in self.connection.execute(
+                f"SELECT scene_id, title, play_count FROM source_scene WHERE scene_id IN "
+                f"({','.join('?' for _ in page_ids)})",
+                page_ids,
+            )
+        }
         items = []
-        for scene_id in ordered[start : start + page_size]:
+        for scene_id in page_ids:
             score = scores.get(scene_id)
             evidence = []
             if scene_id in explicit:
@@ -365,8 +391,8 @@ class CuratorAPI:
             items.append(
                 {
                     **rows.get(scene_id, {"scene_id": scene_id, "title": "", "play_count": 0}),
-                    "appeal": score.appeal if score else None,
-                    "confidence": score.confidence if score else None,
+                    "appeal": float(score["appeal"]) if score else None,
+                    "confidence": float(score["confidence"]) if score else None,
                     "tagged": scene_id in tagged,
                     "explicit": scene_id in explicit,
                     "suspect": scene_id in suspects,
@@ -377,7 +403,7 @@ class CuratorAPI:
             "schema_version": API_SCHEMA_VERSION,
             "model_id": model_id,
             "view": view,
-            "broader": broader,
+            "aggressiveness": aggressiveness,
             "tag_name": tag_name,
             "page": page,
             "page_size": page_size,

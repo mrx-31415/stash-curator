@@ -12,7 +12,23 @@
 }
 
 .curator-brand {
+  align-items: center;
+  display: flex;
   flex: 0 0 auto;
+  gap: 0.65rem;
+}
+
+.curator-brand-mark {
+  align-items: center;
+  background: linear-gradient(145deg, #339af0, #7950f2);
+  border-radius: 0.65rem;
+  box-shadow: 0 0.25rem 0.8rem rgba(51, 154, 240, 0.22);
+  display: inline-flex;
+  font-size: 1.15rem;
+  height: 2.35rem;
+  justify-content: center;
+  transform: rotate(-5deg);
+  width: 2.35rem;
 }
 
 .curator-header h1 {
@@ -27,6 +43,7 @@
 }
 
 .curator-tagline {
+  font-size: 0.82rem;
   margin: 0.15rem 0 0;
 }
 
@@ -34,6 +51,8 @@
   align-self: stretch;
   border-bottom: 0;
   flex: 1 1 34rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .curator-tabs .nav-link {
@@ -41,7 +60,7 @@
   color: inherit;
   display: inline-flex;
   gap: 0.4rem;
-  padding: 0.55rem 0.9rem;
+  padding: 0.55rem 0.7rem;
 }
 
 .curator-tabs .curator-lane-similar {
@@ -397,6 +416,18 @@
   margin: 0 0.4rem 0 auto;
 }
 
+.curator-prune-aggressiveness,
+.curator-favorite-filter {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.curator-prune-aggressiveness input {
+  width: 8rem;
+}
+
 .curator-prune-actions {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   padding: 0.4rem 0.7rem;
@@ -435,6 +466,19 @@
   width: 100%;
 }
 
+.curator-external-performer > a > img {
+  aspect-ratio: 2 / 3;
+  background: rgba(0, 0, 0, 0.18);
+  object-fit: contain;
+}
+
+.curator-performer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.35rem 0;
+}
+
 .curator-external-card h3 {
   font-size: 1.05rem;
   margin: 0 0 0.35rem;
@@ -457,11 +501,8 @@
 }
 
 .curator-context-link {
-  bottom: 1rem;
-  box-shadow: 0 0.3rem 0.8rem rgba(0, 0, 0, 0.35);
-  position: fixed;
-  right: 1rem;
-  z-index: 1040;
+  color: var(--text-color, #f8f9fa);
+  padding: 0.35rem;
 }
 
 .curator-more {
@@ -494,6 +535,7 @@
 
   .curator-tabs {
     flex-basis: 100%;
+    flex-wrap: wrap;
     overflow-x: auto;
   }
 

@@ -142,6 +142,9 @@ def test_prune_candidates_are_reversible_tags_not_deletions(tmp_path: Path) -> N
     candidates = api.prune_candidates("explicit")
     assert [item["scene_id"] for item in candidates["items"]] == ["disliked"]
     assert "Explicit negative feedback" in candidates["items"][0]["evidence"]
+    assert api.prune_candidates("suspects", aggressiveness=0.5)["aggressiveness"] == 0.5
+    with pytest.raises(ValueError, match="aggressiveness"):
+        api.prune_candidates("suspects", aggressiveness=1.1)
 
     api.record_prune_tags(["disliked"], True, "prune-tag", "[Prune]")
     assert api.prune_candidates("tagged")["items"][0]["scene_id"] == "disliked"

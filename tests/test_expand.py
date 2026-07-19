@@ -31,6 +31,7 @@ class FakeStashDB:
             "piercings": [],
             "images": [{"url": "https://example.test/performer.jpg"}],
         }
+        known_performer = {**performer, "id": "known-external-performer", "name": "Known"}
         scenes = [
             {
                 "id": "owned-external-scene",
@@ -39,7 +40,7 @@ class FakeStashDB:
                 "studio": {"id": "external-studio", "name": "Studio"},
                 "tags": [],
                 "images": [],
-                "performers": [{"performer": performer}],
+                "performers": [{"performer": performer}, {"performer": known_performer}],
             },
             {
                 "id": "new-external-scene",
@@ -48,7 +49,7 @@ class FakeStashDB:
                 "studio": {"id": "external-studio", "name": "Studio"},
                 "tags": [],
                 "images": [{"url": "https://example.test/scene.jpg"}],
-                "performers": [{"performer": performer}],
+                "performers": [{"performer": performer}, {"performer": known_performer}],
             },
         ]
         return {"queryScenes": {"count": len(scenes), "scenes": scenes}}
@@ -90,8 +91,20 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
     assert result["ready"] is True
     assert [item["id"] for item in result["items"]] == ["new-external-scene"]
     assert result["items"][0]["payload"]["images"][0]["url"].startswith("https://")
+    known = result["items"][0]["payload"]["performers"][1]["performer"]
+    assert known["curator_local"] == {"id": "p1", "favorite": True, "play_count": 0}
+    assert [
+        item["id"]
+        for item in ExpandService(connection).results("scene", favorite_only=True)["items"]
+    ] == ["new-external-scene"]
+    assert result["items"][0]["payload"]["why"][-1] == "a performer you already enjoy"
     assert ExpandService(connection).similar("performer", "p1")["items"][0]["id"] == (
         "external-performer"
+    )
+    assert (
+        ExpandService(connection)
+        .results("performer")["items"][0]["payload"]["why"][0]
+        .startswith("Similar to Performer One in ")
     )
 
     ExpandService(connection).shortlist("scene", "new-external-scene", True)
@@ -147,3 +160,14 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
         "external-scene-1",
         "external-scene-2",
     ]
+
+
+def test_expand_avoids_adjacent_repeated_performers() -> None:
+    def row(identifier: str, performer: str):
+        return {
+            "id": identifier,
+            "payload": {"performers": [{"performer": {"id": performer}}]},
+        }
+
+    ordered = ExpandService._diverse_scenes([row("a", "p1"), row("b", "p1"), row("c", "p2")])
+    assert [item["id"] for item in ordered] == ["a", "c", "b"]
