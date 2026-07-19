@@ -14,7 +14,7 @@ from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
-from curator.ranking import SlateBuilder
+from curator.ranking import LanePolicy, SlateBuilder
 from curator.ranking.slate import Slate
 from curator.storage import transaction
 
@@ -49,7 +49,10 @@ class CuratorAPI:
         coordinator = ModelUpdateCoordinator(
             self.connection, debounce_ms=int(config["debounce_ms"])
         )
-        coordinator.drain()
+        built_models = coordinator.drain()
+        for model in built_models:
+            LanePolicy(self.connection).classify(model.model_id)
+            SlateBuilder(self.connection).prepare(model.model_id)
         timings["model_update"] = round((time.perf_counter() - started) * 1000)
         stage_started = time.perf_counter()
         excluded = exclude_scene_ids or set()

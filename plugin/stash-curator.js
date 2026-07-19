@@ -7,14 +7,38 @@
   const { NavLink } = libraries.ReactRouterDOM;
   const { faCompass } = libraries.FontAwesomeSolid;
   const LANES = [
-    ["for_you", "For You"],
-    ["best_bets", "Best Bets"],
-    ["revisit", "Revisit"],
-    ["discover", "Discover"],
-    ["adventure", "Adventure"],
+    {
+      value: "for_you",
+      label: "For You",
+      description: "A balanced shelf of strong matches, timely revisits, and a little discovery.",
+    },
+    {
+      value: "best_bets",
+      label: "Best Bets",
+      description: "The strongest unwatched matches for when you want a dependable choice now.",
+    },
+    {
+      value: "revisit",
+      label: "Revisit",
+      description: "Scenes you have enjoyed before, brought back after enough time away.",
+    },
+    {
+      value: "discover",
+      label: "Discover",
+      description: "Mostly your taste, with one boundary gently challenged to find something new.",
+    },
+    {
+      value: "adventure",
+      label: "Adventure",
+      description: "Deliberate long shots that explore gaps in the model—and possible pruning candidates.",
+    },
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
+  const slateCache = new Map();
+  const slateRequests = new Map();
+  let cachedModelId = null;
+  let cacheGeneration = 0;
 
   function uuid() {
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -37,6 +61,53 @@
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
     return payload.data.runPluginOperation;
+  }
+
+  function slateKey(lane, exploration) {
+    return `${lane}:${lane === "for_you" ? exploration : 0}`;
+  }
+
+  function clearSlateCache() {
+    slateCache.clear();
+    slateRequests.clear();
+    cachedModelId = null;
+    cacheGeneration += 1;
+  }
+
+  function loadSlate(lane, exploration, prefetched = false) {
+    const key = slateKey(lane, exploration);
+    if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
+    if (slateRequests.has(key)) return slateRequests.get(key);
+    const generation = cacheGeneration;
+    const request = operation({
+      operation: "get_slate",
+      lane,
+      exploration,
+      context: { route: location.pathname, prefetched },
+    })
+      .then((data) => {
+        if (generation !== cacheGeneration) return data;
+        if (cachedModelId && cachedModelId !== data.model_id) clearSlateCache();
+        cachedModelId = data.model_id;
+        slateCache.set(key, data);
+        return data;
+      })
+      .finally(() => slateRequests.delete(key));
+    slateRequests.set(key, request);
+    return request;
+  }
+
+  async function prefetchLanes(activeLane, exploration) {
+    const generation = cacheGeneration;
+    for (const option of LANES) {
+      if (generation !== cacheGeneration) return;
+      if (option.value === activeLane) continue;
+      try {
+        await loadSlate(option.value, option.value === "for_you" ? exploration : 0, true);
+      } catch (_) {
+        // Opening the lane will retry and show any error in context.
+      }
+    }
   }
 
   async function runTask(taskName) {
@@ -120,8 +191,8 @@
     return React.createElement(
       "div",
       { className: "curator-feedback" },
-      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_up") }, "👍"),
-      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_down") }, "👎"),
+      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_up") }, "Useful 👍"),
+      React.createElement(Button, { size: "sm", disabled: busy, onClick: () => send("thumb_down") }, "Not for me 👎"),
       React.createElement(
         "details",
         { className: "curator-more" },
@@ -192,41 +263,50 @@
       scene
         ? React.createElement(SceneCard, { scene })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
-      React.createElement("p", { className: "curator-explanation" }, item.explanation),
       React.createElement(
-        "details",
-        { className: "curator-evidence" },
-        React.createElement("summary", null, "Why this?"),
+        "div",
+        { className: "curator-card-body" },
+        React.createElement("div", { className: "curator-take-label" }, "Curator's take"),
+        React.createElement("p", { className: "curator-explanation" }, item.explanation),
         React.createElement(
-          "ul",
-          null,
-          item.supporting_reasons.map((reason, index) =>
+          "div",
+          { className: "curator-card-details" },
+          React.createElement(
+            "details",
+            { className: "curator-evidence" },
+            React.createElement("summary", null, "Why this?"),
             React.createElement(
-              "li",
-              { key: `${reason.code}-${index}` },
-              `${reason.code.replaceAll(".", " · ")} (${reason.magnitude.toFixed(2)})`
+              "ul",
+              null,
+              item.supporting_reasons.map((reason, index) =>
+                React.createElement(
+                  "li",
+                  { key: `${reason.code}-${index}` },
+                  `${reason.code.replaceAll(".", " · ")} (${reason.magnitude.toFixed(2)})`
+                )
+              )
             )
+          ),
+          React.createElement(
+            "details",
+            { className: "curator-score" },
+            React.createElement("summary", null, "How the score was built"),
+            React.createElement(ScoreNode, {
+              name: "total",
+              value: {
+                final_utility: item.final_utility,
+                appeal: item.appeal,
+                current_fit: item.current_fit,
+                confidence: item.confidence,
+                components: item.components,
+                diversity_penalties: item.penalties,
+                diversity_bonuses: item.bonuses,
+              },
+            })
           )
-        )
-      ),
-      React.createElement(
-        "details",
-        { className: "curator-score" },
-        React.createElement("summary", null, "How the score was built"),
-        React.createElement(ScoreNode, {
-          name: "total",
-          value: {
-            final_utility: item.final_utility,
-            appeal: item.appeal,
-            current_fit: item.current_fit,
-            confidence: item.confidence,
-            components: item.components,
-            diversity_penalties: item.penalties,
-            diversity_bonuses: item.bonuses,
-          },
-        })
-      ),
-      React.createElement(Feedback, { item, onRemove })
+        ),
+        React.createElement(Feedback, { item, onRemove })
+      )
     );
   }
 
@@ -394,22 +474,30 @@
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
-    const [showImages, setShowImages] = React.useState(true);
     const [exploration, setExploration] = React.useState(0);
     const [refreshKey, setRefreshKey] = React.useState(0);
 
     React.useEffect(() => {
       let active = true;
-      setLoading(true);
+      const cached = slateCache.get(slateKey(lane, exploration));
+      setSlate(cached || null);
+      setLoading(!cached);
       setError("");
-      operation({ operation: "get_slate", lane, exploration, context: { route: location.pathname } }).then(
-        (data) => active && (setSlate(data), setLoading(false)),
+      loadSlate(lane, exploration).then(
+        (data) => {
+          if (!active) return;
+          setSlate(data);
+          setLoading(false);
+          prefetchLanes(lane, exploration);
+        },
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => {
         active = false;
       };
     }, [lane, exploration, refreshKey]);
+
+    const laneOption = LANES.find((option) => option.value === lane);
 
     const ids = slate?.items.map((item) => item.scene_id) || [];
     const scenesQuery = GQL.useFindScenesQuery({
@@ -424,6 +512,7 @@
     );
     function remove(sceneId) {
       const excluded = slate.items.map((item) => item.scene_id);
+      clearSlateCache();
       setSlate((current) => ({ ...current, items: current.items.filter((item) => item.scene_id !== sceneId) }));
       operation({ operation: "replace_item", lane, exploration, exclude_scene_ids: excluded }).then(
         (replacement) =>
@@ -439,30 +528,32 @@
         () => {}
       );
     }
+    function refresh() {
+      clearSlateCache();
+      setRefreshKey((value) => value + 1);
+    }
 
     return React.createElement(
       "main",
-      { className: `curator-page container-fluid ${showImages ? "" : "curator-hide-images"}` },
+      { className: "curator-page container-fluid" },
       React.createElement(
         "header",
         { className: "curator-header" },
         React.createElement("div", null, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste.")),
-        React.createElement(
-          "label",
-          { className: "curator-image-toggle" },
-          React.createElement("input", { type: "checkbox", checked: showImages, onChange: (event) => setShowImages(event.target.checked) }),
-          " Images"
-        )
+        React.createElement(CuratorControls, { onRefresh: refresh })
       ),
       React.createElement(
         Nav,
         { variant: "tabs", role: "tablist", className: "curator-tabs" },
-        LANES.map(([value, label]) =>
-          React.createElement(Nav.Link, { key: value, as: "button", active: lane === value, onClick: () => setLane(value), role: "tab", "aria-selected": lane === value }, label)
+        LANES.map((option) =>
+          React.createElement(Nav.Link, { key: option.value, as: "button", active: lane === option.value, onClick: () => setLane(option.value), role: "tab", "aria-selected": lane === option.value }, option.label)
         )
       ),
-      React.createElement(CuratorControls, { onRefresh: () => setRefreshKey((value) => value + 1) }),
-      lane === "for_you" &&
+      React.createElement(
+        "section",
+        { className: "curator-lane-intro" },
+        React.createElement("p", null, laneOption?.description),
+        lane === "for_you" &&
         React.createElement(
           "label",
           { className: "curator-exploration" },
@@ -478,7 +569,14 @@
           }),
           React.createElement("span", null, "Adventurous")
         ),
-      (loading || loadingComponents || scenesQuery.loading) && React.createElement("p", { className: "curator-loading" }, "Curating your library…"),
+      ),
+      (loading || loadingComponents || scenesQuery.loading) &&
+        React.createElement(
+          "div",
+          { className: "curator-loading", role: "status" },
+          React.createElement("span", null, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…"),
+          React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })
+        ),
       slate?.rebuilding && React.createElement("div", { className: "alert alert-info", role: "status" }, "Curator is rebuilding its model. These recommendations use the previous completed model."),
       slate?.model_pending && !slate.rebuilding && React.createElement("div", { className: "alert alert-info", role: "status" }, "Your recent choices are waiting to be folded into the model."),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet.")),
@@ -621,22 +719,25 @@
   }
 
   Api.register.route("/plugins/stash-curator", CuratorPage);
-  Api.patch.before("MainNavBar.UtilityItems", function (props) {
+  function CuratorNavItem() {
     const { Icon } = Api.components;
-    return [
-      {
-        children: React.createElement(
-          React.Fragment,
-          null,
-          props.children,
-          React.createElement(
-            NavLink,
-            { className: "nav-utility", exact: true, to: "/plugins/stash-curator" },
-            React.createElement(Button, { className: "minimal d-flex align-items-center h-100", title: "Stash Curator" }, React.createElement(Icon, { icon: faCompass }))
-          )
-        ),
-      },
-    ];
+    return React.createElement(
+      Nav.Link,
+      { as: "div", eventKey: "/plugins/stash-curator", className: "col-4 col-sm-3 col-md-2 col-lg-auto" },
+      React.createElement(
+        NavLink,
+        { exact: true, to: "/plugins/stash-curator", activeClassName: "active", className: "btn minimal p-4 p-xl-2 d-flex flex-column flex-xl-row align-items-center" },
+        React.createElement(Icon, { icon: faCompass, className: "fa-icon nav-menu-icon mr-xl-2" }),
+        React.createElement("span", null, "Curator")
+      )
+    );
+  }
+  Api.patch.instead("MainNavBar.MenuItems", function (props, _, original) {
+    const children = React.Children.toArray(props.children);
+    if (!children.some((child) => child.key === "stash-curator")) {
+      children.push(React.createElement(CuratorNavItem, { key: "stash-curator" }));
+    }
+    return original({ ...props, children });
   });
   Api.Event.addEventListener("stash:location", (event) => {
     attachPlayer(event.detail.data.location.pathname);

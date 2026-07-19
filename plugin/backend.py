@@ -20,7 +20,7 @@ from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
 from curator.graphql import GraphQLClient  # noqa: E402
 from curator.model import ModelUpdateCoordinator  # noqa: E402
-from curator.ranking import LanePolicy  # noqa: E402
+from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
@@ -111,6 +111,20 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
             "SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms>? LIMIT 1",
             (time.time_ns() // 1_000_000 - 6 * 3_600_000,),
         ).fetchone()
+        capture = {
+            "direct_playback_sessions": connection.execute(
+                "SELECT count(*) FROM play_session WHERE provenance='direct_player'"
+            ).fetchone()[0],
+            "direct_behavior_events": connection.execute(
+                "SELECT count(*) FROM behavior_event WHERE provenance='direct_player'"
+            ).fetchone()[0],
+            "qualified_impressions": connection.execute(
+                "SELECT count(*) FROM impression_item WHERE qualified_at_ms IS NOT NULL"
+            ).fetchone()[0],
+            "last_playback_at_ms": connection.execute(
+                "SELECT max(ended_at_ms) FROM play_session WHERE provenance='direct_player'"
+            ).fetchone()[0],
+        }
     finally:
         connection.close()
     stash = _client(payload).execute(VERSION_QUERY)
@@ -122,6 +136,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "database_schema": migration.current_version,
         "model_id": str(current[0]) if current else None,
         "ready": current is not None,
+        "capture": capture,
         "sync_due": (
             not running
             and float(config["auto_sync_hours"]) > 0
@@ -317,6 +332,9 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
             lane_count = len(LanePolicy(connection).classify(model.model_id))
+            _progress(0.96)
+            _log("i", "Preparing fast lane caches")
+            lane_caches = SlateBuilder(connection).prepare(model.model_id)
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -325,6 +343,7 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 "historical_scenes": historical.scene_count,
                 "model_id": model.model_id,
                 "lane_classifications": lane_count,
+                "lane_candidate_caches": lane_caches,
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode == "build":
@@ -336,10 +355,14 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
             lane_count = len(LanePolicy(connection).classify(model.model_id))
+            _progress(0.96)
+            _log("i", "Preparing fast lane caches")
+            lane_caches = SlateBuilder(connection).prepare(model.model_id)
             _progress(0.98)
             summary = {
                 "model_id": model.model_id,
                 "lane_classifications": lane_count,
+                "lane_candidate_caches": lane_caches,
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode == "backup":

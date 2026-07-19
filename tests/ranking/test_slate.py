@@ -280,6 +280,22 @@ def test_new_slate_builder_reuses_persisted_lane_classifications(
     assert SlateBuilder(connection).recommend("best_bets", 1).items
 
 
+def test_prepared_lane_candidates_avoid_rehydrating_model_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    counts = SlateBuilder(connection).prepare("model")
+    assert set(counts) == {"best_bets", "revisit", "discover", "adventure"}
+
+    monkeypatch.setattr(
+        SlateBuilder,
+        "_candidates",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("rehydrated")),
+    )
+    assert SlateBuilder(connection).recommend("best_bets", 1).items
+
+
 def test_best_bets_excludes_viewed_scenes_while_revisit_requires_them(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(

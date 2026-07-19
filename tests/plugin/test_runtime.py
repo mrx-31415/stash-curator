@@ -54,6 +54,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         "curator/__init__.py",
         "curator/storage/sql/0006_plugin_product.sql",
         "curator/storage/sql/0007_qualified_impressions.sql",
+        "curator/storage/sql/0008_lane_candidate_cache.sql",
     } <= names
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")

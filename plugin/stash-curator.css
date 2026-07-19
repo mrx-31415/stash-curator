@@ -1,11 +1,20 @@
 .curator-page {
-  padding-top: 1rem;
+  margin: 0 auto;
+  max-width: 112rem;
+  padding: 0.55rem 1.25rem 2rem;
 }
 
 .curator-header {
-  align-items: start;
+  align-items: center;
   display: flex;
+  gap: 1rem;
   justify-content: space-between;
+}
+
+.curator-header h1 {
+  font-size: 1.55rem;
+  line-height: 1.1;
+  margin: 0;
 }
 
 .curator-tagline,
@@ -13,25 +22,26 @@
   color: var(--text-muted, #adb5bd);
 }
 
+.curator-tagline {
+  margin: 0.15rem 0 0;
+}
+
 .curator-tabs {
-  margin-bottom: 1rem;
+  margin-top: 0.45rem;
+}
+
+.curator-tabs .nav-link {
+  color: inherit;
+  padding: 0.55rem 0.9rem;
 }
 
 .curator-controls {
-  margin-bottom: 1rem;
-}
-
-.curator-exploration {
-  align-items: center;
-  display: flex;
-  gap: 0.6rem;
-  margin-bottom: 1rem;
-  width: max-content;
+  margin: 0;
 }
 
 .curator-controls > summary {
   cursor: pointer;
-  width: max-content;
+  white-space: nowrap;
 }
 
 .curator-task-buttons,
@@ -61,46 +71,133 @@
   min-width: 16rem;
 }
 
-.curator-tabs .nav-link {
-  color: inherit;
+.curator-lane-intro {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-top: 0;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.75rem;
+}
+
+.curator-lane-intro > p {
+  color: var(--text-muted, #adb5bd);
+  margin: 0;
+}
+
+.curator-exploration {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.curator-loading {
+  margin: 1rem 0;
+  max-width: 28rem;
+}
+
+.curator-loading > span {
+  color: var(--text-muted, #adb5bd);
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.curator-progress {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  height: 0.3rem;
+  overflow: hidden;
+}
+
+.curator-progress::after {
+  animation: curator-progress 1.15s ease-in-out infinite;
+  background: var(--primary, #7952b3);
+  border-radius: inherit;
+  content: "";
+  display: block;
+  height: 100%;
+  width: 38%;
+}
+
+@keyframes curator-progress {
+  from { transform: translateX(-105%); }
+  to { transform: translateX(275%); }
 }
 
 .curator-grid {
   display: grid;
-  gap: 1.25rem;
-  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
 }
 
 .curator-card {
-  background: rgba(0, 0, 0, 0.12);
-  border-radius: 0.4rem;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.55rem;
+  box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
   min-width: 0;
-  padding: 0.75rem;
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.curator-card .scene-card {
+.curator-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+}
+
+.curator-card > .scene-card {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
   width: 100%;
 }
 
-.curator-hide-images .scene-card__image,
-.curator-hide-images .scene-card-preview {
-  display: none !important;
+.curator-card-body {
+  border-top: 2px solid var(--primary, #7952b3);
+  display: flex;
+  flex-direction: column;
+  padding: 0.8rem 0.9rem 0;
+}
+
+.curator-take-label {
+  color: var(--text-muted, #adb5bd);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .curator-explanation {
   line-height: 1.45;
-  margin: 0.75rem 0;
+  margin: 0.25rem 0 0.65rem;
+}
+
+.curator-card-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
 }
 
 .curator-evidence,
 .curator-score {
-  margin: 0.4rem 0;
+  margin: 0;
 }
 
 .curator-evidence summary,
 .curator-score summary,
 .curator-score-node summary {
   cursor: pointer;
+}
+
+.curator-evidence ul {
+  padding-left: 1.25rem;
 }
 
 .curator-score-children {
@@ -117,10 +214,13 @@
 
 .curator-feedback {
   align-items: center;
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: 0.75rem;
+  margin: 0.8rem -0.9rem 0;
+  padding: 0.65rem 0.9rem;
 }
 
 .curator-more {
@@ -144,7 +244,16 @@
   z-index: 10;
 }
 
-@media (max-width: 40rem) {
+@media (max-width: 48rem) {
+  .curator-page {
+    padding-inline: 0.65rem;
+  }
+
+  .curator-lane-intro {
+    align-items: start;
+    flex-direction: column;
+  }
+
   .curator-grid {
     grid-template-columns: 1fr;
   }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import time
@@ -12,7 +13,8 @@ from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features import FeatureStore
 from curator.model import RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
-from curator.ranking.policy import LaneClassification, LanePolicy
+from curator.ranking.policy import LANES, LaneClassification, LanePolicy
+from curator.storage import transaction
 
 FAMILIAR_PATTERN = (
     "best_bets",
@@ -87,8 +89,46 @@ class SlateBuilder:
         self.connection = connection
         self.config = config
         self._cached_model_id: str | None = None
+        self._cached_source_lanes: frozenset[str] = frozenset()
         self._cached_candidates: tuple[_Candidate, ...] = ()
         self._cached_vectors: dict[str, dict[str, float]] = {}
+
+    def prepare(self, model_id: str, *, limit_per_lane: int = 500) -> dict[str, int]:
+        policy = LanePolicy(self.connection, self.config)
+        prepared: list[tuple[str, str, int]] = []
+        for lane in LANES:
+            classifications = policy.load(model_id, lanes={lane}, limit_per_lane=limit_per_lane)
+            candidates = self._candidates(model_id, classifications)
+            payload = [
+                {
+                    "scene_id": item.classification.scene_id,
+                    "lane": item.classification.lane,
+                    "subtype": item.classification.subtype,
+                    "lane_value": item.classification.lane_value,
+                    "qualification": item.classification.qualification,
+                    "performers": item.performers,
+                    "studio_group": item.studio_group,
+                    "content": item.content,
+                }
+                for item in candidates
+            ]
+            prepared.append((lane, json.dumps(payload, separators=(",", ":")), len(payload)))
+        with transaction(self.connection):
+            self.connection.execute(
+                "DELETE FROM model_lane_candidate_cache WHERE model_id=?", (model_id,)
+            )
+            self.connection.executemany(
+                """
+                INSERT INTO model_lane_candidate_cache(
+                    model_id, lane, candidates_json, candidate_count, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (model_id, lane, payload, count, time.time_ns() // 1_000_000)
+                    for lane, payload, count in prepared
+                ),
+            )
+        return {lane: count for lane, _, count in prepared}
 
     def recommend(self, lane: str, count: int, *, exploration: int = 0) -> Slate:
         started = time.perf_counter()
@@ -102,28 +142,33 @@ class SlateBuilder:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
-        if model_id != self._cached_model_id:
-            policy = LanePolicy(self.connection, self.config)
-            source_lanes = (
-                set(
-                    FAMILIAR_PATTERN
-                    if exploration < 0
-                    else ADVENTUROUS_PATTERN
-                    if exploration > 0
-                    else self.config.ranking.for_you_pattern
-                )
-                if lane == "for_you"
-                else {lane}
+        source_lanes = (
+            set(
+                FAMILIAR_PATTERN
+                if exploration < 0
+                else ADVENTUROUS_PATTERN
+                if exploration > 0
+                else self.config.ranking.for_you_pattern
             )
-            classifications = policy.load(
-                model_id,
-                lanes=source_lanes,
-                limit_per_lane=max(500, count * 20),
-            ) or policy.classify(model_id)
+            if lane == "for_you"
+            else {lane}
+        )
+        source_lane_key = frozenset(source_lanes)
+        if model_id != self._cached_model_id or source_lane_key != self._cached_source_lanes:
+            policy = LanePolicy(self.connection, self.config)
+            prepared = self._load_prepared(model_id, source_lanes)
+            classifications: tuple[LaneClassification, ...] = ()
+            if not prepared:
+                classifications = policy.load(
+                    model_id,
+                    lanes=source_lanes,
+                    limit_per_lane=max(500, count * 20),
+                ) or policy.classify(model_id)
             timings["classifications"] = round((time.perf_counter() - started) * 1000)
             stage_started = time.perf_counter()
             self._cached_model_id = model_id
-            self._cached_candidates = tuple(self._candidates(model_id, classifications))
+            self._cached_source_lanes = source_lane_key
+            self._cached_candidates = prepared or tuple(self._candidates(model_id, classifications))
             timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         live_eligibility = scene_eligibility(
@@ -231,6 +276,38 @@ class SlateBuilder:
         timings["items"] = round((time.perf_counter() - stage_started) * 1000)
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
+
+    def _load_prepared(self, model_id: str, lanes: set[str]) -> tuple[_Candidate, ...]:
+        placeholders = ",".join("?" for _ in lanes)
+        rows = self.connection.execute(
+            f"""
+            SELECT lane, candidates_json FROM model_lane_candidate_cache
+            WHERE model_id=? AND lane IN ({placeholders})
+            """,
+            (model_id, *lanes),
+        ).fetchall()
+        if {str(row["lane"]) for row in rows} != lanes:
+            return ()
+        candidates = tuple(
+            _Candidate(
+                LaneClassification(
+                    str(item["scene_id"]),
+                    str(item["lane"]),
+                    str(item["subtype"]) if item.get("subtype") else None,
+                    float(item["lane_value"]),
+                    dict(item["qualification"]),
+                ),
+                tuple(map(str, item["performers"])),
+                str(item["studio_group"]) if item.get("studio_group") else None,
+                {str(name): float(value) for name, value in item["content"].items()},
+            )
+            for row in rows
+            for item in json.loads(str(row["candidates_json"]))
+        )
+        self._cached_vectors = {
+            candidate.classification.scene_id: candidate.content for candidate in candidates
+        }
+        return candidates
 
     def _target(self, lane: str, position: int, exploration: int) -> tuple[str, str | None]:
         if lane == "for_you":
