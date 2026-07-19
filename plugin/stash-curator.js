@@ -745,12 +745,12 @@
       )
     );
   }
-  Api.patch.instead("MainNavBar.MenuItems", function (props, _, original) {
+  Api.patch.after("MainNavBar.MenuItems", function (props, _, result) {
     const children = React.Children.toArray(props.children);
     if (!children.some((child) => child.key === "stash-curator")) {
       children.push(React.createElement(CuratorNavItem, { key: "stash-curator" }));
     }
-    return original({ ...props, children });
+    return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
   });
   Api.Event.addEventListener("stash:location", (event) => {
     attachPlayer(event.detail.data.location.pathname);
