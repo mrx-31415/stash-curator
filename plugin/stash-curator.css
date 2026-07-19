@@ -27,7 +27,6 @@
   font-size: 1.15rem;
   height: 2.35rem;
   justify-content: center;
-  transform: rotate(-5deg);
   width: 2.35rem;
 }
 
@@ -456,7 +455,55 @@
 }
 
 .curator-expand-sort {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+  margin: 0;
   width: auto;
+}
+
+.curator-expand-sort select,
+.curator-gender-select {
+  width: auto;
+}
+
+.curator-shortlist-tab {
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  margin-left: 0.35rem;
+}
+
+.curator-expand-filters {
+  margin: 0.4rem 0 0.8rem;
+}
+
+.curator-expand-filters > div {
+  align-items: end;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(10rem, 1fr)) auto;
+  margin-top: 0.5rem;
+}
+
+.curator-expand-filters label {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.curator-icon-action {
+  align-items: center;
+  display: inline-flex;
+  height: 1.9rem;
+  justify-content: center;
+  padding: 0;
+  width: 2rem;
+}
+
+.curator-similar-reference {
+  align-items: start;
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+  max-width: 22rem;
 }
 
 .curator-external-card > a > img {
@@ -502,7 +549,9 @@
 
 .curator-context-link {
   color: var(--text-color, #f8f9fa);
-  padding: 0.35rem;
+  height: 1.9rem;
+  padding: 0;
+  width: 1.9rem;
 }
 
 .curator-more {
@@ -558,6 +607,10 @@
   }
 
   .curator-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .curator-expand-filters > div {
     grid-template-columns: 1fr;
   }
 }

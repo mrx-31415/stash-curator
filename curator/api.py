@@ -239,6 +239,11 @@ class CuratorAPI:
         sort: str = "match",
         performer_id: str | None = None,
         favorite_only: bool = False,
+        gender: str = "FEMALE",
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_query: str = "",
+        studio_query: str = "",
         count: int = 50,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
@@ -246,6 +251,11 @@ class CuratorAPI:
             sort=sort,
             performer_id=performer_id,
             favorite_only=favorite_only,
+            gender=gender,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            performer_query=performer_query,
+            studio_query=studio_query,
             count=count,
         )
 

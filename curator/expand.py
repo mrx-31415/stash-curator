@@ -7,6 +7,7 @@ import math
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import date, timedelta
 from typing import Any
 
@@ -34,6 +35,17 @@ query CuratorExpandScenes($input: SceneQueryInput!) {
         waist_size hip_size breast_type tattoos { location } piercings { location }
         images { url width height }
       } }
+    }
+  }
+}
+"""
+PERFORMERS = """
+query CuratorSimilarPerformers($input: PerformerQueryInput!) {
+  queryPerformers(input: $input) {
+    performers {
+      id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
+      waist_size hip_size breast_type tattoos { location } piercings { location }
+      images { url width height }
     }
   }
 }
@@ -136,6 +148,11 @@ class ExpandService:
         sort: str = "match",
         performer_id: str | None = None,
         favorite_only: bool = False,
+        gender: str = "FEMALE",
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_query: str = "",
+        studio_query: str = "",
         count: int = 50,
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
@@ -171,6 +188,25 @@ class ExpandService:
                 )
             ):
                 continue
+            if gender and not self._payload_matches_gender(payload, entity_type, gender):
+                continue
+            if entity_type == "scene":
+                tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
+                if include_tags and not all(value.casefold() in tags for value in include_tags):
+                    continue
+                if exclude_tags and any(value.casefold() in tags for value in exclude_tags):
+                    continue
+                if performer_query and performer_query.casefold() not in " ".join(
+                    str(item.get("performer", {}).get("name") or "").casefold()
+                    for item in payload.get("performers", [])
+                ):
+                    continue
+                if (
+                    studio_query
+                    and studio_query.casefold()
+                    not in str((payload.get("studio") or {}).get("name") or "").casefold()
+                ):
+                    continue
             rows.append(
                 {
                     "id": str(row["external_id"]),
@@ -277,18 +313,14 @@ class ExpandService:
         return {"ready": True, "items": items}
 
     def similar(self, entity_type: str, entity_id: str, count: int = 50) -> dict[str, object]:
+        shortlisted = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT external_id FROM external_shortlist WHERE entity_type=?", (entity_type,)
+            )
+        }
         if entity_type == "scene":
-            target_tags = {
-                str(row[0])
-                for row in self.connection.execute(
-                    """
-                    SELECT ids.stash_id FROM scene_tag st
-                    JOIN source_tag_stash_id ids USING(tag_id)
-                    WHERE st.scene_id=? AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
-                    """,
-                    (entity_id, STASHDB),
-                )
-            }
+            target_tags = self._external_content(entity_id)
             target_performers = [
                 str(row[0])
                 for row in self.connection.execute(
@@ -308,20 +340,25 @@ class ExpandService:
                 "SELECT * FROM external_entity WHERE entity_type='scene'"
             ):
                 payload = json.loads(row["payload_json"])
-                tags = {str(tag["id"]) for tag in payload.get("tags", [])}
-                content = len(target_tags & tags) / max(1, len(target_tags | tags))
+                tags = {str(tag["id"]): str(tag["name"]) for tag in payload.get("tags", [])}
+                shared = set(target_tags) & set(tags)
+                content = (
+                    sum(target_tags[value] for value in shared)
+                    / sum(target_tags.values())
+                    * (1 - math.exp(-len(shared) / 2))
+                    if target_tags
+                    else 0.0
+                )
                 performer = max(
                     (
-                        performer_similarity(
-                            self._profile(item["performer"]), target, weights
-                        ).similarity
+                        self._profile_match(self._profile(item["performer"]), target, weights)[0]
                         for item in payload.get("performers", [])
                         for target in targets
                     ),
                     default=0,
                 )
-                similarity = 0.6 * content + 0.4 * performer
-                if similarity < 0.1:
+                similarity = (0.85 * content + 0.15 * performer) if target_tags else performer
+                if similarity < 0.15 or (target_tags and not shared):
                     continue
                 appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
                 items.append(
@@ -331,7 +368,17 @@ class ExpandService:
                         "similarity": similarity,
                         "score": 0.7 * similarity + 0.3 * appeal,
                         "sources": json.loads(row["sources_json"]),
-                        "payload": payload,
+                        "shortlisted": str(row["external_id"]) in shortlisted,
+                        "payload": {
+                            **payload,
+                            "why": [
+                                (
+                                    f"Shares {', '.join(tags[value] for value in sorted(shared))}"
+                                    if shared
+                                    else "Similar performer profile"
+                                )
+                            ],
+                        },
                     }
                 )
         elif entity_type == "performer":
@@ -349,10 +396,16 @@ class ExpandService:
                 "SELECT * FROM external_entity WHERE entity_type='performer'"
             ):
                 payload = json.loads(row["payload_json"])
-                similarity = performer_similarity(
+                similarity, match, coverage = self._profile_match(
                     self._profile(payload), target, weights
-                ).similarity
+                )
+                if similarity < 0.25 or coverage < 0.25:
+                    continue
                 appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
+                blocks = sorted(
+                    match.block_similarities,
+                    key=lambda block: -match.block_similarities[block] * match.block_weights[block],
+                )[:3]
                 items.append(
                     {
                         "id": str(row["external_id"]),
@@ -360,13 +413,167 @@ class ExpandService:
                         "similarity": similarity,
                         "score": 0.7 * similarity + 0.3 * appeal,
                         "sources": json.loads(row["sources_json"]),
-                        "payload": payload,
+                        "shortlisted": str(row["external_id"]) in shortlisted,
+                        "payload": {
+                            **payload,
+                            "why": [
+                                "Closest on "
+                                + ", ".join(
+                                    block.replace("augmentation", "breast type") for block in blocks
+                                )
+                            ],
+                        },
                     }
                 )
         else:
             raise ValueError("invalid external similarity entity type")
         items.sort(key=lambda item: (-item["score"], item["id"]))
         return {"ready": bool(items), "items": items[:count]}
+
+    def targeted_similar(
+        self,
+        client: GraphQLClient,
+        links: dict[str, dict[str, str]],
+        entity_type: str,
+        entity_id: str,
+        *,
+        gender: str = "FEMALE",
+        count: int = 50,
+    ) -> dict[str, object]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        feature_version = FeatureStore(self.connection).current_version()
+        if model_id is None or feature_version is None:
+            raise RuntimeError("no published model")
+        if entity_type == "scene":
+            rows: dict[str, dict[str, Any]] = {}
+            sources: dict[str, set[str]] = defaultdict(set)
+            content = self._external_content(entity_id)
+            performers = [
+                links["performers"][str(row[0])]
+                for row in self.connection.execute(
+                    "SELECT performer_id FROM scene_performer WHERE scene_id=?", (entity_id,)
+                )
+                if str(row[0]) in links["performers"]
+            ]
+            if content:
+                tag_ids = sorted(content, key=content.__getitem__, reverse=True)[:20]
+                self._fetch(client, rows, sources, "tags", tag_ids, 500)
+            if performers:
+                self._fetch(client, rows, sources, "performers", performers, 250)
+            candidates = [
+                value
+                for key, value in rows.items()
+                if key not in set(links["scenes"].values()) and self._matches_gender(value, gender)
+            ]
+            scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
+            self._merge_external("scene", scenes)
+        elif entity_type == "performer":
+            target_row = self.connection.execute(
+                "SELECT gender, ethnicity FROM source_performer WHERE performer_id=?",
+                (entity_id,),
+            ).fetchone()
+            if target_row is None:
+                raise ValueError(f"unknown performer: {entity_id}")
+            query: dict[str, object] = {
+                "page": 1,
+                "per_page": 500,
+                "sort": "POPULARITY",
+                "direction": "DESC",
+            }
+            selected_gender = gender or str(target_row["gender"] or "")
+            if selected_gender:
+                query["gender"] = selected_gender
+            ethnicity = str(target_row["ethnicity"] or "").upper().replace(" ", "_")
+            if ethnicity in {
+                "CAUCASIAN",
+                "BLACK",
+                "ASIAN",
+                "INDIAN",
+                "LATIN",
+                "MIDDLE_EASTERN",
+                "MIXED",
+                "OTHER",
+            }:
+                query["ethnicity"] = ethnicity
+            candidates = client.execute(PERFORMERS, {"input": query})["queryPerformers"][
+                "performers"
+            ]
+            owned = set(links["performers"].values())
+            self._merge_external(
+                "performer",
+                (
+                    {
+                        "id": str(payload["id"]),
+                        "payload": payload,
+                        "score": 0.0,
+                        "sources": ["similar"],
+                    }
+                    for payload in candidates
+                    if str(payload["id"]) not in owned
+                ),
+            )
+        else:
+            raise ValueError("invalid external similarity entity type")
+        result = self.similar(entity_type, entity_id, count=count * 2)
+        raw_items = result["items"]
+        assert isinstance(raw_items, list)
+        result["items"] = [
+            item
+            for item in raw_items
+            if not gender or self._payload_matches_gender(item["payload"], entity_type, gender)
+        ][:count]
+        result["ready"] = bool(result["items"])
+        return result
+
+    def _merge_external(self, entity_type: str, items: Iterable[dict[str, Any]]) -> None:
+        now_ms = time.time_ns() // 1_000_000
+        with transaction(self.connection):
+            self.connection.executemany(
+                """
+                INSERT INTO external_entity(
+                  entity_type, external_id, payload_json, score, sources_json, fetched_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entity_type, external_id) DO UPDATE SET
+                  payload_json=excluded.payload_json, score=excluded.score,
+                  sources_json=excluded.sources_json, fetched_at_ms=excluded.fetched_at_ms
+                """,
+                (
+                    (
+                        entity_type,
+                        str(item["id"]),
+                        json.dumps(item["payload"], separators=(",", ":")),
+                        float(item["score"]),
+                        json.dumps(item["sources"], separators=(",", ":")),
+                        now_ms,
+                    )
+                    for item in items
+                ),
+            )
+
+    def _external_content(self, scene_id: str) -> dict[str, float]:
+        feature_version = FeatureStore(self.connection).current_version()
+        if not feature_version:
+            return {}
+        vector = (
+            FeatureStore(self.connection)
+            .scene_content_vectors(feature_version, [scene_id])
+            .get(scene_id, {})
+        )
+        external = {
+            str(row["tag_id"]): str(row["stash_id"])
+            for row in self.connection.execute(
+                """
+                SELECT tag_id, stash_id FROM source_tag_stash_id
+                WHERE lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))
+                """,
+                (STASHDB,),
+            )
+        }
+        return {
+            external[name.removeprefix("tag:")]: value
+            for name, value in vector.items()
+            if name.removeprefix("tag:") in external
+        }
 
     def _seeds(
         self, model_id: str, feature_version: str, links: dict[str, dict[str, str]]
@@ -469,6 +676,12 @@ class ExpandService:
             for item in scene.get("performers", [])
         )
 
+    @staticmethod
+    def _payload_matches_gender(payload: dict[str, Any], entity_type: str, gender: str) -> bool:
+        if entity_type == "performer":
+            return str(payload.get("gender") or "").casefold() == gender.casefold()
+        return ExpandService._matches_gender(payload, gender)
+
     def _score(
         self,
         scenes: list[dict[str, Any]],
@@ -525,16 +738,20 @@ class ExpandService:
             studio_value = external_studio_appeal.get(str(studio.get("id") or ""), 0)
             similarity_value = 0.0
             for performer in cast:
+                external_id = str(performer["id"])
+                local = evidence.get(external_id)
                 profile = self._profile(performer)
-                matches = [
-                    (*self._profile_match(profile, anchor, weights), anchor_evidence)
-                    for anchor, anchor_evidence in anchors
-                ]
+                matches = (
+                    [
+                        (*self._profile_match(profile, anchor, weights), anchor_evidence)
+                        for anchor, anchor_evidence in anchors
+                    ]
+                    if local is None
+                    else []
+                )
                 match = max(matches, key=lambda item: item[0]) if matches else None
                 strength = float(match[3].get("strength", 0)) if match else 0.0
                 similarity_value = max(similarity_value, (match[0] if match else 0.0) * strength)
-                external_id = str(performer["id"])
-                local = evidence.get(external_id)
                 performer_payload = {**performer}
                 if local:
                     performer_payload["curator_local"] = {

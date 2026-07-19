@@ -50,8 +50,8 @@ settings:
     description: Recent-release window used by Expand. Default 90.
     type: NUMBER
   expandGender:
-    displayName: Expand performer gender
-    description: StashDB performer gender filter. Default FEMALE; leave empty for all.
+    displayName: External performer gender
+    description: Default StashDB gender filter for Expand and Similar. Default FEMALE; leave empty for all.
     type: STRING
   expandWildcard:
     displayName: Expand popularity wildcard

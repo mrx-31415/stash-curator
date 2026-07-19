@@ -166,6 +166,16 @@ def _settings(payload: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+def _string_list(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(value) > 50:
+        raise ValueError("filter values must be a list of at most 50 strings")
+    if not all(isinstance(item, str) and len(item) <= 100 for item in value):
+        raise ValueError("filter values must be strings up to 100 characters")
+    return tuple(value)
+
+
 def _database_path(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
     configured = str((payload.get("args") or {}).get("database_path") or "").strip()
     if not configured:
@@ -377,18 +387,31 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
         if operation == "get_explanation":
             return api.explanation(str(args.get("scene_id") or ""))
         if operation == "get_expand":
+            config = api.config()["config"]
+            assert isinstance(config, dict)
             return api.expand(
                 str(args.get("entity_type") or "scene"),
                 sort=str(args.get("sort") or "match"),
                 performer_id=str(args["performer_id"]) if args.get("performer_id") else None,
                 favorite_only=bool(args.get("favorite_only")),
+                gender=str(args.get("gender", config["expand_gender"])),
+                include_tags=_string_list(args.get("include_tags")),
+                exclude_tags=_string_list(args.get("exclude_tags")),
+                performer_query=str(args.get("performer_query") or ""),
+                studio_query=str(args.get("studio_query") or ""),
                 count=int(args.get("count") or 50),
             )
         if operation == "get_shortlist":
             return api.expand_shortlist()
         if operation == "get_external_similar":
-            return api.external_similar(
-                str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
+            config = api.config()["config"]
+            assert isinstance(config, dict)
+            return ExpandService(connection).targeted_similar(
+                _stashdb(payload),
+                _external_links(payload),
+                str(args.get("entity_type") or ""),
+                str(args.get("entity_id") or ""),
+                gender=str(args.get("gender", config["expand_gender"])),
             )
         if operation == "update_shortlist":
             entity_type = str(args.get("entity_type") or "")

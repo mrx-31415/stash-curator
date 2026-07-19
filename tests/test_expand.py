@@ -1,6 +1,7 @@
 from datetime import date
 from pathlib import Path
 
+from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService
 from curator.model import PreferenceModelBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
@@ -38,7 +39,7 @@ class FakeStashDB:
                 "title": "Already owned",
                 "release_date": date.today().isoformat(),
                 "studio": {"id": "external-studio", "name": "Studio"},
-                "tags": [],
+                "tags": [{"id": "external-tag", "name": "Useful"}],
                 "images": [],
                 "performers": [{"performer": performer}, {"performer": known_performer}],
             },
@@ -47,7 +48,7 @@ class FakeStashDB:
                 "title": "A new candidate",
                 "release_date": date.today().isoformat(),
                 "studio": {"id": "external-studio", "name": "Studio"},
-                "tags": [],
+                "tags": [{"id": "external-tag", "name": "Useful"}],
                 "images": [{"url": "https://example.test/scene.jpg"}],
                 "performers": [{"performer": performer}, {"performer": known_performer}],
             },
@@ -98,6 +99,13 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         for item in ExpandService(connection).results("scene", favorite_only=True)["items"]
     ] == ["new-external-scene"]
     assert result["items"][0]["payload"]["why"][-1] == "a performer you already enjoy"
+    assert [
+        item["id"]
+        for item in ExpandService(connection).results(
+            "scene", include_tags=("Useful",), performer_query="External", studio_query="Studio"
+        )["items"]
+    ] == ["new-external-scene"]
+    assert ExpandService(connection).results("scene", exclude_tags=("Useful",))["items"] == []
     assert ExpandService(connection).similar("performer", "p1")["items"][0]["id"] == (
         "external-performer"
     )
@@ -171,3 +179,61 @@ def test_expand_avoids_adjacent_repeated_performers() -> None:
 
     ordered = ExpandService._diverse_scenes([row("a", "p1"), row("b", "p1"), row("c", "p2")])
     assert [item["id"] for item in ordered] == ["a", "c", "b"]
+
+
+def test_external_scene_similarity_requires_shared_content(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    service.refresh(
+        FakeStashDB(),
+        {
+            "scenes": {"old-good": "owned-external-scene"},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {"studio-1": "external-studio"},
+        },
+        now_ms=REFERENCE_MS,
+        candidate_limit=10,
+    )
+    connection.execute(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        ("good", "https://stashdb.org/graphql", "external-tag"),
+    )
+
+    assert [item["id"] for item in service.similar("scene", "old-good")["items"]] == [
+        "new-external-scene"
+    ]
+    payload = connection.execute(
+        "SELECT payload_json FROM external_entity WHERE external_id='new-external-scene'"
+    ).fetchone()[0]
+    connection.execute(
+        "UPDATE external_entity SET payload_json=replace(?, 'external-tag', 'other-tag') "
+        "WHERE external_id='new-external-scene'",
+        (payload,),
+    )
+    assert service.similar("scene", "old-good")["items"] == []
+
+
+def test_sparse_external_performer_profile_has_low_confidence() -> None:
+    service = ExpandService
+    sparse = service._profile({"id": "sparse", "ethnicity": "Caucasian"})
+    complete = service._profile(
+        {
+            "id": "complete",
+            "ethnicity": "Caucasian",
+            "hair_color": "Black",
+            "eye_color": "Brown",
+            "height": 170,
+            "cup_size": "DD",
+            "band_size": 34,
+            "waist_size": 24,
+            "hip_size": 36,
+            "breast_type": "AUGMENTED",
+        }
+    )
+
+    similarity, _, coverage = service._profile_match(
+        sparse, complete, dict(DEFAULT_CONFIG.feature.performer_block_weights)
+    )
+    assert coverage < 0.25
+    assert similarity < 0.4
