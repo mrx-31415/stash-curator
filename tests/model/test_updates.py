@@ -85,9 +85,7 @@ def test_update_readiness_batches_events_and_limits_rebuild_frequency(tmp_path: 
     status = coordinator.status()
     assert status.requested_at_ms == first_requested_at
     assert status.pending_count == 5
-    assert status.ready(
-        now[0], event_threshold=5, max_wait_ms=30_000, min_interval_ms=60_000
-    )
+    assert status.ready(now[0], event_threshold=5, max_wait_ms=30_000, min_interval_ms=60_000)
 
     connection.execute(
         "UPDATE model_update_state SET last_finished_at_ms=? WHERE singleton=1", (now[0],)

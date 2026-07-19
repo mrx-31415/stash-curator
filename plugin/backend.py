@@ -128,9 +128,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
             now_ms,
             event_threshold=int(config["model_update_event_threshold"]),
             max_wait_ms=round(float(config["model_update_max_wait_minutes"]) * 60_000),
-            min_interval_ms=round(
-                float(config["model_update_min_interval_minutes"]) * 60_000
-            ),
+            min_interval_ms=round(float(config["model_update_min_interval_minutes"]) * 60_000),
         )
         capture = {
             "direct_playback_sessions": connection.execute(

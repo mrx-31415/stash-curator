@@ -309,9 +309,7 @@ class CuratorAPI:
         ):
             raise ValueError("auto_sync_hours must be between 0 and 720")
         threshold = values.get("model_update_event_threshold")
-        if threshold is not None and (
-            not isinstance(threshold, int) or not 1 <= threshold <= 100
-        ):
+        if threshold is not None and (not isinstance(threshold, int) or not 1 <= threshold <= 100):
             raise ValueError("model_update_event_threshold must be an integer from 1 to 100")
         for key in ("model_update_max_wait_minutes", "model_update_min_interval_minutes"):
             value = values.get(key)

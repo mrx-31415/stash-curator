@@ -48,8 +48,7 @@ class ModelUpdateStatus:
             self.requested_at_ms is not None and now_ms - self.requested_at_ms >= max_wait_ms
         )
         interval_elapsed = (
-            self.last_finished_at_ms is None
-            or now_ms - self.last_finished_at_ms >= min_interval_ms
+            self.last_finished_at_ms is None or now_ms - self.last_finished_at_ms >= min_interval_ms
         )
         return interval_elapsed and (enough_events or waited_long_enough)
 

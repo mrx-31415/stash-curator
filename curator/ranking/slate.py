@@ -198,9 +198,7 @@ class SlateBuilder:
                 and candidate.classification.scene_id in direct_plays
             )
         )
-        self._live_fit, self._live_cooldown = self._live_current_fit(
-            model_id, direct_plays, now_ms
-        )
+        self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)
         timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
         stage_started = time.perf_counter()
         selected: list[_Candidate] = []
@@ -423,9 +421,7 @@ class SlateBuilder:
             "history": 0.0,
             "live_cooldown": 0.0,
         }
-        penalties["live_cooldown"] = self._live_cooldown.get(
-            candidate.classification.scene_id, 0.0
-        )
+        penalties["live_cooldown"] = self._live_cooldown.get(candidate.classification.scene_id, 0.0)
         for previous in selected:
             if set(candidate.performers) & set(previous.performers):
                 penalties["performer"] = max(
