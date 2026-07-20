@@ -6,9 +6,9 @@
 
 .curator-header {
   align-items: center;
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
   gap: 0.5rem 1.5rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .curator-brand {
@@ -139,14 +139,14 @@
 .curator-active-job {
   align-items: center;
   display: grid;
-  flex: 1 0 100%;
   gap: 0.25rem 0.6rem;
+  grid-column: 1 / -1;
   grid-template-columns: minmax(12rem, auto) auto minmax(8rem, 1fr) auto;
   order: 2;
 }
 
 .curator-header-message {
-  flex: 1 0 100%;
+  grid-column: 1 / -1;
   margin: 0;
   order: 3;
 }
@@ -791,7 +791,7 @@
   }
 
   .curator-header {
-    flex-wrap: wrap;
+    grid-template-columns: 1fr;
   }
 
   .curator-tabs {
