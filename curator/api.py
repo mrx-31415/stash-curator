@@ -242,6 +242,7 @@ class CuratorAPI:
             "entity_type": entity_type,
             "entity_id": entity_id,
             "impression_id": impression_id if entity_type == "scene" else None,
+            "timings_ms": service.timings_ms,
             "items": [
                 {**asdict(item), "label": labels.get(item.entity_id, "")} for item in results
             ],
