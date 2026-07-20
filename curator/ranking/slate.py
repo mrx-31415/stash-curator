@@ -138,24 +138,7 @@ class SlateBuilder:
                 ),
             )
         for lane in (*LANES, "for_you"):
-            slate = self.recommend(lane, slate_size)
-            with transaction(self.connection):
-                self.connection.execute(
-                    """
-                    INSERT INTO application_meta(key, value) VALUES (?, ?)
-                    ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                    """,
-                    (
-                        f"slate:{model_id}:{lane}",
-                        json.dumps(
-                            {
-                                "created_at_ms": time.time_ns() // 1_000_000,
-                                "items": [asdict(item) for item in slate.items],
-                            },
-                            separators=(",", ":"),
-                        ),
-                    ),
-                )
+            self.recommend(lane, slate_size)
         return {lane: count for lane, _, count in prepared}
 
     def recommend(self, lane: str, count: int, *, exploration: float = 0) -> Slate:
@@ -336,7 +319,29 @@ class SlateBuilder:
             )
         timings["items"] = round((time.perf_counter() - stage_started) * 1000)
         timings["total"] = round((time.perf_counter() - started) * 1000)
-        return Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
+        slate = Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
+        if exploration == 0:
+            self._save_prepared_slate(slate)
+        return slate
+
+    def _save_prepared_slate(self, slate: Slate) -> None:
+        with transaction(self.connection):
+            self.connection.execute(
+                """
+                INSERT INTO application_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (
+                    f"slate:{slate.model_id}:{slate.lane}",
+                    json.dumps(
+                        {
+                            "created_at_ms": time.time_ns() // 1_000_000,
+                            "items": [asdict(item) for item in slate.items],
+                        },
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
 
     def _load_prepared_slate(self, model_id: str, lane: str, count: int) -> Slate | None:
         started = time.perf_counter()
@@ -348,7 +353,11 @@ class SlateBuilder:
             return None
         payload = json.loads(str(row[0]))
         created_at_ms = int(payload["created_at_ms"])
+        if time.time_ns() // 1_000_000 - created_at_ms > 3_600_000:
+            return None
         items = tuple(self._recommendation_item(item) for item in payload["items"])
+        if len(items) < count:
+            return None
         if not items:
             return Slate(model_id, lane, (), (), {"precomputed": 1, "total": 0})
         scene_ids = {item.scene_id for item in items}
@@ -378,6 +387,8 @@ class SlateBuilder:
                 and bool(eligibility.get(item.scene_id, {}).get("eligible", False))
             )
         )[:count]
+        if len(selected) < count:
+            return None
         elapsed = round((time.perf_counter() - started) * 1_000)
         return Slate(model_id, lane, selected, (), {"precomputed": 1, "total": elapsed})
 

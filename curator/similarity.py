@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, performer_similarity
@@ -67,8 +67,10 @@ class SimilarityService:
             raise ValueError(f"unknown scene: {scene_id}")
         features = FeatureStore(self.connection)
         candidate_ids = set(self.appeals)
-        content = features.scene_content_vectors(self.feature_version)
-        target_content = content.get(scene_id, {})
+        target_content = features.scene_content_vectors(self.feature_version, [scene_id]).get(
+            scene_id, {}
+        )
+        content_overlaps = features.scene_content_overlaps(self.feature_version, scene_id)
         performers = self._scene_performers()
         genders = self._performer_genders()
         target_performers = performers.get(scene_id, set())
@@ -118,7 +120,6 @@ class SimilarityService:
                 (performer_scores.get(value, 0) for value in candidate_performers), default=0
             )
             performer_value = 1.0 if same else profile_value
-            candidate_content = content.get(candidate_id, {})
             candidate_tags = scene_tags.get(candidate_id, set())
             if any(not group & candidate_tags for group in included):
                 continue
@@ -130,8 +131,7 @@ class SimilarityService:
                 continue
             if studio_ids and studios.get(candidate_id) not in studio_ids:
                 continue
-            shared = set(target_content) & set(candidate_content)
-            content_value = sum(target_content[key] * candidate_content[key] for key in shared)
+            content_value = content_overlaps.get(candidate_id, 0.0)
             structure = 1 - abs(
                 target_structure - min(1.0, max(0, len(candidate_performers) - 1) / 3)
             )
@@ -149,16 +149,12 @@ class SimilarityService:
                 relationships.append("same_performer")
             elif profile_value >= 0.65:
                 relationships.append("similar_performer")
-            if shared:
+            if content_value > 0:
                 relationships.append("shared_content")
             if structure >= 0.8:
                 relationships.append("similar_structure")
             if same_studio:
                 relationships.append("same_studio")
-            shared_tags = sorted(
-                shared,
-                key=lambda key: -(target_content[key] * candidate_content[key]),
-            )[:5]
             appeal = (candidate_appeal + 1) / 2
             results.append(
                 SimilarityResult(
@@ -172,15 +168,34 @@ class SimilarityService:
                         "performer": performer_value,
                         "structure": structure,
                         "studio": float(same_studio),
-                        "shared_tags": [
-                            names.get(key, key.removeprefix("tag:")) for key in shared_tags
-                        ],
+                        "shared_tags": [],
                         "shared_performer_ids": sorted(same),
                     },
                 )
             )
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
-        return self._diverse_scenes(ranked, performers, count)
+        selected = self._diverse_scenes(ranked, performers, count)
+        selected_content = features.scene_content_vectors(
+            self.feature_version, [item.entity_id for item in selected]
+        )
+        return tuple(
+            replace(
+                item,
+                details={
+                    **item.details,
+                    "shared_tags": [
+                        names.get(key, key.removeprefix("tag:"))
+                        for key in sorted(
+                            set(target_content) & set(selected_content.get(item.entity_id, {})),
+                            key=lambda key: (
+                                -target_content[key] * selected_content[item.entity_id][key]
+                            ),
+                        )[:5]
+                    ],
+                },
+            )
+            for item in selected
+        )
 
     def performers(
         self, performer_id: str, count: int = 20, gender: str = ""

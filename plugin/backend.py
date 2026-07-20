@@ -685,11 +685,6 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
             lane_count = len(LanePolicy(connection).classify(model.model_id))
-            _progress(0.96)
-            _log("i", "Preparing fast lane caches")
-            lane_caches = SlateBuilder(connection).prepare(
-                model.model_id, slate_size=max(60, int(sidecar_config["page_size"]) * 3)
-            )
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -698,7 +693,6 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 "historical_scenes": historical.scene_count,
                 "model_id": model.model_id,
                 "lane_classifications": lane_count,
-                "lane_candidate_caches": lane_caches,
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode in {"build", "update-model"}:
@@ -728,19 +722,11 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 _progress(0.94)
                 _log("i", "Organizing scenes into recommendation lanes")
                 lane_count = len(LanePolicy(connection).classify(model.model_id))
-                _progress(0.96)
-                _log("i", "Preparing fast lane caches")
-                config = CuratorAPI(connection).config()["config"]
-                assert isinstance(config, dict)
-                lane_caches = SlateBuilder(connection).prepare(
-                    model.model_id, slate_size=max(60, int(config["page_size"]) * 3)
-                )
                 _progress(0.98)
                 summary = {
                     "updated": True,
                     "model_id": model.model_id,
                     "lane_classifications": lane_count,
-                    "lane_candidate_caches": lane_caches,
                     "stage_timings_ms": model.stage_timings_ms,
                 }
         elif mode == "prepare":

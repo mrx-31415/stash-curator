@@ -411,6 +411,10 @@ class LanePolicy:
     def _persist(self, model_id: str, classifications: list[LaneClassification]) -> None:
         with transaction(self.connection):
             self.connection.execute("DELETE FROM model_scene_lane WHERE model_id=?", (model_id,))
+            self.connection.execute(
+                "DELETE FROM model_lane_candidate_cache WHERE model_id=?", (model_id,)
+            )
+            self.connection.execute("DELETE FROM application_meta WHERE key LIKE 'slate:%'")
             self.connection.executemany(
                 """
                 INSERT INTO model_scene_lane(

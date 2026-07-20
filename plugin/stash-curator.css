@@ -1,7 +1,11 @@
 .curator-page {
+  box-sizing: border-box;
   margin: 0 auto;
   max-width: 112rem;
+  min-width: 0;
+  overflow-x: clip;
   padding: 0.55rem 1.25rem 2rem;
+  width: 100%;
 }
 
 .curator-header {
@@ -9,6 +13,14 @@
   display: grid;
   gap: 0.5rem 1.5rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.curator-header > *,
+.curator-similar,
+.curator-similar-search,
+.curator-expand-toolbar {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .curator-brand {
@@ -399,10 +411,12 @@
 
 .curator-similar-search form {
   flex: 1 1 24rem;
+  min-width: 0;
 }
 
 .curator-similar-search input {
   flex: 1;
+  min-width: 0;
 }
 
 .curator-similar-candidates {
@@ -594,6 +608,7 @@
 .curator-saved-filters {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   grid-column: 1 / -1;
 }
@@ -785,7 +800,7 @@
   z-index: 10;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 75rem) {
   .curator-page {
     padding-inline: 0.65rem;
   }
@@ -797,6 +812,7 @@
   .curator-tabs {
     flex-basis: 100%;
     overflow-x: auto;
+    width: 100%;
   }
 
   .curator-tabs .nav-link {
@@ -804,9 +820,13 @@
   }
 
   .curator-controls {
-    align-items: start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
     height: auto;
+    justify-content: flex-start;
+    margin-left: 0;
+    width: 100%;
   }
 
   .curator-active-job {
@@ -824,5 +844,30 @@
 
   .curator-expand-filters > div {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 36rem) {
+  .curator-tabs {
+    justify-content: space-between;
+  }
+
+  .curator-tabs .nav-link {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding-inline: 0.45rem;
+  }
+
+  .curator-tabs .nav-link span {
+    display: none;
+  }
+
+  .curator-tabs .curator-lane-similar,
+  .curator-tabs .curator-lane-prune {
+    margin-left: 0;
+  }
+
+  .curator-similar-search form {
+    flex-basis: 100%;
   }
 }

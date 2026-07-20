@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from curator.api import CuratorAPI
+from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.storage import connect_database
 from tests.model.test_builder import REFERENCE_MS, _database
@@ -80,10 +81,17 @@ def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
 
 
 def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    original = FeatureStore.scene_content_vectors
+
+    def bounded_vectors(self, feature_version, scene_ids=None):
+        assert scene_ids is not None
+        return original(self, feature_version, scene_ids)
+
+    monkeypatch.setattr(FeatureStore, "scene_content_vectors", bounded_vectors)
 
     result = CuratorAPI(connection).similar(
         "scene", "old-good", 5, impression_id="similar-impression", now_ms=REFERENCE_MS

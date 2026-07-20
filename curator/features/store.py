@@ -87,6 +87,28 @@ class FeatureStore:
             vectors.setdefault(str(row["entity_id"]), {})[str(row["name"])] = float(row["value"])
         return vectors
 
+    def scene_content_overlaps(self, feature_version: str, scene_id: str) -> dict[str, float]:
+        """Calculate sparse content dot products in SQLite without loading every vector."""
+        return {
+            str(row["entity_id"]): float(row["similarity"])
+            for row in self.connection.execute(
+                """
+                WITH target AS (
+                  SELECT ef.feature_id, ef.value
+                  FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
+                  WHERE ef.feature_version=? AND ef.entity_type='scene'
+                    AND ef.entity_id=? AND fd.family='content'
+                )
+                SELECT other.entity_id, sum(target.value * other.value) AS similarity
+                FROM target JOIN entity_feature other USING(feature_id)
+                WHERE other.feature_version=? AND other.entity_type='scene'
+                  AND other.entity_id<>?
+                GROUP BY other.entity_id
+                """,
+                (feature_version, scene_id, feature_version, scene_id),
+            )
+        }
+
     def performer_profiles(
         self, feature_version: str, performer_ids: Collection[str] | None = None
     ) -> dict[str, PerformerProfile]:

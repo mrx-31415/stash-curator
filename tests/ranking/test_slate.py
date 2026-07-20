@@ -277,7 +277,12 @@ def test_new_slate_builder_reuses_persisted_lane_classifications(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reclassified")),
     )
 
-    assert SlateBuilder(connection).recommend("best_bets", 1).items
+    builder = SlateBuilder(connection)
+    assert builder.recommend("best_bets", 1).items
+    assert connection.execute("SELECT count(*) FROM model_lane_candidate_cache").fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT 1 FROM application_meta WHERE key='slate:model:best_bets'"
+    ).fetchone()
 
 
 def test_prepared_lane_candidates_avoid_rehydrating_model_features(

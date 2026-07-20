@@ -752,10 +752,11 @@ After the validation gate:
 - loading, empty, stale-model, rebuilding, and error states.
 
 The UI requests one complete slate operation and then current card facts through
-Stash GraphQL. Never make one backend process call per card. Published models include
-a prepared candidate snapshot per source lane; the UI caches opened slates and
-prefetches unopened tabs. Eligibility, cooldown, history, and slate diversity remain
-live request-time decisions.
+Stash GraphQL. Never make one backend process call per card. Published models persist
+lane classifications; candidate details are read from normalized tables when first
+needed, and completed slates are cached lazily for one hour. The UI also caches opened
+slates and prefetches unopened tabs. Eligibility, cooldown, history, and slate
+diversity remain live request-time decisions.
 
 ### 17.2 Browser events
 
@@ -1065,11 +1066,12 @@ Implemented with a Curator route, compass navigation item, five tabs, native sce
 cards, a balanced For You mix, progressive explanations and
 score trees, lane descriptions, joined recommendation/feedback card bodies, and
 explicit progress, empty, stale, rebuilding, and error states. Curator sits with the
-main library sections in Stash navigation. Published models prepare source-lane
-candidate snapshots during sync/build; opened slates are cached in the browser and
-the remaining tabs are prefetched sequentially. Installed assets load and all five
-live lanes return scene-card data with bundled explanations. Keyboard, touch, and
-native-navigation behavior still need a browser pass.
+main library sections in Stash navigation. Published models persist lane
+classifications while candidate hydration and slate caching happen on demand; opened
+slates are cached in the browser and the remaining tabs are prefetched sequentially.
+Installed assets load and all five live lanes return scene-card data with bundled
+explanations. Keyboard, touch, and native-navigation behavior still need a browser
+pass.
 
 ### WP-10 — Events and feedback
 
@@ -1134,7 +1136,9 @@ Deliverables:
 
 Scene results first satisfy a meaningful similarity floor, then rank by an initial
 70% similarity / 30% predicted-Appeal blend. Performer results reuse the existing
-missing-aware weighted profile comparison. Diversity remains a slate concern.
+missing-aware weighted profile comparison. Scene content overlap is aggregated in
+SQLite so a request loads only the target and returned sparse vectors. Diversity
+remains a slate concern.
 
 Acceptance: synthetic tests prove the floor, blend, labels, stable ordering, and
 separation from ordinary lane history.
