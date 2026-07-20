@@ -77,9 +77,9 @@
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
-  async function operation(args) {
+  async function operation(args, timeoutMs = 30000) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch("/graphql", {
         method: "POST",
@@ -558,7 +558,7 @@
       const cacheKey = JSON.stringify(request);
       if (similarityCache.has(cacheKey)) { setResult(similarityCache.get(cacheKey)); setLoading(false); return; }
       setLoading(true);
-      operation(request).then(
+      operation(request, nextSource === "stashdb" ? 60000 : 30000).then(
         (data) => { similarityCache.set(cacheKey, data); if (similarityCache.size > 10) similarityCache.delete(similarityCache.keys().next().value); setResult(data); setLoading(false); },
         (failure) => (setError(failure.message), setLoading(false))
       );

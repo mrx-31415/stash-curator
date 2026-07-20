@@ -558,9 +558,9 @@ class ExpandService:
             else:
                 tag_ids = []
             if tag_ids:
-                self._fetch(client, rows, sources, "tags", tag_ids, 500)
+                self._fetch(client, rows, sources, "tags", tag_ids, 250)
             if performers:
-                self._fetch(client, rows, sources, "performers", performers, 250)
+                self._fetch(client, rows, sources, "performers", performers, 100)
             candidates = [
                 value
                 for key, value in rows.items()
