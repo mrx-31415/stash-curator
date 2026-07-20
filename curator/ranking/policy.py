@@ -264,7 +264,11 @@ class LanePolicy:
                     },
                 )
             )
-        self._persist(model_id, classifications)
+        self._persist(
+            model_id,
+            classifications,
+            {scene_id: score.appeal for scene_id, score in eligible_scores.items()},
+        )
         return tuple(classifications)
 
     def load(
@@ -408,7 +412,12 @@ class LanePolicy:
         }
         return coverage_ranks, unknown_performers, unknown_studios
 
-    def _persist(self, model_id: str, classifications: list[LaneClassification]) -> None:
+    def _persist(
+        self,
+        model_id: str,
+        classifications: list[LaneClassification],
+        appeals: dict[str, float],
+    ) -> None:
         with transaction(self.connection):
             self.connection.execute("DELETE FROM model_scene_lane WHERE model_id=?", (model_id,))
             self.connection.execute(
@@ -418,8 +427,8 @@ class LanePolicy:
             self.connection.executemany(
                 """
                 INSERT INTO model_scene_lane(
-                    model_id, scene_id, lane, subtype, lane_value, qualification_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    model_id, scene_id, lane, subtype, lane_value, qualification_json, appeal
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -429,6 +438,7 @@ class LanePolicy:
                         item.subtype,
                         item.lane_value,
                         json.dumps(item.qualification, sort_keys=True, separators=(",", ":")),
+                        appeals[item.scene_id],
                     )
                     for item in classifications
                 ),

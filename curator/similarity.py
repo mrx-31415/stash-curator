@@ -39,12 +39,23 @@ class SimilarityService:
             str(row["scene_id"]): float(row["appeal"])
             for row in connection.execute(
                 """
-                SELECT scene_id, appeal FROM model_scene_score
-                WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
+                SELECT scene_id, max(appeal) AS appeal FROM model_scene_lane
+                WHERE model_id=? AND appeal IS NOT NULL GROUP BY scene_id
                 """,
                 (self.model_id,),
             )
         }
+        if not self.appeals:
+            self.appeals = {
+                str(row["scene_id"]): float(row["appeal"])
+                for row in connection.execute(
+                    """
+                    SELECT scene_id, appeal FROM model_scene_score
+                    WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
+                    """,
+                    (self.model_id,),
+                )
+            }
         self.timings_ms = {"initialization": round((time.perf_counter() - started) * 1000)}
 
     def scenes(
