@@ -72,6 +72,29 @@ class OfflineStashDB:
         raise RuntimeError("offline")
 
 
+class TaxonomyStashDB(FakeStashDB):
+    url = "https://stashdb.org/graphql"
+
+    def execute(self, document: str, variables: dict[str, object] | None = None):
+        if "queryTagCategories" in document:
+            return {"queryTagCategories": {"count": 0, "tag_categories": []}}
+        if "queryTags" in document:
+            return {
+                "queryTags": {
+                    "count": 1,
+                    "tags": [
+                        {
+                            "id": "external-tag",
+                            "name": "Familiar Scenario",
+                            "aliases": [],
+                            "category": None,
+                        }
+                    ],
+                }
+            }
+        return super().execute(document, variables or {})
+
+
 def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
@@ -86,7 +109,11 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         client, links, now_ms=REFERENCE_MS, candidate_limit=10
     )
 
-    assert refreshed == {"scene_count": 1, "performer_count": 1}
+    assert refreshed == {
+        "scene_count": 1,
+        "performer_count": 1,
+        "taxonomy_refreshed": False,
+    }
     assert 1 <= len(client.inputs) <= 3
     result = ExpandService(connection).results("scene")
     assert result["ready"] is True
@@ -140,6 +167,17 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
     assert [item["id"] for item in shortlisted] == ["new-external-scene"]
     ExpandService(connection).shortlist("scene", "new-external-scene", False)
     assert ExpandService(connection).shortlist_results()["items"] == []
+
+
+def test_refresh_resolves_local_tag_names_from_stashdb_taxonomy(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+
+    result = service.refresh(TaxonomyStashDB(), {"scenes": {}, "performers": {}, "studios": {}})
+
+    assert result["taxonomy_refreshed"] is True
+    assert "id:external-tag" in service._external_content("old-good")
 
 
 def test_expand_wildcard_is_opt_in_and_bad_queries_are_rejected(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ import sqlite3
 import time
 from collections import defaultdict
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from typing import Any
 
@@ -17,9 +18,14 @@ from curator.features.measurements import CUP_ALIASES, augmentation_category
 from curator.features.profiles import ProfileValue
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
-from curator.model import RecommendationModelStore
+from curator.model import ModelUpdateCoordinator, RecommendationModelStore
 from curator.storage import transaction
-from curator.taxonomy import equivalent_tag_names
+from curator.taxonomy import (
+    StashDBTaxonomyClient,
+    TaxonomyIndex,
+    TaxonomyStore,
+    equivalent_tag_names,
+)
 
 STASHDB = "https://stashdb.org/graphql"
 SCENES = """
@@ -57,6 +63,37 @@ class ExpandService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
+    def _refresh_taxonomy(self, client: GraphQLClient, now_ms: int) -> bool:
+        checked = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key='taxonomy_checked_at_ms'"
+        ).fetchone()
+        current = self.connection.execute(
+            """
+            SELECT s.fetched_at_ms FROM application_meta m
+            JOIN taxonomy_snapshot s ON s.snapshot_id=m.value
+            WHERE m.key='taxonomy_snapshot_id'
+            """
+        ).fetchone()
+        last_checked = int(checked[0]) if checked else (int(current[0]) if current else 0)
+        if now_ms - last_checked < 30 * 86_400_000:
+            return False
+        try:
+            data = StashDBTaxonomyClient(client).fetch()
+        except (KeyError, RuntimeError, TypeError):
+            return False
+        published = TaxonomyStore(self.connection).publish(data, fetched_at_ms=now_ms)
+        with transaction(self.connection):
+            self.connection.execute(
+                """
+                INSERT INTO application_meta(key, value) VALUES ('taxonomy_checked_at_ms', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (str(now_ms),),
+            )
+        if not published.reused:
+            ModelUpdateCoordinator(self.connection).request("taxonomy_sync")
+        return not published.reused
+
     def refresh(
         self,
         client: GraphQLClient,
@@ -68,6 +105,8 @@ class ExpandService:
         candidate_limit: int = 1_000,
         now_ms: int | None = None,
     ) -> dict[str, object]:
+        fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
+        taxonomy_refreshed = self._refresh_taxonomy(client, fetched_at_ms)
         model_store = RecommendationModelStore(self.connection)
         model_id = model_store.current_model_id()
         if model_id is None:
@@ -101,7 +140,6 @@ class ExpandService:
             and self._matches_gender(row, gender)
         ]
         scenes, performers = self._score(candidates, sources, model_id, feature_version, links)
-        fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
         with transaction(self.connection):
             self.connection.execute("DELETE FROM external_entity")
             self.connection.executemany(
@@ -140,7 +178,11 @@ class ExpandService:
                     len(performers),
                 ),
             )
-        return {"scene_count": len(scenes), "performer_count": len(performers)}
+        return {
+            "scene_count": len(scenes),
+            "performer_count": len(performers),
+            "taxonomy_refreshed": taxonomy_refreshed,
+        }
 
     def results(
         self,
@@ -539,8 +581,6 @@ class ExpandService:
             raise RuntimeError("no published model")
         candidate_ids: set[str]
         if entity_type == "scene":
-            rows: dict[str, dict[str, Any]] = {}
-            sources: dict[str, set[str]] = defaultdict(set)
             content = self._external_content(entity_id)
             performers = [
                 links["performers"][str(row[0])]
@@ -549,18 +589,24 @@ class ExpandService:
                 )
                 if str(row[0]) in links["performers"]
             ]
-            if content:
-                tag_ids = [
-                    key.removeprefix("id:")
-                    for key in sorted(content, key=content.__getitem__, reverse=True)
-                    if key.startswith("id:")
-                ][:20]
-            else:
-                tag_ids = []
-            if tag_ids:
-                self._fetch(client, rows, sources, "tags", tag_ids, 250)
-            if performers:
-                self._fetch(client, rows, sources, "performers", performers, 100)
+            tag_ids = [
+                key.removeprefix("id:")
+                for key in sorted(content, key=content.__getitem__, reverse=True)
+                if key.startswith("id:")
+            ][:5]
+            adjacent = self._adjacent_performer_ids(entity_id, feature_version, gender)
+            performer_ids = list(dict.fromkeys([*performers, *adjacent]))
+            rows, sources = self._fetch_probes(
+                client,
+                [
+                    probe
+                    for probe in (
+                        ("tags", tag_ids, 250),
+                        ("performers", performer_ids, 100),
+                    )
+                    if probe[1]
+                ],
+            )
             candidates = [
                 value
                 for key, value in rows.items()
@@ -641,6 +687,61 @@ class ExpandService:
         result["ready"] = bool(result["items"])
         return result
 
+    def _adjacent_performer_ids(
+        self, scene_id: str, feature_version: str, gender: str, limit: int = 15
+    ) -> list[str]:
+        target_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT performer_id FROM scene_performer WHERE scene_id=?", (scene_id,)
+            )
+        }
+        targets = FeatureStore(self.connection).performer_profiles(feature_version, target_ids)
+        if not targets:
+            return []
+        weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
+        ranked = []
+        for row in self.connection.execute(
+            "SELECT external_id, payload_json FROM external_entity WHERE entity_type='performer'"
+        ):
+            payload = json.loads(row["payload_json"])
+            if gender and str(payload.get("gender") or "").casefold() != gender.casefold():
+                continue
+            candidate = self._profile(payload)
+            similarity = max(
+                (self._profile_match(candidate, target, weights)[0] for target in targets.values()),
+                default=0,
+            )
+            if similarity >= 0.45:
+                ranked.append((similarity, str(row["external_id"])))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [identifier for _, identifier in ranked[:limit]]
+
+    def _fetch_probes(
+        self,
+        client: GraphQLClient,
+        probes: list[tuple[str, list[str], int]],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+        if not probes:
+            return {}, defaultdict(set)
+
+        def fetch(
+            probe: tuple[str, list[str], int],
+        ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+            rows: dict[str, dict[str, Any]] = {}
+            sources: dict[str, set[str]] = defaultdict(set)
+            self._fetch(client, rows, sources, *probe)
+            return rows, sources
+
+        rows: dict[str, dict[str, Any]] = {}
+        sources: dict[str, set[str]] = defaultdict(set)
+        with ThreadPoolExecutor(max_workers=len(probes)) as executor:
+            for probe_rows, probe_sources in executor.map(fetch, probes):
+                rows.update(probe_rows)
+                for identifier, values in probe_sources.items():
+                    sources[identifier].update(values)
+        return rows, sources
+
     def _merge_external(self, entity_type: str, items: Iterable[dict[str, Any]]) -> None:
         now_ms = time.time_ns() // 1_000_000
         with transaction(self.connection):
@@ -675,26 +776,53 @@ class ExpandService:
             .scene_content_vectors(feature_version, [scene_id])
             .get(scene_id, {})
         )
-        external = {
-            str(row["tag_id"]): (
-                f"id:{row['stash_id']}"
-                if row["stash_id"]
-                else f"name:{str(row['name']).casefold()}"
-            )
+        local_ids = {name.removeprefix("tag:") for name in vector}
+        if not local_ids:
+            return {}
+        external_ids = self._external_tag_ids(local_ids)
+        names = {
+            str(row["tag_id"]): str(row["name"])
             for row in self.connection.execute(
-                """
-                SELECT t.tag_id, t.name, ids.stash_id FROM source_tag t
-                LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
-                  AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
-                """,
-                (STASHDB,),
+                f"SELECT tag_id, name FROM source_tag WHERE tag_id IN "
+                f"({','.join('?' for _ in local_ids)})",
+                sorted(local_ids),
             )
         }
         return {
-            external[name.removeprefix("tag:")]: value
+            (
+                f"id:{external_ids[local_id]}"
+                if local_id in external_ids
+                else f"name:{names[local_id].casefold()}"
+            ): value
             for name, value in vector.items()
-            if name.removeprefix("tag:") in external
+            if (local_id := name.removeprefix("tag:")) in names
         }
+
+    def _external_tag_ids(self, local_ids: set[str]) -> dict[str, str]:
+        if not local_ids:
+            return {}
+        taxonomy = TaxonomyIndex(self.connection)
+        result = {
+            str(row["tag_id"]): str(row["stash_id"])
+            for row in self.connection.execute(
+                f"SELECT tag_id, stash_id FROM source_tag_stash_id WHERE tag_id IN "
+                f"({','.join('?' for _ in local_ids)}) "
+                "AND lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))",
+                (*sorted(local_ids), STASHDB),
+            )
+        }
+        for row in self.connection.execute(
+            f"SELECT tag_id, name FROM source_tag WHERE tag_id IN "
+            f"({','.join('?' for _ in local_ids)})",
+            sorted(local_ids),
+        ):
+            local_id = str(row["tag_id"])
+            if local_id in result:
+                continue
+            match = taxonomy.resolve(local_id, str(row["name"]))
+            if match and match.external_tag_id and match.confidence >= 0.9:
+                result[local_id] = match.external_tag_id
+        return result
 
     def _seeds(
         self, model_id: str, feature_version: str, links: dict[str, dict[str, str]]
@@ -726,19 +854,22 @@ class ExpandService:
             )
             if str(row[0]) in links["studios"]
         }
-        tags = [
-            str(row[0])
+        local_tags = [
+            str(row[0]).removeprefix("tag:")
             for row in self.connection.execute(
                 """
-                SELECT ids.stash_id FROM feature_affinity a
+                SELECT d.name FROM feature_affinity a
                 JOIN feature_definition d USING(feature_id)
-                JOIN source_tag_stash_id ids ON d.name='tag:' || ids.tag_id
                 WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
-                  AND a.affinity > 0 AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
-                ORDER BY a.affinity * a.confidence DESC LIMIT 20
+                  AND a.affinity > 0
+                ORDER BY a.affinity * a.confidence DESC LIMIT 50
                 """,
-                (model_id, feature_version, STASHDB),
+                (model_id, feature_version),
             )
+        ]
+        resolved = self._external_tag_ids(set(local_tags))
+        tags = list(dict.fromkeys(resolved[value] for value in local_tags if value in resolved))[
+            :20
         ]
         return {
             "performers": performers,

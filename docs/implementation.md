@@ -1209,6 +1209,9 @@ Deliverables:
 - Curator buttons on Stash scene and performer pages;
 - scene routes open Similar scenes; performer routes open Similar performers;
 - Library and StashDB tabs stay separate;
+- external scene retrieval resolves local tags by explicit StashDB ID or the cached
+  unique name/alias taxonomy, then runs bounded tag-OR and performer-OR queries in
+  parallel and reranks their union locally;
 - an external performer links to Expand scenes filtered to that performer.
 
 Acceptance: buttons preserve the source entity, work without Expand configured, and

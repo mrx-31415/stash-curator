@@ -100,14 +100,15 @@ deletions. Both modes resume interrupted page traversal. The validation client
 accepts GraphQL `query` operations only; it contains no Stash mutations. Repository
 tests use synthetic data and do not require access to a real Stash instance.
 
-Optionally cache StashDB's public tag taxonomy before building the model:
+Expand refreshes StashDB's public tag taxonomy automatically when its monthly cache
+expires. It can also be refreshed manually:
 
 ```bash
 # Either export STASHDB_API_KEY=... or add a stashdb.org entry to ~/.netrc.
 uv run curator --db data/curator.sqlite3 sync-taxonomy --json
 ```
 
-`sync-taxonomy` sends read-only GraphQL queries for public categories and tags. It
+These refreshes send read-only GraphQL queries for public categories and tags. They
 does not upload library metadata or behavior. The immutable snapshot is stored in
 Curator's sidecar, so subsequent model builds are offline and reproducible. Local
 tags resolve by StashDB ID when available, then by a unique canonical name or alias;
