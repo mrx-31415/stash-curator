@@ -19,6 +19,7 @@ from curator.features.profiles import SimilarityResult as ProfileSimilarityResul
 from curator.graphql import GraphQLClient
 from curator.model import RecommendationModelStore
 from curator.storage import transaction
+from curator.taxonomy import equivalent_tag_names
 
 STASHDB = "https://stashdb.org/graphql"
 SCENES = """
@@ -173,6 +174,8 @@ class ExpandService:
             )
         }
         rows = []
+        include_groups = equivalent_tag_names(self.connection, include_tags)
+        exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=?", (entity_type,)
         ):
@@ -205,6 +208,8 @@ class ExpandService:
                 studio_names,
                 performer_query,
                 studio_query,
+                include_groups,
+                exclude_groups,
             ):
                 continue
             rows.append(
@@ -241,6 +246,8 @@ class ExpandService:
         studio_names: tuple[str, ...] = (),
         performer_query: str = "",
         studio_query: str = "",
+        include_groups: tuple[frozenset[str], ...] = (),
+        exclude_groups: tuple[frozenset[str], ...] = (),
     ) -> bool:
         tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
         cast = {
@@ -249,8 +256,8 @@ class ExpandService:
         }
         studio = str((payload.get("studio") or {}).get("name") or "").casefold()
         return (
-            (not include_tags or all(value.casefold() in tags for value in include_tags))
-            and not any(value.casefold() in tags for value in exclude_tags)
+            (not include_tags or all(group & tags for group in include_groups))
+            and not any(group & tags for group in exclude_groups)
             and (not performer_names or all(value.casefold() in cast for value in performer_names))
             and (not studio_names or studio in {value.casefold() for value in studio_names})
             and (not performer_query or performer_query.casefold() in " ".join(cast))
@@ -348,6 +355,7 @@ class ExpandService:
         exclude_tags: tuple[str, ...] = (),
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        favorite_only: bool = False,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         if not 0 <= minimum_similarity <= 1:
@@ -359,6 +367,8 @@ class ExpandService:
             )
         }
         if entity_type == "scene":
+            include_groups = equivalent_tag_names(self.connection, include_tags)
+            exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
             target_tags = self._external_content(entity_id)
             target_performers = [
                 str(row[0])
@@ -382,7 +392,18 @@ class ExpandService:
                     continue
                 payload = json.loads(row["payload_json"])
                 if not self._scene_matches(
-                    payload, include_tags, exclude_tags, performer_names, studio_names
+                    payload,
+                    include_tags,
+                    exclude_tags,
+                    performer_names,
+                    studio_names,
+                    include_groups=include_groups,
+                    exclude_groups=exclude_groups,
+                ):
+                    continue
+                if favorite_only and not any(
+                    item.get("performer", {}).get("curator_local", {}).get("favorite")
+                    for item in payload.get("performers", [])
                 ):
                     continue
                 tags = {
@@ -509,6 +530,7 @@ class ExpandService:
         exclude_tags: tuple[str, ...] = (),
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        favorite_only: bool = False,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
@@ -606,6 +628,7 @@ class ExpandService:
             exclude_tags=exclude_tags,
             performer_names=performer_names,
             studio_names=studio_names,
+            favorite_only=favorite_only,
             minimum_similarity=minimum_similarity,
         )
         raw_items = result["items"]
@@ -718,7 +741,7 @@ class ExpandService:
             )
         ]
         return {
-            "performers": performers[:50],
+            "performers": performers,
             "studios": sorted(studios)[:30],
             "tags": tags,
         }

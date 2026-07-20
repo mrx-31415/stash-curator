@@ -131,6 +131,13 @@ def test_local_scene_similarity_filters_candidates(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     api = CuratorAPI(connection)
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES ('appearance', 'Big Ass', 'a')"
+    )
+    connection.execute(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES "
+        "('recent-good', 'appearance', 'scene')"
+    )
 
     tagged = api.similar("scene", "old-good", include_tags=("Familiar Scenario",))
     assert [item["entity_id"] for item in tagged["items"]] == [
@@ -146,6 +153,13 @@ def test_local_scene_similarity_filters_candidates(tmp_path: Path) -> None:
     assert api.similar("scene", "old-good", exclude_tags=("Familiar Scenario",))["items"] == [
         item for item in api.similar("scene", "old-good")["items"] if item["entity_id"] == "unusual"
     ]
+    assert "recent-good" not in {
+        item["entity_id"]
+        for item in api.similar("scene", "old-good", exclude_tags=("Big Ass",))["items"]
+    }
+    assert [
+        item["entity_id"] for item in api.similar("scene", "old-good", favorite_only=True)["items"]
+    ] == ["recent-good"]
 
 
 def test_similar_scene_does_not_wait_for_impression_write_lock(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from curator.taxonomy.store import (
     TaxonomyMatch,
     TaxonomyPublishResult,
     TaxonomyStore,
+    equivalent_tag_names,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "TaxonomyPublishResult",
     "TaxonomyStore",
     "TaxonomyTag",
+    "equivalent_tag_names",
 ]

@@ -185,6 +185,7 @@ class CuratorAPI:
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
+        favorite_only: bool = False,
         minimum_similarity: float = 0.18,
     ) -> dict[str, object]:
         if not 1 <= count <= 100:
@@ -201,6 +202,7 @@ class CuratorAPI:
                 exclude_tags=exclude_tags,
                 performer_ids=performer_ids,
                 studio_ids=studio_ids,
+                favorite_only=favorite_only,
                 minimum_similarity=minimum_similarity,
             )
             table, id_column, label_column = "source_scene", "scene_id", "title"

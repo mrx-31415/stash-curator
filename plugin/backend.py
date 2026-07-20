@@ -421,6 +421,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
+                favorite_only=bool(args.get("favorite_only", False)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])
                     if args.get("minimum_similarity") is not None
@@ -565,6 +566,7 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_ids=_string_list(args.get("performer_ids")),
                 studio_ids=_string_list(args.get("studio_ids")),
+                favorite_only=bool(args.get("favorite_only", False)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])
                     if args.get("minimum_similarity") is not None

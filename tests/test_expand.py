@@ -110,6 +110,16 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         )["items"]
     ] == ["new-external-scene"]
     assert ExpandService(connection).results("scene", exclude_tags=("Useful",))["items"] == []
+    connection.execute(
+        "INSERT INTO taxonomy_snapshot VALUES ('tax', 'https://stashdb.org/graphql', 1, 0, 1)"
+    )
+    connection.execute("INSERT INTO taxonomy_tag VALUES ('tax', 'external-tag', 'Useful', NULL)")
+    connection.execute("INSERT INTO taxonomy_tag_alias VALUES ('tax', 'external-tag', 'Handy')")
+    connection.execute(
+        "INSERT INTO application_meta(key, value) VALUES "
+        "('taxonomy_snapshot_id', 'tax') ON CONFLICT(key) DO UPDATE SET value='tax'"
+    )
+    assert ExpandService(connection).results("scene", exclude_tags=("Handy",))["items"] == []
     assert ExpandService(connection).similar("performer", "p1")["items"][0]["id"] == (
         "external-performer"
     )

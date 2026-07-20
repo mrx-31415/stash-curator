@@ -203,5 +203,44 @@ def _normalize(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def equivalent_tag_names(
+    connection: sqlite3.Connection, values: tuple[str, ...]
+) -> tuple[frozenset[str], ...]:
+    """Expand selected tag names through the active StashDB alias taxonomy."""
+    snapshot = connection.execute(
+        "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
+    ).fetchone()
+    groups = []
+    for value in values:
+        normalized = _normalize(value)
+        names = {normalized}
+        if snapshot:
+            tag_ids = {
+                str(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT tag_id FROM taxonomy_tag WHERE snapshot_id=? AND lower(name)=?
+                    UNION
+                    SELECT tag_id FROM taxonomy_tag_alias WHERE snapshot_id=? AND lower(alias)=?
+                    """,
+                    (snapshot[0], normalized, snapshot[0], normalized),
+                )
+            }
+            for tag_id in tag_ids:
+                names.update(
+                    _normalize(str(row[0]))
+                    for row in connection.execute(
+                        """
+                        SELECT name FROM taxonomy_tag WHERE snapshot_id=? AND tag_id=?
+                        UNION ALL
+                        SELECT alias FROM taxonomy_tag_alias WHERE snapshot_id=? AND tag_id=?
+                        """,
+                        (snapshot[0], tag_id, snapshot[0], tag_id),
+                    )
+                )
+        groups.append(frozenset(names))
+    return tuple(groups)
+
+
 def _is_stashdb(endpoint: str) -> bool:
     return (urlparse(endpoint).hostname or "").casefold() == "stashdb.org"

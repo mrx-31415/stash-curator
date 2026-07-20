@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, performer_similarity
 from curator.model import RecommendationModelStore
+from curator.taxonomy import equivalent_tag_names
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class SimilarityService:
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
+        favorite_only: bool = False,
         minimum_similarity: float = 0.18,
     ) -> tuple[SimilarityResult, ...]:
         if (
@@ -89,8 +91,20 @@ class SimilarityService:
             f"tag:{row['tag_id']}": str(row["name"])
             for row in self.connection.execute("SELECT tag_id, name FROM source_tag")
         }
-        included = {value.casefold() for value in include_tags}
-        excluded = {value.casefold() for value in exclude_tags}
+        included = equivalent_tag_names(self.connection, include_tags)
+        excluded = equivalent_tag_names(self.connection, exclude_tags)
+        filter_names = set().union(*included, *excluded)
+        scene_tags = self._scene_tags(filter_names) if filter_names else {}
+        favorites = (
+            {
+                str(row[0])
+                for row in self.connection.execute(
+                    "SELECT performer_id FROM source_performer WHERE favorite=1"
+                )
+            }
+            if favorite_only
+            else set()
+        )
         results: list[SimilarityResult] = []
         for candidate_id in candidate_ids:
             candidate_appeal = self.appeals[candidate_id]
@@ -105,12 +119,12 @@ class SimilarityService:
             )
             performer_value = 1.0 if same else profile_value
             candidate_content = content.get(candidate_id, {})
-            candidate_tags = {
-                names.get(key, key.removeprefix("tag:")).casefold() for key in candidate_content
-            }
-            if included and not included <= candidate_tags:
+            candidate_tags = scene_tags.get(candidate_id, set())
+            if any(not group & candidate_tags for group in included):
                 continue
-            if excluded & candidate_tags:
+            if any(group & candidate_tags for group in excluded):
+                continue
+            if favorite_only and not favorites & candidate_performers:
                 continue
             if performer_ids and not set(performer_ids) <= candidate_performers:
                 continue
@@ -228,6 +242,19 @@ class SimilarityService:
             "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id"
         ):
             result.setdefault(str(row["scene_id"]), set()).add(str(row["performer_id"]))
+        return result
+
+    def _scene_tags(self, names: set[str]) -> dict[str, set[str]]:
+        result: dict[str, set[str]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT st.scene_id, t.name FROM scene_tag st
+            JOIN source_tag t USING(tag_id) WHERE lower(t.name) IN
+            ({",".join("?" for _ in names)})
+            """,
+            sorted(names),
+        ):
+            result.setdefault(str(row["scene_id"]), set()).add(str(row["name"]).casefold())
         return result
 
     def _studios(self) -> dict[str, str]:

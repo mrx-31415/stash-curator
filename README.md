@@ -43,15 +43,11 @@ Curator keeps feedback and events in its sidecar. Its only library mutation is t
 explicit, reversible Prune action, which adds or removes the configured tag; Curator
 never deletes media.
 
-For a nightly background sync, let the host scheduler invoke Stash's task API; no
-browser needs to be open. For example, this crontab entry runs at 03:00:
-
-```cron
-0 3 * * * curl -fsS -H 'Content-Type: application/json' --data '{"query":"mutation { runPluginTask(plugin_id: \"stash-curator\", task_name: \"Sync and build recommendations\") }"}' http://127.0.0.1:9999/graphql >/dev/null
-```
-
-Change the URL when Stash is not reachable on the host loopback interface, and add
-an `ApiKey` header when authentication is enabled.
+Stash does not currently provide plugins with a background scheduler or startup hook.
+For unattended refreshes, invoke **Sync and build recommendations** through Stash's
+task API from the host scheduler; no browser needs to be open. A long-lived scheduler
+task would still need external startup after every Stash restart, so Curator keeps its
+background jobs one-shot.
 
 StashDB discovery is opt-in. Configure a StashDB stash-box in Stash, then run
 **Refresh Expand cache** manually or from the same host scheduler. The cache remains
