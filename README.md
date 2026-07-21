@@ -26,11 +26,14 @@ configuration, updates, and backups.
 
 ## What it does
 
-| Choose | Explore | Maintain |
-| --- | --- | --- |
-| For You, Best Bets, and Revisit lanes | Discover and Adventure challenge the model | Prune review applies a reversible tag |
-| Preference-aware Similar results | Optional read-only StashDB Expand | Curator never deletes media |
-| “Why this?” evidence and score details | Variety across performers, studios, and content | Local feedback and event history |
+- **Recommendations:** For You balances dependable matches, timely revisits, and a
+  little discovery; four dedicated lanes let you choose the mood.
+- **Explanations:** “Why this?” shows the evidence, confidence, and timing behind a
+  recommendation.
+- **Similar:** find related scenes and performers using content and learned preference.
+- **Expand:** optionally discover external StashDB candidates scored against your
+  local model.
+- **Prune:** review poor matches and apply a reversible tag; Curator never deletes media.
 
 Curator separates long-term **Appeal** from **Current Fit**, then builds varied lanes
 instead of sorting everything by one opaque score. Read [how recommendations work](docs/recommendations.md)
@@ -53,7 +56,6 @@ performance testing continue. The runtime is dependency-free. Development uses
 ## Project provenance
 
 The idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
-Stash Curator is an independent project with no implied affiliation or endorsement.
 
 Stash Curator is primarily generated with AI coding agents under human direction,
 review, and testing.
