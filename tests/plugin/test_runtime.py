@@ -105,6 +105,13 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_plugin_ignores_repeated_script_evaluation() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    guard = "if (window.__stashCuratorPluginLoaded) return;"
+    assert source.count(guard) == 1
+    assert source.index(guard) < source.index("const Api = window.PluginApi;")
+
+
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
     spec = importlib.util.spec_from_file_location("curator_plugin_backend", backend)
