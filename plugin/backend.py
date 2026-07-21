@@ -469,10 +469,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             key = str(settings.get("whisparrApiKey") or "").strip()
             root = str(settings.get("whisparrRootFolder") or "").strip()
             profile = int(settings.get("whisparrQualityProfileId") or 0)
-            if not root or profile < 1:
-                raise ValueError(
-                    "configure Whisparr root folder and quality profile in plugin settings"
-                )
             return WhisparrClient(url, key).send_scene(
                 external_id,
                 str(payload_json.get("title") or "Added by Stash Curator"),
