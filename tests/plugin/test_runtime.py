@@ -119,6 +119,9 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'className: "card-section-title"' in source
     assert "Curator never deletes media; tagging is reversible" in source
     assert "Score is ranking utility, not a probability" in source
+    assert '"appeal.performer_identity": "Performer match"' in source
+    assert '"appeal.content_neighbor": "Similar content"' in source
+    assert "Wildcard items are selected outside preference-derived seeds" in source
 
 
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
