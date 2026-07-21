@@ -1,6 +1,10 @@
 (function () {
   "use strict";
 
+  // ponytail: Stash re-evaluates plugin scripts after cache resets; hard refresh loads updates.
+  if (window.__stashCuratorPluginLoaded) return;
+  window.__stashCuratorPluginLoaded = true;
+
   const Api = window.PluginApi;
   const { React, ReactDOM, GQL, libraries } = Api;
   const { Button, Nav } = libraries.Bootstrap;
