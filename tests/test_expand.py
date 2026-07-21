@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -239,7 +240,7 @@ def test_expand_avoids_adjacent_repeated_performers() -> None:
     assert [item["id"] for item in ordered] == ["a", "c", "b"]
 
 
-def test_external_scene_similarity_requires_shared_content(tmp_path: Path) -> None:
+def test_external_scene_similarity_rejects_compilation_tag_bags(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     service = ExpandService(connection)
@@ -266,12 +267,22 @@ def test_external_scene_similarity_requires_shared_content(tmp_path: Path) -> No
     payload = connection.execute(
         "SELECT payload_json FROM external_entity WHERE external_id='new-external-scene'"
     ).fetchone()[0]
+    compilation = json.loads(payload)
+    compilation["tags"].append({"id": "compilation", "name": "Compilation"})
+    connection.execute(
+        "UPDATE external_entity SET payload_json=? WHERE external_id='new-external-scene'",
+        (json.dumps(compilation),),
+    )
+    assert service.similar("scene", "old-good")["items"] == []
+
     connection.execute(
         "UPDATE external_entity SET payload_json=replace(?, 'external-tag', 'other-tag') "
         "WHERE external_id='new-external-scene'",
         (payload,),
     )
-    assert service.similar("scene", "old-good")["items"] == []
+    exact = service.similar("scene", "old-good")["items"]
+    assert [item["id"] for item in exact] == ["new-external-scene"]
+    assert exact[0]["payload"]["why"] == ["Same performer"]
 
 
 def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> None:
@@ -291,7 +302,7 @@ def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> N
     )
 
     tag_query = next(value for value in client.inputs if "tags" in value)
-    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES_ALL"}
+    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:

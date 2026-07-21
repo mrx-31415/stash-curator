@@ -418,6 +418,20 @@ class ExpandService:
                     "SELECT performer_id FROM scene_performer WHERE scene_id=?", (entity_id,)
                 )
             ]
+            target_studio = self.connection.execute(
+                "SELECT studio_id FROM source_scene WHERE scene_id=?", (entity_id,)
+            ).fetchone()
+            target_studio_id = str(target_studio[0]) if target_studio and target_studio[0] else None
+            target_structure = min(1.0, max(0, len(target_performers) - 1) / 3)
+            target_is_compilation = bool(
+                self.connection.execute(
+                    """
+                    SELECT 1 FROM scene_tag st JOIN source_tag t USING(tag_id)
+                    WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1
+                    """,
+                    (entity_id,),
+                ).fetchone()
+            )
             feature_version = FeatureStore(self.connection).current_version()
             profiles = (
                 FeatureStore(self.connection).performer_profiles(feature_version)
@@ -433,6 +447,11 @@ class ExpandService:
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
                 payload = json.loads(row["payload_json"])
+                if not target_is_compilation and any(
+                    str(tag.get("name", "")).casefold() == "compilation"
+                    for tag in payload.get("tags", [])
+                ):
+                    continue
                 if not self._scene_matches(
                     payload,
                     include_tags,
@@ -457,30 +476,43 @@ class ExpandService:
                     )
                 }
                 shared = set(target_tags) & set(tags)
-                content = (
-                    sum(target_tags[value] for value in shared)
-                    / sum(target_tags.values())
-                    * (1 - math.exp(-len(shared) / 2))
-                    if target_tags
-                    else 0.0
+                content = sum(target_tags[value] ** 2 for value in shared) if target_tags else 0.0
+                exact_performer = any(
+                    str(item.get("performer", {}).get("curator_local", {}).get("id"))
+                    in target_performers
+                    for item in payload.get("performers", [])
                 )
-                performer = max(
-                    (
-                        self._profile_match(
-                            self._profile(
-                                item["performer"],
-                                payload.get("production_date") or payload.get("release_date"),
-                            ),
-                            target,
-                            weights,
-                        )[0]
-                        for item in payload.get("performers", [])
-                        for target in targets
-                    ),
-                    default=0,
+                performer = (
+                    1.0
+                    if exact_performer
+                    else max(
+                        (
+                            self._profile_match(
+                                self._profile(
+                                    item["performer"],
+                                    payload.get("production_date") or payload.get("release_date"),
+                                ),
+                                target,
+                                weights,
+                            )[0]
+                            for item in payload.get("performers", [])
+                            for target in targets
+                        ),
+                        default=0,
+                    )
                 )
-                similarity = (0.85 * content + 0.15 * performer) if target_tags else performer
-                if similarity < minimum_similarity or (target_tags and not shared):
+                structure = 1 - abs(
+                    target_structure - min(1.0, max(0, len(payload.get("performers", [])) - 1) / 3)
+                )
+                candidate_studio = payload.get("studio") or {}
+                same_studio = bool(
+                    target_studio_id
+                    and str(candidate_studio.get("curator_local", {}).get("id")) == target_studio_id
+                )
+                similarity = (
+                    0.5 * content + 0.3 * performer + 0.1 * structure + 0.1 * float(same_studio)
+                )
+                if similarity < minimum_similarity:
                     continue
                 appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
                 items.append(
@@ -497,7 +529,19 @@ class ExpandService:
                                 (
                                     f"Shares {', '.join(tags[value] for value in sorted(shared))}"
                                     if shared
-                                    else "Similar performer profile"
+                                    else (
+                                        "Same performer"
+                                        if exact_performer
+                                        else (
+                                            "Similar performer profile"
+                                            if performer > 0
+                                            else (
+                                                "Same studio"
+                                                if same_studio
+                                                else "Similar cast structure"
+                                            )
+                                        )
+                                    )
                                 )
                             ],
                         },
@@ -591,6 +635,13 @@ class ExpandService:
                 )
                 if str(row[0]) in links["performers"]
             ]
+            studios = [
+                links["studios"][str(row[0])]
+                for row in self.connection.execute(
+                    "SELECT studio_id FROM source_scene WHERE scene_id=?", (entity_id,)
+                )
+                if row[0] and str(row[0]) in links["studios"]
+            ]
             tag_ids = [
                 key.removeprefix("id:")
                 for key in sorted(content, key=content.__getitem__, reverse=True)
@@ -601,8 +652,9 @@ class ExpandService:
                 [
                     probe
                     for probe in (
-                        ("tags", tag_ids[:2], 100, "INCLUDES_ALL"),
+                        ("tags", tag_ids, 100, "INCLUDES"),
                         ("performers", performers, 75, "INCLUDES"),
+                        ("studios", studios, 75, "INCLUDES"),
                     )
                     if probe[1]
                 ],
@@ -956,6 +1008,7 @@ class ExpandService:
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         evidence = self._performer_evidence(model_id, links)
         evidence_by_local = {str(item["local_id"]): item for item in evidence.values()}
+        local_studios = {external: local for local, external in links["studios"].items()}
         anchors = [
             (profiles[key], item)
             for key, item in evidence_by_local.items()
@@ -981,6 +1034,9 @@ class ExpandService:
             identity = float(identity_evidence.get("strength", 0)) * cast_weight
             studio = scene.get("studio") or {}
             studio_value = external_studio_appeal.get(str(studio.get("id") or ""), 0)
+            studio_payload = {**studio}
+            if local_studio := local_studios.get(str(studio.get("id") or "")):
+                studio_payload["curator_local"] = {"id": local_studio}
             similarity_value = 0.0
             for performer in cast:
                 external_id = str(performer["id"])
@@ -1041,6 +1097,7 @@ class ExpandService:
             )
             payload = {
                 **scene,
+                "studio": studio_payload,
                 "performers": [
                     {"performer": performer_rows[str(item["id"])]["payload"]} for item in cast
                 ],
