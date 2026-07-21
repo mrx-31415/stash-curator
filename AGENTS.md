@@ -17,6 +17,11 @@ do not introduce a dependency or abstraction without a measured need. SQLite sch
 changes always get a new ordered migration. Never edit an applied migration or reset
 the sidecar to work around one.
 
+Custom scene and performer cards must preserve Stash's native SFW Switch class
+contract: `scene-card`/`performer-card`, the matching `*-card-image`, `card-section`,
+and `card-section-title`. Keep usable controls outside `card-section`; the SFW Switch
+blurs that section and the media while active.
+
 ## Implementation loop
 
 1. Make the smallest complete change.
