@@ -26,22 +26,25 @@ wide: true
 
 <section class="showcase">
   <div class="showcase-copy"><span class="pill">For You</span><h3>Reasons, not mystery scores</h3><p>Every card can open “Why this?” to show Appeal, Current Fit, confidence, supporting evidence, and any timing adjustment.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-recommendations.svg' | relative_url }}" alt="Synthetic Curator For You lane with an open Why this explanation and score evidence"></div>
+  <div class="recommendation-captures">
+    <div class="capture"><img src="{{ '/assets/showcase-recommendations.png' | relative_url }}" alt="Curator For You lane showing varied recommendations and source-lane icons" width="1909" height="730" loading="lazy" decoding="async"></div>
+    <div class="capture capture-detail"><img src="{{ '/assets/showcase-explanation.png' | relative_url }}" alt="Why this panel with a plain-language reason and readable model evidence" width="455" height="686" loading="lazy" decoding="async"></div>
+  </div>
 </section>
 
 <section class="showcase">
   <div class="showcase-copy"><span class="pill">Discover + Expand</span><h3>Explore locally—or look beyond it</h3><p>Discover tests one explainable edge of your learned taste. Optional Expand searches StashDB metadata without uploading preference history.</p></div>
-  <div class="capture-pair"><div class="capture"><img src="{{ '/assets/showcase-discover.svg' | relative_url }}" alt="Synthetic local Discover lane showing a familiar anchor and one explained stretch"></div><div class="capture"><img src="{{ '/assets/showcase-expand.svg' | relative_url }}" alt="Synthetic external Expand view with StashDB results marked as external"></div></div>
+  <div class="capture-pair"><div class="capture"><img src="{{ '/assets/showcase-discover.png' | relative_url }}" alt="Local Discover lane explaining that it gently challenges one learned boundary" width="1919" height="722" loading="lazy" decoding="async"></div><div class="capture"><img src="{{ '/assets/showcase-expand.png' | relative_url }}" alt="External Expand view with locally scored StashDB candidates and a Wildcard result" width="1907" height="934" loading="lazy" decoding="async"></div></div>
 </section>
 
 <section class="showcase">
   <div class="showcase-copy"><span class="pill">Similar</span><h3>Similarity informed by preference</h3><p>Find related scenes or performers through shared content and missing-aware profiles, with local and StashDB results kept distinct.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-similar.svg' | relative_url }}" alt="Synthetic Similar results comparing a reference scene with preference-aware local matches"></div>
+  <div class="capture"><img src="{{ '/assets/showcase-similar.png' | relative_url }}" alt="Similar view comparing a reference scene with preference-aware local matches" width="1919" height="944" loading="lazy" decoding="async"></div>
 </section>
 
 <section class="showcase">
   <div class="showcase-copy"><span class="pill">Prune</span><h3>Review, tag, reverse</h3><p>Curator can surface explicit dislikes and uncertain candidates for review. It never deletes media; applying or removing the configured tag is deliberate and reversible.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-prune.svg' | relative_url }}" alt="Synthetic Prune review queue with reversible tag actions and no delete control"></div>
+  <div class="capture"><img src="{{ '/assets/showcase-prune.png' | relative_url }}" alt="Prune review queue with reversible tag actions and no delete control" width="1919" height="944" loading="lazy" decoding="async"></div>
 </section>
 
 ## Local by design

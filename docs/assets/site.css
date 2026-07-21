@@ -58,11 +58,13 @@ pre code { border: 0; padding: 0; }
 .card { background: linear-gradient(145deg, var(--surface), #0d1727); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem; }
 .card h3 { margin-top: 0; }
 .card p { color: var(--muted); margin-bottom: 0; }
-.showcase { align-items: center; display: grid; gap: clamp(1.4rem, 5vw, 4rem); grid-template-columns: minmax(16rem, .7fr) minmax(0, 1.3fr); margin-block: 4rem; }
-.showcase:nth-of-type(even) .showcase-copy { order: 2; }
+.showcase { display: grid; gap: 1.25rem; margin-block: 4rem; }
+.showcase-copy p { color: var(--muted); }
 .capture { background: #050a13; border: 1px solid #344561; border-radius: 14px; box-shadow: 0 24px 60px #0008; overflow: hidden; }
 .capture img { width: 100%; }
 .capture-pair { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
+.recommendation-captures { display: grid; gap: 1rem; }
+.capture-detail { justify-self: center; max-width: 28rem; width: 72%; }
 .pill { border: 1px solid #5a4cc0; border-radius: 999px; color: #bfb5ff; display: inline-block; font-size: .8rem; padding: .2rem .55rem; }
 .notice { border-left: 3px solid var(--green); color: var(--muted); padding-left: 1rem; }
 table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
@@ -76,8 +78,7 @@ blockquote { border-left: 3px solid var(--violet); color: var(--muted); margin-l
   .nav-links { align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: none; flex-direction: column; gap: .2rem; padding: .6rem; position: absolute; right: 1rem; top: 3.8rem; width: min(18rem, calc(100vw - 2rem)); }
   .nav-links.open { display: flex; }
   .nav-links a { padding: .6rem; }
-  .hero, .showcase { grid-template-columns: 1fr; }
-  .showcase:nth-of-type(even) .showcase-copy { order: initial; }
+  .hero { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr; }
 }
 
@@ -85,6 +86,7 @@ blockquote { border-left: 3px solid var(--violet); color: var(--muted); margin-l
   body { font-size: 16px; }
   main { padding-block: 2.5rem; }
   .capture-pair { grid-template-columns: 1fr; }
+  .capture-detail { width: 88%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
