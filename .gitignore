@@ -16,7 +16,7 @@ dist/
 Thumbs.db
 
 # Secrets and local configuration
-AGENTS.md
+AGENTS.override.md
 .env
 .env.*
 !.env.example
