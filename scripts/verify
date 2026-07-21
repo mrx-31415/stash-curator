@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+pytest() (
+  local base temporary
+  base="${TMPDIR:-../.tmp}"
+  mkdir -p "$base"
+  temporary=$(mktemp -d "$base/pytest-curator.XXXXXX")
+  trap 'rm -rf "$temporary"' EXIT
+  uv run --frozen pytest -q --basetemp="$temporary" "$@"
+)
+
+case "${1:-}" in
+  changed)
+    shift
+    mapfile -d '' files < <(
+      { git diff --name-only -z --diff-filter=ACMR; git diff --cached --name-only -z --diff-filter=ACMR; git ls-files --others --exclude-standard -z; } |
+        sort -zu
+    )
+    python=()
+    javascript=false
+    for file in "${files[@]}"; do
+      [[ -f "$file" ]] || continue
+      [[ "$file" == *.py ]] && python+=("$file")
+      [[ "$file" == plugin/stash-curator.js ]] && javascript=true
+    done
+    ((${#python[@]} == 0)) || uv run --frozen ruff format "${python[@]}"
+    ((${#python[@]} == 0)) || uv run --frozen ruff check "${python[@]}"
+    [[ "$javascript" == false ]] || node --check plugin/stash-curator.js
+    (($# == 0)) || pytest "$@"
+    git diff --check
+    ;;
+  full)
+    uv run --frozen ruff check .
+    uv run --frozen ruff format --check .
+    uv run --frozen mypy curator plugin/backend.py
+    pytest
+    node --check plugin/stash-curator.js
+    uv run --frozen python scripts/build_plugin.py
+    git diff --check
+    ;;
+  *)
+    echo "usage: scripts/verify {changed [pytest-target ...]|full}" >&2
+    exit 2
+    ;;
+esac

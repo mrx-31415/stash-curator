@@ -20,18 +20,8 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
-      - name: Lint
-        run: uv run --frozen ruff check .
-      - name: Check formatting
-        run: uv run --frozen ruff format --check .
-      - name: Type check
-        run: uv run --frozen mypy curator plugin/backend.py
-      - name: Test
-        run: uv run --frozen pytest
-      - name: Check plugin JavaScript
-        run: node --check plugin/stash-curator.js
-      - name: Build plugin source
-        run: uv run --frozen python scripts/build_plugin.py
+      - name: Verify
+        run: scripts/verify full
       - uses: actions/upload-artifact@v4
         with:
           name: stash-curator-plugin

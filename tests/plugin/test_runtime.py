@@ -42,21 +42,24 @@ def test_plugin_round_trip_survives_process_restart(tmp_path: Path) -> None:
 
 
 def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
     archive = build(tmp_path / "stash-curator.zip")
     with zipfile.ZipFile(archive) as package:
         names = set(package.namelist())
         package.extractall(tmp_path / "installed")
-    assert {
-        "LICENSE",
-        "stash-curator.yml",
-        "stash-curator.js",
-        "stash-curator.css",
-        "backend.py",
-        "curator/__init__.py",
-        "curator/storage/sql/0006_plugin_product.sql",
-        "curator/storage/sql/0007_qualified_impressions.sql",
-        "curator/storage/sql/0008_lane_candidate_cache.sql",
-    } <= names
+    expected = {"LICENSE"}
+    for directory in ("plugin", "curator"):
+        source = root / directory
+        for path in source.rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+                relative = path.relative_to(source)
+                if directory != "plugin" or "data" not in relative.parts:
+                    expected.add(
+                        (Path("curator") / relative).as_posix()
+                        if directory == "curator"
+                        else relative.as_posix()
+                    )
+    assert names == expected
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")
     assert (tmp_path / "index.html").is_file()
