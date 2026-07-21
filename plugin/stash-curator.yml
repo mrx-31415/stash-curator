@@ -70,12 +70,12 @@ settings:
     description: Optional Whisparr API key. It is used only by the plugin backend.
     type: STRING
   whisparrRootFolder:
-    displayName: Whisparr root folder
-    description: Default root folder path for scenes sent from Expand.
+    displayName: Whisparr root folder override
+    description: Optional. Leave empty to use Whisparr's first configured root folder.
     type: STRING
   whisparrQualityProfileId:
-    displayName: Whisparr quality profile ID
-    description: Default numeric quality profile ID for scenes sent from Expand.
+    displayName: Whisparr quality profile ID override
+    description: Optional. Leave empty to use Whisparr's fallback (or first) quality profile.
     type: NUMBER
   whisparrSearchImmediately:
     displayName: Search Whisparr immediately
