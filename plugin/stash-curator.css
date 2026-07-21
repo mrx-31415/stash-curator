@@ -766,6 +766,43 @@
   width: 2rem;
 }
 
+.curator-whisparr-logo {
+  align-items: center;
+  background: #241c1f;
+  border-radius: 50%;
+  color: #a66cff;
+  display: inline-flex;
+  font-family: Georgia, serif;
+  font-size: 0.8rem;
+  font-style: italic;
+  font-weight: bold;
+  height: 1rem;
+  justify-content: center;
+  line-height: 1;
+  position: relative;
+  width: 1rem;
+}
+
+.curator-whisparr-logo img {
+  inset: 0;
+  position: absolute;
+}
+
+.curator-whisparr-action.btn-primary {
+  background: #241c1f;
+  border-color: #7137c8;
+}
+
+.curator-whisparr-action.btn-primary:hover,
+.curator-whisparr-action.btn-primary:focus {
+  background: #170b28;
+  border-color: #a66cff;
+}
+
+.curator-whisparr-status {
+  flex-basis: 100%;
+}
+
 .curator-similar-reference {
   align-items: flex-start;
   display: flex;
