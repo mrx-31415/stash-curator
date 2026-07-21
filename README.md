@@ -86,7 +86,7 @@ Requirements:
 Set up and verify the project:
 
 ```bash
-uv sync --all-groups
+uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy curator plugin/backend.py
@@ -167,22 +167,12 @@ model families. Use
 `explain --scene-id <id> --json` or
 `similar-performers --performer-id <id> --json` for focused inspection.
 
-Run the disposable latent-model experiment without changing production scores:
-
-```bash
-uv run --group poc python scripts/latent_poc.py \
-  --stash-url http://localhost:9999 --output reports/latent-poc.html
-```
-
-The default deterministic 6,000-scene sample includes every labelled scene. Pass
-`--max-scenes 0` for the full library.
-
 Evaluate recommendations for StashDB scenes and performers that are not in the local
 library:
 
 ```bash
 chmod 600 ~/.netrc  # once, when using netrc instead of STASHDB_API_KEY
-uv run --group poc python scripts/stashdb_poc.py \
+uv run python scripts/stashdb_poc.py \
   --stash-url http://localhost:9999 --output reports/stashdb-poc.html \
   --similar-to "Example Performer"
 ```

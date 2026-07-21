@@ -119,7 +119,6 @@ core dependency-light. Initial expected dependencies:
 
 - a small HTTP client for GraphQL;
 - SQLite from the standard library;
-- NumPy/SciPy and scikit-learn for sparse vectors and nearest neighbors;
 - a Markdown/templating library only if the report cannot remain dependency-light.
 
 Pin all dependencies in `uv.lock`. Ranking must be deterministic for a fixed dataset,
