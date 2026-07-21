@@ -950,9 +950,12 @@
     }
     React.useEffect(() => {
       refreshStatus();
+    }, []);
+    React.useEffect(() => {
+      if (!health?.active_job) return undefined;
       const timer = setInterval(refreshStatus, 5000);
       return () => clearInterval(timer);
-    }, []);
+    }, [Boolean(health?.active_job)]);
 
     async function start(taskName) {
       try {
