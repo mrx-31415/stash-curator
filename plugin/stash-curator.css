@@ -64,6 +64,8 @@
   border-bottom: 0;
   flex: 1 1 34rem;
   flex-wrap: nowrap;
+  grid-column: 1 / -1;
+  grid-row: 2;
   height: 3rem;
   min-width: 0;
   overflow-x: auto;
@@ -204,6 +206,8 @@
   flex: 0 1 auto;
   flex-wrap: nowrap;
   gap: 0.35rem 0.6rem;
+  grid-column: 3;
+  grid-row: 1;
   height: 3rem;
   justify-content: space-between;
   margin-left: auto;
@@ -906,6 +910,8 @@
 
   .curator-tabs {
     flex-basis: 100%;
+    grid-column: 1;
+    grid-row: auto;
     overflow-x: auto;
     width: 100%;
   }
@@ -919,6 +925,8 @@
     flex-direction: row;
     flex-wrap: wrap;
     height: auto;
+    grid-column: 1;
+    grid-row: auto;
     justify-content: flex-start;
     margin-left: 0;
     width: 100%;
