@@ -1,4 +1,4 @@
-name: Plugin source
+name: Documentation and plugin source
 
 on:
   push:
@@ -27,9 +27,14 @@ jobs:
           version: "0.11.21"
           python-version: "3.12"
       - uses: actions/configure-pages@v6
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
       - run: uv run --frozen python scripts/build_plugin.py
+      - run: cp dist/stash-curator.zip dist/index.yml _site/
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -17,7 +17,6 @@ VERSION = "0.1.0"
 
 def build(output: Path = OUTPUT) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "site" / "index.html", output.parent / "index.html")
     with tempfile.TemporaryDirectory() as temporary:
         staging = Path(temporary) / "stash-curator"
         shutil.copytree(

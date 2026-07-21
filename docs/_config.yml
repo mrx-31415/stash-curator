@@ -1,0 +1,17 @@
+title: Stash Curator
+description: Local-first, explainable recommendations for Stash.
+url: https://mrx-31415.github.io
+baseurl: /stash-curator
+repository: mrx-31415/stash-curator
+markdown: kramdown
+permalink: pretty
+exclude:
+  - archive
+  - decisions
+  - handover.md
+  - README.md
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
