@@ -896,6 +896,12 @@
   z-index: 10;
 }
 
+@media (min-width: 75.01rem) and (max-width: 130rem) {
+  .curator-tagline {
+    display: none;
+  }
+}
+
 @media (max-width: 75rem) {
   .curator-page {
     padding-inline: 0.65rem;
