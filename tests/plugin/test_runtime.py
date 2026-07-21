@@ -91,6 +91,13 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
 
 
+def test_curator_tabs_update_browser_history() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    assert "const routeLocation = useLocation();" in source
+    assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
+    assert "onClick: () => openView(option.value)" in source
+
+
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
     spec = importlib.util.spec_from_file_location("curator_plugin_backend", backend)
