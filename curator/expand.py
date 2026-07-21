@@ -941,9 +941,13 @@ class ExpandService:
             links["studios"][str(row["studio_id"])]: float(row["appeal"])
             for row in self.connection.execute(
                 """
-                SELECT s.studio_id, AVG(m.appeal) AS appeal
-                FROM source_scene s JOIN model_scene_score m USING(scene_id)
-                WHERE m.model_id=? AND s.studio_id IS NOT NULL GROUP BY s.studio_id
+                WITH appeal AS (
+                  SELECT scene_id, max(appeal) AS value FROM model_scene_lane
+                  WHERE model_id=? AND appeal IS NOT NULL GROUP BY scene_id
+                )
+                SELECT s.studio_id, AVG(a.value) AS appeal
+                FROM source_scene s JOIN appeal a USING(scene_id)
+                WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id
                 """,
                 (model_id,),
             )
@@ -1064,15 +1068,19 @@ class ExpandService:
         result: dict[str, dict[str, Any]] = {}
         for row in self.connection.execute(
             """
+            WITH appeal AS (
+              SELECT scene_id, max(appeal) AS value FROM model_scene_lane
+              WHERE model_id=? AND appeal IS NOT NULL GROUP BY scene_id
+            )
             SELECT p.performer_id, p.name, p.favorite,
               COALESCE(SUM(s.play_count), 0) AS play_count,
-              COALESCE(SUM(CASE WHEN s.play_count > 0 THEN m.appeal * s.play_count END)
+              COALESCE(SUM(CASE WHEN s.play_count > 0 THEN a.value * s.play_count END)
                 / NULLIF(SUM(CASE WHEN s.play_count > 0 THEN s.play_count END), 0), 0)
                 AS observed_appeal
             FROM source_performer p
             LEFT JOIN scene_performer sp USING(performer_id)
             LEFT JOIN source_scene s USING(scene_id)
-            LEFT JOIN model_scene_score m ON m.scene_id=s.scene_id AND m.model_id=?
+            LEFT JOIN appeal a USING(scene_id)
             GROUP BY p.performer_id
             """,
             (model_id,),
