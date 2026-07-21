@@ -66,6 +66,7 @@
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
+  const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
   const similarityCache = new Map();
   const restoredCache = readSlateCache();
   const slateCache = new Map(restoredCache.entries);
@@ -274,19 +275,29 @@
 
   function ExternalCard({ item, kind, gender, onShortlist, onShowScenes, onWhisparr }) {
     const [copied, setCopied] = React.useState(false);
+    const [whisparr, setWhisparr] = React.useState(null);
     const payload = item.payload;
     if (!payload) return null;
     const image = payload.images?.find((value) => value.url)?.url;
     const href = `https://stashdb.org/${kind === "scene" ? "scenes" : "performers"}/${item.id}`;
     const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
     const people = gender ? cast.filter((person) => person.gender === gender) : cast;
+    async function addToWhisparr() {
+      setWhisparr({ status: "adding", message: "Adding to Whisparr…" });
+      try {
+        const result = await onWhisparr(item.id);
+        setWhisparr({ status: result.status, message: result.status === "already_exists" ? "Already in Whisparr." : "Added to Whisparr." });
+      } catch (failure) {
+        setWhisparr({ status: "error", message: failure.message });
+      }
+    }
     return React.createElement(
       "article",
       { className: `curator-card curator-external-card curator-external-${kind} ${kind}-card` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       image && React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })),
       React.createElement("div", { className: "curator-card-body" }, React.createElement("h3", null, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name)), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { size: "sm", variant: "primary", title: "Send to Whisparr", onClick: () => onWhisparr(item.id) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Whisparr"))
+      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   }
 
@@ -600,10 +611,7 @@
         setResult((current) => ({ ...current, items: current.items.map((value) => value.id === item.id ? { ...value, shortlisted: !item.shortlisted } : value) }));
       } catch (failure) { setError(failure.message); }
     }
-    async function sendWhisparr(id) {
-      try { await operation({ operation: "send_whisparr", external_id: id }); }
-      catch (failure) { setError(failure.message); }
-    }
+    const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     function relationshipText(item) {
       const labels = {
         same_performer: "Same performer",
@@ -804,12 +812,7 @@
         setVersion((value) => value + 1);
       } catch (failure) { setError(failure.message); }
     }
-    async function sendWhisparr(id) {
-      try {
-        const result = await operation({ operation: "send_whisparr", external_id: id });
-        setMessage(result.status === "already_exists" ? "Already in Whisparr." : "Sent to Whisparr.");
-      } catch (failure) { setError(failure.message); }
-    }
+    const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     return React.createElement(
       "section",
       { className: "curator-expand" },
