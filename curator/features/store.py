@@ -94,16 +94,13 @@ class FeatureStore:
             for row in self.connection.execute(
                 """
                 WITH target AS (
-                  SELECT ef.feature_id, ef.value
-                  FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-                  WHERE ef.feature_version=? AND ef.entity_type='scene'
-                    AND ef.entity_id=? AND fd.family='content'
+                  SELECT feature_id, value FROM scene_content_search
+                  WHERE feature_version=? AND scene_id=?
                 )
-                SELECT other.entity_id, sum(target.value * other.value) AS similarity
-                FROM target JOIN entity_feature other USING(feature_id)
-                WHERE other.feature_version=? AND other.entity_type='scene'
-                  AND other.entity_id<>?
-                GROUP BY other.entity_id
+                SELECT other.scene_id AS entity_id, sum(target.value * other.value) AS similarity
+                FROM target JOIN scene_content_search other USING(feature_id)
+                WHERE other.feature_version=? AND other.scene_id<>?
+                GROUP BY other.scene_id
                 """,
                 (feature_version, scene_id, feature_version, scene_id),
             )

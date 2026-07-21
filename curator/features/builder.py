@@ -574,6 +574,23 @@ class FeatureBuilder:
                     )
                 ),
             )
+            self.connection.execute("DELETE FROM scene_content_search")
+            self.connection.executemany(
+                """
+                INSERT INTO scene_content_search(feature_version, feature_id, scene_id, value)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    (
+                        feature_version,
+                        definitions[(feature.entity_type, feature.family, feature.name)][0],
+                        feature.entity_id,
+                        feature.value,
+                    )
+                    for feature in features
+                    if feature.entity_type == "scene" and feature.family == "content"
+                ),
+            )
             self.connection.execute(
                 "UPDATE feature_build SET status='superseded' WHERE status='published'"
             )
