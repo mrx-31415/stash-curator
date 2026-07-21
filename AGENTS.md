@@ -4,8 +4,8 @@ This is repository guidance for agents implementing Stash Curator changes.
 
 ## Before changing code
 
-1. Read `docs/handover.md`, then the relevant part of `docs/design.md` or
-   `docs/implementation.md`.
+1. Read `docs/handover.md`, then the relevant public guide in `docs/`. Historical
+   design and delivery records live in `docs/archive/` and are not current guidance.
 2. Run `git status --short` and preserve all existing user changes.
 3. Trace the complete path with `rg` before editing shared code. Fix the common root
    rather than each caller.
