@@ -67,6 +67,7 @@
   grid-column: 1 / -1;
   grid-row: 2;
   height: 3rem;
+  justify-content: flex-start;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
