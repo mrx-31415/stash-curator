@@ -85,3 +85,28 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
         writer.rollback()
         reader.close()
         writer.close()
+
+
+def test_stale_concurrent_migrator_rechecks_after_writer_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "curator.sqlite3"
+    first = connect_database(database)
+    second = connect_database(database)
+    second_runner = MigrationRunner(second)
+    stale = second_runner.status()
+    MigrationRunner(first).migrate(applied_at_ms=1)
+    current_status = second_runner.status
+    calls = 0
+
+    def status():
+        nonlocal calls
+        calls += 1
+        return stale if calls == 1 else current_status()
+
+    monkeypatch.setattr(second_runner, "status", status)
+    try:
+        assert second_runner.migrate(applied_at_ms=2).current_version == 11
+    finally:
+        second.close()
+        first.close()

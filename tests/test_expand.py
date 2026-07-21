@@ -291,7 +291,7 @@ def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> N
     )
 
     tag_query = next(value for value in client.inputs if "tags" in value)
-    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
+    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES_ALL"}
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:

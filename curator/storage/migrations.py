@@ -139,6 +139,12 @@ class MigrationRunner:
             if migration.version not in pending:
                 continue
             with transaction(self.connection):
+                # Another plugin operation may have applied it while this one waited
+                # for SQLite's writer lock.
+                if self.connection.execute(
+                    "SELECT 1 FROM schema_migration WHERE version=?", (migration.version,)
+                ).fetchone():
+                    continue
                 for statement in _statements(migration.sql):
                     self.connection.execute(statement)
                 self.connection.execute(

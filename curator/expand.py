@@ -579,6 +579,8 @@ class ExpandService:
         feature_version = FeatureStore(self.connection).current_version()
         if model_id is None or feature_version is None:
             raise RuntimeError("no published model")
+        started = time.perf_counter()
+        timings: dict[str, int] = {}
         candidate_ids: set[str]
         if entity_type == "scene":
             content = self._external_content(entity_id)
@@ -594,19 +596,19 @@ class ExpandService:
                 for key in sorted(content, key=content.__getitem__, reverse=True)
                 if key.startswith("id:")
             ][:5]
-            adjacent = self._adjacent_performer_ids(entity_id, feature_version, gender)
-            performer_ids = list(dict.fromkeys([*performers, *adjacent]))
             rows, sources = self._fetch_probes(
                 client,
                 [
                     probe
                     for probe in (
-                        ("tags", tag_ids, 250),
-                        ("performers", performer_ids, 100),
+                        ("tags", tag_ids[:2], 100, "INCLUDES_ALL"),
+                        ("performers", performers, 75, "INCLUDES"),
                     )
                     if probe[1]
                 ],
             )
+            timings["retrieval"] = round((time.perf_counter() - started) * 1000)
+            stage_started = time.perf_counter()
             candidates = [
                 value
                 for key, value in rows.items()
@@ -615,6 +617,7 @@ class ExpandService:
             candidate_ids = {str(value["id"]) for value in candidates}
             scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
             self._merge_external("scene", scenes)
+            timings["scoring"] = round((time.perf_counter() - stage_started) * 1000)
         elif entity_type == "performer":
             target_row = self.connection.execute(
                 "SELECT gender, ethnicity FROM source_performer WHERE performer_id=?",
@@ -663,8 +666,10 @@ class ExpandService:
                     if str(payload["id"]) not in owned
                 ),
             )
+            timings["retrieval"] = round((time.perf_counter() - started) * 1000)
         else:
             raise ValueError("invalid external similarity entity type")
+        stage_started = time.perf_counter()
         result = self.similar(
             entity_type,
             entity_id,
@@ -685,48 +690,21 @@ class ExpandService:
             if not gender or self._payload_matches_gender(item["payload"], entity_type, gender)
         ][:count]
         result["ready"] = bool(result["items"])
+        timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
+        timings["total"] = round((time.perf_counter() - started) * 1000)
+        result["timings_ms"] = timings
         return result
-
-    def _adjacent_performer_ids(
-        self, scene_id: str, feature_version: str, gender: str, limit: int = 15
-    ) -> list[str]:
-        target_ids = {
-            str(row[0])
-            for row in self.connection.execute(
-                "SELECT performer_id FROM scene_performer WHERE scene_id=?", (scene_id,)
-            )
-        }
-        targets = FeatureStore(self.connection).performer_profiles(feature_version, target_ids)
-        if not targets:
-            return []
-        weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
-        ranked = []
-        for row in self.connection.execute(
-            "SELECT external_id, payload_json FROM external_entity WHERE entity_type='performer'"
-        ):
-            payload = json.loads(row["payload_json"])
-            if gender and str(payload.get("gender") or "").casefold() != gender.casefold():
-                continue
-            candidate = self._profile(payload)
-            similarity = max(
-                (self._profile_match(candidate, target, weights)[0] for target in targets.values()),
-                default=0,
-            )
-            if similarity >= 0.45:
-                ranked.append((similarity, str(row["external_id"])))
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return [identifier for _, identifier in ranked[:limit]]
 
     def _fetch_probes(
         self,
         client: GraphQLClient,
-        probes: list[tuple[str, list[str], int]],
+        probes: list[tuple[str, list[str], int, str]],
     ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
         if not probes:
             return {}, defaultdict(set)
 
         def fetch(
-            probe: tuple[str, list[str], int],
+            probe: tuple[str, list[str], int, str],
         ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
             rows: dict[str, dict[str, Any]] = {}
             sources: dict[str, set[str]] = defaultdict(set)
@@ -885,6 +863,7 @@ class ExpandService:
         source: str,
         values: list[str],
         limit: int,
+        modifier: str = "INCLUDES",
     ) -> None:
         fetched = 0
         page = 1
@@ -897,7 +876,7 @@ class ExpandService:
                 "direction": "DESC",
             }
             if source != "wildcard":
-                query[source] = {"value": values, "modifier": "INCLUDES"}
+                query[source] = {"value": values, "modifier": modifier}
             data = client.execute(SCENES, {"input": query})["queryScenes"]
             batch = data["scenes"]
             for scene in batch:
