@@ -11,18 +11,25 @@ def test_whisparr_send_checks_duplicates_and_honors_search_toggle() -> None:
     def transport(method: str, url: str, headers, body: bytes | None) -> bytes:
         requests.append((method, url, json.loads(body) if body else None))
         assert headers["X-Api-Key"] == "secret"
+        if url.endswith("/rootfolder"):
+            return b'[{"path":"/downloads"}]'
+        if url.endswith("/qualityprofile"):
+            return b'[{"id":3},{"id":7,"fallback":true}]'
         return b"[]" if method == "GET" else b'{"id":42}'
 
     result = WhisparrClient("http://whisparr.local", "secret", transport=transport).send_scene(
-        "stashdb-scene", "Scene", "/media", 3, search=False
+        "stashdb-scene", "Scene", search=False
     )
 
     assert result == {"status": "sent", "id": 42}
-    assert requests[1][0:2] == (
+    assert requests[0][1] == "http://whisparr.local/api/v3/movie?stashId=stashdb-scene"
+    assert requests[3][0:2] == (
         "POST",
         "http://whisparr.local/api/v3/movie",
     )
-    assert requests[1][2]["addOptions"] == {"monitor": "none", "searchForMovie": False}
+    assert requests[3][2]["rootFolderPath"] == "/downloads"
+    assert requests[3][2]["qualityProfileId"] == 7
+    assert requests[3][2]["addOptions"] == {"monitor": "none", "searchForMovie": False}
 
 
 def test_whisparr_duplicate_is_not_posted() -> None:

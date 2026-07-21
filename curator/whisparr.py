@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, cast
@@ -32,12 +33,12 @@ class WhisparrClient:
         self,
         stashdb_id: str,
         title: str,
-        root_folder: str,
-        quality_profile_id: int,
+        root_folder: str = "",
+        quality_profile_id: int = 0,
         *,
         search: bool = True,
     ) -> dict[str, object]:
-        movies = self._request("GET", "/movie")
+        movies = self._request("GET", f"/movie?{urllib.parse.urlencode({'stashId': stashdb_id})}")
         if not isinstance(movies, list):
             raise RuntimeError("Whisparr returned an invalid movie list")
         existing = next(
@@ -50,6 +51,34 @@ class WhisparrClient:
         )
         if existing:
             return {"status": "already_exists", "id": existing.get("id")}
+        if not root_folder.strip():
+            folders = self._request("GET", "/rootfolder")
+            root_folder = (
+                next(
+                    (
+                        str(item.get("path") or "").strip()
+                        for item in folders
+                        if isinstance(item, dict) and item.get("path")
+                    ),
+                    "",
+                )
+                if isinstance(folders, list)
+                else ""
+            )
+            if not root_folder:
+                raise RuntimeError("Whisparr has no configured root folder")
+        if quality_profile_id < 1:
+            profiles = self._request("GET", "/qualityprofile")
+            available = (
+                [item for item in profiles if isinstance(item, dict)]
+                if isinstance(profiles, list)
+                else []
+            )
+            profile = next((item for item in available if item.get("fallback")), None)
+            profile = profile or next(iter(available), None)
+            quality_profile_id = int(profile.get("id") or 0) if profile else 0
+            if quality_profile_id < 1:
+                raise RuntimeError("Whisparr has no configured quality profile")
         created = self._request(
             "POST",
             "/movie",
