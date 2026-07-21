@@ -414,6 +414,17 @@ class ExpandService:
             include_groups = equivalent_tag_names(self.connection, include_tags)
             exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
             target_tags = self._external_content(entity_id)
+            feature_version = FeatureStore(self.connection).current_version()
+            target_content = (
+                FeatureStore(self.connection)
+                .scene_content_vectors(feature_version, [entity_id])
+                .get(entity_id, {})
+                if feature_version
+                else {}
+            )
+            content_space = (
+                self._external_content_space(feature_version) if feature_version else None
+            )
             target_performers = [
                 str(row[0])
                 for row in self.connection.execute(
@@ -434,7 +445,6 @@ class ExpandService:
                     (entity_id,),
                 ).fetchone()
             )
-            feature_version = FeatureStore(self.connection).current_version()
             profiles = (
                 FeatureStore(self.connection).performer_profiles(feature_version)
                 if feature_version
@@ -478,7 +488,15 @@ class ExpandService:
                     )
                 }
                 shared = set(target_tags) & set(tags)
-                content = sum(target_tags[value] ** 2 for value in shared) if target_tags else 0.0
+                candidate_content = (
+                    self._external_candidate_content(payload.get("tags", []), content_space)
+                    if content_space
+                    else {}
+                )
+                content = sum(
+                    value * candidate_content.get(name, 0.0)
+                    for name, value in target_content.items()
+                )
                 exact_performer = any(
                     str(item.get("performer", {}).get("curator_local", {}).get("id"))
                     in target_performers
@@ -835,6 +853,82 @@ class ExpandService:
             for name, value in vector.items()
             if (local_id := name.removeprefix("tag:")) in names
         }
+
+    def _external_content_space(
+        self, feature_version: str
+    ) -> tuple[dict[str, set[str]], dict[str, float], dict[str, set[str]], float]:
+        config_row = self.connection.execute(
+            "SELECT config_json FROM feature_build WHERE feature_version=?", (feature_version,)
+        ).fetchone()
+        config = json.loads(config_row[0]) if config_row else {}
+        total = max(
+            1, int(self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0])
+        )
+        rows = list(
+            self.connection.execute(
+                """
+                SELECT d.name, d.metadata_json, t.tag_id, t.name AS tag_name
+                FROM feature_definition d JOIN source_tag t ON d.name='tag:' || t.tag_id
+                WHERE d.feature_version=? AND d.family='content'
+                """,
+                (feature_version,),
+            )
+        )
+        external_ids = self._external_tag_ids({str(row["tag_id"]) for row in rows})
+        mappings: dict[str, set[str]] = defaultdict(set)
+        weights: dict[str, float] = {}
+        for row in rows:
+            name = str(row["name"])
+            local_id = str(row["tag_id"])
+            frequency = int(json.loads(row["metadata_json"])["document_frequency"])
+            rarity = min(
+                float(config.get("idf_cap", DEFAULT_CONFIG.feature.idf_cap)),
+                1
+                + float(config.get("idf_strength", DEFAULT_CONFIG.feature.idf_strength))
+                * math.log((total + 1) / (frequency + 1)),
+            )
+            weights[name] = (
+                rarity
+                * frequency
+                / (
+                    frequency
+                    + float(config.get("one_off_prior", DEFAULT_CONFIG.feature.one_off_prior))
+                )
+            )
+            mappings[f"name:{str(row['tag_name']).casefold()}"].add(name)
+            if local_id in external_ids:
+                mappings[f"id:{external_ids[local_id]}"].add(name)
+        parents: dict[str, set[str]] = defaultdict(set)
+        for row in self.connection.execute("SELECT tag_id, parent_tag_id FROM tag_parent"):
+            child = f"tag:{row['tag_id']}"
+            parent = f"tag:{row['parent_tag_id']}"
+            if child in weights and parent in weights:
+                parents[child].add(parent)
+        return (
+            mappings,
+            weights,
+            parents,
+            float(config.get("parent_weight", DEFAULT_CONFIG.feature.parent_weight)),
+        )
+
+    @staticmethod
+    def _external_candidate_content(
+        tags: Iterable[dict[str, Any]],
+        space: tuple[dict[str, set[str]], dict[str, float], dict[str, set[str]], float],
+    ) -> dict[str, float]:
+        mappings, weights, parents, parent_weight = space
+        base: dict[str, float] = {}
+        for tag in tags:
+            names = mappings.get(f"id:{tag.get('id')}", set()) | mappings.get(
+                f"name:{str(tag.get('name') or '').casefold()}", set()
+            )
+            for name in names:
+                base[name] = 1.0
+                for parent in parents.get(name, set()):
+                    base[parent] = max(base.get(parent, 0.0), parent_weight)
+        vector = {name: base_value * weights[name] for name, base_value in base.items()}
+        norm = math.sqrt(sum(value * value for value in vector.values())) or 1.0
+        return {name: value / norm for name, value in vector.items()}
 
     def _external_tag_ids(self, local_ids: set[str]) -> dict[str, str]:
         if not local_ids:

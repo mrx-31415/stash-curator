@@ -285,6 +285,96 @@ def test_external_scene_similarity_rejects_compilation_tag_bags(tmp_path: Path) 
     assert exact[0]["payload"]["why"] == ["Same performer"]
 
 
+def test_external_content_similarity_normalizes_candidate_mapped_tags(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    tags = (
+        ("generic", "Generic Scenario"),
+        ("specific-one", "Specific One"),
+        ("specific-two", "Specific Two"),
+        *((f"unrelated-{value}", f"Unrelated {value}") for value in range(8)),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+        ((tag_id, name, f"hash-{tag_id}") for tag_id, name in tags),
+    )
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES (?, ?, 'scene')",
+        (
+            (scene_id, "generic")
+            for scene_id in (
+                "old-good",
+                "recent-good",
+                "unseen-good",
+                "disliked",
+                "unlabeled",
+                "unusual",
+            )
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO scene_marker(marker_id, scene_id, seconds, primary_tag_id, source_hash) "
+        "VALUES (?, 'old-good', 0, ?, ?)",
+        (
+            ("marker-specific-one", "specific-one", "marker-hash-one"),
+            ("marker-specific-two", "specific-two", "marker-hash-two"),
+        ),
+    )
+    scenes = ("recent-good", "unseen-good", "disliked", "unlabeled", "unusual")
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES (?, ?, 'scene')",
+        ((scenes[value % len(scenes)], f"unrelated-{value}") for value in range(8)),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        ((tag_id, "https://stashdb.org/graphql", f"external-{tag_id}") for tag_id, _ in tags),
+    )
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    service._merge_external(
+        "scene",
+        (
+            {
+                "id": "generic-with-noise",
+                "payload": {
+                    "tags": [
+                        {"id": f"external-{tag_id}", "name": name}
+                        for tag_id, name in tags
+                        if tag_id == "generic" or tag_id.startswith("unrelated")
+                    ],
+                    "performers": [],
+                },
+                "score": 0,
+                "sources": ["tags"],
+            },
+            {
+                "id": "specific-match",
+                "payload": {
+                    "tags": [
+                        {"id": f"external-{tag_id}", "name": name}
+                        for tag_id, name in tags
+                        if tag_id.startswith("specific")
+                    ],
+                    "performers": [],
+                },
+                "score": 0,
+                "sources": ["tags"],
+            },
+        ),
+    )
+
+    result = service.similar("scene", "old-good", minimum_similarity=0)
+    old_target = service._external_content("old-good")
+
+    assert old_target["id:external-generic"] ** 2 > sum(
+        old_target[f"id:external-specific-{value}"] ** 2 for value in ("one", "two")
+    )
+    assert [item["id"] for item in result["items"]] == [
+        "specific-match",
+        "generic-with-noise",
+    ]
+    assert result["items"][0]["similarity"] > result["items"][1]["similarity"]
+
+
 def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
