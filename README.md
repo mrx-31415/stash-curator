@@ -62,7 +62,7 @@ directory. Back up before uninstalling. Removing Curator does not alter Stash-ow
 scenes, performers, tags, studios, or history.
 
 For performance diagnosis, enable **Enable profiling** in Curator's plugin settings,
-reproduce the slow operation, then open Curator's **Profiling** tab. Curator retains
+reproduce the slow operation, then select the DEV icon in Curator's toolbar. Curator retains
 the latest 200 operation and task traces locally. Trace details omit SQL parameters
 and GraphQL variables and can be exported as Chrome Trace Event JSON for
 [Perfetto](https://ui.perfetto.dev/). Disable profiling when finished; saved traces

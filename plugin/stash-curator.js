@@ -6,6 +6,7 @@
   const { Button, Nav } = libraries.Bootstrap;
   const { NavLink } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
+  const { faDev } = libraries.FontAwesomeBrands;
   const { faBullseye, faCheckCircle, faClock, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
   const LANES = [
     {
@@ -58,12 +59,6 @@
       label: "Prune",
       icon: faWrench,
       description: "Review explicit dislikes and high-confidence poor matches for library cleanup.",
-    },
-    {
-      value: "profiling",
-      label: "Profiling",
-      icon: faClock,
-      description: "Inspect recent Curator operation and task timings.",
     },
   ];
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
@@ -932,7 +927,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh }) {
+  function CuratorControls({ onRefresh, onProfiling, profilingActive }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -1010,6 +1005,7 @@
           { className: "curator-task-buttons" },
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Sync library: fetch changed Stash metadata and refresh recommendations.", "aria-label": "Sync library", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Rebuild model from the existing synchronized data.", "aria-label": "Rebuild model", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+          React.createElement(Button, { className: "curator-icon-button curator-profiling-button", size: "sm", variant: profilingActive ? "primary" : "secondary", title: "Open performance profiles.", "aria-label": "Open performance profiles", "aria-pressed": profilingActive, onClick: onProfiling }, React.createElement(FontAwesomeIcon, { icon: faDev })),
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
@@ -1023,7 +1019,7 @@
     const route = new URLSearchParams(location.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
-    const [lane, setLane] = React.useState(() => NAV_ITEMS.some((item) => item.value === requestedView) ? requestedView : "for_you");
+    const [lane, setLane] = React.useState(() => NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you");
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
@@ -1110,7 +1106,7 @@
             )
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh })
+        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => setLane("profiling"), profilingActive: lane === "profiling" })
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),

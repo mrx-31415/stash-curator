@@ -95,11 +95,6 @@
   margin-left: 0.45rem;
 }
 
-.curator-tabs .curator-lane-profiling {
-  border-left: 1px solid rgba(255, 255, 255, 0.18);
-  margin-left: 0.45rem;
-}
-
 .curator-profiling {
   margin-top: 1rem;
 }
@@ -227,6 +222,10 @@
   justify-content: center;
   padding: 0;
   width: 1.8rem;
+}
+
+.curator-profiling-button svg {
+  font-size: 0.78rem;
 }
 
 .curator-status {
@@ -894,12 +893,6 @@
   position: absolute;
   width: max-content;
   z-index: 10;
-}
-
-@media (min-width: 75.01rem) and (max-width: 130rem) {
-  .curator-tagline {
-    display: none;
-  }
 }
 
 @media (max-width: 75rem) {
