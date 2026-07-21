@@ -4,7 +4,7 @@
   const Api = window.PluginApi;
   const { React, ReactDOM, GQL, libraries } = Api;
   const { Button, Nav } = libraries.Bootstrap;
-  const { NavLink } = libraries.ReactRouterDOM;
+  const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
   const { faBullseye, faCheckCircle, faClock, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
@@ -1022,10 +1022,12 @@
   }
 
   function CuratorPage() {
-    const route = new URLSearchParams(location.search);
+    const history = useHistory();
+    const routeLocation = useLocation();
+    const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
-    const [lane, setLane] = React.useState(() => NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you");
+    const lane = NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you";
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
@@ -1092,6 +1094,11 @@
       clearSlateCache();
       setRefreshKey((value) => value + 1);
     }
+    function openView(view) {
+      if (view === lane) return;
+      route.set("view", view);
+      history.push({ pathname: routeLocation.pathname, search: route.toString() });
+    }
 
     return React.createElement(
       "main",
@@ -1106,13 +1113,13 @@
           NAV_ITEMS.map((option) =>
             React.createElement(
               Nav.Link,
-              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => setLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
               React.createElement(FontAwesomeIcon, { icon: option.icon }),
               React.createElement("span", null, option.label)
             )
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => setLane("profiling"), profilingActive: lane === "profiling" })
+        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openView("profiling"), profilingActive: lane === "profiling" })
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),

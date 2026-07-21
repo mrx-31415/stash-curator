@@ -68,6 +68,7 @@
   grid-row: 2;
   height: 3rem;
   justify-content: flex-start;
+  margin-inline: 0;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -993,12 +994,7 @@
 }
 
 @media (max-width: 36rem) {
-  .curator-tabs {
-    justify-content: space-between;
-  }
-
   .curator-tabs .nav-link {
-    flex: 1 1 auto;
     justify-content: center;
     padding-inline: 0.45rem;
   }
