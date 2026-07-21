@@ -3,15 +3,77 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Self, overload
 from uuid import uuid4
+
+from curator.profiling import current_trace, span
 
 
 class StorageError(RuntimeError):
     """Raised when a storage operation violates a Curator invariant."""
+
+
+def _sql_details(statement: str) -> tuple[str, dict[str, object]]:
+    normalized = " ".join(statement.split())[:1_000]
+    command = normalized.partition(" ")[0].upper() or "SQL"
+    match = re.search(r"\b(?:FROM|INTO|UPDATE|TABLE)\s+([\w.]+)", normalized, re.IGNORECASE)
+    return (f"{command} {match.group(1)}" if match else command, {"statement": normalized})
+
+
+class ProfiledCursor(sqlite3.Cursor):
+    def execute(self, sql: str, parameters: Any = (), /) -> Self:
+        name, details = _sql_details(sql)
+        with span("sqlite", name, details):
+            super().execute(sql, parameters)
+        return self
+
+    def executemany(self, sql: str, seq_of_parameters: Any, /) -> Self:
+        name, details = _sql_details(sql)
+        with span("sqlite", f"{name} many", details):
+            super().executemany(sql, seq_of_parameters)
+        return self
+
+    def fetchone(self) -> Any:
+        with span("sqlite", "fetchone"):
+            return super().fetchone()
+
+    def fetchmany(self, size: int | None = None) -> list[Any]:
+        with span("sqlite", "fetchmany"):
+            return super().fetchmany() if size is None else super().fetchmany(size)
+
+    def fetchall(self) -> list[Any]:
+        with span("sqlite", "fetchall"):
+            return super().fetchall()
+
+
+class ProfiledConnection(sqlite3.Connection):
+    @overload
+    def cursor(self, factory: None = None) -> ProfiledCursor: ...
+
+    @overload
+    def cursor[T: sqlite3.Cursor](self, factory: Callable[[sqlite3.Connection], T]) -> T: ...
+
+    def cursor(self, factory: Any = None) -> Any:
+        return super().cursor(ProfiledCursor if factory is None else factory)
+
+    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(self, sql: str, seq_of_parameters: Any, /) -> sqlite3.Cursor:
+        return self.cursor().executemany(sql, seq_of_parameters)
+
+    def commit(self) -> None:
+        with span("sqlite", "COMMIT"):
+            super().commit()
+
+    def rollback(self) -> None:
+        with span("sqlite", "ROLLBACK"):
+            super().rollback()
 
 
 def connect_database(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
@@ -29,10 +91,16 @@ def connect_database(path: Path, *, readonly: bool = False) -> sqlite3.Connectio
             uri=True,
             isolation_level=None,
             timeout=30,
+            factory=ProfiledConnection if current_trace() else sqlite3.Connection,
         )
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, isolation_level=None, timeout=30)
+        connection = sqlite3.connect(
+            path,
+            isolation_level=None,
+            timeout=30,
+            factory=ProfiledConnection if current_trace() else sqlite3.Connection,
+        )
 
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")

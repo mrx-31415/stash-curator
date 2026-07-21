@@ -20,7 +20,7 @@ def test_doctor_json_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert result["status"] == "ok"
     assert result["stash"] == "not_configured"
     assert result["schema_current"] == 0
-    assert result["schema_latest"] == 12
+    assert result["schema_latest"] == 13
 
 
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:

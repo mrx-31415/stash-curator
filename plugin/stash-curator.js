@@ -59,6 +59,12 @@
       icon: faWrench,
       description: "Review explicit dislikes and high-confidence poor matches for library cleanup.",
     },
+    {
+      value: "profiling",
+      label: "Profiling",
+      icon: faClock,
+      description: "Inspect recent Curator operation and task timings.",
+    },
   ];
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
@@ -840,6 +846,92 @@
     );
   }
 
+  function ProfilingPanel() {
+    const [profiles, setProfiles] = React.useState(null);
+    const [selected, setSelected] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState("");
+
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await operation({ operation: "list_profiles", limit: 200 });
+        setProfiles(data);
+        if (selected && !data.items.some((item) => item.trace_id === selected.trace_id)) {
+          setSelected(null);
+        }
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    React.useEffect(() => { load(); }, []);
+
+    async function inspect(traceId) {
+      setError("");
+      try {
+        setSelected(await operation({ operation: "get_profile", trace_id: traceId }));
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+
+    async function clear() {
+      if (!window.confirm("Clear all saved Curator profiles?")) return;
+      try {
+        await operation({ operation: "clear_profiles", confirmation: "CLEAR" });
+        setSelected(null);
+        await load();
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+
+    function exportTrace() {
+      if (!selected) return;
+      const blob = new Blob([JSON.stringify(selected.trace)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const operationName = selected.operation.replace(/[^a-z0-9_-]/gi, "-");
+      link.download = `curator-${operationName}-${selected.trace_id}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    const events = (selected?.trace?.traceEvents || []).filter((event) => event.ph === "X");
+    const root = events[0];
+    const spans = events.slice(1).sort((left, right) => right.dur - left.dur);
+    const visibleSpans = spans.slice(0, 500);
+    const total = Math.max(1, root?.dur || 1);
+    const formatDuration = (microseconds) => microseconds >= 1000
+      ? `${(microseconds / 1000).toFixed(1)} ms`
+      : `${microseconds} µs`;
+
+    return React.createElement(
+      "section",
+      { className: "curator-profiling", role: "tabpanel" },
+      !profiles?.enabled && React.createElement("div", { className: "alert alert-info" }, "Profiling is disabled. Enable it in Curator's plugin settings to record new operations; saved profiles remain available."),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, "Recent profiles"), React.createElement(Button, { size: "sm", onClick: load, disabled: loading }, "Refresh"), React.createElement(Button, { size: "sm", variant: "danger", onClick: clear, disabled: !profiles?.items?.length }, "Clear")),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading profiles…"),
+      profiles && !loading && profiles.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No profiles have been recorded yet."),
+      profiles?.items?.length > 0 && React.createElement("div", { className: "curator-profile-layout" },
+        React.createElement("div", { className: "curator-profile-list", role: "list" }, profiles.items.map((item) => React.createElement("button", { key: item.trace_id, type: "button", className: selected?.trace_id === item.trace_id ? "active" : "", onClick: () => inspect(item.trace_id) }, React.createElement("strong", null, item.operation), React.createElement("span", null, `${item.kind} · ${formatDuration(item.duration_us)}`), React.createElement("small", null, `${new Date(item.started_at_ms).toLocaleString()} · ${item.status}${item.truncated ? " · truncated" : ""}`)))),
+        selected && React.createElement("div", { className: "curator-profile-detail" },
+          React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, selected.operation), React.createElement(Button, { size: "sm", onClick: exportTrace }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Export trace")),
+          React.createElement("p", null, `${formatDuration(selected.duration_us)} · ${selected.span_count} spans · ${selected.status}`),
+          React.createElement("div", { className: "curator-profile-timeline", "aria-label": "Trace timeline" }, spans.slice(0, 100).map((event, index) => React.createElement("div", { key: `${event.name}-${index}`, title: `${event.cat}: ${event.name} (${formatDuration(event.dur)})` }, React.createElement("span", { className: `curator-profile-${event.cat}`, style: { marginLeft: `${Math.max(0, ((event.ts - root.ts) / total) * 100)}%`, width: `${Math.max(0.4, (event.dur / total) * 100)}%` } })))),
+          spans.length > visibleSpans.length && React.createElement("small", null, `Showing the 500 longest of ${spans.length} spans; export contains all spans.`),
+          React.createElement("div", { className: "curator-profile-table-wrap" }, React.createElement("table", { className: "table table-sm curator-profile-table" }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Category"), React.createElement("th", null, "Span"), React.createElement("th", null, "Duration"), React.createElement("th", null, "Details"))), React.createElement("tbody", null, visibleSpans.map((event, index) => React.createElement("tr", { key: `${event.name}-${index}` }, React.createElement("td", null, event.cat), React.createElement("td", null, event.name), React.createElement("td", null, formatDuration(event.dur)), React.createElement("td", null, event.args?.statement || ""))))))
+        )
+      )
+    );
+  }
+
   function CuratorControls({ onRefresh }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
@@ -1023,6 +1115,7 @@
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "expand" && React.createElement(ExpandPanel, { initialPerformerId: route.get("performer") }),
+      lane === "profiling" && React.createElement(ProfilingPanel),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(
           "div",

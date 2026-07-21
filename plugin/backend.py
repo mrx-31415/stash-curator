@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,6 +22,15 @@ from curator.events import HistoricalEventStore  # noqa: E402
 from curator.expand import STASHDB, ExpandService  # noqa: E402
 from curator.graphql import GraphQLClient  # noqa: E402
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore  # noqa: E402
+from curator.profiling import (  # noqa: E402
+    begin_trace,
+    clear_traces,
+    end_trace,
+    get_trace,
+    list_traces,
+    save_trace,
+    span,
+)
 from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
@@ -126,7 +136,9 @@ def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
     )
     if box is None or not box.get("api_key"):
         raise RuntimeError("configure StashDB with an API key in Stash settings")
-    return GraphQLClient(str(box["endpoint"]), api_key=str(box["api_key"]))
+    return GraphQLClient(
+        str(box["endpoint"]), api_key=str(box["api_key"]), profile_category="stashdb"
+    )
 
 
 def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -354,8 +366,7 @@ def _round_trip(payload: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
-    settings = _settings(payload)
+def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> dict[str, object]:
     connection = _open(payload, settings)
     args = payload.get("args") or {}
     try:
@@ -551,6 +562,24 @@ def _api(payload: dict[str, Any], operation: str) -> dict[str, object]:
             return api.update_config(values)
         if operation == "get_job_status":
             return _job_status(connection)
+        if operation == "list_profiles":
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "enabled": bool(settings.get("profilingEnabled", False)),
+                "items": list_traces(connection, int(args.get("limit") or 50)),
+            }
+        if operation == "get_profile":
+            return {
+                "schema_version": SCHEMA_VERSION,
+                **get_trace(connection, str(args.get("trace_id") or "")),
+            }
+        if operation == "clear_profiles":
+            if str(args.get("confirmation") or "") != "CLEAR":
+                raise ValueError("clearing profiles requires confirmation")
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "deleted": clear_traces(connection),
+            }
         if operation == "get_inspector_entity":
             return api.inspector(
                 str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
@@ -595,8 +624,9 @@ def _job_status(connection: Any) -> dict[str, object]:
     return {"schema_version": SCHEMA_VERSION, "jobs": jobs}
 
 
-def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
-    settings = _settings(payload)
+def _run_task_body(
+    payload: dict[str, Any], mode: str, settings: dict[str, Any]
+) -> dict[str, object]:
     connection = _open(payload, settings)
     job_id = str(uuid4())
     started_at_ms = time.time_ns() // 1_000_000
@@ -659,32 +689,37 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                     _log("i", f"Synchronizing {entity}s: {processed}/{total}")
 
             _log("i", "Synchronizing Stash metadata")
-            synced = SyncService(
-                _client(payload),
-                SyncRepository(connection),
-                page_size=int(sidecar_config["sync_page_size"]),
-                progress=report_sync,
-            ).sync(full=mode == "full-sync-build")
-            CuratorAPI(connection).reconcile_prune_tag(str(sidecar_config["prune_tag_name"]))
+            with span("python", "task.sync"):
+                synced = SyncService(
+                    _client(payload),
+                    SyncRepository(connection),
+                    page_size=int(sidecar_config["sync_page_size"]),
+                    progress=report_sync,
+                ).sync(full=mode == "full-sync-build")
+            with span("python", "task.reconcile_prune"):
+                CuratorAPI(connection).reconcile_prune_tag(str(sidecar_config["prune_tag_name"]))
             _progress(0.78)
             _log("i", "Rebuilding historical preference signals")
-            historical = HistoricalEventStore(connection).rebuild(
-                None if mode == "full-sync-build" or synced.resumed else synced.scene_ids
-            )
+            with span("python", "task.historical_events"):
+                historical = HistoricalEventStore(connection).rebuild(
+                    None if mode == "full-sync-build" or synced.resumed else synced.scene_ids
+                )
             _progress(0.86)
             _log("i", "Building the recommendation model")
             coordinator = ModelUpdateCoordinator(connection)
             coordinator.request("source_sync")
-            model = coordinator.drain(
-                force=True,
-                max_builds=1,
-                progress=lambda processed, total: _progress(
-                    0.86 + 0.08 * (processed / max(1, total))
-                ),
-            )[0]
+            with span("python", "task.model_build"):
+                model = coordinator.drain(
+                    force=True,
+                    max_builds=1,
+                    progress=lambda processed, total: _progress(
+                        0.86 + 0.08 * (processed / max(1, total))
+                    ),
+                )[0]
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
-            lane_count = len(LanePolicy(connection).classify(model.model_id))
+            with span("python", "task.lane_classification"):
+                lane_count = len(LanePolicy(connection).classify(model.model_id))
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -712,7 +747,8 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             coordinator = ModelUpdateCoordinator(connection)
             if mode == "build":
                 coordinator.request("manual_build")
-            models = coordinator.drain(force=True, max_builds=1, progress=report_model)
+            with span("python", "task.model_build"):
+                models = coordinator.drain(force=True, max_builds=1, progress=report_model)
             if not models:
                 summary = {"updated": False}
                 _progress(0.98)
@@ -721,7 +757,8 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
                 model = models[-1]
                 _progress(0.94)
                 _log("i", "Organizing scenes into recommendation lanes")
-                lane_count = len(LanePolicy(connection).classify(model.model_id))
+                with span("python", "task.lane_classification"):
+                    lane_count = len(LanePolicy(connection).classify(model.model_id))
                 _progress(0.98)
                 summary = {
                     "updated": True,
@@ -737,15 +774,17 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             config = CuratorAPI(connection).config()["config"]
             assert isinstance(config, dict)
             _log("i", "Preparing recommendation pages")
-            lane_caches = SlateBuilder(connection).prepare(
-                model_id, slate_size=max(60, int(config["page_size"]) * 3)
-            )
+            with span("python", "task.prepare_pages"):
+                lane_caches = SlateBuilder(connection).prepare(
+                    model_id, slate_size=max(60, int(config["page_size"]) * 3)
+                )
             _progress(0.98)
             summary = {"model_id": model_id, "lane_candidate_caches": lane_caches}
         elif mode == "backup":
             _progress(0.1)
             destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"
-            backup_database(connection, destination)
+            with span("python", "task.backup"):
+                backup_database(connection, destination)
             _progress(0.98)
             summary = {"backup": str(destination)}
         elif mode == "expand-refresh":
@@ -754,13 +793,14 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
             assert isinstance(config, dict)
             _log("i", "Collecting bounded StashDB candidates")
             _progress(0.25)
-            summary = ExpandService(connection).refresh(
-                _stashdb(payload),
-                _external_links(payload),
-                horizon_days=int(config["expand_horizon_days"]),
-                gender=str(config["expand_gender"]),
-                wildcard=bool(config["expand_wildcard"]),
-            )
+            with span("python", "task.expand_refresh"):
+                summary = ExpandService(connection).refresh(
+                    _stashdb(payload),
+                    _external_links(payload),
+                    horizon_days=int(config["expand_horizon_days"]),
+                    gender=str(config["expand_gender"]),
+                    wildcard=bool(config["expand_wildcard"]),
+                )
             _progress(0.98)
         else:
             raise ValueError(f"unknown Curator task: {mode}")
@@ -795,6 +835,42 @@ def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
         connection.close()
 
 
+def _profiled[T](
+    payload: dict[str, Any], name: str, kind: str, call: Callable[[dict[str, Any]], T]
+) -> T:
+    trace, token = begin_trace(name, kind)
+    try:
+        settings = _settings(payload)
+    except BaseException as settings_failure:
+        end_trace(trace, token, settings_failure)
+        raise
+    if not bool(settings.get("profilingEnabled", False)):
+        end_trace(trace, token)
+        return call(settings)
+
+    failure: BaseException | None = None
+    try:
+        return call(settings)
+    except BaseException as caught:
+        failure = caught
+        raise
+    finally:
+        end_trace(trace, token, failure)
+        try:
+            save_trace(_database_path(payload, settings), trace)
+        except Exception as save_error:
+            _log("w", f"Could not save Curator profile: {save_error}")
+
+
+def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
+    return _profiled(
+        payload,
+        mode,
+        "task",
+        lambda settings: _run_task_body(payload, mode, settings),
+    )
+
+
 def dispatch(payload: dict[str, Any]) -> dict[str, object]:
     operation = str((payload.get("args") or {}).get("operation") or "health")
     if operation == "health":
@@ -818,7 +894,20 @@ def dispatch(payload: dict[str, Any]) -> dict[str, object]:
         connection = _open(payload, settings)
         connection.close()
         return {"schema_version": SCHEMA_VERSION, "reset": True}
-    return _api(payload, operation)
+    excluded = {
+        "get_job_status",
+        "list_profiles",
+        "get_profile",
+        "clear_profiles",
+    }
+    if operation in excluded:
+        return _api(payload, operation, _settings(payload))
+    return _profiled(
+        payload,
+        operation,
+        "operation",
+        lambda profiled_settings: _api(payload, operation, profiled_settings),
+    )
 
 
 def main() -> None:

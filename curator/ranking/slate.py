@@ -15,6 +15,7 @@ from curator.features import FeatureStore
 from curator.model import RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import scene_recovery
+from curator.profiling import record_duration
 from curator.ranking.policy import LANES, LaneClassification, LanePolicy
 from curator.storage import transaction
 
@@ -174,11 +175,13 @@ class SlateBuilder:
                     limit_per_lane=max(500, count * 20),
                 ) or policy.classify(model_id)
             timings["classifications"] = round((time.perf_counter() - started) * 1000)
+            record_duration("python", "ranking.classifications", timings["classifications"])
             stage_started = time.perf_counter()
             self._cached_model_id = model_id
             self._cached_source_lanes = source_lane_key
             self._cached_candidates = prepared or tuple(self._candidates(model_id, classifications))
             timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "ranking.candidates", timings["candidates"])
         stage_started = time.perf_counter()
         now_ms = time.time_ns() // 1_000_000
         candidate_ids = {item.classification.scene_id for item in self._cached_candidates}
@@ -219,6 +222,7 @@ class SlateBuilder:
         )
         self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)
         timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "ranking.eligibility", timings["eligibility"])
         stage_started = time.perf_counter()
         selected: list[_Candidate] = []
         selected_utilities: list[tuple[float, dict[str, float], dict[str, float]]] = []
@@ -232,6 +236,7 @@ class SlateBuilder:
             for candidate in candidates
         }
         timings["history"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "ranking.history", timings["history"])
         stage_started = time.perf_counter()
         for position in range(count):
             target_lane, target_subtype = self._target(lane, position, exploration)
@@ -286,6 +291,7 @@ class SlateBuilder:
             selected_utilities.append(utility)
 
         timings["selection"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "ranking.selection", timings["selection"])
         stage_started = time.perf_counter()
         scores = RecommendationModelStore(self.connection).scores(
             model_id, {candidate.classification.scene_id for candidate in selected}
@@ -318,6 +324,7 @@ class SlateBuilder:
                 )
             )
         timings["items"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "ranking.items", timings["items"])
         timings["total"] = round((time.perf_counter() - started) * 1000)
         slate = Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
         if exploration == 0:

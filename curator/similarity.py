@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, performer_similarity
 from curator.model import RecommendationModelStore
+from curator.profiling import record_duration
 from curator.taxonomy import equivalent_tag_names
 
 
@@ -57,6 +58,7 @@ class SimilarityService:
                 )
             }
         self.timings_ms = {"initialization": round((time.perf_counter() - started) * 1000)}
+        record_duration("python", "similarity.initialization", self.timings_ms["initialization"])
 
     def scenes(
         self,
@@ -87,12 +89,14 @@ class SimilarityService:
         )
         content_overlaps = features.scene_content_overlaps(self.feature_version, scene_id)
         self.timings_ms["content"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "similarity.content", self.timings_ms["content"])
         started = time.perf_counter()
         performers = self._scene_performers()
         genders = self._performer_genders()
         target_performers = performers.get(scene_id, set())
         profiles = features.performer_profiles(self.feature_version)
         self.timings_ms["profiles"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "similarity.profiles", self.timings_ms["profiles"])
         started = time.perf_counter()
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
         performer_scores: dict[str, float] = {}
@@ -106,6 +110,9 @@ class SimilarityService:
                     performer_similarity(target, profile, weights).similarity,
                 )
         self.timings_ms["performer_similarity"] = round((time.perf_counter() - started) * 1000)
+        record_duration(
+            "python", "similarity.performer_similarity", self.timings_ms["performer_similarity"]
+        )
         started = time.perf_counter()
         target_studio = self._studios().get(scene_id)
         studios = self._studios()
@@ -197,6 +204,7 @@ class SimilarityService:
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
         selected = self._diverse_scenes(ranked, performers, count)
         self.timings_ms["ranking"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "similarity.filter_and_rank", self.timings_ms["ranking"])
         started = time.perf_counter()
         selected_content = features.scene_content_vectors(
             self.feature_version, [item.entity_id for item in selected]
@@ -220,6 +228,7 @@ class SimilarityService:
             for item in selected
         )
         self.timings_ms["details"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "similarity.details", self.timings_ms["details"])
         self.timings_ms["total"] = sum(self.timings_ms.values())
         return result
 

@@ -9,6 +9,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from scripts.build_plugin import build
 
 
@@ -122,3 +124,40 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         assert config["model_update_event_threshold"] == 7
     finally:
         connection.close()
+
+
+def test_backend_profiles_only_when_enabled_and_exposes_profile_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_profiling", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "curator.sqlite3"
+    payload = {"args": {"database_path": str(database)}}
+
+    def work(settings):
+        connection = module._open(payload, settings)
+        try:
+            connection.execute("SELECT 1").fetchone()
+        finally:
+            connection.close()
+        return {"done": True}
+
+    monkeypatch.setattr(module, "_settings", lambda _payload: {"profilingEnabled": True})
+    assert module._profiled(payload, "test-work", "operation", work) == {"done": True}
+    listed = module._api(payload, "list_profiles", {"profilingEnabled": True})
+    assert listed["enabled"] is True
+    assert listed["items"][0]["operation"] == "test-work"
+
+    monkeypatch.setattr(module, "_settings", lambda _payload: {"profilingEnabled": False})
+    module._profiled(payload, "disabled-work", "operation", work)
+    listed = module._api(payload, "list_profiles", {"profilingEnabled": False})
+    assert listed["enabled"] is False
+    assert [item["operation"] for item in listed["items"]] == ["test-work"]
+
+    with pytest.raises(ValueError, match="confirmation"):
+        module._api(payload, "clear_profiles", {"profilingEnabled": False})
+    payload["args"] = {"database_path": str(database), "confirmation": "CLEAR"}
+    assert module._api(payload, "clear_profiles", {"profilingEnabled": False})["deleted"] == 1

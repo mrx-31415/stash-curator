@@ -17,6 +17,10 @@ ui:
     - stash-curator.css
 
 settings:
+  profilingEnabled:
+    displayName: Enable profiling
+    description: Record recent Curator operation timings for the Profiling page.
+    type: BOOLEAN
   databasePath:
     displayName: Sidecar database path
     description: Leave empty to store data in the plugin's data directory.

@@ -19,6 +19,7 @@ from curator.features.profiles import performer_similarity
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
+from curator.profiling import record_duration
 from curator.storage import ModelStore, transaction
 from curator.storage.retention import prune_snapshots
 
@@ -120,12 +121,14 @@ class PreferenceModelBuilder:
         )
         self._report(0.05)
         timings["features"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "model.features", timings["features"])
         stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
         training_labels = self._training_labels(labels)
         self._report(0.10)
         timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "model.labels", timings["labels"])
         evidence_fingerprint = self._evidence_fingerprint(labels)
         model_digest = hashlib.sha256(
             (
@@ -170,6 +173,7 @@ class PreferenceModelBuilder:
             affinities = self._affinities(scene_features, training_labels, label_mean)
             self._report(0.20)
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "model.affinities", timings["affinities"])
             stage_started = time.perf_counter()
             scores = self._scores(
                 feature_version,
@@ -181,10 +185,12 @@ class PreferenceModelBuilder:
                 reference_at_ms,
             )
             timings["scores"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "model.scores", timings["scores"])
             stage_started = time.perf_counter()
             self._publish(model_id, feature_version, affinities, labels, scores)
             self._report(0.97)
             timings["publish"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "model.publish", timings["publish"])
         except Exception:
             model_store.fail(model_id)
             raise

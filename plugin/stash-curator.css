@@ -95,6 +95,102 @@
   margin-left: 0.45rem;
 }
 
+.curator-tabs .curator-lane-profiling {
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  margin-left: 0.45rem;
+}
+
+.curator-profiling {
+  margin-top: 1rem;
+}
+
+.curator-profiling-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.curator-profiling-toolbar h2 {
+  flex: 1;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.curator-profile-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(15rem, 22rem) minmax(0, 1fr);
+  margin-top: 0.75rem;
+}
+
+.curator-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.curator-profile-list button {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.35rem;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+}
+
+.curator-profile-list button.active {
+  border-color: var(--primary, #7952b3);
+}
+
+.curator-profile-list span,
+.curator-profile-list small {
+  color: var(--text-muted, #adb5bd);
+}
+
+.curator-profile-timeline {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 15rem;
+  overflow: auto;
+  padding: 0.35rem;
+}
+
+.curator-profile-timeline > div {
+  height: 0.35rem;
+  width: 100%;
+}
+
+.curator-profile-timeline span {
+  background: #748ffc;
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.curator-profile-timeline .curator-profile-sqlite { background: #20c997; }
+.curator-profile-timeline .curator-profile-stash { background: #ffd43b; }
+.curator-profile-timeline .curator-profile-stashdb { background: #ff922b; }
+.curator-profile-timeline .curator-profile-python { background: #b197fc; }
+
+.curator-profile-table-wrap {
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.curator-profile-table td:last-child {
+  font-family: monospace;
+  max-width: 32rem;
+  overflow-wrap: anywhere;
+}
+
 .curator-lane-for_you { --lane-color: #4dabf7; }
 .curator-lane-best_bets { --lane-color: #20c997; }
 .curator-lane-revisit { --lane-color: #b197fc; }
@@ -843,6 +939,10 @@
   }
 
   .curator-expand-filters > div {
+    grid-template-columns: 1fr;
+  }
+
+  .curator-profile-layout {
     grid-template-columns: 1fr;
   }
 }

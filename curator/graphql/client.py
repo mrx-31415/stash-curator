@@ -9,6 +9,8 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
+from curator.profiling import span
+
 JsonObject = dict[str, Any]
 Transport = Callable[[str, Mapping[str, str], bytes, float], bytes]
 
@@ -21,6 +23,11 @@ def _operation_type(document: str) -> str | None:
     without_comments = re.sub(r"#[^\n]*", "", document).lstrip()
     match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", without_comments)
     return match.group(1).lower() if match else None
+
+
+def _operation_name(document: str) -> str:
+    match = re.search(r"\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)", document)
+    return match.group(1) if match else "anonymous"
 
 
 def _urllib_transport(url: str, headers: Mapping[str, str], body: bytes, timeout: float) -> bytes:
@@ -43,11 +50,13 @@ class GraphQLClient:
         headers: Mapping[str, str] | None = None,
         timeout: float = 30.0,
         transport: Transport = _urllib_transport,
+        profile_category: str = "stash",
     ) -> None:
         base = url.rstrip("/")
         self.url = base if base.endswith("/graphql") else f"{base}/graphql"
         self.timeout = timeout
         self.transport = transport
+        self.profile_category = profile_category
         self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
         self.headers.update(headers or {})
         if api_key:
@@ -70,7 +79,8 @@ class GraphQLClient:
             {"query": document, "variables": dict(variables or {})},
             separators=(",", ":"),
         ).encode()
-        raw = self.transport(self.url, self.headers, body, self.timeout)
+        with span(self.profile_category, _operation_name(document)):
+            raw = self.transport(self.url, self.headers, body, self.timeout)
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:

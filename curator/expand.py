@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import date, timedelta
 from typing import Any
 
@@ -19,6 +20,7 @@ from curator.features.profiles import ProfileValue
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
+from curator.profiling import record_duration
 from curator.storage import transaction
 from curator.taxonomy import (
     StashDBTaxonomyClient,
@@ -660,6 +662,7 @@ class ExpandService:
                 ],
             )
             timings["retrieval"] = round((time.perf_counter() - started) * 1000)
+            record_duration("python", "external_similar.retrieval", timings["retrieval"])
             stage_started = time.perf_counter()
             candidates = [
                 value
@@ -670,6 +673,7 @@ class ExpandService:
             scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
             self._merge_external("scene", scenes)
             timings["scoring"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "external_similar.scoring", timings["scoring"])
         elif entity_type == "performer":
             target_row = self.connection.execute(
                 "SELECT gender, ethnicity FROM source_performer WHERE performer_id=?",
@@ -719,6 +723,7 @@ class ExpandService:
                 ),
             )
             timings["retrieval"] = round((time.perf_counter() - started) * 1000)
+            record_duration("python", "external_similar.retrieval", timings["retrieval"])
         else:
             raise ValueError("invalid external similarity entity type")
         stage_started = time.perf_counter()
@@ -743,6 +748,7 @@ class ExpandService:
         ][:count]
         result["ready"] = bool(result["items"])
         timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "external_similar.filter_and_rank", timings["ranking"])
         timings["total"] = round((time.perf_counter() - started) * 1000)
         result["timings_ms"] = timings
         return result
@@ -766,7 +772,9 @@ class ExpandService:
         rows: dict[str, dict[str, Any]] = {}
         sources: dict[str, set[str]] = defaultdict(set)
         with ThreadPoolExecutor(max_workers=len(probes)) as executor:
-            for probe_rows, probe_sources in executor.map(fetch, probes):
+            futures = [executor.submit(copy_context().run, fetch, probe) for probe in probes]
+            for future in futures:
+                probe_rows, probe_sources = future.result()
                 rows.update(probe_rows)
                 for identifier, values in probe_sources.items():
                     sources[identifier].update(values)

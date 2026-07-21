@@ -15,6 +15,7 @@ from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
+from curator.profiling import record_duration
 from curator.ranking import SlateBuilder
 from curator.ranking.slate import Slate
 from curator.similarity import SimilarityService
@@ -60,6 +61,7 @@ class CuratorAPI:
         # Model builds can take minutes on a large library. The plugin schedules them as
         # native background tasks; slate requests always use the last published model.
         timings["model_update"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "slate.model_update", timings["model_update"])
         stage_started = time.perf_counter()
         excluded = exclude_scene_ids or set()
         built = SlateBuilder(self.connection).recommend(
@@ -74,11 +76,13 @@ class CuratorAPI:
             built.timings_ms,
         )
         timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "slate.ranking", timings["ranking"])
         stage_started = time.perf_counter()
         impression_id = impression_id or str(uuid4())
         now_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
         InteractionStore(self.connection).record_impression(impression_id, slate, now_ms, context)
         timings["impression"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "slate.impression", timings["impression"])
         stage_started = time.perf_counter()
         explanations = ExplanationService(self.connection)
         explanations.ensure(slate.model_id, {item.scene_id for item in slate.items})
@@ -101,6 +105,7 @@ class CuratorAPI:
             ]
             items.append(payload)
         timings["explanations"] = round((time.perf_counter() - stage_started) * 1000)
+        record_duration("python", "slate.explanations", timings["explanations"])
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return {
             "schema_version": API_SCHEMA_VERSION,
