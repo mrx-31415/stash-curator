@@ -9,7 +9,7 @@ Stash Curator is a local-first recommendation and discovery plugin for
 feedback, explains why an item appears, and keeps the model in a sidecar SQLite
 database you control.
 
-![A synthetic Stash Curator recommendation screen with five lanes and an open explanation panel](docs/assets/showcase-recommendations.svg)
+![Stash Curator's For You lane showing varied recommendations](docs/assets/showcase-recommendations.png)
 
 ## Install
 
