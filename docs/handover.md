@@ -11,8 +11,6 @@ current guidance or part of the published site.
 
 ## Open acceptance work
 
-- Replace the synthetic showcase illustrations with sanitized desktop captures when
-  supplied, preserving the current filenames and alt text.
 - Complete installed desktop/mobile keyboard, playback, Prune, StashDB failure, and
   restart checks before calling the project 1.0-ready.
 - After publishing, smoke-test every route and fetch the public `index.yml` source.
