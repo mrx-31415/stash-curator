@@ -1,4 +1,7 @@
-# Stash Curator implementation plan
+# Archived implementation plan
+
+> Historical delivery record. This is not current user documentation; see
+> [Architecture](../architecture.md) and [Contributing](../contributing.md).
 
 Status: implementation plan, 2026-07-15
 Product: **Stash Curator**

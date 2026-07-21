@@ -1,4 +1,7 @@
-# Tag and performer evidence design
+# Archived tag and performer evidence design
+
+> Historical model research. This is not current user documentation; see
+> [Recommendations](../recommendations.md).
 
 Status: taxonomy classification implemented; profile enrichment proposed
 
@@ -88,7 +91,7 @@ older taxonomy snapshot cannot resolve them.
 
 The implemented resolver recognizes explicit rules, the cached StashDB taxonomy,
 and a conservative fallback vocabulary. Its reviewed category policy lives in
-[`stashdb_category_roles.json`](../curator/taxonomy/stashdb_category_roles.json), not
+[`stashdb_category_roles.json`](../../curator/taxonomy/stashdb_category_roles.json), not
 in a private library export. Usage/agreement classification and the review queue are
 later profile-enrichment work.
 
