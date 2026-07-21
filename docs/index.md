@@ -66,7 +66,6 @@ the [architecture]({{ '/architecture/' | relative_url }}).
 ## Acknowledgements and project provenance
 
 The idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
-Stash Curator is an independent project with no implied affiliation or endorsement.
 
 Stash Curator is primarily generated with AI coding agents under human direction,
 review, and testing.
