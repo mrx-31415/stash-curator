@@ -56,7 +56,7 @@
       value: "expand",
       label: "Expand",
       icon: faCompass,
-      description: "External metadata candidates scored locally; a Wildcard was selected outside preference-derived seeds.",
+      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
     },
     {
       value: "prune",
@@ -277,6 +277,15 @@
     );
   }
 
+  function reasonLabel(code) {
+    const labels = {
+      "appeal.performer_identity": "Performer match",
+      "appeal.content_neighbor": "Similar content",
+    };
+    const fallback = code.split(".").at(-1).replaceAll("_", " ");
+    return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  }
+
   function ExternalCard({ item, kind, gender, onShortlist, onShowScenes, onWhisparr }) {
     const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
@@ -448,7 +457,7 @@
                 React.createElement(
                   "li",
                   { key: `${reason.code}-${index}` },
-                  `${reason.code.replaceAll(".", " · ")} (${reason.magnitude.toFixed(2)})`
+                  `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
                 )
               )
             )
