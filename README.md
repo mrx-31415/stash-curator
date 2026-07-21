@@ -22,6 +22,7 @@ and explicit feedback, then explains why each suggestion fits.
 
 - [Product and recommendation design](docs/design.md)
 - [Implementation plan](docs/implementation.md)
+- [Current implementation handover](docs/handover.md)
 
 The design defines user promises and model semantics. The implementation plan defines
 component boundaries, delivery gates, work packages, tests, and acceptance criteria.
