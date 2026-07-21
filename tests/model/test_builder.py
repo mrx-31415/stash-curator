@@ -2,9 +2,11 @@ import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
+import curator.model.builder as builder_module
 from curator.cli import run
 from curator.config import DEFAULT_CONFIG
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
@@ -125,6 +127,8 @@ def _database(path: Path) -> sqlite3.Connection:
 
 def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
     builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
 
     first = builder.build()
@@ -144,6 +148,15 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
     assert all(-1 <= score.appeal <= 1 for score in scores.values())
     assert all(-1 <= score.current_fit <= 1 for score in scores.values())
     assert all(0 <= score.confidence <= 1 for score in scores.values())
+    assert not any(
+        query in " ".join(statement.split())
+        for statement in statements
+        for query in (
+            "SELECT performer_id FROM scene_performer WHERE scene_id=",
+            "SELECT studio_id FROM source_scene WHERE scene_id=",
+            "SELECT occurred_at_ms FROM feedback WHERE scene_id=",
+        )
+    )
     assert scores["old-good"].direct_confidence == pytest.approx(0.7135, abs=0.001)
     assert scores["old-good"].current_fit > scores["recent-good"].current_fit
     assert scores["disliked"].current_fit == pytest.approx(scores["disliked"].appeal)
@@ -199,6 +212,17 @@ def test_model_build_reports_stage_progress(tmp_path: Path) -> None:
 
     assert {(50, 1_000), (100, 1_000), (200, 1_000), (1_000, 1_000)} <= set(progress)
     assert progress[-1] == (1_000, 1_000)
+
+
+def test_model_compares_known_performer_pairs_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    counted = Mock(wraps=builder_module.performer_similarity)
+    monkeypatch.setattr(builder_module, "performer_similarity", counted)
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    assert counted.call_count == 3
 
 
 def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path: Path) -> None:
