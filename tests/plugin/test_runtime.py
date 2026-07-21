@@ -8,6 +8,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -131,6 +132,25 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.SCHEMA_VERSION == 1
+
+
+def test_reused_model_keeps_existing_lane_classifications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_lanes", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(
+        module.LanePolicy,
+        "classify",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("reclassified")),
+    )
+    cursor = SimpleNamespace(fetchone=lambda: (3,))
+    connection = SimpleNamespace(execute=lambda *_args: cursor)
+
+    assert module._classify_lanes(connection, SimpleNamespace(model_id="model", reused=True)) == 3
 
 
 def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
