@@ -1,4 +1,7 @@
-# Stash Curator recommendation design
+# Archived recommendation design
+
+> Historical design record. This is not current user documentation; see
+> [Recommendations](../recommendations.md) and [Architecture](../architecture.md).
 
 Status: canonical design, 2026-07-15
 Working product name: **Stash Curator**

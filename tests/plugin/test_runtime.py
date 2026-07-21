@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import zipfile
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -64,9 +65,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert names == expected
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")
-    assert (tmp_path / "index.html").is_file()
     assert "id: stash-curator" in index
-    assert "sha256:" in index
+    assert f"sha256: {sha256(archive.read_bytes()).hexdigest()}" in index
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
     installed = tmp_path / "installed"
     assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()

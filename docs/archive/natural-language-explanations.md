@@ -1,4 +1,7 @@
-# Natural-language explanation design
+# Archived natural-language explanation design
+
+> Historical explanation research. This is not current user documentation; see
+> [Recommendations](../recommendations.md).
 
 Status: deterministic microplanner implemented; evaluation in progress
 

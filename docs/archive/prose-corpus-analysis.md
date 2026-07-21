@@ -1,4 +1,6 @@
-# Recommendation prose corpus analysis
+# Archived recommendation prose corpus analysis
+
+> Historical research note. This is not current user documentation.
 
 Status: 200-record private evaluation complete; implementation rules proposed
 

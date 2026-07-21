@@ -1,193 +1,61 @@
 <p align="center">
-  <img src="docs/assets/stash-curator.svg" alt="Stash Curator" width="112">
+  <img src="docs/assets/stash-curator.svg" alt="Stash Curator compass" width="112">
 </p>
 <h1 align="center">Stash Curator</h1>
 <p align="center"><strong>Navigate your library, guided by your taste.</strong></p>
-<p align="center">
-  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
-  <a href="https://github.com/mrx-31415/stash-curator/actions"><img alt="Build status" src="https://github.com/mrx-31415/stash-curator/actions/workflows/ci.yml/badge.svg"></a>
-</p>
 
-Stash Curator is a recommendation and discovery plugin for
-[Stash](https://github.com/stashapp/stash). It learns locally from viewing behavior
-and explicit feedback, then explains why each suggestion fits.
+Stash Curator is a local-first recommendation and discovery plugin for
+[Stash](https://github.com/stashapp/stash). It learns from viewing history and direct
+feedback, explains why an item appears, and keeps the model in a sidecar SQLite
+database you control.
 
-| Explore | Understand | Improve |
-| --- | --- | --- |
-| Five recommendation lanes | Inspectable score breakdowns | Feedback updates the model |
-| Similar scenes and performers | Supporting scenes and shared content | Prune candidates without deleting media |
-| Optional StashDB discovery | Natural-language recommendations | Variety-aware ranking |
+![A synthetic Stash Curator recommendation screen with five lanes and an open explanation panel](docs/assets/showcase-recommendations.svg)
 
-## Documentation
+## Install
 
-- [Product and recommendation design](docs/design.md)
-- [Implementation plan](docs/implementation.md)
-- [Current implementation handover](docs/handover.md)
-
-The design defines user promises and model semantics. The implementation plan defines
-component boundaries, delivery gates, work packages, tests, and acceptance criteria.
-
-## Install in Stash
-
-The initial release targets Stash v0.31 and requires Python 3.12 or newer in the
-Stash plugin runtime. Add this source under **Settings → Plugins → Available
-Plugins**:
+Preview requirements: **Stash v0.31** and **Python 3.12+** available to Stash's
+plugin runtime. Add this source under **Settings → Plugins → Available Plugins**:
 
 ```text
 https://mrx-31415.github.io/stash-curator/index.yml
 ```
 
-Install **Stash Curator**, reload plugins, open the compass button in Stash's
-top navigation, and run **Sync library** once. Jobs, configuration, backup, and reset are available from the Curator page;
-manual and full-reconciliation tasks are also available on Stash's Tasks page.
-Curator keeps feedback and events in its sidecar. Its only library mutation is the
-explicit, reversible Prune action, which adds or removes the configured tag; Curator
-never deletes media.
+Install **Stash Curator**, reload plugins, open the compass in Stash's navigation,
+then select **Sync library** once. See [Getting started](docs/getting-started.md) for
+configuration, updates, and backups.
 
-Stash does not currently provide plugins with a background scheduler or startup hook.
-For unattended refreshes, invoke **Sync and build recommendations** through Stash's
-task API from the host scheduler; no browser needs to be open. A long-lived scheduler
-task would still need external startup after every Stash restart, so Curator keeps its
-background jobs one-shot.
+## What it does
 
-StashDB discovery is opt-in. Configure a StashDB stash-box in Stash, then run
-**Refresh Expand cache** manually or from the same host scheduler. The cache remains
-usable during StashDB outages and is marked stale after 12 hours. Preference history
-is scored locally and is never sent to StashDB. Popularity-wildcard candidates are
-disabled by default and visibly badged when enabled.
+| Choose | Explore | Maintain |
+| --- | --- | --- |
+| For You, Best Bets, and Revisit lanes | Discover and Adventure challenge the model | Prune review applies a reversible tag |
+| Preference-aware Similar results | Optional read-only StashDB Expand | Curator never deletes media |
+| “Why this?” evidence and score details | Variety across performers, studios, and content | Local feedback and event history |
 
-The sidecar defaults to `{pluginDir}/data/curator.sqlite3`. Configure **Sidecar
-database path** before first use if plugin updates or uninstallation may replace that
-directory. Back up before uninstalling. Removing Curator does not alter Stash-owned
-scenes, performers, tags, studios, or history.
+Curator separates long-term **Appeal** from **Current Fit**, then builds varied lanes
+instead of sorting everything by one opaque score. Read [how recommendations work](docs/recommendations.md)
+or browse the complete [documentation site](https://mrx-31415.github.io/stash-curator/).
 
-For performance diagnosis, enable **Enable profiling** in Curator's plugin settings,
-reproduce the slow operation, then select the DEV icon in Curator's toolbar. Curator retains
-the latest 200 operation and task traces locally. Trace details omit SQL parameters
-and GraphQL variables and can be exported as Chrome Trace Event JSON for
-[Perfetto](https://ui.perfetto.dev/). Disable profiling when finished; saved traces
-remain available until cleared.
+## Safety and privacy
 
-Build a local package source with:
+Preference history, learned weights, and explanations stay local. StashDB discovery
+is opt-in and sends bounded read-only metadata queries, never your preference model.
+The only intentional Stash mutation is an explicit Prune action that adds or removes
+the configured tag. Back up the sidecar before uninstalling; see [Privacy](docs/privacy.md).
 
-```bash
-uv run python scripts/build_plugin.py
-```
+## Status
 
-This writes `dist/stash-curator.zip` and its checksummed `dist/index.yml`.
+Stash Curator is **Preview / pre-1.0**. Core recommendation, Similar, Expand, Prune,
+backup, and packaging flows are implemented; installed-system compatibility and
+performance testing continue. The runtime is dependency-free. Development uses
+[uv](https://docs.astral.sh/uv/); see [Contributing](docs/contributing.md).
 
-## Development
+## Project provenance
 
-Requirements:
+The idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
+Stash Curator is an independent project with no implied affiliation or endorsement.
 
-- Python 3.12 or newer
-- [uv](https://docs.astral.sh/uv/)
+Stash Curator is primarily generated with AI coding agents under human direction,
+review, and testing.
 
-Set up and verify the project:
-
-```bash
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy curator plugin/backend.py
-uv run pytest
-```
-
-Synchronize a local validation cache:
-
-```bash
-export STASH_URL=http://localhost:9999
-# export STASH_API_KEY=...  # only when Stash requires one
-uv run curator --db data/curator.sqlite3 doctor
-uv run curator --db data/curator.sqlite3 sync
-uv run curator --db data/curator.sqlite3 sync --full
-```
-
-Normal sync is incremental. A full sync traverses stable IDs and reconciles source
-deletions. Both modes resume interrupted page traversal. The validation client
-accepts GraphQL `query` operations only; it contains no Stash mutations. Repository
-tests use synthetic data and do not require access to a real Stash instance.
-
-Expand refreshes StashDB's public tag taxonomy automatically when its monthly cache
-expires. It can also be refreshed manually:
-
-```bash
-# Either export STASHDB_API_KEY=... or add a stashdb.org entry to ~/.netrc.
-uv run curator --db data/curator.sqlite3 sync-taxonomy --json
-```
-
-These refreshes send read-only GraphQL queries for public categories and tags. They
-does not upload library metadata or behavior. The immutable snapshot is stored in
-Curator's sidecar, so subsequent model builds are offline and reproducible. Local
-tags resolve by StashDB ID when available, then by a unique canonical name or alias;
-ambiguous matches are retained as provenance but are not guessed. The committed
-[category-role policy](curator/taxonomy/stashdb_category_roles.json) classifies body
-and appearance categories as performer attributes and treats other categories,
-including Clothing, as scene content by default.
-
-Build and inspect recommendations after a sync:
-
-```bash
-uv run curator --db data/curator.sqlite3 build-model --json
-uv run curator --db data/curator.sqlite3 recommend --lane for_you --count 12
-uv run curator --db data/curator.sqlite3 recommend --lane best_bets --count 12
-uv run curator --db data/curator.sqlite3 recommend --lane revisit --count 12
-uv run curator --db data/curator.sqlite3 recommend --lane discover --count 12
-uv run curator --db data/curator.sqlite3 recommend --lane adventure --count 12
-```
-
-Sync reconstructs historical evidence only for the scenes it receives and marks the
-model dirty. A resident plugin can call the update coordinator after its two-second
-quiet period; from the CLI, publish pending work with:
-
-```bash
-uv run curator --db data/curator.sqlite3 update-model --force --json
-```
-
-Recorded actions only require the faster preference rebuild. For direct maintenance,
-`build-model --preferences-only` skips historical reconstruction. Model publication
-keeps the current and previous snapshots and removes one older snapshot per build.
-Preview or accelerate the backlog cleanup with `db gc`; add `--apply` to delete and
-optionally `--vacuum` to reclaim file space. Vacuum is never automatic.
-
-Generate the local evaluation report:
-
-```bash
-uv run curator --db data/curator.sqlite3 report \
-  --output reports/curator-report.html --count 12
-```
-
-The report contains model internals and local entity names by default. Keep it in the
-ignored `reports/` directory. Add `--redacted` when producing an artifact suitable
-for sharing. When `STASH_URL` or `--stash-url` is set, report covers and titles link
-to the corresponding scene in Stash; redacted reports omit those private links. The
-report includes an image visibility toggle, supporting evidence, and an expandable
-score tree from final utility through lane inputs, Appeal, Current Fit, and individual
-model families. Use
-`explain --scene-id <id> --json` or
-`similar-performers --performer-id <id> --json` for focused inspection.
-
-Evaluate recommendations for StashDB scenes and performers that are not in the local
-library:
-
-```bash
-chmod 600 ~/.netrc  # once, when using netrc instead of STASHDB_API_KEY
-uv run python scripts/stashdb_poc.py \
-  --stash-url http://localhost:9999 --output reports/stashdb-poc.html \
-  --similar-to "Example Performer"
-```
-
-This disposable report expands a bounded candidate pool from strongly enjoyed linked
-scenes, then applies Curator's v1 affinities, content neighbors, bounded components,
-and coverage-aware performer similarity. It sends queries only, keeps external
-metadata in memory, and does not modify the sidecar schema.
-
-## Privacy
-
-Do not commit library exports, GraphQL responses, SQLite databases, local reports,
-real entity IDs, credentials, or personal evaluation notes. See the privacy boundary
-in the [design](docs/design.md#appendix-repository-privacy-boundary).
-
-## License
-
-Stash Curator is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Licensed under [AGPL-3.0](LICENSE).
