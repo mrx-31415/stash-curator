@@ -21,7 +21,6 @@ dev = [
   "pytest>=8.3",
   "ruff>=0.9",
 ]
-poc = ["scikit-learn>=1.6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["curator"]

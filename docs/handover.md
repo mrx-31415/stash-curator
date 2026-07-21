@@ -159,7 +159,7 @@ letting multiple merely known performers overwhelm scene-content mismatch.
 From the repository root:
 
 ```bash
-uv sync --all-groups
+uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy curator plugin/backend.py
