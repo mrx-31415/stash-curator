@@ -50,19 +50,19 @@
       value: "similar",
       label: "Similar",
       icon: faSearch,
-      description: "Start from a scene or performer and find close, preference-aware matches.",
+      description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
     },
     {
       value: "expand",
       label: "Expand",
       icon: faCompass,
-      description: "Find promising scenes and performers beyond your library.",
+      description: "External metadata candidates scored locally; a Wildcard was selected outside preference-derived seeds.",
     },
     {
       value: "prune",
       label: "Prune",
       icon: faWrench,
-      description: "Review explicit dislikes and high-confidence poor matches for library cleanup.",
+      description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
   ];
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
@@ -300,24 +300,25 @@
       { className: `curator-card curator-external-card curator-external-${kind} ${kind}-card` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       image && React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })),
-      React.createElement("div", { className: "curator-card-body" }, React.createElement("h3", null, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name)), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
+      React.createElement("div", { className: "curator-card-body card-section" }, React.createElement("h3", { className: "card-section-title" }, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name)), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
       React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   }
 
   function SourceReference({ entity, type, fallback }) {
-    if (!entity) return React.createElement(NavLink, { to: `/${type}s/${fallback.id}` }, fallback.label);
-    const href = `/${type}s/${entity.id}`;
-    const image = type === "scene" ? entity.paths?.screenshot : entity.image_path;
-    const title = entity.title || entity.name || `#${entity.id}`;
-    const details = type === "scene"
-      ? [...(entity.performers || []).map((item) => item.name), ...(entity.tags || []).slice(0, 3).map((item) => item.name)]
-      : [entity.measurements, entity.hair_color, entity.birthdate].filter(Boolean);
+    const href = `/${type}s/${entity?.id || fallback.id}`;
+    const image = entity && (type === "scene" ? entity.paths?.screenshot : entity.image_path);
+    const title = entity?.title || entity?.name || fallback.label;
+    const details = !entity
+      ? []
+      : type === "scene"
+        ? [...(entity.performers || []).map((item) => item.name), ...(entity.tags || []).slice(0, 3).map((item) => item.name)]
+        : [entity.measurements, entity.hair_color, entity.birthdate].filter(Boolean);
     return React.createElement(
       NavLink,
-      { className: `curator-source-reference curator-source-reference-${type}`, to: href },
-      image && React.createElement("img", { src: image, alt: "" }),
-      React.createElement("span", null, React.createElement("strong", null, title), details.length > 0 && React.createElement("small", null, details.join(" · ")))
+      { className: `curator-source-reference curator-source-reference-${type} ${type}-card`, to: href },
+      image && React.createElement("img", { className: `${type}-card-image`, src: image, alt: "" }),
+      React.createElement("span", { className: "card-section" }, React.createElement("strong", { className: "card-section-title" }, title), details.length > 0 && React.createElement("small", null, details.join(" · ")))
     );
   }
 
@@ -1124,6 +1125,12 @@
           )
         ),
         React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openView("profiling"), profilingActive: lane === "profiling" })
+      ),
+      laneOption && React.createElement(
+        "div",
+        { className: "curator-view-guidance" },
+        React.createElement("p", null, laneOption.description),
+        laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),

@@ -58,6 +58,21 @@
   margin: 0.15rem 0 0;
 }
 
+.curator-view-guidance {
+  color: var(--text-muted, #adb5bd);
+  font-size: 0.82rem;
+  margin: 0.35rem 0 0.8rem;
+}
+
+.curator-view-guidance p {
+  display: inline;
+  margin: 0;
+}
+
+.curator-view-guidance p + p::before {
+  content: " ";
+}
+
 .curator-tabs {
   align-items: center;
   align-self: center;
@@ -195,6 +210,9 @@
 .curator-lane-revisit { --lane-color: #b197fc; }
 .curator-lane-discover { --lane-color: #ffd43b; }
 .curator-lane-adventure { --lane-color: #ff922b; }
+.curator-lane-similar { --lane-color: #4dabf7; }
+.curator-lane-expand { --lane-color: #ff922b; }
+.curator-lane-prune { --lane-color: #fa5252; }
 
 .curator-tabs .nav-link svg,
 .curator-source-badge svg {
@@ -350,13 +368,23 @@
 .curator-source-discover { --lane-color: #ffd43b; }
 .curator-source-adventure { --lane-color: #ff922b; }
 
+.curator-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+}
+
 .curator-card[class*="curator-source-"] {
   border-left: 3px solid var(--lane-color, rgba(255, 255, 255, 0.12));
 }
 
-.curator-card:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+.curator-similar { --surface-color: #4dabf7; }
+.curator-expand { --surface-color: #ff922b; }
+.curator-prune-page { --surface-color: #fa5252; }
+
+.curator-similar .curator-card,
+.curator-expand .curator-card,
+.curator-prune-page .curator-card {
+  border-left: 3px solid var(--surface-color);
 }
 
 .curator-card > .scene-card {
@@ -833,6 +861,10 @@
   text-decoration: none;
 }
 
+.curator-similar .curator-source-reference {
+  border-left: 3px solid var(--surface-color);
+}
+
 .curator-source-reference img {
   align-self: stretch;
   height: 5.5rem;
@@ -876,7 +908,7 @@
   margin: 0.35rem 0;
 }
 
-.curator-external-card h3 {
+.curator-external-card .card-section-title {
   font-size: 1.05rem;
   margin: 0 0 0.35rem;
 }
