@@ -99,10 +99,10 @@ class FeatureStore:
                 )
                 SELECT other.scene_id AS entity_id, sum(target.value * other.value) AS similarity
                 FROM target JOIN scene_content_search other USING(feature_id)
-                WHERE other.feature_version=? AND other.scene_id<>?
+                WHERE other.scene_id<>?
                 GROUP BY other.scene_id
                 """,
-                (feature_version, scene_id, feature_version, scene_id),
+                (feature_version, scene_id, scene_id),
             )
         }
 

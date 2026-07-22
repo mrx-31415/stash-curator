@@ -118,10 +118,16 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     assert "tag:content" in vectors["scene-1"]
     assert "tag:parent" in vectors["scene-1"]
     assert "tag:admin" not in vectors["scene-1"]
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
     assert (
         FeatureStore(connection).scene_content_overlaps(first.feature_version, "scene-1")["scene-2"]
         > 0
     )
+    connection.set_trace_callback(None)
+    overlap_query = next(statement for statement in statements if "WITH target AS" in statement)
+    plan = connection.execute(f"EXPLAIN QUERY PLAN {overlap_query}")
+    assert any("SEARCH other USING PRIMARY KEY (feature_id=?)" in row["detail"] for row in plan)
     scene_features = FeatureStore(connection).entity_features(first.feature_version, "scene")
     families = {feature.family for feature in scene_features["scene-1"]}
     assert {"content", "performer_identity", "studio"} <= families
