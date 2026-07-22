@@ -133,7 +133,26 @@ def test_plugin_ignores_repeated_script_evaluation() -> None:
 
 def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    assert 'className: "curator-card-body card-section"' in source
+    assert "grid-card ${kind}-card" in source
+    assert (
+        "className: `curator-external-thumbnail thumbnail-section "
+        '${kind === "scene" ? "video-section" : ""}`' in source
+    )
+    assert 'className: "card-section-title flex-aligned"' in source
+    assert 'metadataPopover("tags", faTag, "Tags", tags.length' in source
+    assert 'metadataPopover("performers", faUser, "Performers", cast.length' in source
+    assert "React.createElement(\n        HoverPopover," in source
+    assert "leaveDelay: 250" in source
+    assert 'className: "minimal curator-external-popover-button"' in source
+    assert 'className: "performer-tag-container row"' in source
+    assert 'className: "image-thumbnail"' in source
+    assert 'className: "tag-item tag-link badge badge-secondary"' in source
+    assert 'React.createElement("summary", null, "Why this?")' in source
+    assert 'React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`)' in source
+    assert 'React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`)' in source
+    assert (
+        'className: kind === "scene" ? "scene-card__details" : "curator-external-details"' in source
+    )
     assert "className: `${type}-card-image`" in source
     assert 'className: "card-section-title"' in source
     assert "Curator never deletes media; tagging is reversible" in source
