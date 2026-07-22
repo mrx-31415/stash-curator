@@ -620,6 +620,18 @@ def _job_status(connection: Any) -> dict[str, object]:
     return {"schema_version": SCHEMA_VERSION, "jobs": jobs}
 
 
+def _classify_lanes(connection: Any, model: Any) -> int:
+    if model.reused:
+        count = int(
+            connection.execute(
+                "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model.model_id,)
+            ).fetchone()[0]
+        )
+        if count:
+            return count
+    return len(LanePolicy(connection).classify(model.model_id))
+
+
 def _run_task_body(
     payload: dict[str, Any], mode: str, settings: dict[str, Any]
 ) -> dict[str, object]:
@@ -715,7 +727,7 @@ def _run_task_body(
             _progress(0.94)
             _log("i", "Organizing scenes into recommendation lanes")
             with span("python", "task.lane_classification"):
-                lane_count = len(LanePolicy(connection).classify(model.model_id))
+                lane_count = _classify_lanes(connection, model)
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -754,7 +766,7 @@ def _run_task_body(
                 _progress(0.94)
                 _log("i", "Organizing scenes into recommendation lanes")
                 with span("python", "task.lane_classification"):
-                    lane_count = len(LanePolicy(connection).classify(model.model_id))
+                    lane_count = _classify_lanes(connection, model)
                 _progress(0.98)
                 summary = {
                     "updated": True,

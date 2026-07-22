@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,18 @@ class ProfileValue:
 class PerformerProfile:
     performer_id: str
     blocks: dict[str, dict[str, ProfileValue]]
+    norms: dict[str, float] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "norms",
+            {
+                block: math.sqrt(sum(item.value**2 for item in values.values()))
+                for block, values in self.blocks.items()
+                if block not in NUMERIC_BLOCKS
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -37,15 +49,19 @@ NUMERIC_SCALES = {
     "hip_to_height": 0.12,
     "age_recording": 8.0,
 }
+NUMERIC_BLOCKS = {"measurements", "height", "age"}
 
 
-def _cosine(left: dict[str, ProfileValue], right: dict[str, ProfileValue]) -> float | None:
+def _cosine(
+    left: dict[str, ProfileValue],
+    right: dict[str, ProfileValue],
+    left_norm: float,
+    right_norm: float,
+) -> float | None:
     shared = set(left) & set(right)
     if not shared:
         return 0.0
     dot = sum(left[key].value * right[key].value for key in shared)
-    left_norm = math.sqrt(sum(item.value**2 for item in left.values()))
-    right_norm = math.sqrt(sum(item.value**2 for item in right.values()))
     if left_norm == 0 or right_norm == 0:
         return None
     confidence = sum(min(left[key].confidence, right[key].confidence) for key in shared) / len(
@@ -73,15 +89,16 @@ def performer_similarity(
 ) -> SimilarityResult:
     similarities: dict[str, float] = {}
     used_weights: dict[str, float] = {}
-    numeric_blocks = {"measurements", "height", "age"}
     for block in sorted(set(left.blocks) & set(right.blocks)):
         weight = block_weights.get(block, 0.0)
         if weight <= 0:
             continue
         similarity = (
             _numeric(left.blocks[block], right.blocks[block])
-            if block in numeric_blocks
-            else _cosine(left.blocks[block], right.blocks[block])
+            if block in NUMERIC_BLOCKS
+            else _cosine(
+                left.blocks[block], right.blocks[block], left.norms[block], right.norms[block]
+            )
         )
         if similarity is None:
             continue

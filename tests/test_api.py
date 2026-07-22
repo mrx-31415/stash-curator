@@ -5,6 +5,7 @@ import pytest
 from curator.api import CuratorAPI
 from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
+from curator.similarity import SimilarityService
 from curator.storage import connect_database
 from tests.model.test_builder import REFERENCE_MS, _database
 
@@ -91,7 +92,16 @@ def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
         assert scene_ids is not None
         return original(self, feature_version, scene_ids)
 
+    studio_scans = 0
+    original_studios = SimilarityService._studios
+
+    def counted_studios(self):
+        nonlocal studio_scans
+        studio_scans += 1
+        return original_studios(self)
+
     monkeypatch.setattr(FeatureStore, "scene_content_vectors", bounded_vectors)
+    monkeypatch.setattr(SimilarityService, "_studios", counted_studios)
 
     result = CuratorAPI(connection).similar(
         "scene", "old-good", 5, impression_id="similar-impression", now_ms=REFERENCE_MS
@@ -106,6 +116,7 @@ def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
     )
     assert any("shared_content" in item["relationships"] for item in result["items"])
     assert all(item["label"] for item in result["items"])
+    assert studio_scans == 1
     impression = connection.execute(
         "SELECT lane, request_context_json FROM impression WHERE impression_id='similar-impression'"
     ).fetchone()

@@ -194,17 +194,11 @@
     return request;
   }
 
-  async function prefetchLanes(activeLane) {
-    const generation = cacheGeneration;
-    for (const option of LANES) {
-      if (generation !== cacheGeneration) return;
-      if (option.value === activeLane) continue;
-      try {
-        await loadSlate(option.value, true);
-      } catch (_) {
-        // Opening the lane will retry and show any error in context.
-      }
-    }
+  function prefetchLane(lane) {
+    if (!laneByValue.has(lane)) return;
+    loadSlate(lane, true).catch(() => {
+      // Opening the lane will retry and show any error in context.
+    });
   }
 
   async function runTask(taskName) {
@@ -1064,7 +1058,6 @@
           if (!active) return;
           setSlate(data);
           setLoading(false);
-          prefetchLanes(lane);
         },
         (failure) => active && (setError(failure.message), setLoading(false))
       );
@@ -1127,7 +1120,7 @@
           NAV_ITEMS.map((option) =>
             React.createElement(
               Nav.Link,
-              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), onMouseEnter: () => prefetchLane(option.value), onFocus: () => prefetchLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
               React.createElement(FontAwesomeIcon, { icon: option.icon }),
               React.createElement("span", null, option.label)
             )

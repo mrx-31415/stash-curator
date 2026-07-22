@@ -1,3 +1,6 @@
+from unittest.mock import Mock
+
+import curator.features.profiles as profiles_module
 from curator.features.profiles import PerformerProfile, ProfileValue, performer_similarity
 
 WEIGHTS = {
@@ -59,3 +62,14 @@ def test_cup_and_augmentation_conflicts_reduce_similarity() -> None:
         performer_similarity(close, close, WEIGHTS).similarity
         > performer_similarity(close, conflict, WEIGHTS).similarity
     )
+
+
+def test_cosine_norms_are_computed_once(monkeypatch) -> None:
+    sqrt = Mock(wraps=profiles_module.math.sqrt)
+    monkeypatch.setattr(profiles_module.math, "sqrt", sqrt)
+    profile = PerformerProfile("profile", {"eyes": {"eye:blue": ProfileValue(1, 1)}})
+
+    performer_similarity(profile, profile, WEIGHTS)
+    performer_similarity(profile, profile, WEIGHTS)
+
+    assert sqrt.call_count == 1

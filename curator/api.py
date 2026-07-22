@@ -15,7 +15,7 @@ from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
-from curator.profiling import record_duration
+from curator.profiling import record_duration, span
 from curator.ranking import SlateBuilder
 from curator.ranking.slate import Slate
 from curator.similarity import SimilarityService
@@ -353,52 +353,60 @@ class CuratorAPI:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model")
-        tagged = {
-            str(row[0])
-            for row in self.connection.execute(
-                """
-                SELECT st.scene_id FROM scene_tag st JOIN source_tag t USING(tag_id)
-                WHERE lower(t.name)=lower(?)
-                """,
-                (tag_name,),
-            )
-        }
+        with span("python", "prune.tagged"):
+            tagged = {
+                str(row[0])
+                for row in self.connection.execute(
+                    """
+                    SELECT scene_id FROM scene_tag WHERE tag_id IN (
+                      SELECT tag_id FROM source_tag WHERE lower(name)=lower(?)
+                    )
+                    """,
+                    (tag_name,),
+                )
+            }
         states = {
             str(row["scene_id"]): str(row["state"])
             for row in self.connection.execute("SELECT scene_id, state FROM pruning_candidate")
         }
-        explicit = {
-            str(row[0])
-            for row in self.connection.execute(
-                """
-                SELECT f.scene_id FROM feedback f
-                WHERE f.reversed_by_id IS NULL AND f.feedback_type IN ('thumb_down', 'never_show')
-                AND f.occurred_at_ms=(
-                  SELECT max(f2.occurred_at_ms) FROM feedback f2
-                  WHERE f2.scene_id=f.scene_id AND f2.reversed_by_id IS NULL
-                  AND f2.feedback_type IN ('thumb_up', 'thumb_down', 'never_show')
-                )
-                """
-            )
-        } | {scene_id for scene_id, state in states.items() if state == "review"}
-        appeal_limit = -0.18 + 0.13 * aggressiveness
-        confidence_limit = 0.55 - 0.20 * aggressiveness
-        scores = (
-            {
-                str(row["scene_id"]): row
+        with span("python", "prune.explicit"):
+            explicit = {
+                str(row[0])
                 for row in self.connection.execute(
                     """
-                    SELECT scene_id, appeal, confidence FROM model_scene_score
-                    WHERE model_id=? AND (scene_id IN (
-                      SELECT scene_id FROM pruning_candidate WHERE state='review'
-                    ) OR appeal<=? AND confidence>=?)
-                    """,
-                    (model_id, appeal_limit, confidence_limit),
+                    SELECT f.scene_id FROM feedback f
+                    WHERE f.reversed_by_id IS NULL
+                    AND f.feedback_type IN ('thumb_down', 'never_show')
+                    AND f.occurred_at_ms=(
+                      SELECT max(f2.occurred_at_ms) FROM feedback f2
+                      WHERE f2.scene_id=f.scene_id AND f2.reversed_by_id IS NULL
+                      AND f2.feedback_type IN ('thumb_up', 'thumb_down', 'never_show')
+                    )
+                    """
                 )
-            }
-            if view != "tagged"
-            else {}
-        )
+            } | {scene_id for scene_id, state in states.items() if state == "review"}
+        appeal_limit = -0.18 + 0.13 * aggressiveness
+        confidence_limit = 0.55 - 0.20 * aggressiveness
+        with span("python", "prune.scores"):
+            scores = (
+                {
+                    str(row["scene_id"]): row
+                    for row in self.connection.execute(
+                        """
+                        SELECT scene_id, appeal, confidence FROM model_scene_score
+                        WHERE model_id=? AND appeal<=? AND confidence>=?
+                        UNION
+                        SELECT scene_id, appeal, confidence FROM model_scene_score
+                        WHERE model_id=? AND scene_id IN (
+                          SELECT scene_id FROM pruning_candidate WHERE state='review'
+                        )
+                        """,
+                        (model_id, appeal_limit, confidence_limit, model_id),
+                    )
+                }
+                if view != "tagged"
+                else {}
+            )
         suspects = {
             scene_id
             for scene_id, score in scores.items()

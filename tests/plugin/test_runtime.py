@@ -9,6 +9,7 @@ import sys
 import zipfile
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -105,6 +106,16 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_curator_prefetches_only_the_intended_lane() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    assert "function prefetchLanes" not in source
+    assert "if (!laneByValue.has(lane)) return;" in source
+    assert "loadSlate(lane).then(" in source
+    assert "loadSlate(lane, true).catch(" in source
+    assert "onMouseEnter: () => prefetchLane(option.value)" in source
+    assert "onFocus: () => prefetchLane(option.value)" in source
+
+
 def test_plugin_ignores_repeated_script_evaluation() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     guard = "if (window.__stashCuratorPluginLoaded) return;"
@@ -131,6 +142,25 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.SCHEMA_VERSION == 1
+
+
+def test_reused_model_keeps_existing_lane_classifications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_lanes", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(
+        module.LanePolicy,
+        "classify",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("reclassified")),
+    )
+    cursor = SimpleNamespace(fetchone=lambda: (3,))
+    connection = SimpleNamespace(execute=lambda *_args: cursor)
+
+    assert module._classify_lanes(connection, SimpleNamespace(model_id="model", reused=True)) == 3
 
 
 def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:

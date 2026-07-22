@@ -1107,14 +1107,13 @@ class ExpandService:
             )
             if str(row["studio_id"]) in links["studios"]
         }
-        profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         evidence = self._performer_evidence(model_id, links)
         evidence_by_local = {str(item["local_id"]): item for item in evidence.values()}
+        anchor_ids = {key for key, item in evidence_by_local.items() if float(item["strength"]) > 0}
+        profiles = FeatureStore(self.connection).performer_profiles(feature_version, anchor_ids)
         local_studios = {external: local for local, external in links["studios"].items()}
         anchors = [
-            (profiles[key], item)
-            for key, item in evidence_by_local.items()
-            if key in profiles and float(item["strength"]) > 0
+            (profiles[key], item) for key, item in evidence_by_local.items() if key in profiles
         ]
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
         performer_rows: dict[str, dict[str, Any]] = {}
