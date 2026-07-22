@@ -52,7 +52,15 @@ class Trace:
         with self._lock:
             if len(self.events) >= MAX_EVENTS - 2:
                 self.dropped_events += 1
-                return
+                if category == "sqlite":
+                    return
+                try:
+                    index = next(
+                        i for i, event in enumerate(self.events) if event["cat"] == "sqlite"
+                    )
+                    del self.events[index]
+                except StopIteration:
+                    return
             event: dict[str, object] = {
                 "name": name,
                 "cat": category,

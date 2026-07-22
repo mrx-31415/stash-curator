@@ -4,6 +4,7 @@ from pathlib import Path
 
 from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService
+from curator.features import FeatureStore
 from curator.model import PreferenceModelBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
 
@@ -375,7 +376,9 @@ def test_external_content_similarity_normalizes_candidate_mapped_tags(tmp_path: 
     assert result["items"][0]["similarity"] > result["items"][1]["similarity"]
 
 
-def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> None:
+def test_external_similarity_loads_only_positive_anchor_profiles(
+    tmp_path: Path, monkeypatch
+) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     connection.execute(
@@ -383,6 +386,14 @@ def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> N
         ("good", "https://stashdb.org/graphql", "external-tag"),
     )
     client = FakeStashDB()
+    requested: list[object] = []
+    performer_profiles = FeatureStore.performer_profiles
+
+    def capture_profiles(store, feature_version, performer_ids=None):
+        requested.append(performer_ids)
+        return performer_profiles(store, feature_version, performer_ids)
+
+    monkeypatch.setattr(FeatureStore, "performer_profiles", capture_profiles)
 
     ExpandService(connection).targeted_similar(
         client,
@@ -393,6 +404,7 @@ def test_external_similarity_sends_only_raw_stashdb_tag_ids(tmp_path: Path) -> N
 
     tag_query = next(value for value in client.inputs if "tags" in value)
     assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
+    assert {"p1"} in requested
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:

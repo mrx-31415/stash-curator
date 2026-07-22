@@ -109,3 +109,17 @@ def test_profile_limit_is_validated(tmp_path: Path) -> None:
             get_trace(connection, "missing")
     finally:
         connection.close()
+
+
+def test_truncated_trace_keeps_high_level_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(profiling, "MAX_EVENTS", 5)
+    trace, token = begin_trace("update-model", "task")
+    try:
+        for index in range(4):
+            trace.record("sqlite", f"query-{index}", time.perf_counter_ns(), 1_000)
+        trace.record("python", "model.scores", time.perf_counter_ns(), 1_000)
+    finally:
+        end_trace(trace, token)
+
+    assert "model.scores" in {event["name"] for event in trace.events}
+    assert trace.dropped_events == 2

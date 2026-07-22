@@ -356,9 +356,15 @@ def _external_profiles(
     for identifier, values in content.items():
         norm = math.sqrt(sum(value * value for value in values.values())) or 1.0
         confidence = min(1.0, scene_counts[identifier] / 5)
-        profiles[identifier].blocks["content"] = {
-            name: ProfileValue(value / norm, confidence) for name, value in values.items()
-        }
+        profiles[identifier] = PerformerProfile(
+            identifier,
+            {
+                **profiles[identifier].blocks,
+                "content": {
+                    name: ProfileValue(value / norm, confidence) for name, value in values.items()
+                },
+            },
+        )
     return profiles, raw_performers
 
 
