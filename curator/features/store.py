@@ -121,7 +121,7 @@ class FeatureStore:
             f"""
             SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
             FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-            WHERE {where} ORDER BY ef.entity_id, fd.family, fd.name
+            WHERE {where} ORDER BY ef.entity_id, ef.feature_id
             """,
             parameters,
         ):

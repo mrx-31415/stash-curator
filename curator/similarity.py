@@ -114,8 +114,8 @@ class SimilarityService:
             "python", "similarity.performer_similarity", self.timings_ms["performer_similarity"]
         )
         started = time.perf_counter()
-        target_studio = self._studios().get(scene_id)
         studios = self._studios()
+        target_studio = studios.get(scene_id)
         target_structure = min(1.0, max(0, len(target_performers) - 1) / 3)
         names = {
             f"tag:{row['tag_id']}": str(row["name"])
