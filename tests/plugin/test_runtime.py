@@ -106,6 +106,16 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_curator_prefetches_only_the_intended_lane() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    assert "function prefetchLanes" not in source
+    assert "if (!laneByValue.has(lane)) return;" in source
+    assert "loadSlate(lane).then(" in source
+    assert "loadSlate(lane, true).catch(" in source
+    assert "onMouseEnter: () => prefetchLane(option.value)" in source
+    assert "onFocus: () => prefetchLane(option.value)" in source
+
+
 def test_plugin_ignores_repeated_script_evaluation() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     guard = "if (window.__stashCuratorPluginLoaded) return;"
