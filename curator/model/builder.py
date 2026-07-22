@@ -19,7 +19,7 @@ from curator.features.profiles import performer_similarity
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
-from curator.profiling import record_duration
+from curator.profiling import record_duration, span
 from curator.storage import ModelStore, transaction
 from curator.storage.retention import prune_snapshots
 
@@ -409,23 +409,26 @@ class PreferenceModelBuilder:
         label_mean: float,
         reference_at_ms: int,
     ) -> tuple[_Score, ...]:
-        vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
+        with span("python", "model.score_vectors"):
+            vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
         all_scene_ids = [
             str(row[0])
             for row in self.connection.execute(
                 "SELECT scene_id FROM source_scene ORDER BY scene_id"
             )
         ]
-        preference_vectors, discriminative_tag_count = self._preference_content_vectors(
-            vectors, scene_features, affinities
-        )
-        progress_total = len(preference_vectors) + len(all_scene_ids)
-        neighbors = self._content_neighbors(
-            preference_vectors, training_labels, label_mean, progress_total
-        )
-        performer_similarity_scores = self._performer_similarity_scores(
-            feature_version, scene_features, affinities
-        )
+        with span("python", "model.score_neighbors"):
+            preference_vectors, discriminative_tag_count = self._preference_content_vectors(
+                vectors, scene_features, affinities
+            )
+            progress_total = len(preference_vectors) + len(all_scene_ids)
+            neighbors = self._content_neighbors(
+                preference_vectors, training_labels, label_mean, progress_total
+            )
+        with span("python", "model.score_performer_similarity"):
+            performer_similarity_scores = self._performer_similarity_scores(
+                feature_version, scene_features, affinities
+            )
         baseline_support = sum(label.confidence for label in training_labels.values())
         baseline = (
             label_mean * baseline_support / (self.config.model.affinity_prior + baseline_support)
@@ -646,7 +649,7 @@ class PreferenceModelBuilder:
             recovery = self._recovery(last, reference_at_ms)
             cooldown = max(0.0, appeal) * (1 - recovery)
             satiation = self._satiation(scene_id, appeal, recent_context)
-            not_now = self._not_now_penalty(scene_id, reference_at_ms)
+            not_now = self._not_now_penalty(scene_id, reference_at_ms, recent_context)
             current_fit = _clamp(appeal - cooldown - satiation - not_now)
             content_count = len(vectors.get(scene_id, {}))
             performer_profile_count = sum(
@@ -825,16 +828,17 @@ class PreferenceModelBuilder:
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         weights = dict(self.config.feature.performer_block_weights)
         known = {key: profiles[key] for key in identity_affinity if key in profiles}
-        result: dict[str, dict[str, object]] = {}
+        matches_by_performer: dict[str, list[dict[str, object]]] = {
+            performer_id: [] for performer_id in profiles
+        }
         for performer_id, profile in profiles.items():
-            matches = []
             for known_id, known_profile in known.items():
-                if known_id == performer_id:
+                if known_id == performer_id or (performer_id in known and known_id < performer_id):
                     continue
                 similarity = performer_similarity(profile, known_profile, weights)
                 if similarity.similarity <= 0:
                     continue
-                matches.append(
+                matches_by_performer[performer_id].append(
                     {
                         "performer_id": known_id,
                         "similarity": similarity.similarity,
@@ -843,6 +847,18 @@ class PreferenceModelBuilder:
                         "blocks": similarity.block_similarities,
                     }
                 )
+                if performer_id in known:
+                    matches_by_performer[known_id].append(
+                        {
+                            "performer_id": performer_id,
+                            "similarity": similarity.similarity,
+                            "affinity": identity_affinity[performer_id][0],
+                            "confidence": identity_affinity[performer_id][1],
+                            "blocks": similarity.block_similarities,
+                        }
+                    )
+        result: dict[str, dict[str, object]] = {}
+        for performer_id, matches in matches_by_performer.items():
             matches.sort(key=lambda item: (-_number(item["similarity"]), str(item["performer_id"])))
             selected = matches[:5]
             denominator = sum(_number(item["similarity"]) ** 3 for item in selected)
@@ -913,6 +929,26 @@ class PreferenceModelBuilder:
     def _recent_context(
         self, reference_at_ms: int, vectors: dict[str, dict[str, float]]
     ) -> dict[str, object]:
+        scene_performers: dict[str, list[str]] = defaultdict(list)
+        for row in self.connection.execute(
+            "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id"
+        ):
+            scene_performers[str(row["scene_id"])].append(str(row["performer_id"]))
+        scene_studios = {
+            str(row["scene_id"]): str(row["studio_id"])
+            for row in self.connection.execute(
+                "SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL"
+            )
+        }
+        not_now = {
+            str(row["scene_id"]): int(row["occurred_at_ms"])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id, max(occurred_at_ms) AS occurred_at_ms FROM feedback
+                WHERE feedback_type='not_now' AND reversed_by_id IS NULL GROUP BY scene_id
+                """
+            )
+        }
         cutoff = reference_at_ms - 30 * 86_400_000
         rows = self.connection.execute(
             """
@@ -932,10 +968,7 @@ class PreferenceModelBuilder:
                 studios[str(row["studio_id"])] = max(
                     played_at, studios.get(str(row["studio_id"]), 0)
                 )
-            for performer in self.connection.execute(
-                "SELECT performer_id FROM scene_performer WHERE scene_id=?", (scene_id,)
-            ):
-                performer_id = str(performer[0])
+            for performer_id in scene_performers.get(scene_id, ()):
                 performers[performer_id] = max(played_at, performers.get(performer_id, 0))
             if scene_id in vectors:
                 recent_vectors.append((scene_id, played_at, vectors[scene_id]))
@@ -943,6 +976,9 @@ class PreferenceModelBuilder:
             "reference": reference_at_ms,
             "performers": performers,
             "studios": studios,
+            "scene_performers": scene_performers,
+            "scene_studios": scene_studios,
+            "not_now": not_now,
             "vectors": recent_vectors,
             "scene_vectors": vectors,
         }
@@ -956,22 +992,22 @@ class PreferenceModelBuilder:
         reference = reference_value
         performer_times = context["performers"]
         studio_times = context["studios"]
+        scene_performers = context["scene_performers"]
+        scene_studios = context["scene_studios"]
         assert isinstance(performer_times, dict)
         assert isinstance(studio_times, dict)
+        assert isinstance(scene_performers, dict)
+        assert isinstance(scene_studios, dict)
         performer_penalty = 0.0
-        for row in self.connection.execute(
-            "SELECT performer_id FROM scene_performer WHERE scene_id=?", (scene_id,)
-        ):
-            timestamp = performer_times.get(str(row[0]))
+        for performer_id in scene_performers.get(scene_id, ()):
+            timestamp = performer_times.get(str(performer_id))
             if isinstance(timestamp, int):
                 days = max(0.0, (reference - timestamp) / 86_400_000)
                 performer_penalty = max(performer_penalty, 0.06 * math.exp(-days / 7))
-        studio_row = self.connection.execute(
-            "SELECT studio_id FROM source_scene WHERE scene_id=?", (scene_id,)
-        ).fetchone()
         studio_penalty = 0.0
-        if studio_row and studio_row[0] and isinstance(studio_times.get(str(studio_row[0])), int):
-            timestamp = int(studio_times[str(studio_row[0])])
+        studio_id = scene_studios.get(scene_id)
+        if isinstance(studio_id, str) and isinstance(studio_times.get(studio_id), int):
+            timestamp = int(studio_times[studio_id])
             days = max(0.0, (reference - timestamp) / 86_400_000)
             studio_penalty = 0.03 * math.exp(-days / 7)
         content_penalty = 0.0
@@ -994,18 +1030,15 @@ class PreferenceModelBuilder:
             appeal * (performer_penalty + studio_penalty + content_penalty),
         )
 
-    def _not_now_penalty(self, scene_id: str, reference_at_ms: int) -> float:
-        row = self.connection.execute(
-            """
-            SELECT occurred_at_ms FROM feedback
-            WHERE scene_id=? AND feedback_type='not_now' AND reversed_by_id IS NULL
-            ORDER BY occurred_at_ms DESC LIMIT 1
-            """,
-            (scene_id,),
-        ).fetchone()
-        if row is None:
+    def _not_now_penalty(
+        self, scene_id: str, reference_at_ms: int, context: dict[str, object]
+    ) -> float:
+        not_now = context["not_now"]
+        assert isinstance(not_now, dict)
+        occurred_at_ms = not_now.get(scene_id)
+        if not isinstance(occurred_at_ms, int):
             return 0.0
-        age_days = max(0.0, (reference_at_ms - int(row[0])) / 86_400_000)
+        age_days = max(0.0, (reference_at_ms - occurred_at_ms) / 86_400_000)
         if age_days >= self.config.model.not_now_days:
             return 0.0
         return self.config.model.not_now_penalty * (1 - age_days / self.config.model.not_now_days)
