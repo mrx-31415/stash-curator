@@ -210,9 +210,9 @@
 .curator-lane-revisit { --lane-color: #b197fc; }
 .curator-lane-discover { --lane-color: #ffd43b; }
 .curator-lane-adventure { --lane-color: #ff922b; }
-.curator-lane-similar { --lane-color: #4dabf7; }
-.curator-lane-expand { --lane-color: #ff922b; }
-.curator-lane-prune { --lane-color: #fa5252; }
+.curator-lane-similar { --lane-color: #66d9e8; }
+.curator-lane-expand { --lane-color: #f783ac; }
+.curator-lane-prune { --lane-color: #ff6b6b; }
 
 .curator-tabs .nav-link svg,
 .curator-source-badge svg {
