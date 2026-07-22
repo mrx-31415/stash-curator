@@ -12,6 +12,11 @@
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
   const { faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const componentTransforms = window.StashCuratorComponentTransforms ||= {};
+
+  function transformComponentProps(name, props) {
+    return (componentTransforms[name] || []).reduce((value, transform) => transform(value), props);
+  }
   const LANES = [
     {
       value: "for_you",
@@ -280,7 +285,8 @@
     return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
   }
 
-  function ExternalCard({ item, kind, gender, onShortlist, onShowScenes, onWhisparr }) {
+  const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
+    const { item, kind, gender, onShortlist, onShowScenes, onWhisparr } = transformComponentProps("stash-curator.ExternalCard", props);
     const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
     const payload = item.payload;
@@ -306,9 +312,10 @@
       React.createElement("div", { className: "curator-card-body card-section" }, React.createElement("h3", { className: "card-section-title" }, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, payload.title || payload.name || item.id)), people.length > 0 && React.createElement("div", { className: "curator-performer-links" }, people.map((person) => React.createElement(person.curator_local ? NavLink : "a", { key: person.id, className: "btn btn-secondary btn-sm", ...(person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" }) }, person.name)), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)), payload.studio?.name && React.createElement("p", { className: "curator-external-meta" }, payload.studio.name), payload.why?.length && React.createElement("p", null, payload.why.join(" · ")), React.createElement("small", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)),
       React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
-  }
+  });
 
-  function SourceReference({ entity, type, fallback }) {
+  const SourceReference = Api.register.component("stash-curator.SourceReference", function SourceReference(props) {
+    const { entity, type, fallback } = transformComponentProps("stash-curator.SourceReference", props);
     const href = `/${type}s/${entity?.id || fallback.id}`;
     const image = entity && (type === "scene" ? entity.paths?.screenshot : entity.image_path);
     const title = entity?.title || entity?.name || fallback.label;
@@ -323,7 +330,7 @@
       image && React.createElement("img", { className: `${type}-card-image`, src: image, alt: "" }),
       React.createElement("span", { className: "card-section" }, React.createElement("strong", { className: "card-section-title" }, title), details.length > 0 && React.createElement("small", null, details.join(" · ")))
     );
-  }
+  });
 
   function Feedback({ item, onRemove }) {
     const [saved, setSaved] = React.useState("");
