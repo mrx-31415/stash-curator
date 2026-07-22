@@ -106,6 +106,14 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_curator_external_components_are_public_and_patchable() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    assert 'Api.register.component("stash-curator.ExternalCard"' in source
+    assert 'Api.register.component("stash-curator.SourceReference"' in source
+    assert 'transformComponentProps("stash-curator.ExternalCard", props)' in source
+    assert 'transformComponentProps("stash-curator.SourceReference", props)' in source
+
+
 def test_curator_prefetches_only_the_intended_lane() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "function prefetchLanes" not in source
