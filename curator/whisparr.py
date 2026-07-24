@@ -89,12 +89,15 @@ class WhisparrClient:
                 "rootFolderPath": root_folder,
                 "qualityProfileId": quality_profile_id,
                 "monitored": False,
-                "addOptions": {"monitor": "none", "searchForMovie": search},
+                "addOptions": {"monitor": "none", "searchForMovie": False},
             },
         )
         if not isinstance(created, dict):
             raise RuntimeError("Whisparr returned an invalid add response")
-        return {"status": "sent", "id": created.get("id")}
+        movie_id = created.get("id")
+        if search:
+            self._request("POST", "/command", {"name": "MoviesSearch", "movieIds": [movie_id]})
+        return {"status": "sent", "id": movie_id}
 
     def _request(self, method: str, path: str, payload: object | None = None) -> Any:
         body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None
