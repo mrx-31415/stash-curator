@@ -114,6 +114,13 @@ def test_curator_external_components_are_public_and_patchable() -> None:
     assert 'transformComponentProps("stash-curator.SourceReference", props)' in source
 
 
+def test_whisparr_button_is_disabled_until_configured() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    assert "disabled: !whisparrEnabled ||" in source
+    assert "setWhisparrEnabled(data.whisparr_enabled)" in source
+    assert "onWhisparr: sendWhisparr, whisparrEnabled" in source
+
+
 def test_curator_prefetches_only_the_intended_lane() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "function prefetchLanes" not in source
@@ -214,6 +221,22 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         assert config["model_update_event_threshold"] == 7
     finally:
         connection.close()
+    assert (
+        module._api(
+            {"args": {"database_path": str(tmp_path / "curator.sqlite3")}},
+            "get_config",
+            {"whisparrUrl": "http://whisparr.local", "whisparrApiKey": "secret"},
+        )["whisparr_enabled"]
+        is True
+    )
+    assert (
+        module._api(
+            {"args": {"database_path": str(tmp_path / "curator.sqlite3")}},
+            "get_config",
+            {"whisparrUrl": "http://whisparr.local"},
+        )["whisparr_enabled"]
+        is False
+    )
 
 
 def test_backend_profiles_only_when_enabled_and_exposes_profile_api(
