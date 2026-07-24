@@ -32,6 +32,28 @@ def test_whisparr_send_checks_duplicates_and_honors_search_toggle() -> None:
     assert requests[3][2]["addOptions"] == {"monitor": "none", "searchForMovie": False}
 
 
+def test_whisparr_send_starts_search_after_add() -> None:
+    requests: list[tuple[str, str, object | None]] = []
+
+    def transport(method: str, url: str, _headers, body: bytes | None) -> bytes:
+        payload = json.loads(body) if body else None
+        requests.append((method, url, payload))
+        if method == "GET":
+            return b"[]"
+        return b'{"id":42}'
+
+    result = WhisparrClient("http://whisparr.local", "secret", transport=transport).send_scene(
+        "stashdb-scene", "Scene", "/downloads", 3
+    )
+
+    assert result == {"status": "sent", "id": 42}
+    assert requests[-1] == (
+        "POST",
+        "http://whisparr.local/api/v3/command",
+        {"name": "MoviesSearch", "movieIds": [42]},
+    )
+
+
 def test_whisparr_duplicate_is_not_posted() -> None:
     calls = 0
 
