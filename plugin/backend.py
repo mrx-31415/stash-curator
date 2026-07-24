@@ -550,7 +550,12 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "reverse_exclusion":
             return api.reverse_exclusion(str(args.get("scene_id") or ""))
         if operation == "get_config":
-            return api.config()
+            result = api.config()
+            result["whisparr_enabled"] = bool(
+                str(settings.get("whisparrUrl") or "").strip()
+                and str(settings.get("whisparrApiKey") or "").strip()
+            )
+            return result
         if operation == "update_config":
             values = args.get("values")
             if not isinstance(values, dict):
