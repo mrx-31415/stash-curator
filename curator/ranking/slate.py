@@ -6,8 +6,9 @@ import json
 import math
 import sqlite3
 import time
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field, replace
-from heapq import nsmallest
+from heapq import heappop, heappush
 from typing import Any
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
@@ -88,9 +89,12 @@ class SlateBuilder:
         self,
         connection: sqlite3.Connection,
         config: CuratorConfig = DEFAULT_CONFIG,
+        *,
+        diversity_enabled: bool = True,
     ) -> None:
         self.connection = connection
         self.config = config
+        self.diversity_enabled = diversity_enabled
         self._cached_model_id: str | None = None
         self._cached_source_lanes: frozenset[str] = frozenset()
         self._cached_candidates: tuple[_Candidate, ...] = ()
@@ -100,47 +104,264 @@ class SlateBuilder:
         self._live_fit: dict[str, float] = {}
         self._live_cooldown: dict[str, float] = {}
 
-    def prepare(
-        self, model_id: str, *, limit_per_lane: int = 500, slate_size: int = 60
-    ) -> dict[str, int]:
+    def prepare(self, model_id: str, *, slate_size: int = 60) -> dict[str, int]:
         policy = LanePolicy(self.connection, self.config)
-        prepared: list[tuple[str, str, int]] = []
+        prepared: list[_Candidate] = []
+        counts: dict[str, int] = {}
         for lane in LANES:
-            classifications = policy.load(model_id, lanes={lane}, limit_per_lane=limit_per_lane)
+            classifications = policy.load(model_id, lanes={lane})
             candidates = self._candidates(model_id, classifications)
-            payload = [
-                {
-                    "scene_id": item.classification.scene_id,
-                    "lane": item.classification.lane,
-                    "subtype": item.classification.subtype,
-                    "lane_value": item.classification.lane_value,
-                    "qualification": item.classification.qualification,
-                    "performers": item.performers,
-                    "studio_group": item.studio_group,
-                    "content": item.content,
-                }
-                for item in candidates
-            ]
-            prepared.append((lane, json.dumps(payload, separators=(",", ":")), len(payload)))
+            prepared.extend(candidates)
+            counts[lane] = len(candidates)
         with transaction(self.connection):
             self.connection.execute(
                 "DELETE FROM model_lane_candidate_cache WHERE model_id=?", (model_id,)
             )
             self.connection.execute("DELETE FROM application_meta WHERE key LIKE 'slate:%'")
-            self.connection.executemany(
-                """
-                INSERT INTO model_lane_candidate_cache(
-                    model_id, lane, candidates_json, candidate_count, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    (model_id, lane, payload, count, time.time_ns() // 1_000_000)
-                    for lane, payload, count in prepared
-                ),
-            )
+        self._save_prepared_candidates(model_id, set(LANES), tuple(prepared))
         for lane in (*LANES, "for_you"):
             self.recommend(lane, slate_size)
-        return {lane: count for lane, _, count in prepared}
+        return counts
+
+    def materialize(self, model_id: str, *, force: bool = False) -> dict[str, int]:
+        if (
+            not force
+            and self.connection.execute(
+                "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+            ).fetchone()
+        ):
+            return {
+                str(row["lane"]): int(row["candidate_count"])
+                for row in self.connection.execute(
+                    """
+                    SELECT lane, count(*) AS candidate_count FROM model_scene_lane
+                    WHERE model_id=? GROUP BY lane
+                    """,
+                    (model_id,),
+                )
+            }
+        classifications = LanePolicy(self.connection, self.config).load(model_id)
+        candidates = self._candidates(model_id, classifications)
+        counts = {
+            lane: sum(candidate.classification.lane == lane for candidate in candidates)
+            for lane in LANES
+        }
+        with transaction(self.connection):
+            self.connection.execute(
+                "DELETE FROM model_lane_order_state WHERE model_id=?", (model_id,)
+            )
+            self.connection.execute("DELETE FROM model_lane_order WHERE model_id=?", (model_id,))
+        for lane in (*LANES, "for_you"):
+            lane_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if lane == "for_you" or candidate.classification.lane == lane
+            )
+            for ordering, varied in (("score_first", False), ("varied", True)):
+                ordered = self._build_order(lane, lane_candidates, varied=varied)
+                with transaction(self.connection):
+                    self.connection.executemany(
+                        """
+                        INSERT INTO model_lane_order(
+                            model_id, lane, ordering, position, scene_id,
+                            source_lane, utility, ranking_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            (
+                                model_id,
+                                lane,
+                                ordering,
+                                position,
+                                candidate.classification.scene_id,
+                                candidate.classification.lane,
+                                utility,
+                                json.dumps(
+                                    {"penalties": penalties, "bonuses": bonuses},
+                                    separators=(",", ":"),
+                                ),
+                            )
+                            for position, (candidate, utility, penalties, bonuses) in enumerate(
+                                ordered
+                            )
+                        ),
+                    )
+        with transaction(self.connection):
+            self.connection.execute(
+                """
+                INSERT INTO model_lane_order_state(model_id, created_at_ms) VALUES (?, ?)
+                """,
+                (model_id, time.time_ns() // 1_000_000),
+            )
+        return counts
+
+    def _build_order(
+        self, lane: str, candidates: tuple[_Candidate, ...], *, varied: bool
+    ) -> list[tuple[_Candidate, float, dict[str, float], dict[str, float]]]:
+        by_key = {
+            (candidate.classification.scene_id, candidate.classification.lane): candidate
+            for candidate in candidates
+        }
+        utilities = {
+            key: candidate.classification.lane_value
+            + (self.config.ranking.uncovered_content_bonus if varied and candidate.content else 0.0)
+            for key, candidate in by_key.items()
+        }
+        versions = dict.fromkeys(by_key, 0)
+        heaps: dict[tuple[str, str], list[tuple[float, str, str, int]]] = defaultdict(list)
+
+        def selectors(candidate: _Candidate) -> tuple[tuple[str, str], ...]:
+            result = [("all", "")]
+            if lane == "for_you":
+                result.append(("lane", candidate.classification.lane))
+            elif lane == "adventure" and candidate.classification.subtype:
+                result.append(("subtype", candidate.classification.subtype))
+            return tuple(result)
+
+        def push(key: tuple[str, str]) -> None:
+            candidate = by_key[key]
+            entry = (
+                -utilities[key],
+                candidate.classification.scene_id,
+                candidate.classification.lane,
+                versions[key],
+            )
+            for selector in selectors(candidate):
+                heappush(heaps[selector], entry)
+
+        for key in by_key:
+            push(key)
+
+        selected_scene_ids: set[str] = set()
+        seen_performers: set[str] = set()
+        seen_studios: set[str] = set()
+        covered_features: set[str] = set()
+        performer_penalized: set[tuple[str, str]] = set()
+        studio_penalized: set[tuple[str, str]] = set()
+        covered_share = dict.fromkeys(by_key, 0.0)
+        content_totals = {
+            key: sum(abs(value) for value in candidate.content.values())
+            for key, candidate in by_key.items()
+        }
+        performer_index: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        studio_index: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        feature_index: dict[str, list[tuple[tuple[str, str], float]]] = defaultdict(list)
+        if varied:
+            for key, candidate in by_key.items():
+                for performer in candidate.performers:
+                    performer_index[performer].add(key)
+                if candidate.studio_group:
+                    studio_index[candidate.studio_group].add(key)
+                total = content_totals[key]
+                if total:
+                    for feature, value in candidate.content.items():
+                        feature_index[feature].append((key, abs(value) / total))
+
+        def pop(
+            selector: tuple[str, str],
+            previous: _Candidate | None,
+            *,
+            allow_adjacent: bool = False,
+        ) -> _Candidate | None:
+            deferred: list[tuple[float, str, str, int]] = []
+            heap = heaps[selector]
+            chosen = None
+            while heap:
+                entry = heappop(heap)
+                key = (entry[1], entry[2])
+                if (
+                    key not in by_key
+                    or entry[3] != versions[key]
+                    or by_key[key].classification.scene_id in selected_scene_ids
+                ):
+                    continue
+                candidate = by_key[key]
+                if (
+                    varied
+                    and previous
+                    and not allow_adjacent
+                    and not self.config.ranking.adjacent_shared_performers
+                    and set(candidate.performers) & set(previous.performers)
+                ):
+                    deferred.append(entry)
+                    continue
+                chosen = candidate
+                break
+            for entry in deferred:
+                heappush(heap, entry)
+            return chosen
+
+        ordered: list[tuple[_Candidate, float, dict[str, float], dict[str, float]]] = []
+        previous: _Candidate | None = None
+        scene_count = len({candidate.classification.scene_id for candidate in candidates})
+        while len(selected_scene_ids) < scene_count:
+            target_lane, target_subtype = self._target(lane, len(ordered), 0)
+            wanted = (
+                ("subtype", target_subtype)
+                if lane == "adventure" and target_subtype
+                else ("lane", target_lane)
+                if lane == "for_you"
+                else ("all", "")
+            )
+            chosen = pop(wanted, previous) or pop(("all", ""), previous)
+            if chosen is None:
+                chosen = pop(("all", ""), previous, allow_adjacent=True)
+            if chosen is None:
+                break
+            key = (chosen.classification.scene_id, chosen.classification.lane)
+            penalties = {
+                "performer": (
+                    self.config.ranking.performer_repeat_penalty
+                    if key in performer_penalized
+                    else 0.0
+                ),
+                "studio": (self.config.ranking.studio_penalty if key in studio_penalized else 0.0),
+                "content": (
+                    self.config.ranking.content_penalty * covered_share[key] if varied else 0.0
+                ),
+                "history": 0.0,
+                "live_cooldown": 0.0,
+            }
+            bonuses = {
+                "uncovered_content": (
+                    self.config.ranking.uncovered_content_bonus * (1 - covered_share[key])
+                    if varied and chosen.content
+                    else 0.0
+                )
+            }
+            ordered.append((chosen, utilities[key], penalties, bonuses))
+            selected_scene_ids.add(chosen.classification.scene_id)
+            previous = chosen
+            if not varied:
+                continue
+            changed: set[tuple[str, str]] = set()
+            for performer in set(chosen.performers) - seen_performers:
+                seen_performers.add(performer)
+                for affected in performer_index[performer] - performer_penalized:
+                    performer_penalized.add(affected)
+                    utilities[affected] -= self.config.ranking.performer_repeat_penalty
+                    changed.add(affected)
+            if chosen.studio_group and chosen.studio_group not in seen_studios:
+                seen_studios.add(chosen.studio_group)
+                for affected in studio_index[chosen.studio_group] - studio_penalized:
+                    studio_penalized.add(affected)
+                    utilities[affected] -= self.config.ranking.studio_penalty
+                    changed.add(affected)
+            for feature in set(chosen.content) - covered_features:
+                covered_features.add(feature)
+                for affected, share in feature_index[feature]:
+                    covered_share[affected] += share
+                    utilities[affected] -= (
+                        self.config.ranking.content_penalty
+                        + self.config.ranking.uncovered_content_bonus
+                    ) * share
+                    changed.add(affected)
+            for affected in changed:
+                if by_key[affected].classification.scene_id in selected_scene_ids:
+                    continue
+                versions[affected] += 1
+                push(affected)
+        return ordered
 
     def recommend(self, lane: str, count: int, *, exploration: float = 0) -> Slate:
         started = time.perf_counter()
@@ -155,8 +376,13 @@ class SlateBuilder:
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
         if exploration == 0:
+            materialized = self._load_materialized_slate(model_id, lane, count)
+            if materialized is not None:
+                return materialized
+        prepared_slate = None
+        if exploration == 0:
             prepared_slate = self._load_prepared_slate(model_id, lane, count)
-            if prepared_slate is not None:
+            if prepared_slate is not None and len(prepared_slate.items) >= count:
                 return prepared_slate
         source_lanes = {lane}
         if lane == "for_you":
@@ -169,17 +395,18 @@ class SlateBuilder:
             prepared = self._load_prepared(model_id, source_lanes)
             classifications: tuple[LaneClassification, ...] = ()
             if not prepared:
-                classifications = policy.load(
-                    model_id,
-                    lanes=source_lanes,
-                    limit_per_lane=max(500, count * 20),
-                ) or policy.classify(model_id)
+                classifications = policy.load(model_id, lanes=source_lanes)
+                if not classifications:
+                    policy.classify(model_id)
+                    classifications = policy.load(model_id, lanes=source_lanes)
             timings["classifications"] = round((time.perf_counter() - started) * 1000)
             record_duration("python", "ranking.classifications", timings["classifications"])
             stage_started = time.perf_counter()
             self._cached_model_id = model_id
             self._cached_source_lanes = source_lane_key
             self._cached_candidates = prepared or tuple(self._candidates(model_id, classifications))
+            if not prepared:
+                self._save_prepared_candidates(model_id, source_lanes, self._cached_candidates)
             timings["candidates"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "ranking.candidates", timings["candidates"])
         stage_started = time.perf_counter()
@@ -224,23 +451,51 @@ class SlateBuilder:
         timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "ranking.eligibility", timings["eligibility"])
         stage_started = time.perf_counter()
-        selected: list[_Candidate] = []
+        candidate_lookup = {
+            (item.classification.scene_id, item.classification.lane): item for item in candidates
+        }
+        prefix_items = tuple(
+            item
+            for item in (prepared_slate.items if prepared_slate else ())
+            if (item.scene_id, item.source_lane) in candidate_lookup
+        )
+        selected = [candidate_lookup[(item.scene_id, item.source_lane)] for item in prefix_items]
         selected_utilities: list[tuple[float, dict[str, float], dict[str, float]]] = []
         diagnostics: list[str] = []
-        history = self._history_context(model_id)
+        history = self._history_context(model_id) if self.diversity_enabled else (set(), set(), ())
         self._pair_similarities.clear()
-        self._history_similarities = {
-            candidate.classification.scene_id: max(
-                (self._cosine(candidate.content, vector) for vector in history[2]), default=0.0
-            )
-            for candidate in candidates
-        }
+        self._history_similarities = (
+            {
+                candidate.classification.scene_id: max(
+                    (self._cosine(candidate.content, vector) for vector in history[2]), default=0.0
+                )
+                for candidate in candidates
+            }
+            if self.diversity_enabled
+            else {}
+        )
         timings["history"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "ranking.history", timings["history"])
         stage_started = time.perf_counter()
-        for position in range(count):
+        selected_scene_ids = {candidate.classification.scene_id for candidate in selected}
+        seen_performers = {
+            performer for candidate in selected for performer in candidate.performers
+        }
+        seen_studios = {candidate.studio_group for candidate in selected if candidate.studio_group}
+        covered_content = {name for candidate in selected for name in candidate.content}
+        content_similarities = (
+            {
+                candidate.classification.scene_id: max(
+                    (self._candidate_similarity(candidate, previous) for previous in selected),
+                    default=0.0,
+                )
+                for candidate in candidates
+            }
+            if self.diversity_enabled
+            else {}
+        )
+        for position in range(len(selected), count):
             target_lane, target_subtype = self._target(lane, position, exploration)
-            selected_scene_ids = {candidate.classification.scene_id for candidate in selected}
             remaining = [
                 candidate
                 for candidate in candidates
@@ -260,25 +515,33 @@ class SlateBuilder:
                 ]
                 or remaining
             )
-            # ponytail: 500 leaves broad diversity room; raise only if real slates exhaust it.
-            pool = nsmallest(
-                max(500, count * 20),
-                pool,
-                key=lambda candidate: (
-                    -candidate.classification.lane_value,
-                    candidate.classification.scene_id,
-                ),
-            )
             ranked = []
             for candidate in pool:
-                utility = self._utility(candidate, selected, history)
+                utility = self._utility(
+                    candidate,
+                    selected[-1] if selected else None,
+                    history,
+                    seen_performers,
+                    seen_studios,
+                    covered_content,
+                    content_similarities.get(candidate.classification.scene_id, 0.0),
+                )
                 if utility is None:
                     continue
                 ranked.append((utility[0], candidate.classification.scene_id, candidate, utility))
             if not ranked and self.config.ranking.relax_adjacent_when_exhausted:
                 diagnostics.append(f"position {position}: relaxed adjacent performer constraint")
                 for candidate in pool:
-                    utility = self._utility(candidate, selected, history, relax_adjacent=True)
+                    utility = self._utility(
+                        candidate,
+                        selected[-1] if selected else None,
+                        history,
+                        seen_performers,
+                        seen_studios,
+                        covered_content,
+                        content_similarities.get(candidate.classification.scene_id, 0.0),
+                        relax_adjacent=True,
+                    )
                     if utility:
                         ranked.append(
                             (utility[0], candidate.classification.scene_id, candidate, utility)
@@ -288,17 +551,32 @@ class SlateBuilder:
                 break
             _, _, chosen, utility = min(ranked, key=lambda item: (-item[0], item[1]))
             selected.append(chosen)
+            selected_scene_ids.add(chosen.classification.scene_id)
             selected_utilities.append(utility)
+            if self.diversity_enabled:
+                seen_performers.update(chosen.performers)
+                if chosen.studio_group:
+                    seen_studios.add(chosen.studio_group)
+                covered_content.update(chosen.content)
+                for candidate in remaining:
+                    scene_id = candidate.classification.scene_id
+                    if scene_id in selected_scene_ids:
+                        continue
+                    content_similarities[scene_id] = max(
+                        content_similarities[scene_id],
+                        self._candidate_similarity(candidate, chosen),
+                    )
 
         timings["selection"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "ranking.selection", timings["selection"])
         stage_started = time.perf_counter()
+        new_selected = selected[len(prefix_items) :]
         scores = RecommendationModelStore(self.connection).scores(
-            model_id, {candidate.classification.scene_id for candidate in selected}
+            model_id, {candidate.classification.scene_id for candidate in new_selected}
         )
-        items: list[RecommendationItem] = []
-        selected_items = zip(selected, selected_utilities, strict=True)
-        for position, (chosen, utility) in enumerate(selected_items):
+        items = list(prefix_items)
+        selected_items = zip(new_selected, selected_utilities, strict=True)
+        for position, (chosen, utility) in enumerate(selected_items, start=len(prefix_items)):
             score = scores[chosen.classification.scene_id]
             reasons = ["eligibility.lane"]
             reasons.extend(f"diversity.{name}" for name, value in utility[1].items() if value > 0)
@@ -331,6 +609,140 @@ class SlateBuilder:
             self._save_prepared_slate(slate)
         return slate
 
+    def _load_materialized_slate(self, model_id: str, lane: str, count: int) -> Slate | None:
+        started = time.perf_counter()
+        if not self.connection.execute(
+            "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+        ).fetchone():
+            return None
+        ordering = "varied" if self.diversity_enabled else "score_first"
+        direct_plays = {
+            str(row["scene_id"]): int(row["last_played"])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
+                WHERE provenance='direct_player' GROUP BY scene_id
+                """
+            )
+        }
+        now_ms = time.time_ns() // 1_000_000
+        unrecovered_direct_plays = {
+            scene_id
+            for scene_id, played_at_ms in direct_plays.items()
+            if scene_recovery(
+                max(0.0, (now_ms - played_at_ms) / 86_400_000), config=self.config.model
+            )
+            < 0.10
+        }
+        selected_rows: list[sqlite3.Row] = []
+        offset = 0
+        chunk_size = max(100, count)
+        while len(selected_rows) < count:
+            rows = self.connection.execute(
+                """
+                SELECT position, scene_id, source_lane, utility, ranking_json
+                FROM model_lane_order
+                WHERE model_id=? AND lane=? AND ordering=?
+                ORDER BY position LIMIT ? OFFSET ?
+                """,
+                (model_id, lane, ordering, chunk_size, offset),
+            ).fetchall()
+            if not rows:
+                break
+            offset += len(rows)
+            scene_ids = {str(row["scene_id"]) for row in rows}
+            eligibility = scene_eligibility(
+                self.connection, now_ms, self.config, scene_ids=scene_ids
+            )
+            selected_rows.extend(
+                row
+                for row in rows
+                if bool(eligibility.get(str(row["scene_id"]), {}).get("eligible", False))
+                and not (
+                    str(row["source_lane"]) == "best_bets" and str(row["scene_id"]) in direct_plays
+                )
+                and not (
+                    str(row["source_lane"]) == "revisit"
+                    and str(row["scene_id"]) in unrecovered_direct_plays
+                )
+            )
+            if len(rows) < chunk_size:
+                break
+        selected_rows = selected_rows[:count]
+        scene_ids = {str(row["scene_id"]) for row in selected_rows}
+        scores = RecommendationModelStore(self.connection).scores(model_id, scene_ids)
+        classifications: dict[tuple[str, str], LaneClassification] = {}
+        if scene_ids:
+            placeholders = ",".join("?" for _ in scene_ids)
+            for row in self.connection.execute(
+                f"""
+                SELECT scene_id, lane, subtype, lane_value, qualification_json
+                FROM model_scene_lane
+                WHERE model_id=? AND scene_id IN ({placeholders})
+                """,
+                (model_id, *scene_ids),
+            ):
+                classification = LaneClassification(
+                    str(row["scene_id"]),
+                    str(row["lane"]),
+                    str(row["subtype"]) if row["subtype"] else None,
+                    float(row["lane_value"]),
+                    json.loads(str(row["qualification_json"])),
+                )
+                classifications[(classification.scene_id, classification.lane)] = classification
+        self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)
+        items = []
+        for position, row in enumerate(selected_rows):
+            scene_id = str(row["scene_id"])
+            source_lane = str(row["source_lane"])
+            classification = classifications[(scene_id, source_lane)]
+            score = scores[scene_id]
+            ranking = json.loads(str(row["ranking_json"]))
+            penalties = {
+                str(name): float(value)
+                for name, value in dict(ranking.get("penalties", {})).items()
+            }
+            penalties["live_cooldown"] = self._live_cooldown.get(scene_id, 0.0)
+            bonuses = {
+                str(name): float(value) for name, value in dict(ranking.get("bonuses", {})).items()
+            }
+            reasons = ["eligibility.lane"]
+            reasons.extend(
+                f"diversity.{name}"
+                for name, value in penalties.items()
+                if name != "live_cooldown" and value > 0
+            )
+            items.append(
+                RecommendationItem(
+                    scene_id,
+                    lane,
+                    source_lane,
+                    classification.subtype,
+                    position,
+                    score.appeal,
+                    self._live_fit.get(scene_id, score.current_fit),
+                    score.confidence,
+                    classification.lane_value,
+                    float(row["utility"]) - penalties["live_cooldown"],
+                    penalties,
+                    bonuses,
+                    score.components,
+                    score.neighbors,
+                    score.eligibility,
+                    classification.qualification,
+                    tuple(reasons),
+                )
+            )
+        elapsed = round((time.perf_counter() - started) * 1_000)
+        record_duration("python", "ranking.materialized", elapsed)
+        return Slate(
+            model_id,
+            lane,
+            tuple(items),
+            (),
+            {"materialized": 1, "selection": elapsed, "total": elapsed},
+        )
+
     def _save_prepared_slate(self, slate: Slate) -> None:
         with transaction(self.connection):
             self.connection.execute(
@@ -339,7 +751,7 @@ class SlateBuilder:
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
                 """,
                 (
-                    f"slate:{slate.model_id}:{slate.lane}",
+                    self._slate_key(slate.model_id, slate.lane),
                     json.dumps(
                         {
                             "created_at_ms": time.time_ns() // 1_000_000,
@@ -354,7 +766,7 @@ class SlateBuilder:
         started = time.perf_counter()
         row = self.connection.execute(
             "SELECT value FROM application_meta WHERE key=?",
-            (f"slate:{model_id}:{lane}",),
+            (self._slate_key(model_id, lane),),
         ).fetchone()
         if row is None:
             return None
@@ -363,8 +775,6 @@ class SlateBuilder:
         if time.time_ns() // 1_000_000 - created_at_ms > 3_600_000:
             return None
         items = tuple(self._recommendation_item(item) for item in payload["items"])
-        if len(items) < count:
-            return None
         if not items:
             return Slate(model_id, lane, (), (), {"precomputed": 1, "total": 0})
         scene_ids = {item.scene_id for item in items}
@@ -394,8 +804,6 @@ class SlateBuilder:
                 and bool(eligibility.get(item.scene_id, {}).get("eligible", False))
             )
         )[:count]
-        if len(selected) < count:
-            return None
         elapsed = round((time.perf_counter() - started) * 1_000)
         return Slate(model_id, lane, selected, (), {"precomputed": 1, "total": elapsed})
 
@@ -425,12 +833,24 @@ class SlateBuilder:
         placeholders = ",".join("?" for _ in lanes)
         rows = self.connection.execute(
             f"""
-            SELECT lane, candidates_json FROM model_lane_candidate_cache
+            SELECT lane, candidates_json, candidate_count FROM model_lane_candidate_cache
             WHERE model_id=? AND lane IN ({placeholders})
             """,
             (model_id, *lanes),
         ).fetchall()
         if {str(row["lane"]) for row in rows} != lanes:
+            return ()
+        expected = {
+            str(row["lane"]): int(row["candidate_count"])
+            for row in self.connection.execute(
+                f"""
+                SELECT lane, count(*) AS candidate_count FROM model_scene_lane
+                WHERE model_id=? AND lane IN ({placeholders}) GROUP BY lane
+                """,
+                (model_id, *lanes),
+            )
+        }
+        if any(int(row["candidate_count"]) != expected.get(str(row["lane"]), 0) for row in rows):
             return ()
         candidates = tuple(
             _Candidate(
@@ -452,6 +872,48 @@ class SlateBuilder:
             candidate.classification.scene_id: candidate.content for candidate in candidates
         }
         return candidates
+
+    def _save_prepared_candidates(
+        self, model_id: str, lanes: set[str], candidates: tuple[_Candidate, ...]
+    ) -> None:
+        rows = []
+        for lane in lanes:
+            payload = [
+                {
+                    "scene_id": item.classification.scene_id,
+                    "lane": item.classification.lane,
+                    "subtype": item.classification.subtype,
+                    "lane_value": item.classification.lane_value,
+                    "qualification": item.classification.qualification,
+                    "performers": item.performers,
+                    "studio_group": item.studio_group,
+                    "content": item.content,
+                }
+                for item in candidates
+                if item.classification.lane == lane
+            ]
+            rows.append(
+                (
+                    model_id,
+                    lane,
+                    json.dumps(payload, separators=(",", ":")),
+                    len(payload),
+                    time.time_ns() // 1_000_000,
+                )
+            )
+        with transaction(self.connection):
+            self.connection.executemany(
+                """
+                INSERT INTO model_lane_candidate_cache(
+                    model_id, lane, candidates_json, candidate_count, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(model_id, lane) DO UPDATE SET
+                    candidates_json=excluded.candidates_json,
+                    candidate_count=excluded.candidate_count,
+                    created_at_ms=excluded.created_at_ms
+                """,
+                rows,
+            )
 
     def _target(self, lane: str, position: int, exploration: float) -> tuple[str, str | None]:
         if lane == "for_you":
@@ -519,16 +981,21 @@ class SlateBuilder:
     def _utility(
         self,
         candidate: _Candidate,
-        selected: list[_Candidate],
+        previous: _Candidate | None,
         history: tuple[set[str], set[str], tuple[dict[str, float], ...]],
+        seen_performers: set[str],
+        seen_studios: set[str],
+        covered_content: set[str],
+        content_similarity: float,
         *,
         relax_adjacent: bool = False,
     ) -> tuple[float, dict[str, float], dict[str, float]] | None:
         if (
-            selected
+            self.diversity_enabled
+            and previous
             and not self.config.ranking.adjacent_shared_performers
             and not relax_adjacent
-            and set(candidate.performers) & set(selected[-1].performers)
+            and set(candidate.performers) & set(previous.performers)
         ):
             return None
         penalties = {
@@ -539,34 +1006,28 @@ class SlateBuilder:
             "live_cooldown": 0.0,
         }
         penalties["live_cooldown"] = self._live_cooldown.get(candidate.classification.scene_id, 0.0)
-        for previous in selected:
-            if set(candidate.performers) & set(previous.performers):
-                penalties["performer"] = max(
-                    penalties["performer"], self.config.ranking.performer_repeat_penalty
+        uncovered_share = 0.0
+        if self.diversity_enabled:
+            if set(candidate.performers) & seen_performers:
+                penalties["performer"] = self.config.ranking.performer_repeat_penalty
+            if candidate.studio_group and candidate.studio_group in seen_studios:
+                penalties["studio"] = self.config.ranking.studio_penalty
+            penalties["content"] = self.config.ranking.content_penalty * content_similarity
+            history_performers, history_studios, history_vectors = history
+            if set(candidate.performers) & history_performers:
+                penalties["history"] += self.config.ranking.history_performer_penalty
+            if candidate.studio_group and candidate.studio_group in history_studios:
+                penalties["history"] += self.config.ranking.history_studio_penalty
+            if history_vectors:
+                penalties["history"] += (
+                    self.config.ranking.history_content_penalty
+                    * self._history_similarities[candidate.classification.scene_id]
                 )
-            if candidate.studio_group and candidate.studio_group == previous.studio_group:
-                penalties["studio"] = max(penalties["studio"], self.config.ranking.studio_penalty)
-            penalties["content"] = max(
-                penalties["content"],
-                self.config.ranking.content_penalty
-                * self._candidate_similarity(candidate, previous),
+            uncovered_share = (
+                len(set(candidate.content) - covered_content) / len(candidate.content)
+                if candidate.content
+                else 0.0
             )
-        history_performers, history_studios, history_vectors = history
-        if set(candidate.performers) & history_performers:
-            penalties["history"] += self.config.ranking.history_performer_penalty
-        if candidate.studio_group and candidate.studio_group in history_studios:
-            penalties["history"] += self.config.ranking.history_studio_penalty
-        if history_vectors:
-            penalties["history"] += (
-                self.config.ranking.history_content_penalty
-                * self._history_similarities[candidate.classification.scene_id]
-            )
-        covered = {name for previous in selected for name in previous.content}
-        uncovered_share = (
-            len(set(candidate.content) - covered) / len(candidate.content)
-            if candidate.content
-            else 0.0
-        )
         bonuses = {
             "uncovered_content": self.config.ranking.uncovered_content_bonus * uncovered_share
         }
@@ -574,6 +1035,10 @@ class SlateBuilder:
             candidate.classification.lane_value + sum(bonuses.values()) - sum(penalties.values())
         )
         return final, penalties, bonuses
+
+    def _slate_key(self, model_id: str, lane: str) -> str:
+        suffix = "" if self.diversity_enabled else ":unshuffled"
+        return f"slate:{model_id}:{lane}{suffix}"
 
     def _live_current_fit(
         self, model_id: str, direct_plays: dict[str, int], now_ms: int

@@ -23,8 +23,8 @@ to open it.
 
 Select **Sync library** in Curator's toolbar. The corresponding Stash task is named
 **Sync and build recommendations**. It incrementally reads metadata and history,
-normalizes evidence, and publishes the first model. Progress and errors appear in
-Curator and on Stash's Tasks page.
+normalizes evidence, and publishes the first model with indexed recommendation
+orders. Progress and errors appear in Curator and on Stash's Tasks page.
 
 A full reconciliation is available as **Full sync and build recommendations** on the
 Tasks page. Use it when source records were deleted or an incremental sync appears
@@ -36,7 +36,9 @@ Curator's settings live with Stash's plugin settings. Useful early choices are:
 
 - **Sidecar database path:** set this before first use if plugin updates or removal
   may replace the plugin data directory.
-- **Scenes per lane:** defaults to 20.
+- **Results per page:** defaults to 20 for recommendations, Similar, and Expand.
+- **Disable recommendation variety:** leave unchecked to avoid repeating performers,
+  studios, and similar content; check it for score-first ordering.
 - **Prune tag:** defaults to `[Prune]`.
 - **Expand settings:** optional StashDB and Whisparr behavior.
 - **Enable profiling:** keep off unless diagnosing performance.
