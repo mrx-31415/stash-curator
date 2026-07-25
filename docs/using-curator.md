@@ -38,7 +38,8 @@ Open **Taste Profile** to review content-tag beliefs and answer with a fixed sen
 from strong dislike to strong like. A direct answer is strong evidence rather than a
 hard exclusion; **Neutral** is an explicit near-zero preference, while **Clear
 answer** returns the tag to behavior-derived inference. Answers are queued locally
-during transient failures.
+during transient failures. Search includes supported local tags that currently appear
+on zero scenes, so preferences can be declared before that content enters the library.
 
 After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
 with up to three relevant content tags. Answer only the tags that contributed to the
@@ -61,6 +62,8 @@ Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 shortlist candidates. External results are metadata leads, not proof that a scene is
 available locally. Filters and ordering are applied before paging. Optional Whisparr
 actions require separate settings.
+Use the tag action on an external scene to rate its tags that map exactly to local
+content tags; this does not create scene-level feedback for media outside the library.
 
 The top-level Performer Hunt view queries StashDB directly for scenes listed for a selected local
 performer with a StashDB identity. It compares exact StashDB scene links and separates

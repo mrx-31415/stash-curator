@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from curator.config import DEFAULT_CONFIG
-from curator.expand import ExpandService
+from curator.expand import STASHDB, ExpandService
 from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
@@ -381,21 +381,28 @@ class CuratorAPI:
             for row in self.connection.execute("SELECT tag_id, value FROM direct_tag_preference")
         }
         items: list[dict[str, object]] = []
+        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
         for row in self.connection.execute(
             """
-            SELECT d.name, d.metadata_json, a.affinity, a.confidence,
-                   a.effective_support
-            FROM feature_definition d
+            WITH scene_counts AS (
+              SELECT tag_id, count(DISTINCT scene_id) AS scene_count
+              FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
+            )
+            SELECT t.tag_id, t.name, coalesce(sc.scene_count, 0) AS scene_count,
+                   a.affinity, a.confidence, a.effective_support
+            FROM source_tag t
+            JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=? AND r.role='content'
+            LEFT JOIN scene_counts sc ON sc.tag_id=t.tag_id
+            LEFT JOIN feature_definition d
+              ON d.feature_version=? AND d.family='content' AND d.name='tag:' || t.tag_id
             LEFT JOIN feature_affinity a
               ON a.feature_id=d.feature_id AND a.model_id=?
-            WHERE d.feature_version=? AND d.family='content'
-            ORDER BY d.name
+            ORDER BY t.name, t.tag_id
             """,
-            (model_id, feature_version),
+            (config_version, feature_version, model_id),
         ):
-            metadata = json.loads(str(row["metadata_json"]))
-            tag_id = str(metadata.get("tag_id") or str(row["name"]).removeprefix("tag:"))
-            scene_count = int(metadata.get("document_frequency") or 0)
+            tag_id = str(row["tag_id"])
+            scene_count = int(row["scene_count"])
             affinity = float(row["affinity"] or 0)
             confidence = float(row["confidence"] or 0)
             direct_value = direct.get(tag_id)
@@ -405,7 +412,7 @@ class CuratorAPI:
             items.append(
                 {
                     "tag_id": tag_id,
-                    "name": str(metadata.get("tag_name") or tag_id),
+                    "name": str(row["name"] or tag_id),
                     "inferred_value": affinity,
                     "confidence": confidence,
                     "support": float(row["effective_support"] or 0),
@@ -428,6 +435,58 @@ class CuratorAPI:
             "model_id": model_id,
             "items": items,
         }
+
+    def external_tag_choices(self, tags: list[dict[str, Any]]) -> dict[str, object]:
+        if len(tags) > 100:
+            raise ValueError("at most 100 external tags are supported")
+        requested = [
+            (str(item.get("id") or ""), str(item.get("name") or "").strip())
+            for item in tags
+            if isinstance(item, dict) and (item.get("id") or item.get("name"))
+        ]
+        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+        rows = [
+            dict(row)
+            for row in self.connection.execute(
+                """
+                SELECT t.tag_id, t.name, p.value AS direct_value, ids.stash_id
+                FROM source_tag t
+                JOIN tag_role r
+                  ON r.tag_id=t.tag_id AND r.config_version=? AND r.role='content'
+                LEFT JOIN direct_tag_preference p ON p.tag_id=t.tag_id
+                LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
+                  AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
+                ORDER BY t.tag_id
+                """,
+                (config_version, STASHDB),
+            )
+        ]
+        by_external = {str(row["stash_id"]): row for row in rows if row["stash_id"]}
+        by_name: dict[str, list[dict[str, object]]] = {}
+        for row in rows:
+            by_name.setdefault(str(row["name"] or "").casefold(), []).append(row)
+        choices: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for external_id, name in requested:
+            matched = by_external.get(external_id)
+            if matched is None:
+                matches = by_name.get(name.casefold(), [])
+                matched = matches[0] if len(matches) == 1 else None
+            if matched is None or str(matched["tag_id"]) in seen:
+                continue
+            seen.add(str(matched["tag_id"]))
+            choices.append(
+                {
+                    "tag_id": str(matched["tag_id"]),
+                    "name": str(matched["name"] or matched["tag_id"]),
+                    "direct_value": (
+                        float(str(matched["direct_value"]))
+                        if matched["direct_value"] is not None
+                        else None
+                    ),
+                }
+            )
+        return {"schema_version": API_SCHEMA_VERSION, "items": choices}
 
     def tag_sentiment_follow_up(self, scene_id: str, limit: int = 3) -> dict[str, object]:
         if not scene_id or not 1 <= limit <= 3:

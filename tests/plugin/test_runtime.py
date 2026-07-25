@@ -142,6 +142,15 @@ def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
     assert "submitTagPreference(tag.tag_id, value);" in source
 
 
+def test_external_scene_cards_can_rate_matching_local_tags() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'operation: "get_external_tag_choices"' in source
+    assert '"Rate matching local tags"' in source
+    assert '"No matching local content tags."' in source
+    assert "submitTagPreference(tag.tag_id, value);" in source
+
+
 def test_curator_external_components_are_public_and_patchable() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert 'Api.register.component("stash-curator.ExternalCard"' in source

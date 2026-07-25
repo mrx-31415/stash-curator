@@ -119,6 +119,15 @@ def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
 
 def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES ('unused', 'Unused', 'unused')"
+    )
+    connection.execute(
+        """
+        INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id)
+        VALUES ('unused', 'https://stashdb.org/graphql', 'external-unused')
+        """
+    )
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     api = CuratorAPI(connection)
 
@@ -128,6 +137,9 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     assert good["scene_count"] == 4
     assert good["direct_value"] is None
     assert good["prompt"] in {"belief", "uncertain"}
+    unused = next(item for item in profile["items"] if item["tag_id"] == "unused")
+    assert unused["scene_count"] == 0
+    assert unused["inferred_value"] == 0
 
     assert (
         api.submit_tag_preferences(
@@ -138,6 +150,15 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     good = next(item for item in api.taste_profile()["items"] if item["tag_id"] == "good")
     assert good["direct_value"] == 0.5
     assert good["prompt"] is None
+    assert (
+        api.submit_tag_preferences(
+            [{"preference_id": "unused", "tag_id": "unused", "value": -1, "occurred_at_ms": 11}]
+        )["accepted"]
+        == 1
+    )
+    assert api.external_tag_choices([{"id": "external-unused", "name": "External name"}])[
+        "items"
+    ] == [{"tag_id": "unused", "name": "Unused", "direct_value": -1.0}]
 
 
 def test_thumb_down_follow_up_filters_caps_and_keeps_scene_feedback_independent(
