@@ -38,9 +38,10 @@ Open **Taste Profile** to review tag beliefs and answer with a fixed sentiment
 from strong dislike to strong like. A direct answer is strong evidence rather than a
 hard exclusion; **Neutral** is an explicit near-zero preference, while **Clear
 answer** returns the tag to behavior-derived inference. Answers are queued locally
-during transient failures. Search includes classified local tags, including performer
-attributes and tags that currently appear on zero scenes, so preferences can be
-declared before that content enters the library.
+during transient failures. Direct answers affect tag fit but do not count as separate
+behavioral corroboration. Search includes classified local tags, including performer
+attributes and tags that currently appear on zero scenes, so preferences can be declared
+before that content enters the library.
 
 After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
 with up to three relevant content tags. Answer only the tags that contributed to the
