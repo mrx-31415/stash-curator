@@ -415,6 +415,7 @@ class PreferenceModelBuilder:
                     **learned.contexts,
                     "declared_preference": direct_value,
                     "learned_affinity": learned.affinity,
+                    "learned_confidence": learned.confidence,
                 },
             )
         return result
@@ -769,9 +770,17 @@ class PreferenceModelBuilder:
                 if feature.family != "content" or feature.name in strengths:
                     continue
                 affinity = affinities.get(feature.feature_id)
-                strengths[feature.name] = (
-                    max(0.0, affinity.affinity) * affinity.confidence if affinity else 0.0
+                learned_affinity = (
+                    _number(affinity.contexts.get("learned_affinity", affinity.affinity))
+                    if affinity
+                    else 0.0
                 )
+                learned_confidence = (
+                    _number(affinity.contexts.get("learned_confidence", affinity.confidence))
+                    if affinity
+                    else 0.0
+                )
+                strengths[feature.name] = max(0.0, learned_affinity) * learned_confidence
         maximum = max(strengths.values(), default=0.0)
         generic = self.config.model.neighbor_generic_weight
         weighted: dict[str, dict[str, float]] = {}
