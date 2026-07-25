@@ -25,6 +25,10 @@ settings:
     displayName: Sidecar database path
     description: Leave empty to store data in the plugin's data directory.
     type: STRING
+  backupPath:
+    displayName: Backup directory
+    description: Leave empty to store Curator backups beside the sidecar database.
+    type: STRING
   pageSize:
     displayName: Results per page
     description: Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20.
