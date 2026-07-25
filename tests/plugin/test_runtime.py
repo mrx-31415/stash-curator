@@ -106,6 +106,19 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_recent_recommendations_reuse_qualified_impression_history() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'value: "history"' in source
+    assert "icon: faHistory,\n      maintenance: true" in source
+    assert 'operation: "get_recommendation_history"' in source
+    assert '"Filter recommendation history by lane"' in source
+    assert 'className: "form-control form-control-sm", value: laneFilter' in source
+    assert '"Scene removed from Stash"' in source
+    assert "item.reason_snapshot.map(reasonLabel)" in source
+    assert '"Why this now?"' in source
+
+
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
