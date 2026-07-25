@@ -51,6 +51,17 @@ shortlist candidates. External results are metadata leads, not proof that a scen
 available locally. Filters and ordering are applied before paging. Optional Whisparr
 actions require separate settings.
 
+The top-level Performer Hunt view queries StashDB directly for scenes listed for a selected local
+performer with a StashDB identity. It compares exact StashDB scene links and separates
+All, In library, and Not linked locally results; unlinked does not mean definitively
+missing because local scenes without StashDB identities cannot be matched. Queries
+follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
+result. Include and exclude tag filters apply to the fetched result.
+The **Hide exact PHash matches** filter is enabled by default. It also applies to
+Expand and StashDB Similar scenes. Disable it to inspect candidates marked
+**Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed
+identity.
+
 ## Prune
 
 Prune groups explicit dislikes, suspected poor fits, and candidates surfaced during

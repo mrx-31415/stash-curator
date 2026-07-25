@@ -153,6 +153,36 @@ def test_recommendation_variety_toggle_updates_native_setting_and_cache() -> Non
     assert 'diversityEnabled ? " Balanced" : " Score-first"' in source
 
 
+def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert 'operation: "get_performer_hunt"' in source
+    assert 'value: "hunt"' in source
+    assert "icon: faCrosshairs" in source
+    assert 'initialType: "hunt", huntOnly: true' in source
+    assert '["all", `All ${huntCounts.all}`]' in source
+    assert '["linked", `In library ${huntCounts.linked}`]' in source
+    assert '["unlinked", `Not linked locally ${huntCounts.unlinked}`]' in source
+    assert 'kind: "tag", label: "Include tags"' in source
+    assert 'kind: "tag", label: "Exclude tags"' in source
+    assert source.count('" Hide exact PHash matches"') == 3
+    assert "hide_phash_matches: hidePhashMatches" in source
+    assert '"Likely local · exact PHash"' in source
+    assert '"Release date"' in source
+    assert '"Preference score"' in source
+    assert "data?.truncated" in source
+    assert "(failure) => active && (setError(failure.message), setLoading(false))" in source
+    assert 'entityType === "hunt" ? "scene" : entityType' in source
+
+
+def test_plugin_reads_local_file_phashes_for_external_matching() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "backend.py").read_text(encoding="utf-8")
+
+    assert "files { fingerprints { type value } }" in source
+    assert '"scene_phashes": {}' in source
+    assert 'casefold() == "phash"' in source
+
+
 def test_plugin_ignores_repeated_script_evaluation() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     guard = "if (window.__stashCuratorPluginLoaded) return;"
@@ -198,6 +228,52 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.SCHEMA_VERSION == 1
+
+
+def test_external_links_collect_normalized_local_phashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_links", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    data = {
+        "scenes": {
+            "count": 1,
+            "scenes": [
+                {
+                    "id": "local-scene",
+                    "stash_ids": [
+                        {
+                            "endpoint": "https://stashdb.org/graphql",
+                            "stash_id": "external-scene",
+                        }
+                    ],
+                    "files": [
+                        {
+                            "fingerprints": [
+                                {"type": "phash", "value": "D8BC7554C5A178AA"},
+                                {"type": "phash", "value": "not-a-phash"},
+                            ]
+                        }
+                    ],
+                }
+            ],
+        },
+        "performers": {"count": 0, "performers": []},
+        "studios": {"count": 0, "studios": []},
+    }
+    monkeypatch.setattr(
+        module,
+        "_client",
+        lambda _payload: SimpleNamespace(execute=lambda *_args: data),
+    )
+
+    links = module._external_links({})
+
+    assert links["scene_ids"] == {"external-scene": "local-scene"}
+    assert links["scene_phashes"] == {"d8bc7554c5a178aa": "local-scene"}
 
 
 def test_reused_model_keeps_existing_lane_classifications(
