@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder
 from curator.ranking import SlateBuilder
@@ -40,6 +42,46 @@ def test_impressions_and_feedback_are_idempotent(tmp_path: Path) -> None:
         ]
         == 1
     )
+
+
+def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    store = InteractionStore(connection)
+    positive = {
+        "preference_id": "positive",
+        "tag_id": "good",
+        "value": 1,
+        "occurred_at_ms": 20,
+    }
+    stale = {**positive, "preference_id": "stale", "value": -1, "occurred_at_ms": 10}
+    clear = {**positive, "preference_id": "clear", "value": None, "occurred_at_ms": 30}
+
+    assert store.submit_tag_preferences([positive]) == 1
+    assert store.submit_tag_preferences([positive]) == 0
+    assert store.submit_tag_preferences([stale]) == 1
+    assert (
+        connection.execute(
+            "SELECT value FROM direct_tag_preference WHERE tag_id='good'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert store.submit_tag_preferences([clear]) == 1
+    assert (
+        connection.execute("SELECT 1 FROM direct_tag_preference WHERE tag_id='good'").fetchone()
+        is None
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM direct_tag_preference_history WHERE tag_id='good'"
+        ).fetchone()[0]
+        == 3
+    )
+
+    with pytest.raises(ValueError, match="five-point"):
+        store.submit_tag_preferences([{**positive, "preference_id": "bad", "value": 0.25}])
+    with pytest.raises(ValueError, match="unsupported"):
+        store.submit_tag_preferences([{**positive, "preference_id": "unknown", "tag_id": "x"}])
 
 
 def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> None:

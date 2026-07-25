@@ -143,6 +143,89 @@
   margin-top: 1rem;
 }
 
+.curator-taste {
+  margin-top: 1rem;
+}
+
+.curator-taste > h2 {
+  font-size: 1.2rem;
+}
+
+.curator-taste-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.curator-taste-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.curator-taste-toolbar input {
+  flex: 1 1 16rem;
+}
+
+.curator-taste-toolbar select {
+  flex: 0 1 9rem;
+}
+
+.curator-taste-item {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  justify-content: space-between;
+  padding: 0.65rem;
+}
+
+.curator-taste-item strong,
+.curator-taste-item small {
+  display: block;
+}
+
+.curator-taste-item .badge {
+  margin-left: 0.5rem;
+}
+
+.curator-taste-item small {
+  color: var(--text-muted, #adb5bd);
+}
+
+.curator-sentiment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.curator-tag-follow-up {
+  margin: 0.5rem 0;
+}
+
+.curator-tag-follow-up-heading,
+.curator-tag-follow-up-item,
+.curator-tag-follow-up-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.curator-tag-follow-up-heading {
+  justify-content: space-between;
+}
+
+.curator-tag-follow-up p {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.curator-tag-follow-up-item {
+  margin-bottom: 0.35rem;
+}
+
 .curator-profiling-toolbar {
   align-items: center;
   display: flex;

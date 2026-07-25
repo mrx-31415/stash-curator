@@ -34,6 +34,17 @@ Use thumbs up or down for direct feedback. The detail menu also supports **Not n
 queued durably in the browser during transient failures and applied in a small model
 update. A later explicit action can reverse earlier feedback.
 
+Open **Taste Profile** to review content-tag beliefs and answer with a fixed sentiment
+from strong dislike to strong like. A direct answer is strong evidence rather than a
+hard exclusion; **Neutral** is an explicit near-zero preference, while **Clear
+answer** returns the tag to behavior-derived inference. Answers are queued locally
+during transient failures.
+
+After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
+with up to three relevant content tags. Answer only the tags that contributed to the
+problem, or choose a scene-specific or metadata explanation; the original thumbs down
+remains independent.
+
 ## Similar
 
 Open Similar from Curator or the compass action on a Stash scene or performer.
