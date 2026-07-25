@@ -1132,6 +1132,12 @@ class PreferenceModelBuilder:
                 for score in scores
             ),
         )
+        # Lane orders are immutable model artifacts: finish them before the atomic
+        # status flip so requests never observe a half-published recommendation model.
+        from curator.ranking import LanePolicy, SlateBuilder
+
+        LanePolicy(self.connection, self.config).classify(model_id)
+        SlateBuilder(self.connection, self.config).materialize(model_id, force=True)
         with transaction(self.connection):
             self.connection.execute(
                 "UPDATE model_version SET status='superseded' WHERE status='published'"

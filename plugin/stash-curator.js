@@ -11,7 +11,7 @@
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
-  const { faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -78,9 +78,11 @@
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
   const similarityCache = new Map();
   const restoredCache = readSlateCache();
+  const laneExclusions = new Map(restoredCache.exclusions.map(([lane, ids]) => [lane, new Set(ids)]));
   const slateCache = new Map(restoredCache.entries);
   const slateRequests = new Map();
   let cachedModelId = restoredCache.modelId;
+  let cachedConfigUpdatedAtMs = restoredCache.configUpdatedAtMs;
   let cacheGeneration = 0;
   let modelUpdateTimer = null;
 
@@ -117,18 +119,23 @@
     }
   }
 
-  function slateKey(lane) {
-    return `${lane}:0`;
+  function slateKey(lane, page = 1) {
+    return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`;
   }
 
   function readSlateCache() {
     try {
       const value = JSON.parse(sessionStorage.getItem(SLATE_CACHE_KEY) || "null");
       return value && Array.isArray(value.entries)
-        ? { modelId: value.modelId || null, entries: value.entries.filter((entry) => Array.isArray(entry) && entry.length === 2) }
-        : { modelId: null, entries: [] };
+        ? {
+            modelId: value.modelId || null,
+            configUpdatedAtMs: Number.isFinite(value.configUpdatedAtMs) ? value.configUpdatedAtMs : null,
+            entries: value.entries.filter((entry) => Array.isArray(entry) && entry.length === 2),
+            exclusions: Array.isArray(value.exclusions) ? value.exclusions.filter((entry) => Array.isArray(entry) && Array.isArray(entry[1])) : [],
+          }
+        : { modelId: null, configUpdatedAtMs: null, entries: [], exclusions: [] };
     } catch (_) {
-      return { modelId: null, entries: [] };
+      return { modelId: null, configUpdatedAtMs: null, entries: [], exclusions: [] };
     }
   }
 
@@ -136,7 +143,7 @@
     try {
       sessionStorage.setItem(
         SLATE_CACHE_KEY,
-        JSON.stringify({ modelId: cachedModelId, entries: [...slateCache.entries()] })
+        JSON.stringify({ modelId: cachedModelId, configUpdatedAtMs: cachedConfigUpdatedAtMs, entries: [...slateCache.entries()], exclusions: [...laneExclusions].map(([lane, ids]) => [lane, [...ids]]) })
       );
     } catch (_) {
       // The in-memory cache still works if browser storage is unavailable or full.
@@ -147,9 +154,21 @@
     slateCache.clear();
     slateRequests.clear();
     cachedModelId = null;
+    cachedConfigUpdatedAtMs = null;
     sessionStorage.removeItem(SLATE_CACHE_KEY);
     cacheGeneration += 1;
     similarityCache.clear();
+  }
+
+  function Pager({ page, hasMore, loading, onPage, label }) {
+    if (page === 1 && !hasMore) return null;
+    return React.createElement(
+      "nav",
+      { className: "curator-pager", "aria-label": label },
+      React.createElement(Button, { size: "sm", disabled: loading || page === 1, onClick: () => onPage(page - 1) }, "Previous"),
+      React.createElement("span", null, `Page ${page}`),
+      React.createElement(Button, { size: "sm", disabled: loading || !hasMore, onClick: () => onPage(page + 1) }, "Next")
+    );
   }
 
   function readFilterPresets() {
@@ -175,22 +194,30 @@
     if (!copied) throw new Error("Copy failed");
   }
 
-  function loadSlate(lane, prefetched = false) {
-    const key = slateKey(lane);
+  function loadSlate(lane, page = 1, prefetched = false) {
+    const key = slateKey(lane, page);
     if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
     if (slateRequests.has(key)) return slateRequests.get(key);
     const generation = cacheGeneration;
     const request = operation({
       operation: "get_slate",
       lane,
+      page,
+      exclude_scene_ids: [...(laneExclusions.get(lane) || [])],
       exploration: 0,
       context: { route: location.pathname, prefetched },
     })
       .then((data) => {
         if (generation !== cacheGeneration) return data;
-        if (cachedModelId && cachedModelId !== data.model_id) clearSlateCache();
+        const modelChanged = cachedModelId && cachedModelId !== data.model_id;
+        const configChanged = cachedConfigUpdatedAtMs !== null && cachedConfigUpdatedAtMs !== data.config_updated_at_ms;
+        if (modelChanged || configChanged) {
+          clearSlateCache();
+          if (modelChanged) laneExclusions.clear();
+        }
         cachedModelId = data.model_id;
-        slateCache.set(key, data);
+        cachedConfigUpdatedAtMs = data.config_updated_at_ms;
+        slateCache.set(slateKey(lane, page), data);
         persistSlateCache();
         return data;
       })
@@ -200,10 +227,27 @@
   }
 
   function prefetchLane(lane) {
-    if (!laneByValue.has(lane)) return;
-    loadSlate(lane, true).catch(() => {
+    if (!laneByValue.has(lane) || cachedConfigUpdatedAtMs === null) return;
+    loadSlate(lane, 1, true).catch(() => {
       // Opening the lane will retry and show any error in context.
     });
+  }
+
+  async function configurePlugin(values) {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: 'mutation ConfigureCurator($input: Map!) { configurePlugin(plugin_id: "stash-curator", input: $input) }',
+        variables: { input: values },
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors) {
+      throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    }
+    return payload.data.configurePlugin;
   }
 
   async function runTask(taskName) {
@@ -562,6 +606,9 @@
     const [result, setResult] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(false);
+    const [page, setPage] = React.useState(1);
+    const [pageSize, setPageSize] = React.useState(20);
+    const [excludedIds, setExcludedIds] = React.useState([]);
     const [gender, setGender] = React.useState(initialFilters.gender ?? "FEMALE");
     const [favoriteOnly, setFavoriteOnly] = React.useState(Boolean(initialFilters.favoriteOnly));
     const [includeTags, setIncludeTags] = React.useState(initialFilters.includeTags || []);
@@ -579,7 +626,10 @@
       variables: { filter: { q: search, per_page: 8 } },
       skip: entityType !== "performer" || !search,
     });
-    const items = result?.items || [];
+    const externalItems = result?.items || [];
+    const items = source === "stashdb"
+      ? externalItems.slice((page - 1) * pageSize, page * pageSize)
+      : externalItems;
     const ids = source === "library" ? items.map((item) => item.entity_id) : [];
     const similarScenes = GQL.useFindScenesQuery({
       variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
@@ -602,15 +652,19 @@
     const sourcePerformer = GQL.useFindPerformerQuery({ variables: { id: selected?.id || "0" }, skip: entityType !== "performer" || !selected });
     const sourceEntity = entityType === "scene" ? sourceScene.data?.findScene : sourcePerformer.data?.findPerformer;
 
-    function load(id, label, type = entityType, nextSource = source, nextGender = gender) {
+    function load(id, label, type = entityType, nextSource = source, nextGender = gender, nextPage = 1, nextExcluded = excludedIds) {
       setSelected({ id: String(id), label: label || `#${id}` });
       setError("");
       const request = { operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender, favorite_only: favoriteOnly, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_ids: filterPerformers.map((item) => String(item.id)), performer_names: filterPerformers.map((item) => item.name), studio_ids: filterStudios.map((item) => String(item.id)), studio_names: filterStudios.map((item) => item.name), minimum_similarity: minimumSimilarity };
+      if (nextSource === "library") {
+        request.page = nextPage;
+        request.exclude_scene_ids = nextExcluded;
+      }
       const cacheKey = JSON.stringify(request);
-      if (similarityCache.has(cacheKey)) { setResult(similarityCache.get(cacheKey)); setLoading(false); return; }
+      if (similarityCache.has(cacheKey)) { setResult(similarityCache.get(cacheKey)); setPage(nextPage); setLoading(false); return; }
       setLoading(true);
       operation(request, nextSource === "stashdb" ? 60000 : 30000).then(
-        (data) => { similarityCache.set(cacheKey, data); if (similarityCache.size > 10) similarityCache.delete(similarityCache.keys().next().value); setResult(data); setLoading(false); },
+        (data) => { similarityCache.set(cacheKey, data); if (similarityCache.size > 10) similarityCache.delete(similarityCache.keys().next().value); setResult(data); setPage(nextPage); setLoading(false); },
         (failure) => (setError(failure.message), setLoading(false))
       );
     }
@@ -624,7 +678,8 @@
       setMinimumSimilarity(value.minimum ?? 0.18);
     }
     function choose(entity) {
-      load(entity.id, entity.title || entity.name || `#${entity.id}`);
+      setExcludedIds([]);
+      load(entity.id, entity.title || entity.name || `#${entity.id}`, entityType, source, gender, 1, []);
     }
     React.useEffect(() => {
       if (initialId) load(initialId, initialLabel, initialType, "library");
@@ -632,6 +687,7 @@
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
         if (initialFilters.gender === undefined) setGender(data.config.expand_gender || "");
+        setPageSize(data.config.page_size || 20);
         setWhisparrEnabled(data.whisparr_enabled);
       }, () => {});
     }, []);
@@ -641,11 +697,25 @@
       setSelected(null);
       setResult(null);
       setSource("library");
+      setPage(1);
+      setExcludedIds([]);
     }
     function switchSource(value) {
       setSource(value);
       setResult(null);
-      if (selected) load(selected.id, selected.label, entityType, value);
+      setPage(1);
+      setExcludedIds([]);
+      if (selected) load(selected.id, selected.label, entityType, value, gender, 1, []);
+    }
+    function changePage(nextPage) {
+      if (source === "stashdb") return setPage(nextPage);
+      load(selected.id, selected.label, entityType, source, gender, nextPage);
+    }
+    function removeSimilar(sceneId) {
+      const nextExcluded = [...new Set([...excludedIds, sceneId])];
+      setExcludedIds(nextExcluded);
+      similarityCache.clear();
+      load(selected.id, selected.label, entityType, source, gender, page, nextExcluded);
     }
     async function shortlistExternal(item, kind) {
       try {
@@ -686,7 +756,7 @@
         selected && React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "StashDB", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
       ),
-      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => load(selected.id, selected.label) }, "Apply"))),
+      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setExcludedIds([]), load(selected.id, selected.label, entityType, source, gender, 1, [])) }, "Apply"))),
       search && !selected && React.createElement(
         "div",
         { className: "curator-similar-candidates" },
@@ -699,7 +769,7 @@
       result && source === "library" && React.createElement(
         "div",
         { className: "curator-grid" },
-        items.map((item, position) => {
+        items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
           const body = React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, relationshipText(item))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`))));
@@ -707,16 +777,17 @@
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
             if (!event.target.closest("a")) return;
-            sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: position, model_id: result.model_id }));
+            sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
           }
-          return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove: () => setResult((current) => ({ ...current, items: current.items.filter((value) => value.entity_id !== item.entity_id) })) })));
+          return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove: removeSimilar })));
         })
       ),
       result && source === "stashdb" && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
         items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (id) => location.assign(`/plugins/stash-curator?view=expand&performer=${id}`), onWhisparr: sendWhisparr, whisparrEnabled }))
-      )
+      ),
+      result && React.createElement(Pager, { page, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
   }
 
@@ -794,7 +865,7 @@
           );
         })
       ),
-      data && data.total > data.page_size && React.createElement("nav", { className: "curator-prune-pager", "aria-label": "Prune pages" }, React.createElement(Button, { size: "sm", disabled: page === 1, onClick: () => setPage((value) => value - 1) }, "Previous"), React.createElement("span", null, `Page ${page} of ${Math.ceil(data.total / data.page_size)}`), React.createElement(Button, { size: "sm", disabled: page * data.page_size >= data.total, onClick: () => setPage((value) => value + 1) }, "Next"))
+      data && data.total > data.page_size && React.createElement("nav", { className: "curator-pager", "aria-label": "Prune pages" }, React.createElement(Button, { size: "sm", disabled: page === 1, onClick: () => setPage((value) => value - 1) }, "Previous"), React.createElement("span", null, `Page ${page} of ${Math.ceil(data.total / data.page_size)}`), React.createElement(Button, { size: "sm", disabled: page * data.page_size >= data.total, onClick: () => setPage((value) => value + 1) }, "Next"))
     );
   }
 
@@ -814,6 +885,7 @@
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
+    const [page, setPage] = React.useState(1);
     const [error, setError] = React.useState("");
     const [message, setMessage] = React.useState("");
     const [version, setVersion] = React.useState(0);
@@ -821,12 +893,12 @@
     React.useEffect(() => {
       let active = true;
       setLoading(true);
-      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore }).then(
+      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore }).then(
         (result) => active && (setData(result), setLoading(false)),
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [entityType, sort, performerId, favoriteOnly, gender, filterVersion, version]);
+    }, [entityType, sort, performerId, favoriteOnly, gender, filterVersion, version, page]);
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
         if (initialFilters.gender === undefined) setGender(data.config.expand_gender || "");
@@ -834,6 +906,7 @@
       }, () => {});
     }, []);
     function applySaved(value) {
+      setPage(1);
       setGender(value.gender ?? "FEMALE");
       setFavoriteOnly(Boolean(value.favoriteOnly));
       setIncludeTags(value.includeTags || []);
@@ -849,6 +922,7 @@
       } catch (failure) { setError(failure.message); }
     }
     function showPerformerScenes(id) {
+      setPage(1);
       setEntityType("scene");
       setPerformerId(id);
     }
@@ -865,15 +939,15 @@
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
-        React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
-        React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
-        entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => setSort(event.target.value), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
+        React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
+        React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
+        entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => (setPage(1), setSort(event.target.value)), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
-        performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => setPerformerId(null) }, "Clear performer filter"),
+        performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => (setPage(1), setPerformerId(null)) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
-      entityType !== "shortlist" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setFilterVersion((value) => value + 1) }, "Apply"))),
+      entityType !== "shortlist" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
@@ -886,7 +960,8 @@
           const kind = entityType === "shortlist" ? item.entity_type : entityType;
           return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
         })
-      )
+      ),
+      entityType !== "shortlist" && data?.ready && React.createElement(Pager, { page, hasMore: data.has_more, loading, onPage: setPage, label: "Expand pages" })
     );
   }
 
@@ -1078,20 +1153,41 @@
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
+    const [page, setPage] = React.useState(1);
+    const [configReady, setConfigReady] = React.useState(false);
+    const [diversityEnabled, setDiversityEnabled] = React.useState(null);
+    const [diversitySaving, setDiversitySaving] = React.useState(false);
 
     React.useEffect(() => {
       let active = true;
+      operation({ operation: "get_config" }).then(
+        (data) => {
+          if (!active) return;
+          if (cachedConfigUpdatedAtMs !== data.updated_at_ms) clearSlateCache();
+          cachedConfigUpdatedAtMs = data.updated_at_ms;
+          setDiversityEnabled(Boolean(data.config.diversity_enabled));
+          persistSlateCache();
+          setConfigReady(true);
+        },
+        () => active && setConfigReady(true)
+      );
+      return () => { active = false; };
+    }, []);
+
+    React.useEffect(() => {
+      let active = true;
+      if (!configReady) return () => { active = false; };
       if (!laneByValue.has(lane)) {
         setSlate(null);
         setLoading(false);
         setError("");
         return () => { active = false; };
       }
-      const cached = slateCache.get(slateKey(lane));
+      const cached = slateCache.get(slateKey(lane, page));
       setSlate(cached || null);
       setLoading(!cached);
       setError("");
-      loadSlate(lane).then(
+      loadSlate(lane, page).then(
         (data) => {
           if (!active) return;
           setSlate(data);
@@ -1102,7 +1198,7 @@
       return () => {
         active = false;
       };
-    }, [lane, refreshKey]);
+    }, [lane, page, refreshKey, configReady]);
 
     const laneOption = NAV_ITEMS.find((option) => option.value === lane);
 
@@ -1118,31 +1214,45 @@
       (scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene])
     );
     function remove(sceneId) {
-      const excluded = slate.items.map((item) => item.scene_id);
       clearSlateCache();
-      setSlate((current) => ({ ...current, items: current.items.filter((item) => item.scene_id !== sceneId) }));
-      operation({ operation: "replace_item", lane, exploration: 0, exclude_scene_ids: excluded }).then(
-        (replacement) =>
-          setSlate((current) => ({
-            ...current,
-            items: [
-              ...current.items,
-              ...replacement.items.filter(
-                (candidate) => !current.items.some((item) => item.scene_id === candidate.scene_id)
-              ),
-            ],
-          })),
-        () => {}
-      );
+      const excluded = laneExclusions.get(lane) || new Set();
+      excluded.add(sceneId);
+      laneExclusions.set(lane, excluded);
+      persistSlateCache();
+      setLoading(true);
+      setRefreshKey((value) => value + 1);
     }
     function refresh() {
       clearSlateCache();
+      laneExclusions.clear();
+      setPage(1);
       setRefreshKey((value) => value + 1);
     }
     function openView(view) {
       if (view === lane) return;
+      setPage(1);
       route.set("view", view);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
+    }
+    async function toggleDiversity() {
+      const nextEnabled = !diversityEnabled;
+      setDiversitySaving(true);
+      setError("");
+      try {
+        await configurePlugin({ diversityDisabled: !nextEnabled });
+        const data = await operation({ operation: "get_config" });
+        clearSlateCache();
+        cachedConfigUpdatedAtMs = data.updated_at_ms;
+        setDiversityEnabled(Boolean(data.config.diversity_enabled));
+        persistSlateCache();
+        setPage(1);
+        setLoading(true);
+        setRefreshKey((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setDiversitySaving(false);
+      }
     }
 
     return React.createElement(
@@ -1169,8 +1279,27 @@
       laneOption && React.createElement(
         "div",
         { className: "curator-view-guidance" },
-        React.createElement("p", null, laneOption.description),
-        laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
+        React.createElement(
+          "div",
+          { className: "curator-view-copy" },
+          React.createElement("p", null, laneOption.description),
+          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
+        ),
+        laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
+          Button,
+          {
+            className: "curator-diversity-toggle",
+            size: "sm",
+            variant: diversityEnabled ? "primary" : "secondary",
+            disabled: diversitySaving,
+            "aria-pressed": diversityEnabled,
+            "aria-label": diversityEnabled ? "Disable recommendation variety" : "Enable recommendation variety",
+            title: diversityEnabled ? "Switch to the model's score-first order" : "Vary performers, studios, and similar content",
+            onClick: toggleDiversity,
+          },
+          React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
+          diversityEnabled ? " Balanced" : " Score-first"
+        )
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
@@ -1194,7 +1323,8 @@
             "section",
             { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
             slate.items.map((item) => React.createElement(RecommendationCard, { key: item.scene_id, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove }))
-          )
+          ),
+          React.createElement(Pager, { page, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )
     );
   }
