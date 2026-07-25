@@ -22,7 +22,7 @@ source cache ──► normalized events                  StashDB
         Appeal + Current Fit + confidence
                      │
                      ▼
-        lane policy + diversity slate
+       lane policy + published lane orders
                      │
                      ▼
        cards, Similar, and explanations
@@ -37,7 +37,7 @@ source cache ──► normalized events                  StashDB
 - `curator/graphql/` and `curator/sync/` incrementally copy the required Stash facts.
 - `curator/events/` conservatively reconstructs history and stores direct outcomes.
 - `curator/features/`, `curator/model/`, and `curator/ranking/` publish immutable
-  feature/model versions and construct slates.
+  feature/model versions with indexed score-first and varied lane orders.
 - `curator/similarity.py`, `curator/expand.py`, and `curator/explanations/` serve
   Similar, StashDB discovery, and factual reasons.
 - `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
@@ -45,8 +45,9 @@ source cache ──► normalized events                  StashDB
 ## Data flow and failure boundaries
 
 Sync writes normalized source tables, then event and feature builders create a new
-version. Model publication is atomic: readers see the old complete model or the new
-complete model, never a partial build. Interactive lane and Similar requests use
+version. Lane classifications and both page orders are built before model publication:
+readers see the old complete model or the new complete model, never a partial build.
+Interactive lane and Similar requests use
 compact SQLite indexes and return stable IDs; the browser fetches current display
 metadata from Stash.
 

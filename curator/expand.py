@@ -190,6 +190,7 @@ class ExpandService:
         self,
         entity_type: str,
         *,
+        page: int = 1,
         sort: str = "match",
         performer_id: str | None = None,
         favorite_only: bool = False,
@@ -205,11 +206,19 @@ class ExpandService:
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
             raise ValueError("invalid Expand query")
+        if page < 1 or not 1 <= count <= 500:
+            raise ValueError("invalid Expand page")
         if not -1 <= minimum_score <= 1:
             raise ValueError("minimum_score must be between -1 and 1")
         cache = self.connection.execute("SELECT * FROM expand_cache WHERE singleton=1").fetchone()
         if cache is None:
-            return {"ready": False, "items": []}
+            return {
+                "ready": False,
+                "page": page,
+                "page_size": count,
+                "has_more": False,
+                "items": [],
+            }
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -274,11 +283,16 @@ class ExpandService:
             rows.sort(key=lambda item: (-item["score"], item["id"]))
             if entity_type == "scene":
                 rows = self._diverse_scenes(rows)
+        start = (page - 1) * count
+        end = page * count
         return {
             "ready": True,
             "fetched_at_ms": int(cache["fetched_at_ms"]),
             "expires_at_ms": int(cache["expires_at_ms"]),
-            "items": rows[:count],
+            "page": page,
+            "page_size": count,
+            "has_more": len(rows) > end,
+            "items": rows[start:end],
         }
 
     @staticmethod

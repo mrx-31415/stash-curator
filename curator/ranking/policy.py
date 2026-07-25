@@ -281,9 +281,7 @@ class LanePolicy:
         if limit_per_lane is not None and limit_per_lane < 1:
             raise ValueError("limit_per_lane must be positive")
         rows: list[sqlite3.Row] = []
-        selected_lanes: tuple[str | None, ...] = (
-            tuple(lanes or LANES) if limit_per_lane else (None,)
-        )
+        selected_lanes: tuple[str | None, ...] = tuple(lanes) if lanes else (None,)
         for lane in selected_lanes:
             where = "model_id=?"
             parameters: list[object] = [model_id]

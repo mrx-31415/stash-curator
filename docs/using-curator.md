@@ -17,6 +17,11 @@ permalink: /using-curator/
 
 Cards are arranged as a slate. Curator avoids adjacent performer repetition and
 softly varies studios and content, so the page is not merely the top 20 scores.
+Previous and Next continue through that same ranked sequence, preserving earlier
+variety decisions. Use the **Balanced** button beside a recommendation lane's
+description to switch between varied and score-first order. This also updates
+**Disable recommendation variety** in Curator's plugin settings. Both orders are
+published with the model, so later pages do not rerank the library.
 
 ## Inspect and teach
 
@@ -35,13 +40,16 @@ Open Similar from Curator or the compass action on a Stash scene or performer.
 Library results use content overlap and preference-aware performer profiles. Switch
 to StashDB only when you want external candidates; local and remote results remain
 separate and the reference entity stays visible.
+Local matches use the configured page size. StashDB Similar keeps up to 100 matches
+from one remote search and pages that stable result locally.
 
 ## Expand
 
 Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 **Refresh Expand cache** task, then browse scenes and performers, save filters, or
 shortlist candidates. External results are metadata leads, not proof that a scene is
-available locally. Optional Whisparr actions require separate settings.
+available locally. Filters and ordering are applied before paging. Optional Whisparr
+actions require separate settings.
 
 ## Prune
 
