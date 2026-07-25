@@ -79,7 +79,7 @@
       value: "taste",
       label: "Taste Profile",
       icon: faTag,
-      description: "Review what Curator has inferred and directly teach it how you feel about content tags.",
+      description: "Review what Curator has inferred and directly teach it how you feel about tags.",
     },
   ];
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
@@ -451,7 +451,7 @@
       ),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       !data && !error && React.createElement("div", { role: "status" }, "Loading taste profile…"),
-      data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No supported content tags are available yet."),
+      data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No supported tags are available yet."),
       data && data.items.length > 0 && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No tags match that search."),
       data && React.createElement(
         "div",
@@ -538,6 +538,9 @@
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled } = transformComponentProps("stash-curator.ExternalCard", props);
     const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
+    const [tagChoices, setTagChoices] = React.useState(null);
+    const [tagLoading, setTagLoading] = React.useState(false);
+    const [tagError, setTagError] = React.useState("");
     const payload = item.payload;
     if (!payload) return null;
     const image = payload.images?.find((value) => value.url)?.url;
@@ -574,6 +577,27 @@
         setWhisparr({ status: "error", message: failure.message });
       }
     }
+    async function rateTags() {
+      if (tagChoices !== null) return setTagChoices(null);
+      setTagLoading(true);
+      setTagError("");
+      try {
+        const result = await operation({
+          operation: "get_external_tag_choices",
+          tags: tags.map((tag) => ({ id: tag.id, name: tag.name })),
+        });
+        setTagChoices(result.items);
+      } catch (failure) {
+        setTagError(failure.message);
+        setTagChoices([]);
+      } finally {
+        setTagLoading(false);
+      }
+    }
+    function answerTag(tag, value) {
+      submitTagPreference(tag.tag_id, value);
+      setTagChoices((current) => current.map((item) => item.tag_id === tag.tag_id ? { ...item, direct_value: value } : item));
+    }
     return React.createElement(
       "article",
       { className: `curator-card curator-external-card curator-external-${kind} grid-card ${kind}-card` },
@@ -582,7 +606,8 @@
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls)),
       React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), React.createElement("p", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)))),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
+      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id }, React.createElement("strong", null, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, onChange: (value) => answerTag(tag, value) })))),
+      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   });
 
