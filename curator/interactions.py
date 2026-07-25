@@ -165,6 +165,95 @@ class InteractionStore:
                 ModelUpdateCoordinator(self.connection).request("direct_feedback")
         return inserted
 
+    def correct_feedback(
+        self,
+        feedback_id: str,
+        correction_id: str,
+        feedback_type: str | None,
+        occurred_at_ms: int,
+    ) -> None:
+        if feedback_type is not None and feedback_type not in FEEDBACK_TYPES:
+            raise ValueError(f"unknown feedback type: {feedback_type}")
+        if not feedback_id or not correction_id or occurred_at_ms < 0:
+            raise ValueError("feedback_id, correction_id, and occurred_at_ms are required")
+        with transaction(self.connection):
+            original = self.connection.execute(
+                """
+                SELECT scene_id, feedback_type, occurred_at_ms, reversed_by_id
+                FROM feedback WHERE feedback_id=?
+                """,
+                (feedback_id,),
+            ).fetchone()
+            if original is None:
+                raise ValueError("unknown feedback")
+            if original["reversed_by_id"] is not None:
+                raise ValueError("feedback was already corrected")
+            if occurred_at_ms < int(original["occurred_at_ms"]):
+                raise ValueError("correction cannot predate feedback")
+            scene_id = str(original["scene_id"])
+            correction = {
+                "feedback_id": correction_id,
+                "scene_id": scene_id,
+                "feedback_type": feedback_type or "reversal",
+                "value": None,
+                "occurred_at_ms": occurred_at_ms,
+                "impression_id": None,
+                "payload": {"replaces_feedback_id": feedback_id},
+            }
+            self.connection.execute(
+                """
+                INSERT INTO feedback(
+                    feedback_id, scene_id, feedback_type, value, occurred_at_ms,
+                    impression_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    correction_id,
+                    scene_id,
+                    correction["feedback_type"],
+                    correction["value"],
+                    occurred_at_ms,
+                    correction["impression_id"],
+                    json.dumps(correction["payload"], separators=(",", ":")),
+                ),
+            )
+            self.connection.execute(
+                "UPDATE feedback SET reversed_by_id=? WHERE feedback_id=?",
+                (correction_id, feedback_id),
+            )
+            if feedback_type is not None:
+                self._apply_feedback(correction)
+            if not self.connection.execute(
+                """
+                SELECT 1 FROM feedback
+                WHERE scene_id=? AND feedback_type='never_show' AND reversed_by_id IS NULL
+                """,
+                (scene_id,),
+            ).fetchone():
+                self.connection.execute(
+                    """
+                    UPDATE exclusion SET reversed_at_ms=?
+                    WHERE entity_type='scene' AND entity_id=? AND exclusion_type='never_show'
+                    AND reversed_at_ms IS NULL
+                    """,
+                    (occurred_at_ms, scene_id),
+                )
+            if str(original["feedback_type"]) in {"thumb_down", "never_show", "prune"} and not (
+                self.connection.execute(
+                    """
+                    SELECT 1 FROM feedback
+                    WHERE scene_id=? AND feedback_type IN ('thumb_down', 'never_show', 'prune')
+                    AND reversed_by_id IS NULL
+                    """,
+                    (scene_id,),
+                ).fetchone()
+            ):
+                self.connection.execute(
+                    "DELETE FROM pruning_candidate WHERE scene_id=? AND state='review'",
+                    (scene_id,),
+                )
+            ModelUpdateCoordinator(self.connection).request("feedback_correction")
+
     def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> int:
         normalized = [self._tag_preference_entry(entry) for entry in entries]
         inserted = 0

@@ -160,6 +160,53 @@ def test_never_show_and_pruning_apply_operational_state(tmp_path: Path) -> None:
     )
 
 
+def test_feedback_corrections_preserve_history_and_reconcile_state(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    store = InteractionStore(connection)
+    assert (
+        store.submit_feedback(
+            [
+                {
+                    "feedback_id": "never",
+                    "scene_id": "old-good",
+                    "feedback_type": "never_show",
+                    "occurred_at_ms": 10,
+                }
+            ]
+        )
+        == 1
+    )
+
+    store.correct_feedback("never", "replacement", "thumb_up", 20)
+
+    rows = connection.execute(
+        """
+        SELECT feedback_id, feedback_type, reversed_by_id
+        FROM feedback WHERE scene_id='old-good' ORDER BY occurred_at_ms
+        """
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("never", "never_show", "replacement"),
+        ("replacement", "thumb_up", None),
+    ]
+    assert (
+        connection.execute(
+            "SELECT reversed_at_ms FROM exclusion WHERE entity_id='old-good'"
+        ).fetchone()[0]
+        == 20
+    )
+    assert (
+        connection.execute("SELECT 1 FROM pruning_candidate WHERE scene_id='old-good'").fetchone()
+        is None
+    )
+    assert (
+        connection.execute(
+            "SELECT last_cause FROM model_update_state WHERE singleton=1"
+        ).fetchone()[0]
+        == "feedback_correction"
+    )
+
+
 def test_short_curator_session_followed_by_another_scene_records_replacement(
     tmp_path: Path,
 ) -> None:
