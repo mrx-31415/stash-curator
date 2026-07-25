@@ -5,6 +5,7 @@ from pathlib import Path
 from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService, normalize_phash
 from curator.features import FeatureStore
+from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
 
@@ -605,3 +606,37 @@ def test_external_profile_normalizes_age_augmentation_and_tag_names() -> None:
     )
     assert ExpandService._cast_weight(4) == 1
     assert ExpandService._cast_weight(100) == 0.2
+
+
+def test_unused_local_tag_preference_scores_matching_external_scenes(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES ('unused', 'Unused', 'unused')"
+    )
+    connection.execute(
+        """
+        INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id)
+        VALUES ('unused', 'https://stashdb.org/graphql', 'external-unused')
+        """
+    )
+    model = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    InteractionStore(connection).submit_tag_preferences(
+        [{"preference_id": "unused", "tag_id": "unused", "value": -1, "occurred_at_ms": 10}]
+    )
+    scenes, _ = ExpandService(connection)._score(
+        [
+            {
+                "id": "tagged",
+                "tags": [{"id": "external-unused", "name": "Unused"}],
+                "performers": [],
+            },
+            {"id": "plain", "tags": [], "performers": []},
+        ],
+        {"tagged": {"wildcard"}, "plain": {"wildcard"}},
+        model.model_id,
+        model.feature_version,
+        {"scenes": {}, "performers": {}, "studios": {}},
+    )
+
+    scores = {item["id"]: item["score"] for item in scenes}
+    assert scores["tagged"] < scores["plain"]
