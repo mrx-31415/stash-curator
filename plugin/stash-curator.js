@@ -1426,6 +1426,26 @@
           : "Not built";
     const activeJob = health?.active_job;
     const progress = typeof activeJob?.progress === "number" ? activeJob.progress : null;
+    const setupChecklist = health && !health.ready && React.createElement(
+      "section",
+      { className: "curator-setup-checklist", "aria-labelledby": "curator-setup-heading" },
+      React.createElement("h2", { id: "curator-setup-heading" }, "Finish Curator setup"),
+      React.createElement(
+        "ul",
+        null,
+        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.sidecar_ready ? faCheckCircle : faWrench }), ` Sidecar and migrations: ${health.sidecar_ready ? `ready (schema ${health.database_schema})` : "needs attention"}`),
+        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.sync_ready ? faCheckCircle : faClock }), ` Library sync: ${health.sync_ready ? "complete" : activeJob ? "running" : "not started"}`),
+        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.ready ? faCheckCircle : faClock }), ` Recommendation model: ${health.model_rebuilding ? "building" : "not built"}`),
+        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.stashdb_available ? faCheckCircle : faGlobe }), ` StashDB: ${health.stashdb_available ? "available" : "optional — not configured"}`)
+      ),
+      lastError && React.createElement("div", { className: "alert alert-danger" }, React.createElement("strong", null, "Initial sync failed: "), lastError.error, " Open Tasks for the full log, correct the problem, then retry."),
+      React.createElement(
+        "div",
+        { className: "curator-setup-actions" },
+        React.createElement(Button, { size: "sm", disabled: Boolean(activeJob), onClick: () => start("Sync and build recommendations") }, activeJob ? "Setup task running…" : "Sync and build recommendations"),
+        React.createElement(NavLink, { className: "btn btn-secondary btn-sm", to: "/settings?tab=plugins" }, "Open plugin settings")
+      )
+    );
 
     return React.createElement(
       React.Fragment,
@@ -1450,6 +1470,7 @@
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
+      setupChecklist,
       activeJob && React.createElement("div", { className: "curator-active-job" }, React.createElement("span", null, activeJob.description), progress !== null && React.createElement("strong", null, `${Math.round(progress * 100)}%`), React.createElement("div", { className: "curator-job-progress" }, React.createElement("span", { style: { width: `${Math.round((progress || 0) * 100)}%` } })), React.createElement(NavLink, { to: "/settings?tab=tasks" }, "View tasks")),
       lastError && React.createElement("small", { className: "curator-header-message text-danger" }, lastError.error),
       message && React.createElement("p", { className: "curator-header-message", role: "status" }, message)

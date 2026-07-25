@@ -52,6 +52,7 @@ RUNTIME_QUERY = """
 query CuratorPluginRuntime {
   version { version }
   jobQueue { id status description progress startTime }
+  configuration { general { stashBoxes { endpoint api_key } } }
 }
 """
 SETTINGS_QUERY = """
@@ -358,8 +359,16 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "stash_version": stash["version"]["version"],
         "database": str(_database_path(payload, settings)),
         "database_schema": migration.current_version,
+        "database_schema_latest": migration.latest_version,
+        "sidecar_ready": not migration.pending_versions,
         "model_id": str(current[0]) if current else None,
         "ready": current is not None,
+        "sync_ready": last_sync is not None,
+        "stashdb_available": any(
+            str(box.get("endpoint") or "").rstrip("/").casefold() == STASHDB.rstrip("/").casefold()
+            and bool(box.get("api_key"))
+            for box in stash["configuration"]["general"]["stashBoxes"]
+        ),
         "capture": capture,
         "model_pending": model_update.pending,
         "model_pending_events": model_update.pending_count,
