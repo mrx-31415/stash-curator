@@ -116,6 +116,14 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert '[-1, "Strong dislike"]' in source
     assert '[1, "Strong like"]' in source
     assert '"Clear answer"' in source
+    assert '"Search taste profile tags"' in source
+    assert '"Filter taste profile tags"' in source
+    assert 'value: "answered"' in source
+    assert '"Needs answer"' in source
+    assert '"Sort taste profile"' in source
+    assert 'value: "confidence"' in source
+    assert 'value: "scenes"' in source
+    assert 'if (sort !== "suggested")' in source
 
 
 def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
