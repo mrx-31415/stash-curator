@@ -165,6 +165,37 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
     assert isinstance(exclusion_reasons, list)
     assert "current_thumb_down" in exclusion_reasons
     assert connection.execute("SELECT count(*) FROM feature_affinity").fetchone()[0] > 0
+    assert connection.execute(
+        "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (first.model_id,)
+    ).fetchone()
+    assert {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT ordering FROM model_lane_order WHERE model_id=?",
+            (first.model_id,),
+        )
+    } == {"score_first", "varied"}
+    assert [
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT scene_id FROM model_lane_order
+            WHERE model_id=? AND lane='for_you' AND ordering='varied'
+            ORDER BY position
+            """,
+            (first.model_id,),
+        )
+    ] != [
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT scene_id FROM model_lane_order
+            WHERE model_id=? AND lane='for_you' AND ordering='score_first'
+            ORDER BY position
+            """,
+            (first.model_id,),
+        )
+    ]
     assert scores["unseen-good"].neighbors
     assert all("scene_id" in neighbor for neighbor in scores["unseen-good"].neighbors)
     assert {str(neighbor["scene_id"]) for neighbor in scores["unseen-good"].neighbors} <= {
@@ -279,6 +310,32 @@ def test_failed_rebuild_cannot_replace_published_model(
     ]
     assert "published" in statuses
     assert "failed" in statuses
+
+
+def test_failed_lane_order_build_cannot_replace_published_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    published = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    connection.execute(
+        """
+        INSERT INTO behavior_event(
+            event_id, event_type, scene_id, occurred_at_ms, outcome, confidence,
+            provenance, payload_json
+        ) VALUES ('new-order-event', 'occasion_outcome', 'unlabeled', ?, 0.4, 1,
+                  'synthetic', '{"primary_signal":"view"}')
+        """,
+        (REFERENCE_MS,),
+    )
+    monkeypatch.setattr(
+        "curator.ranking.SlateBuilder.materialize",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic order failure")),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic order failure"):
+        PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    assert RecommendationModelStore(connection).current_model_id() == published.model_id
 
 
 def test_all_positive_cold_start_learns_relative_lift_without_saturating(

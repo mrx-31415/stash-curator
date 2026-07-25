@@ -70,6 +70,42 @@ def test_slate_api_never_builds_a_pending_model_inline(
     assert result["items"]
 
 
+def test_slate_api_pages_one_ranked_prefix_with_global_positions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+    fail = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # noqa: E731
+        AssertionError("materialized requests must not hydrate candidates")
+    )
+    monkeypatch.setattr("curator.ranking.slate.SlateBuilder._load_prepared", fail)
+    monkeypatch.setattr("curator.ranking.slate.SlateBuilder._candidates", fail)
+    assert api.get_slate("best_bets", 1, now_ms=REFERENCE_MS)["items"] == []
+
+    whole = api.get_slate("for_you", 2, now_ms=REFERENCE_MS)
+    first = api.get_slate("for_you", 1, page=1, impression_id="page-1", now_ms=REFERENCE_MS)
+    second = api.get_slate("for_you", 1, page=2, impression_id="page-2", now_ms=REFERENCE_MS)
+
+    assert first["has_more"] is True
+    assert first["ranking_timings_ms"]["materialized"] == 1
+    assert [first["items"][0]["scene_id"], second["items"][0]["scene_id"]] == [
+        item["scene_id"] for item in whole["items"]
+    ]
+    assert [first["items"][0]["position"], second["items"][0]["position"]] == [0, 1]
+    assert (
+        connection.execute(
+            "SELECT position FROM impression_item WHERE impression_id='page-2'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert api.get_slate("for_you", 20, page=20, now_ms=REFERENCE_MS)["has_more"] is False
+    api.update_config({"diversity_enabled": False}, now_ms=REFERENCE_MS)
+    assert (
+        api.get_slate("for_you", 2, now_ms=REFERENCE_MS)["ranking_timings_ms"]["materialized"] == 1
+    )
+
+
 def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
@@ -135,6 +171,22 @@ def test_similar_performers_are_preference_aware_and_inspectable(tmp_path: Path)
     assert result["items"][0]["details"]["blocks"]
 
 
+def test_local_similarity_pages_one_ranked_prefix(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+
+    whole = api.similar("scene", "old-good", 2)
+    first = api.similar("scene", "old-good", 1, page=1)
+    second = api.similar("scene", "old-good", 1, page=2)
+
+    assert first["has_more"] is True
+    assert [first["items"][0]["entity_id"], second["items"][0]["entity_id"]] == [
+        item["entity_id"] for item in whole["items"]
+    ]
+    assert [first["items"][0]["position"], second["items"][0]["position"]] == [0, 1]
+
+
 def test_local_similarity_filters_gender(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute("UPDATE source_performer SET gender='FEMALE' WHERE performer_id='p3'")
@@ -169,9 +221,10 @@ def test_local_scene_similarity_filters_candidates(tmp_path: Path) -> None:
         "unlabeled",
         "unseen-good",
     ]
-    assert api.similar("scene", "old-good", exclude_tags=("Familiar Scenario",))["items"] == [
-        item for item in api.similar("scene", "old-good")["items"] if item["entity_id"] == "unusual"
-    ]
+    assert [
+        item["entity_id"]
+        for item in api.similar("scene", "old-good", exclude_tags=("Familiar Scenario",))["items"]
+    ] == ["unusual"]
     assert "recent-good" not in {
         item["entity_id"]
         for item in api.similar("scene", "old-good", exclude_tags=("Big Ass",))["items"]
@@ -209,10 +262,13 @@ def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     api = CuratorAPI(connection)
 
-    config = api.update_config({"page_size": 30}, now_ms=10)["config"]
+    config = api.update_config({"page_size": 30, "diversity_enabled": False}, now_ms=10)["config"]
     assert config["page_size"] == 30
+    assert config["diversity_enabled"] is False
     with pytest.raises(ValueError, match="page_size"):
         api.update_config({"page_size": 0})
+    with pytest.raises(ValueError, match="diversity_enabled"):
+        api.update_config({"diversity_enabled": 0})
     with pytest.raises(ValueError, match="unknown"):
         api.update_config({"mystery": True})
 

@@ -24,6 +24,7 @@ from curator.storage import transaction
 API_SCHEMA_VERSION = 1
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
+    "diversity_enabled": True,
     "sync_page_size": 250,
     "debounce_ms": 2_000,
     "model_update_event_threshold": 5,
@@ -45,12 +46,15 @@ class CuratorAPI:
         lane: str,
         count: int,
         *,
+        page: int = 1,
         impression_id: str | None = None,
         context: dict[str, object] | None = None,
         now_ms: int | None = None,
         exclude_scene_ids: set[str] | None = None,
         exploration: float = 0,
     ) -> dict[str, object]:
+        if page < 1 or not 1 <= count <= 500:
+            raise ValueError("invalid recommendation page")
         started = time.perf_counter()
         timings: dict[str, int] = {}
         config = self.config()["config"]
@@ -64,14 +68,37 @@ class CuratorAPI:
         record_duration("python", "slate.model_update", timings["model_update"])
         stage_started = time.perf_counter()
         excluded = exclude_scene_ids or set()
-        built = SlateBuilder(self.connection).recommend(
-            lane, count + len(excluded), exploration=exploration
-        )
-        selected = tuple(item for item in built.items if item.scene_id not in excluded)[:count]
+        start = (page - 1) * count
+        end = page * count
+        built = SlateBuilder(
+            self.connection, diversity_enabled=bool(config["diversity_enabled"])
+        ).recommend(lane, end + len(excluded), exploration=exploration)
+        available = tuple(item for item in built.items if item.scene_id not in excluded)
+        selected = available[start:end]
+        if lane == "for_you":
+            candidate_count = int(
+                self.connection.execute(
+                    "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=?",
+                    (built.model_id,),
+                ).fetchone()[0]
+            )
+        else:
+            candidate_count = int(
+                self.connection.execute(
+                    """
+                    SELECT count(DISTINCT scene_id) FROM model_scene_lane
+                    WHERE model_id=? AND lane=?
+                    """,
+                    (built.model_id, lane),
+                ).fetchone()[0]
+            )
         slate = Slate(
             built.model_id,
             built.lane,
-            tuple(replace(item, position=position) for position, item in enumerate(selected)),
+            tuple(
+                replace(item, position=position)
+                for position, item in enumerate(selected, start=start)
+            ),
             built.diagnostics,
             built.timings_ms,
         )
@@ -123,6 +150,10 @@ class CuratorAPI:
             is not None,
             "impression_id": impression_id,
             "lane": lane,
+            "page": page,
+            "page_size": count,
+            # ponytail: candidate count is an optimistic bound; exact lookahead reranks a card.
+            "has_more": len(available) >= end and candidate_count > end + len(excluded),
             "items": items,
             "diagnostics": list(slate.diagnostics),
             "timings_ms": timings,
@@ -183,6 +214,7 @@ class CuratorAPI:
         entity_id: str,
         count: int = 20,
         *,
+        page: int = 1,
         impression_id: str | None = None,
         now_ms: int | None = None,
         gender: str = "",
@@ -192,16 +224,21 @@ class CuratorAPI:
         studio_ids: tuple[str, ...] = (),
         favorite_only: bool = False,
         minimum_similarity: float = 0.18,
+        exclude_scene_ids: set[str] | None = None,
     ) -> dict[str, object]:
-        if not 1 <= count <= 100:
-            raise ValueError("count must be between 1 and 100")
+        if page < 1 or not 1 <= count <= 500:
+            raise ValueError("invalid Similar page")
         if not 0 <= minimum_similarity <= 1:
             raise ValueError("minimum_similarity must be between 0 and 1")
+        start = (page - 1) * count
+        end = page * count
+        excluded = exclude_scene_ids or set()
+        requested = end + 1 + len(excluded)
         service = SimilarityService(self.connection)
         if entity_type == "scene":
             results = service.scenes(
                 entity_id,
-                count,
+                requested,
                 gender,
                 include_tags=include_tags,
                 exclude_tags=exclude_tags,
@@ -212,10 +249,12 @@ class CuratorAPI:
             )
             table, id_column, label_column = "source_scene", "scene_id", "title"
         elif entity_type == "performer":
-            results = service.performers(entity_id, count, gender)
+            results = service.performers(entity_id, requested, gender)
             table, id_column, label_column = "source_performer", "performer_id", "name"
         else:
             raise ValueError(f"unsupported similar entity type: {entity_type}")
+        available = tuple(item for item in results if item.entity_id not in excluded)
+        results = available[start:end]
         labels = {
             str(row[id_column]): str(row[label_column] or "")
             for row in self.connection.execute(f"SELECT {id_column}, {label_column} FROM {table}")
@@ -230,7 +269,7 @@ class CuratorAPI:
                     service.model_id,
                     (
                         (item.entity_id, position, item.rank_score, item.relationships)
-                        for position, item in enumerate(results)
+                        for position, item in enumerate(results, start=start)
                     ),
                     now_ms if now_ms is not None else time.time_ns() // 1_000_000,
                     {"provenance": "similar", "source_scene_id": entity_id},
@@ -247,9 +286,17 @@ class CuratorAPI:
             "entity_type": entity_type,
             "entity_id": entity_id,
             "impression_id": impression_id if entity_type == "scene" else None,
+            "page": page,
+            "page_size": count,
+            "has_more": len(available) > end,
             "timings_ms": service.timings_ms,
             "items": [
-                {**asdict(item), "label": labels.get(item.entity_id, "")} for item in results
+                {
+                    **asdict(item),
+                    "label": labels.get(item.entity_id, ""),
+                    "position": position,
+                }
+                for position, item in enumerate(results, start=start)
             ],
         }
 
@@ -270,6 +317,7 @@ class CuratorAPI:
         self,
         entity_type: str,
         *,
+        page: int = 1,
         sort: str = "match",
         performer_id: str | None = None,
         favorite_only: bool = False,
@@ -285,6 +333,7 @@ class CuratorAPI:
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
             entity_type,
+            page=page,
             sort=sort,
             performer_id=performer_id,
             favorite_only=favorite_only,
@@ -611,6 +660,7 @@ class CuratorAPI:
     ) -> dict[str, object]:
         allowed = {
             "page_size",
+            "diversity_enabled",
             "sync_page_size",
             "debounce_ms",
             "model_update_event_threshold",
@@ -640,6 +690,9 @@ class CuratorAPI:
 
     @staticmethod
     def _validate_config(values: dict[str, object]) -> None:
+        diversity = values.get("diversity_enabled")
+        if diversity is not None and not isinstance(diversity, bool):
+            raise ValueError("diversity_enabled must be true or false")
         for key in ("page_size", "sync_page_size"):
             value = values.get(key)
             if value is not None and (not isinstance(value, int) or not 1 <= value <= 500):

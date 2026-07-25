@@ -212,6 +212,8 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         for source, (key, convert) in mapping.items()
         if settings.get(source) not in (None, "")
     }
+    if "diversityDisabled" in settings:
+        overrides["diversity_enabled"] = not bool(settings["diversityDisabled"])
     if not overrides:
         return
     row = connection.execute("SELECT config_json FROM curator_config WHERE singleton=1").fetchone()
@@ -373,6 +375,9 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         api = CuratorAPI(connection)
         if operation == "get_slate":
             config = api.config()["config"]
+            excluded = args.get("exclude_scene_ids", [])
+            if not isinstance(excluded, list):
+                raise ValueError("exclude_scene_ids must be a list")
             count = int(
                 args.get("count")
                 or (config.get("page_size", 20) if isinstance(config, dict) else 20)
@@ -380,8 +385,10 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.get_slate(
                 str(args.get("lane") or "for_you"),
                 count,
+                page=int(args.get("page") or 1),
                 impression_id=str(args["impression_id"]) if args.get("impression_id") else None,
                 context=args.get("context") if isinstance(args.get("context"), dict) else None,
+                exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
             )
         if operation == "replace_item":
@@ -402,6 +409,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             assert isinstance(config, dict)
             return api.expand(
                 str(args.get("entity_type") or "scene"),
+                page=int(args.get("page") or 1),
                 sort=str(args.get("sort") or "match"),
                 performer_id=str(args["performer_id"]) if args.get("performer_id") else None,
                 favorite_only=bool(args.get("favorite_only")),
@@ -415,7 +423,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 minimum_score=(
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
-                count=int(args.get("count") or 50),
+                count=int(args.get("count") or config["page_size"]),
             )
         if operation == "get_shortlist":
             return api.expand_shortlist()
@@ -427,6 +435,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 _external_links(payload),
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
+                count=100,
                 gender=str(args.get("gender", config["expand_gender"])),
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
@@ -586,10 +595,16 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
             )
         if operation == "get_similar":
+            config = api.config()["config"]
+            assert isinstance(config, dict)
+            excluded = args.get("exclude_scene_ids", [])
+            if not isinstance(excluded, list):
+                raise ValueError("exclude_scene_ids must be a list")
             return api.similar(
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
-                int(args.get("count") or 20),
+                int(args.get("count") or config["page_size"]),
+                page=int(args.get("page") or 1),
                 impression_id=(str(args["impression_id"]) if args.get("impression_id") else None),
                 gender=str(args.get("gender") or ""),
                 include_tags=_string_list(args.get("include_tags")),
@@ -602,6 +617,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                     if args.get("minimum_similarity") is not None
                     else 0.18
                 ),
+                exclude_scene_ids={str(value) for value in excluded},
             )
         raise ValueError(f"unknown Curator API operation: {operation}")
     finally:
@@ -626,15 +642,18 @@ def _job_status(connection: Any) -> dict[str, object]:
 
 
 def _classify_lanes(connection: Any, model: Any) -> int:
-    if model.reused:
-        count = int(
-            connection.execute(
-                "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model.model_id,)
-            ).fetchone()[0]
-        )
-        if count:
-            return count
+    count = int(
+        connection.execute(
+            "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model.model_id,)
+        ).fetchone()[0]
+    )
+    if count:
+        return count
     return len(LanePolicy(connection).classify(model.model_id))
+
+
+def _prepare_lanes(connection: Any, model_id: str) -> dict[str, int]:
+    return SlateBuilder(connection).materialize(model_id)
 
 
 def _run_task_body(
@@ -733,6 +752,10 @@ def _run_task_body(
             _log("i", "Organizing scenes into recommendation lanes")
             with span("python", "task.lane_classification"):
                 lane_count = _classify_lanes(connection, model)
+            _progress(0.96)
+            _log("i", "Preparing recommendation pages")
+            with span("python", "task.prepare_pages"):
+                lane_caches = _prepare_lanes(connection, model.model_id)
             _progress(0.98)
             _log("i", f"Published recommendation model {model.model_id}")
             summary: dict[str, object] = {
@@ -741,6 +764,7 @@ def _run_task_body(
                 "historical_scenes": historical.scene_count,
                 "model_id": model.model_id,
                 "lane_classifications": lane_count,
+                "lane_candidate_caches": lane_caches,
                 "stage_timings_ms": model.stage_timings_ms,
             }
         elif mode in {"build", "update-model"}:
@@ -772,11 +796,16 @@ def _run_task_body(
                 _log("i", "Organizing scenes into recommendation lanes")
                 with span("python", "task.lane_classification"):
                     lane_count = _classify_lanes(connection, model)
+                _progress(0.96)
+                _log("i", "Preparing recommendation pages")
+                with span("python", "task.prepare_pages"):
+                    lane_caches = _prepare_lanes(connection, model.model_id)
                 _progress(0.98)
                 summary = {
                     "updated": True,
                     "model_id": model.model_id,
                     "lane_classifications": lane_count,
+                    "lane_candidate_caches": lane_caches,
                     "stage_timings_ms": model.stage_timings_ms,
                 }
         elif mode == "prepare":
@@ -784,13 +813,9 @@ def _run_task_body(
             model_id = RecommendationModelStore(connection).current_model_id()
             if model_id is None:
                 raise RuntimeError("no published model; build recommendations first")
-            config = CuratorAPI(connection).config()["config"]
-            assert isinstance(config, dict)
             _log("i", "Preparing recommendation pages")
             with span("python", "task.prepare_pages"):
-                lane_caches = SlateBuilder(connection).prepare(
-                    model_id, slate_size=max(60, int(config["page_size"]) * 3)
-                )
+                lane_caches = _prepare_lanes(connection, model_id)
             _progress(0.98)
             summary = {"model_id": model_id, "lane_candidate_caches": lane_caches}
         elif mode == "backup":
