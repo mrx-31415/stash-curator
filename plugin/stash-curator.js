@@ -11,7 +11,7 @@
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
-  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -62,6 +62,12 @@
       label: "Expand",
       icon: faGlobe,
       description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
+    },
+    {
+      value: "hunt",
+      label: "Performer Hunt",
+      icon: faCrosshairs,
+      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
     },
     {
       value: "prune",
@@ -374,6 +380,7 @@
       "article",
       { className: `curator-card curator-external-card curator-external-${kind} grid-card ${kind}-card` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
+      payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls)),
       React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), React.createElement("p", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)))),
@@ -616,6 +623,7 @@
     const [filterPerformers, setFilterPerformers] = React.useState(initialFilters.performers || []);
     const [filterStudios, setFilterStudios] = React.useState(initialFilters.studios || []);
     const [minimumSimilarity, setMinimumSimilarity] = React.useState(initialFilters.minimum ?? 0.18);
+    const [hidePhashMatches, setHidePhashMatches] = React.useState(initialFilters.hidePhashMatches !== false);
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const sceneSearch = GQL.useFindScenesQuery({
@@ -655,7 +663,7 @@
     function load(id, label, type = entityType, nextSource = source, nextGender = gender, nextPage = 1, nextExcluded = excludedIds) {
       setSelected({ id: String(id), label: label || `#${id}` });
       setError("");
-      const request = { operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender, favorite_only: favoriteOnly, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_ids: filterPerformers.map((item) => String(item.id)), performer_names: filterPerformers.map((item) => item.name), studio_ids: filterStudios.map((item) => String(item.id)), studio_names: filterStudios.map((item) => item.name), minimum_similarity: minimumSimilarity };
+      const request = { operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_ids: filterPerformers.map((item) => String(item.id)), performer_names: filterPerformers.map((item) => item.name), studio_ids: filterStudios.map((item) => String(item.id)), studio_names: filterStudios.map((item) => item.name), minimum_similarity: minimumSimilarity };
       if (nextSource === "library") {
         request.page = nextPage;
         request.exclude_scene_ids = nextExcluded;
@@ -675,6 +683,7 @@
       setExcludeTags(value.excludeTags || []);
       setFilterPerformers(value.performers || []);
       setFilterStudios(value.studios || []);
+      setHidePhashMatches(value.hidePhashMatches !== false);
       setMinimumSimilarity(value.minimum ?? 0.18);
     }
     function choose(entity) {
@@ -756,7 +765,7 @@
         selected && React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "StashDB", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
       ),
-      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setExcludedIds([]), load(selected.id, selected.label, entityType, source, gender, 1, [])) }, "Apply"))),
+      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setExcludedIds([]), load(selected.id, selected.label, entityType, source, gender, 1, [])) }, "Apply"))),
       search && !selected && React.createElement(
         "div",
         { className: "curator-similar-candidates" },
@@ -869,9 +878,9 @@
     );
   }
 
-  function ExpandPanel({ initialPerformerId = null }) {
-    const initialFilters = React.useMemo(() => defaultFilters("expand"), []);
-    const [entityType, setEntityType] = React.useState("scene");
+  function ExpandPanel({ initialPerformerId = null, initialType = "scene", huntOnly = false }) {
+    const initialFilters = React.useMemo(() => defaultFilters(huntOnly ? "hunt" : "expand"), []);
+    const [entityType, setEntityType] = React.useState(initialType);
     const [sort, setSort] = React.useState("match");
     const [performerId, setPerformerId] = React.useState(initialPerformerId);
     const [favoriteOnly, setFavoriteOnly] = React.useState(Boolean(initialFilters.favoriteOnly));
@@ -881,6 +890,7 @@
     const [performers, setPerformers] = React.useState(initialFilters.performers || []);
     const [studios, setStudios] = React.useState(initialFilters.studios || []);
     const [minimumScore, setMinimumScore] = React.useState(initialFilters.minimum ?? 0);
+    const [hidePhashMatches, setHidePhashMatches] = React.useState(initialFilters.hidePhashMatches !== false);
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
@@ -890,19 +900,36 @@
     const [message, setMessage] = React.useState("");
     const [version, setVersion] = React.useState(0);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
+    const [pageSize, setPageSize] = React.useState(20);
+    const [huntPerformer, setHuntPerformer] = React.useState(null);
+    const [huntView, setHuntView] = React.useState("unlinked");
+    const [huntSort, setHuntSort] = React.useState("date");
     React.useEffect(() => {
       let active = true;
+      if (entityType === "hunt" && !huntPerformer) {
+        setData(null);
+        setLoading(false);
+        setError("");
+        return () => { active = false; };
+      }
       setLoading(true);
-      operation(entityType === "shortlist" ? { operation: "get_shortlist" } : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore }).then(
+      setError("");
+      const request = entityType === "shortlist"
+        ? { operation: "get_shortlist" }
+        : entityType === "hunt"
+          ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id) }
+          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
+      operation(request, entityType === "hunt" ? 60000 : 30000).then(
         (result) => active && (setData(result), setLoading(false)),
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [entityType, sort, performerId, favoriteOnly, gender, filterVersion, version, page]);
+    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
         if (initialFilters.gender === undefined) setGender(data.config.expand_gender || "");
         setWhisparrEnabled(data.whisparr_enabled);
+        setPageSize(data.config.page_size || 20);
       }, () => {});
     }, []);
     function applySaved(value) {
@@ -913,13 +940,23 @@
       setExcludeTags(value.excludeTags || []);
       setPerformers(value.performers || []);
       setStudios(value.studios || []);
+      setHidePhashMatches(value.hidePhashMatches !== false);
       setMinimumScore(value.minimum ?? 0);
     }
     async function refresh() {
+      if (entityType === "hunt") {
+        setVersion((value) => value + 1);
+        return;
+      }
       try {
         const id = await runTask("Refresh Expand cache");
         setMessage(`Started Stash job ${id}. Progress is available in Tasks.`);
       } catch (failure) { setError(failure.message); }
+    }
+    function selectHuntPerformer(values) {
+      setPage(1);
+      setData(null);
+      setHuntPerformer(values.at(-1) || null);
     }
     function showPerformerScenes(id) {
       setPage(1);
@@ -929,39 +966,77 @@
     async function shortlist(item, kind) {
       try {
         await operation({ operation: "update_shortlist", entity_type: kind, external_id: item.id, selected: !item.shortlisted });
-        setVersion((value) => value + 1);
+        if (entityType === "hunt") {
+          setData((current) => ({ ...current, items: current.items.map((value) => value.id === item.id ? { ...value, shortlisted: !item.shortlisted } : value) }));
+        } else {
+          setVersion((value) => value + 1);
+        }
       } catch (failure) { setError(failure.message); }
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
+    const tagFilteredHuntItems = entityType === "hunt"
+      ? (data?.items || []).filter((item) => {
+        const tags = new Set((item.payload.tags || []).map((tag) => String(tag.name || "").toLocaleLowerCase()));
+        return (!hidePhashMatches || item.match_type !== "phash")
+          && includeTags.every((tag) => tags.has(tag.name.toLocaleLowerCase()))
+          && excludeTags.every((tag) => !tags.has(tag.name.toLocaleLowerCase()));
+      })
+      : [];
+    const huntCounts = {
+      all: tagFilteredHuntItems.length,
+      linked: tagFilteredHuntItems.filter((item) => item.linked_locally).length,
+      unlinked: tagFilteredHuntItems.filter((item) => !item.linked_locally).length,
+    };
+    const huntItems = entityType === "hunt"
+      ? tagFilteredHuntItems
+        .filter((item) => huntView === "all" || item.linked_locally === (huntView === "linked"))
+        .sort((left, right) => huntSort === "score"
+          ? right.score - left.score || left.id.localeCompare(right.id)
+          : String(right.payload.release_date || right.payload.production_date || "").localeCompare(String(left.payload.release_date || left.payload.production_date || "")) || left.id.localeCompare(right.id))
+      : [];
+    const visibleItems = entityType === "hunt"
+      ? huntItems.slice((page - 1) * pageSize, page * pageSize)
+      : data?.items || [];
+    const huntHasMore = entityType === "hunt" && page * pageSize < huntItems.length;
     return React.createElement(
       "section",
-      { className: "curator-expand" },
+      { className: huntOnly ? "curator-hunt" : "curator-expand" },
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
-        React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
-        React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
+        !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
+        !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => (setPage(1), setSort(event.target.value)), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => (setPage(1), setPerformerId(null)) }, "Clear performer filter"),
-        React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
+        React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
-      entityType !== "shortlist" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
+      entityType === "hunt" && React.createElement(
+        "div",
+        { className: "curator-hunt-controls" },
+        React.createElement(FilterTokens, { kind: "performer", label: "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer }),
+        data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => (setPage(1), setHuntView(value)) }, label))),
+        data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => (setPage(1), setHuntSort(event.target.value)), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
+      ),
+      entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
+      entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => (setPage(1), setHidePhashMatches(value.hidePhashMatches !== false), setIncludeTags(value.includeTags || []), setExcludeTags(value.excludeTags || [])) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFiltersOpen(false)) }, "Apply"))),
+      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => (setPage(1), setHidePhashMatches((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, entityType === "hunt" ? "Querying StashDB…" : "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
+      entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
       data && !data.ready && React.createElement("div", { className: "alert alert-info" }, "Expand has not been prepared yet. Use refresh to collect candidates from StashDB."),
-      data?.ready && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No external candidates match these filters."),
+      data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       data?.ready && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
-        data.items.map((item) => {
-          const kind = entityType === "shortlist" ? item.entity_type : entityType;
+        visibleItems.map((item) => {
+          const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
           return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
         })
       ),
-      entityType !== "shortlist" && data?.ready && React.createElement(Pager, { page, hasMore: data.has_more, loading, onPage: setPage, label: "Expand pages" })
+      entityType !== "shortlist" && data?.ready && React.createElement(Pager, { page, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: setPage, label: entityType === "hunt" ? "Performer Hunt pages" : "Expand pages" })
     );
   }
 
@@ -1303,7 +1378,8 @@
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
-      lane === "expand" && React.createElement(ExpandPanel, { initialPerformerId: route.get("performer") }),
+      lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),
+      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       lane === "profiling" && React.createElement(ProfilingPanel),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(
