@@ -388,10 +388,10 @@ class CuratorAPI:
               SELECT tag_id, count(DISTINCT scene_id) AS scene_count
               FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
             )
-            SELECT t.tag_id, t.name, coalesce(sc.scene_count, 0) AS scene_count,
+            SELECT t.tag_id, t.name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
                    a.affinity, a.confidence, a.effective_support
             FROM source_tag t
-            JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=? AND r.role='content'
+            JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?
             LEFT JOIN scene_counts sc ON sc.tag_id=t.tag_id
             LEFT JOIN feature_definition d
               ON d.feature_version=? AND d.family='content' AND d.name='tag:' || t.tag_id
@@ -407,7 +407,7 @@ class CuratorAPI:
             confidence = float(row["confidence"] or 0)
             direct_value = direct.get(tag_id)
             prompt = None
-            if direct_value is None and scene_count >= 2:
+            if direct_value is None and row["role"] == "content" and scene_count >= 2:
                 prompt = "belief" if confidence >= 0.35 and abs(affinity) >= 0.15 else "uncertain"
             items.append(
                 {
@@ -452,7 +452,7 @@ class CuratorAPI:
                 SELECT t.tag_id, t.name, p.value AS direct_value, ids.stash_id
                 FROM source_tag t
                 JOIN tag_role r
-                  ON r.tag_id=t.tag_id AND r.config_version=? AND r.role='content'
+                  ON r.tag_id=t.tag_id AND r.config_version=?
                 LEFT JOIN direct_tag_preference p ON p.tag_id=t.tag_id
                 LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
                   AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))

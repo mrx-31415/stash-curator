@@ -147,7 +147,7 @@ def test_external_scene_cards_can_rate_matching_local_tags() -> None:
 
     assert 'operation: "get_external_tag_choices"' in source
     assert '"Rate matching local tags"' in source
-    assert '"No matching local content tags."' in source
+    assert '"No matching local tags."' in source
     assert "submitTagPreference(tag.tag_id, value);" in source
 
 
