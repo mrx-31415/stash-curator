@@ -106,6 +106,18 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "onClick: () => openView(option.value)" in source
 
 
+def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'value: "taste"' in source
+    assert 'operation: "get_taste_profile"' in source
+    assert 'operation: "submit_tag_preferences"' in source
+    assert "TAG_PREFERENCE_QUEUE_KEY" in source
+    assert '[-1, "Strong dislike"]' in source
+    assert '[1, "Strong like"]' in source
+    assert '"Clear answer"' in source
+
+
 def test_curator_external_components_are_public_and_patchable() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert 'Api.register.component("stash-curator.ExternalCard"' in source

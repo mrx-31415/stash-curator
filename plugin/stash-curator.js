@@ -75,9 +75,16 @@
       icon: faBroom,
       description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
+    {
+      value: "taste",
+      label: "Taste Profile",
+      icon: faTag,
+      description: "Review what Curator has inferred and directly teach it how you feel about content tags.",
+    },
   ];
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
+  const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
@@ -333,6 +340,102 @@
     };
     const fallback = code.split(".").at(-1).replaceAll("_", " ");
     return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  }
+
+  const SENTIMENTS = [
+    [-1, "Strong dislike"],
+    [-0.5, "Slight dislike"],
+    [0, "Neutral"],
+    [0.5, "Slight like"],
+    [1, "Strong like"],
+  ];
+
+  function TagSentimentControl({ tag, value, onChange }) {
+    return React.createElement(
+      "div",
+      { className: "curator-sentiment", role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      SENTIMENTS.map(([score, label]) =>
+        React.createElement(Button, { key: score, size: "sm", variant: value === score ? "primary" : "secondary", "aria-pressed": value === score, title: label, onClick: () => onChange(score) }, label)
+      ),
+      value !== null && value !== undefined && React.createElement(Button, { size: "sm", variant: "link", onClick: () => onChange(null) }, "Clear answer")
+    );
+  }
+
+  function readTagPreferenceQueue() {
+    try {
+      const value = JSON.parse(localStorage.getItem(TAG_PREFERENCE_QUEUE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  let flushingTagPreferences = false;
+  async function flushTagPreferenceQueue() {
+    if (flushingTagPreferences) return;
+    const entries = readTagPreferenceQueue();
+    if (!entries.length) return;
+    flushingTagPreferences = true;
+    try {
+      await operation({ operation: "submit_tag_preferences", entries });
+      const sent = new Set(entries.map((entry) => entry.preference_id));
+      localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(readTagPreferenceQueue().filter((entry) => !sent.has(entry.preference_id))));
+      clearSlateCache();
+      scheduleModelUpdate();
+    } catch (_) {
+      // Retry on the next route, online event, or plugin page load.
+    } finally {
+      flushingTagPreferences = false;
+    }
+  }
+
+  function submitTagPreference(tagId, value) {
+    const queue = readTagPreferenceQueue();
+    queue.push({ preference_id: uuid(), tag_id: tagId, value, occurred_at_ms: Date.now() });
+    localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(queue));
+    flushTagPreferenceQueue();
+  }
+
+  function TasteProfilePanel() {
+    const [data, setData] = React.useState(null);
+    const [error, setError] = React.useState("");
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "get_taste_profile" }).then(
+        (value) => active && setData(value),
+        (failure) => active && setError(failure.message)
+      );
+      return () => { active = false; };
+    }, []);
+    function answer(tagId, value) {
+      submitTagPreference(tagId, value);
+      setData((current) => ({ ...current, items: current.items.map((item) => item.tag_id === tagId ? { ...item, direct_value: value, prompt: null } : item) }));
+    }
+    return React.createElement(
+      "section",
+      { className: "curator-taste", "aria-labelledby": "curator-taste-title" },
+      React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
+      React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      !data && !error && React.createElement("div", { role: "status" }, "Loading taste profile…"),
+      data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No supported content tags are available yet."),
+      data && React.createElement(
+        "div",
+        { className: "curator-taste-list" },
+        data.items.map((item) =>
+          React.createElement(
+            "article",
+            { key: item.tag_id, className: "curator-taste-item" },
+            React.createElement("div", null,
+              React.createElement("strong", null, item.name),
+              item.prompt && React.createElement("span", { className: "badge badge-info" }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
+              React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
+            ),
+            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, onChange: (value) => answer(item.tag_id, value) })
+          )
+        )
+      )
+    );
   }
 
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
@@ -1378,6 +1481,7 @@
       ),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
+      lane === "taste" && React.createElement(TasteProfilePanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       lane === "profiling" && React.createElement(ProfilingPanel),
@@ -1572,9 +1676,11 @@
     flushQueue();
   });
   window.addEventListener("online", flushQueue);
+  window.addEventListener("online", flushTagPreferenceQueue);
   window.addEventListener("pagehide", () => finishTracker(false));
   attachPlayer(location.pathname);
   flushQueue();
+  flushTagPreferenceQueue();
   function scheduleModelMaintenance() {
     operation({ operation: "health" })
       .then((health) => {
