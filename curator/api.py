@@ -429,6 +429,64 @@ class CuratorAPI:
             "items": items,
         }
 
+    def tag_sentiment_follow_up(self, scene_id: str, limit: int = 3) -> dict[str, object]:
+        if not scene_id or not 1 <= limit <= 3:
+            raise ValueError("scene_id and a limit from 1 to 3 are required")
+        scene_tags = {
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT tag_id FROM scene_tag
+                WHERE scene_id=? AND provenance='scene'
+                """,
+                (scene_id,),
+            )
+        }
+        if (
+            not scene_tags
+            and self.connection.execute(
+                "SELECT 1 FROM source_scene WHERE scene_id=?", (scene_id,)
+            ).fetchone()
+            is None
+        ):
+            raise ValueError(f"unknown scene: {scene_id}")
+        total_scenes = int(
+            self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0]
+        )
+        profile_items = self.taste_profile()["items"]
+        assert isinstance(profile_items, list)
+        candidates = [
+            item
+            for item in profile_items
+            if isinstance(item, dict)
+            and str(item["tag_id"]) in scene_tags
+            and item["direct_value"] is None
+            # ponytail: library-wide prevalence is the existing cheap generic-tag signal.
+            and not (
+                int(item["scene_count"]) >= 5 and int(item["scene_count"]) >= 0.8 * total_scenes
+            )
+        ]
+        candidates.sort(
+            key=lambda item: (
+                0
+                if float(str(item["inferred_value"])) > 0.05
+                else (
+                    1
+                    if float(str(item["confidence"])) < 0.35
+                    or abs(float(str(item["inferred_value"]))) < 0.15
+                    else 2
+                ),
+                -abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "scene_id": scene_id,
+            "items": candidates[:limit],
+        }
+
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
         impressions = [

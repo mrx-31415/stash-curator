@@ -118,6 +118,22 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert '"Clear answer"' in source
 
 
+def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'operation: "get_tag_sentiment_follow_up"' in source
+    assert 'if (feedbackType === "thumb_down" && onThumbDown)' in source
+    assert "onThumbDown(followUp);" in source
+    assert "onRemove(item.scene_id);" in source
+    assert "TagSentimentFollowUp" in source
+    assert '"None of these"' in source
+    assert '"Something scene-specific"' in source
+    assert '"Metadata is wrong"' in source
+    assert '"Skip"' in source
+    assert "onClick: onDismiss" in source
+    assert "submitTagPreference(tag.tag_id, value);" in source
+
+
 def test_curator_external_components_are_public_and_patchable() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert 'Api.register.component("stash-curator.ExternalCard"' in source
