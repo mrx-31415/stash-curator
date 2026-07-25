@@ -333,10 +333,9 @@ class ExpandService:
             if float(row["score"]) < minimum_score:
                 continue
             payload = json.loads(row["payload_json"])
-            if (
-                hide_phash_matches
-                and entity_type == "scene"
-                and (payload.get("curator_local_match") or {}).get("type") == "phash"
+            match_type = (payload.get("curator_local_match") or {}).get("type")
+            if entity_type == "scene" and (
+                match_type == "stashdb_id" or (hide_phash_matches and match_type == "phash")
             ):
                 continue
             if (
