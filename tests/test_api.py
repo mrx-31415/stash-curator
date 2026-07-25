@@ -124,11 +124,18 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     )
     connection.execute(
         """
+        INSERT INTO source_tag(tag_id, name, source_hash)
+        VALUES ('attribute', 'Black Man', 'attribute')
+        """
+    )
+    connection.execute(
+        """
         INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id)
         VALUES ('unused', 'https://stashdb.org/graphql', 'external-unused')
         """
     )
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    connection.execute("UPDATE tag_role SET role='performer_attribute' WHERE tag_id='attribute'")
     api = CuratorAPI(connection)
 
     profile = api.taste_profile()
@@ -140,6 +147,9 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     unused = next(item for item in profile["items"] if item["tag_id"] == "unused")
     assert unused["scene_count"] == 0
     assert unused["inferred_value"] == 0
+    attribute = next(item for item in profile["items"] if item["tag_id"] == "attribute")
+    assert attribute["scene_count"] == 0
+    assert attribute["prompt"] is None
 
     assert (
         api.submit_tag_preferences(
@@ -159,6 +169,22 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     assert api.external_tag_choices([{"id": "external-unused", "name": "External name"}])[
         "items"
     ] == [{"tag_id": "unused", "name": "Unused", "direct_value": -1.0}]
+    assert (
+        api.submit_tag_preferences(
+            [
+                {
+                    "preference_id": "attribute",
+                    "tag_id": "attribute",
+                    "value": -1,
+                    "occurred_at_ms": 12,
+                }
+            ]
+        )["accepted"]
+        == 1
+    )
+    assert api.external_tag_choices([{"name": "Black Man"}])["items"] == [
+        {"tag_id": "attribute", "name": "Black Man", "direct_value": -1.0}
+    ]
 
 
 def test_thumb_down_follow_up_filters_caps_and_keeps_scene_feedback_independent(

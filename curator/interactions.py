@@ -423,13 +423,13 @@ class InteractionStore:
             self.connection.execute(
                 """
             SELECT 1 FROM tag_role
-            WHERE config_version=? AND tag_id=? AND role='content'
+            WHERE config_version=? AND tag_id=?
             """,
                 (config_version, tag_id),
             ).fetchone()
             is None
         ):
-            raise ValueError(f"unknown or unsupported content tag: {tag_id}")
+            raise ValueError(f"unknown or unsupported tag: {tag_id}")
         return {
             "preference_id": preference_id,
             "tag_id": tag_id,
