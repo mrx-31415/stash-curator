@@ -537,6 +537,11 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("scene_id") or ""),
                 min(3, int(args.get("limit") or 3)),
             )
+        if operation == "get_external_tag_choices":
+            tags = args.get("tags")
+            if not isinstance(tags, list):
+                raise ValueError("tags must be a list")
+            return api.external_tag_choices(tags)
         if operation == "submit_events":
             entries = args.get("entries")
             if not isinstance(entries, list):
