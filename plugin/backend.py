@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -220,6 +221,115 @@ def _database_path(payload: dict[str, Any], settings: dict[str, Any] | None = No
     if not configured:
         configured = str((settings or {}).get("databasePath") or "").strip()
     return Path(configured).expanduser() if configured else PLUGIN_DIR / "data" / "curator.sqlite3"
+
+
+BACKUP_NAME = re.compile(r"curator-(?:before-restore-)?(?P<created>\d+)\.sqlite3\.backup")
+
+
+def _backup_directory(payload: dict[str, Any], settings: dict[str, Any]) -> Path:
+    configured = str(settings.get("backupPath") or "").strip()
+    return (
+        Path(configured).expanduser().resolve()
+        if configured
+        else _database_path(payload, settings).expanduser().resolve().parent
+    )
+
+
+def _list_backups(payload: dict[str, Any], settings: dict[str, Any]) -> list[dict[str, object]]:
+    directory = _backup_directory(payload, settings)
+    if not directory.is_dir():
+        return []
+    items = []
+    for path in directory.iterdir():
+        match = BACKUP_NAME.fullmatch(path.name)
+        if match and path.is_file() and not path.is_symlink():
+            items.append(
+                {
+                    "id": path.name,
+                    "created_at_ms": int(match.group("created")),
+                    "size_bytes": path.stat().st_size,
+                    "path": str(path.resolve()),
+                }
+            )
+    return sorted(items, key=lambda item: int(str(item["created_at_ms"])), reverse=True)
+
+
+def _validate_backup(path: Path) -> None:
+    connection = connect_database(path, readonly=True)
+    try:
+        if str(connection.execute("PRAGMA quick_check").fetchone()[0]) != "ok":
+            raise ValueError("backup failed SQLite integrity validation")
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migration'"
+        ).fetchone():
+            raise ValueError("backup is not a Curator database")
+        MigrationRunner(connection).status()
+    except Exception as error:
+        raise ValueError(f"incompatible Curator backup: {error}") from error
+    finally:
+        connection.close()
+
+
+def _backup_control(
+    payload: dict[str, Any], operation: str, settings: dict[str, Any]
+) -> dict[str, object]:
+    args = payload.get("args") or {}
+    database = _database_path(payload, settings).expanduser().resolve()
+    directory = _backup_directory(payload, settings)
+    if operation == "list_backups":
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "backup_directory": str(directory),
+            "items": _list_backups(payload, settings),
+        }
+    connection = _open(payload, settings)
+    try:
+        if connection.execute("SELECT 1 FROM curator_job WHERE state='running' LIMIT 1").fetchone():
+            raise RuntimeError("cannot change backups while a Curator job is running")
+        now_ms = time.time_ns() // 1_000_000
+        if operation == "create_backup":
+            backup = backup_database(
+                connection,
+                directory / f"curator-{now_ms}.sqlite3.backup",
+            )
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "backup_path": str(backup),
+                "items": _list_backups(payload, settings),
+            }
+        backup_id = str(args.get("backup_id") or "")
+        match = BACKUP_NAME.fullmatch(backup_id)
+        backup = directory / backup_id
+        if (
+            not match
+            or backup.parent.resolve() != directory
+            or not backup.is_file()
+            or backup.is_symlink()
+        ):
+            raise ValueError("select a recognized Curator backup")
+        if str(args.get("confirmation") or "") != f"RESTORE {backup_id}":
+            raise ValueError("restore requires explicit confirmation")
+        _validate_backup(backup)
+        safety = backup_database(
+            connection,
+            directory / f"curator-before-restore-{now_ms}.sqlite3.backup",
+        )
+    finally:
+        connection.close()
+    for suffix in ("-wal", "-shm"):
+        Path(f"{database}{suffix}").unlink(missing_ok=True)
+    source = connect_database(backup, readonly=True)
+    try:
+        backup_database(source, database, overwrite=True)
+    finally:
+        source.close()
+    restored = _open(payload, settings)
+    restored.close()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "restored_from": str(backup.resolve()),
+        "safety_backup": str(safety),
+    }
 
 
 def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
@@ -898,7 +1008,9 @@ def _run_task_body(
             summary = {"model_id": model_id, "lane_candidate_caches": lane_caches}
         elif mode == "backup":
             _progress(0.1)
-            destination = PLUGIN_DIR / "data" / f"curator-{started_at_ms}.sqlite3.backup"
+            destination = (
+                _backup_directory(payload, settings) / f"curator-{started_at_ms}.sqlite3.backup"
+            )
             with span("python", "task.backup"):
                 backup_database(connection, destination)
             _progress(0.98)
@@ -993,6 +1105,8 @@ def dispatch(payload: dict[str, Any]) -> dict[str, object]:
         return _health(payload)
     if operation == "round_trip":
         return _round_trip(payload)
+    if operation in {"list_backups", "create_backup", "restore_backup"}:
+        return _backup_control(payload, operation, _settings(payload))
     if operation == "reset":
         if str((payload.get("args") or {}).get("confirmation") or "") != "RESET":
             raise ValueError("reset requires confirmation")

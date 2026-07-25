@@ -99,6 +99,76 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
 
 
+def test_backup_management_uses_recognized_ids_and_explicit_confirmation() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert "icon: faDatabase,\n      maintenance: true" in source
+    assert 'value: "backups"' in source
+    assert 'operation: "list_backups"' in source
+    assert 'operation: "create_backup"' in source
+    assert 'operation({ operation: "create_backup" }, 120000)' in source
+    assert 'operation: "restore_backup"' in source
+    assert "backup_id: item.id" in source
+    assert "confirmation: `RESTORE ${item.id}`" in source
+    assert "Safety backup:" in source
+
+
+def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
+    tmp_path: Path,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_backups", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "curator.sqlite3"
+    backups = tmp_path / "backups"
+    payload = {"args": {"database_path": str(database)}}
+    settings = {"backupPath": str(backups)}
+    connection = module._open(payload, settings)
+    module.CuratorAPI(connection).update_config({"page_size": 12}, now_ms=1)
+    connection.close()
+
+    created = module._backup_control(payload, "create_backup", settings)
+    backup_id = Path(str(created["backup_path"])).name
+    assert created["items"][0]["id"] == backup_id
+
+    connection = module._open(payload, settings)
+    module.CuratorAPI(connection).update_config({"page_size": 30}, now_ms=2)
+    connection.execute(
+        """
+        INSERT INTO curator_job(job_id, job_type, state, started_at_ms)
+        VALUES ('running', 'build', 'running', 3)
+        """
+    )
+    connection.close()
+    with pytest.raises(RuntimeError, match="job is running"):
+        module._backup_control(payload, "create_backup", settings)
+    connection = module._open(payload, settings)
+    connection.execute("DELETE FROM curator_job WHERE job_id='running'")
+    connection.close()
+
+    payload["args"] = {
+        "database_path": str(database),
+        "backup_id": f"../{backup_id}",
+        "confirmation": f"RESTORE ../{backup_id}",
+    }
+    with pytest.raises(ValueError, match="recognized"):
+        module._backup_control(payload, "restore_backup", settings)
+    payload["args"] = {
+        "database_path": str(database),
+        "backup_id": backup_id,
+        "confirmation": f"RESTORE {backup_id}",
+    }
+    restored = module._backup_control(payload, "restore_backup", settings)
+
+    assert Path(str(restored["restored_from"])).name == backup_id
+    assert Path(str(restored["safety_backup"])).is_file()
+    connection = module._open(payload, settings)
+    assert module.CuratorAPI(connection).config()["config"]["page_size"] == 12
+    connection.close()
+
+
 def test_curator_tabs_update_browser_history() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "const routeLocation = useLocation();" in source
