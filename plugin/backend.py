@@ -525,6 +525,17 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(entries, list):
                 raise ValueError("entries must be a list")
             return api.submit_feedback(entries)
+        if operation == "get_feedback_history":
+            return api.feedback_history(
+                int(args.get("page") or 1),
+                int(args.get("page_size") or 20),
+            )
+        if operation == "correct_feedback":
+            return api.correct_feedback(
+                str(args.get("feedback_id") or ""),
+                str(args.get("correction_id") or ""),
+                str(args["feedback_type"]) if args.get("feedback_type") else None,
+            )
         if operation == "submit_tag_preferences":
             entries = args.get("entries")
             if not isinstance(entries, list):

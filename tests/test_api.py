@@ -70,6 +70,35 @@ def test_slate_api_never_builds_a_pending_model_inline(
     assert result["items"]
 
 
+def test_feedback_history_is_newest_first_paginated_and_correctable(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+    existing = int(api.feedback_history()["total"])
+    for feedback_id, feedback_type, occurred_at_ms in (
+        ("older", "thumb_down", REFERENCE_MS + 10),
+        ("newer", "not_now", REFERENCE_MS + 20),
+    ):
+        api.submit_feedback(
+            [
+                {
+                    "feedback_id": feedback_id,
+                    "scene_id": "old-good",
+                    "feedback_type": feedback_type,
+                    "occurred_at_ms": occurred_at_ms,
+                }
+            ]
+        )
+
+    first = api.feedback_history(page=1, page_size=1)
+    second = api.feedback_history(page=2, page_size=1)
+    assert first["total"] == existing + 2
+    assert first["items"][0]["feedback_id"] == "newer"
+    assert second["items"][0]["feedback_id"] == "older"
+
+    api.correct_feedback("newer", "undo", None, now_ms=REFERENCE_MS + 30)
+    assert api.feedback_history()["items"][0]["reversed_by_id"] == "undo"
+
+
 def test_slate_api_pages_one_ranked_prefix_with_global_positions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

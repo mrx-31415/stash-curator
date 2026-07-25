@@ -52,6 +52,13 @@
   const NAV_ITEMS = [
     ...LANES,
     {
+      value: "feedback",
+      label: "Feedback history",
+      icon: faThumbsUp,
+      maintenance: true,
+      description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+    },
+    {
       value: "similar",
       label: "Similar",
       icon: faClone,
@@ -684,6 +691,113 @@
         )
       ),
       saved && React.createElement("small", { role: "status" }, saved)
+    );
+  }
+
+  const FEEDBACK_LABELS = {
+    thumb_up: "Thumbs Up",
+    thumb_down: "Thumbs Down",
+    not_now: "Not Now",
+    never_show: "Never Show",
+    metadata_wrong: "Metadata Wrong",
+    prune: "Prune",
+  };
+
+  function FeedbackHistoryRow({ item, scene, onCorrect }) {
+    const [replacement, setReplacement] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState("");
+    async function correct(feedbackType) {
+      setBusy(true);
+      setError("");
+      try {
+        await operation({
+          operation: "correct_feedback",
+          feedback_id: item.feedback_id,
+          correction_id: uuid(),
+          feedback_type: feedbackType || null,
+        });
+        scheduleModelUpdate();
+        onCorrect();
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    return React.createElement(
+      "tr",
+      null,
+      React.createElement(
+        "td",
+        null,
+        scene
+          ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
+          : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+      ),
+      React.createElement("td", null, FEEDBACK_LABELS[item.feedback_type] || item.feedback_type),
+      React.createElement("td", null, new Date(item.occurred_at_ms).toLocaleString()),
+      React.createElement(
+        "td",
+        null,
+        item.reversed_by_id
+          ? React.createElement("span", { className: "text-muted" }, "Corrected")
+          : React.createElement(
+              "div",
+              { className: "curator-feedback-correction" },
+              React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => correct(null) }, "Undo"),
+              React.createElement(
+                "select",
+                { className: "form-control form-control-sm", value: replacement, disabled: busy, onChange: (event) => setReplacement(event.target.value), "aria-label": "Replacement feedback" },
+                React.createElement("option", { value: "" }, "Replace with…"),
+                Object.entries(FEEDBACK_LABELS).map(([value, label]) => React.createElement("option", { key: value, value }, label))
+              ),
+              React.createElement(Button, { size: "sm", disabled: busy || !replacement, onClick: () => correct(replacement) }, "Save"),
+              error && React.createElement("small", { className: "text-danger" }, error)
+            )
+      )
+    );
+  }
+
+  function FeedbackHistoryPanel() {
+    const [page, setPage] = React.useState(1);
+    const [data, setData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState("");
+    const [version, setVersion] = React.useState(0);
+    React.useEffect(() => {
+      let active = true;
+      setLoading(true);
+      setError("");
+      operation({ operation: "get_feedback_history", page }).then(
+        (result) => active && (setData(result), setLoading(false)),
+        (failure) => active && (setError(failure.message), setLoading(false))
+      );
+      return () => { active = false; };
+    }, [page, version]);
+    const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
+    const scenesQuery = GQL.useFindScenesQuery({
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      skip: ids.length === 0,
+    });
+    const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    return React.createElement(
+      "section",
+      { className: "curator-history-page" },
+      loading && React.createElement("div", { role: "status" }, "Loading feedback history…"),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No feedback has been recorded yet."),
+      data && data.items.length > 0 && React.createElement(
+        "div",
+        { className: "table-responsive" },
+        React.createElement(
+          "table",
+          { className: "table" },
+          React.createElement("thead", null, React.createElement("tr", null, ["Scene", "Action", "Time", "Correction"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
+          React.createElement("tbody", null, data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) })))
+        )
+      ),
+      data && React.createElement(Pager, { page, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
     );
   }
 
@@ -1623,6 +1737,7 @@
         )
       ),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      lane === "feedback" && React.createElement(FeedbackHistoryPanel),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),

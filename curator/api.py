@@ -363,6 +363,51 @@ class CuratorAPI:
         inserted = InteractionStore(self.connection).submit_feedback(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
+    def feedback_history(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid feedback history page")
+        where = "feedback_type <> 'reversal'"
+        total = int(
+            self.connection.execute(f"SELECT count(*) FROM feedback WHERE {where}").fetchone()[0]
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT feedback_id, scene_id, feedback_type, value, occurred_at_ms,
+                   reversed_by_id
+            FROM feedback WHERE {where}
+            ORDER BY occurred_at_ms DESC, feedback_id DESC LIMIT ? OFFSET ?
+            """,
+            (page_size, (page - 1) * page_size),
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "items": [dict(row) for row in rows],
+        }
+
+    def correct_feedback(
+        self,
+        feedback_id: str,
+        correction_id: str,
+        feedback_type: str | None,
+        *,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        InteractionStore(self.connection).correct_feedback(
+            feedback_id,
+            correction_id,
+            feedback_type,
+            now_ms if now_ms is not None else time.time_ns() // 1_000_000,
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "feedback_id": feedback_id,
+            "correction_id": correction_id,
+            "feedback_type": feedback_type,
+        }
+
     def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
