@@ -58,6 +58,13 @@
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
     },
     {
+      value: "history",
+      label: "Recently recommended",
+      icon: faHistory,
+      maintenance: true,
+      description: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
+    },
+    {
       value: "expand",
       label: "Expand",
       icon: faGlobe,
@@ -782,6 +789,108 @@
           React.createElement(Feedback, { item, onRemove, onThumbDown })
         )
       )
+    );
+  }
+
+  function RecommendationHistoryRow({ item, scene }) {
+    const [explanation, setExplanation] = React.useState(null);
+    const [error, setError] = React.useState("");
+    async function explain() {
+      setError("");
+      try {
+        setExplanation(await operation({ operation: "get_explanation", scene_id: item.scene_id }));
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    return React.createElement(
+      "tr",
+      null,
+      React.createElement(
+        "td",
+        null,
+        scene
+          ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
+          : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+      ),
+      React.createElement("td", null, laneByValue.get(item.lane)?.label || item.lane),
+      React.createElement(
+        "td",
+        null,
+        item.reason_snapshot.length
+          ? item.reason_snapshot.map(reasonLabel).join(" · ")
+          : "No reason snapshot recorded"
+      ),
+      React.createElement(
+        "td",
+        null,
+        item.current_model && scene && !explanation && React.createElement(Button, { size: "sm", variant: "link", onClick: explain }, "Why this now?"),
+        explanation && React.createElement("span", null, explanation.summary),
+        error && React.createElement("small", { className: "text-danger" }, error)
+      )
+    );
+  }
+
+  function RecommendationHistoryPanel() {
+    const [page, setPage] = React.useState(1);
+    const [laneFilter, setLaneFilter] = React.useState("");
+    const [data, setData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState("");
+    React.useEffect(() => {
+      let active = true;
+      setLoading(true);
+      setError("");
+      operation({ operation: "get_recommendation_history", page, lane: laneFilter || null }).then(
+        (result) => active && (setData(result), setLoading(false)),
+        (failure) => active && (setError(failure.message), setLoading(false))
+      );
+      return () => { active = false; };
+    }, [page, laneFilter]);
+    const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
+    const scenesQuery = GQL.useFindScenesQuery({
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      skip: ids.length === 0,
+    });
+    const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    const groups = (data?.items || []).reduce((result, item) => {
+      const date = new Date(item.shown_at_ms).toLocaleDateString();
+      (result[date] ||= []).push(item);
+      return result;
+    }, {});
+    return React.createElement(
+      "section",
+      { className: "curator-history-page" },
+      React.createElement(
+        "label",
+        null,
+        "Lane ",
+        React.createElement(
+          "select",
+          { className: "form-control form-control-sm", value: laneFilter, onChange: (event) => (setLaneFilter(event.target.value), setPage(1)), "aria-label": "Filter recommendation history by lane" },
+          React.createElement("option", { value: "" }, "All lanes"),
+          LANES.map((lane) => React.createElement("option", { key: lane.value, value: lane.value }, lane.label))
+        )
+      ),
+      loading && React.createElement("div", { role: "status" }, "Loading recommendation history…"),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No qualified recommendations have been recorded yet."),
+      Object.entries(groups).map(([date, items]) => React.createElement(
+        "section",
+        { key: date },
+        React.createElement("h3", null, date),
+        React.createElement(
+          "div",
+          { className: "table-responsive" },
+          React.createElement(
+            "table",
+            { className: "table" },
+            React.createElement("thead", null, React.createElement("tr", null, ["Scene", "Lane", "Reason shown", "Current explanation"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
+            React.createElement("tbody", null, items.map((item) => React.createElement(RecommendationHistoryRow, { key: item.history_id, item, scene: scenes.get(String(item.scene_id)) })))
+          )
+        )
+      )),
+      data && React.createElement(Pager, { page, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Recommendation history pages" })
     );
   }
 
@@ -1624,6 +1733,7 @@
       ),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
+      lane === "history" && React.createElement(RecommendationHistoryPanel),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),

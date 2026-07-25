@@ -313,6 +313,57 @@ class CuratorAPI:
             "reasons": [asdict(reason) for reason in explanation.all_reasons],
         }
 
+    def recommendation_history(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        *,
+        lane: str | None = None,
+    ) -> dict[str, object]:
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("invalid recommendation history page")
+        if lane and lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
+            raise ValueError("unknown recommendation lane")
+        where = "WHERE h.lane=?" if lane else ""
+        parameters: tuple[object, ...] = (lane,) if lane else ()
+        total = int(
+            self.connection.execute(
+                f"SELECT count(*) FROM recommendation_history h {where}",
+                parameters,
+            ).fetchone()[0]
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT h.history_id, h.scene_id, h.impression_id, h.lane, h.shown_at_ms,
+                   i.reason_snapshot_json,
+                   EXISTS(
+                     SELECT 1 FROM model_scene_score score
+                     JOIN model_version model USING(model_id)
+                     WHERE model.status='published' AND score.scene_id=h.scene_id
+                   ) AS current_model
+            FROM recommendation_history h
+            LEFT JOIN impression_item i
+              ON i.impression_id=h.impression_id AND i.scene_id=h.scene_id
+            {where}
+            ORDER BY h.shown_at_ms DESC, h.history_id DESC LIMIT ? OFFSET ?
+            """,
+            (*parameters, page_size, (page - 1) * page_size),
+        )
+        items = []
+        for row in rows:
+            item = dict(row)
+            snapshot = item.pop("reason_snapshot_json")
+            item["reason_snapshot"] = json.loads(str(snapshot)) if snapshot else []
+            items.append(item)
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "lane": lane,
+            "items": items,
+        }
+
     def expand(
         self,
         entity_type: str,

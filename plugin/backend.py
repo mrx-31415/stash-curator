@@ -430,6 +430,12 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             )
         if operation == "get_explanation":
             return api.explanation(str(args.get("scene_id") or ""))
+        if operation == "get_recommendation_history":
+            return api.recommendation_history(
+                int(args.get("page") or 1),
+                int(args.get("page_size") or 20),
+                lane=str(args["lane"]) if args.get("lane") else None,
+            )
         if operation == "get_expand":
             config = api.config()["config"]
             assert isinstance(config, dict)

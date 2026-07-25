@@ -506,3 +506,38 @@ def test_never_show_can_be_reversed_explicitly(tmp_path: Path) -> None:
     assert api.exclusions()["items"][0]["scene_id"] == "old-good"
     assert api.reverse_exclusion("old-good", now_ms=2)["reversed"] is True
     assert api.exclusions()["items"] == []
+
+
+def test_recommendation_history_uses_qualified_impressions_without_new_tracking(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+    for impression_id, lane, shown_at_ms in (
+        ("older", "best_bets", REFERENCE_MS + 10),
+        ("newer", "discover", REFERENCE_MS + 20),
+    ):
+        slate = api.get_slate("for_you", 1, impression_id=impression_id, now_ms=shown_at_ms - 1)
+        connection.execute(
+            "UPDATE impression SET lane=? WHERE impression_id=?",
+            (lane, impression_id),
+        )
+        api.submit_events(
+            [
+                {
+                    "event_id": f"qualified:{impression_id}",
+                    "event_type": "qualified_impression",
+                    "impression_id": impression_id,
+                    "scene_id": slate["items"][0]["scene_id"],
+                    "occurred_at_ms": shown_at_ms,
+                }
+            ]
+        )
+
+    history = api.recommendation_history(page_size=1)
+    assert history["total"] == 2
+    assert history["items"][0]["impression_id"] == "newer"
+    assert history["items"][0]["reason_snapshot"]
+    assert history["items"][0]["current_model"] == 1
+    assert api.recommendation_history(lane="best_bets")["items"][0]["impression_id"] == "older"
