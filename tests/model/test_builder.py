@@ -277,6 +277,29 @@ def test_direct_tag_sentiment_overrides_and_clear_restores_inference(tmp_path: P
     assert affinity(restored.model_id)[0] == pytest.approx(inferred)
 
 
+def test_direct_tag_sentiment_does_not_rewrite_behavioral_neighbors(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO scene_tag(scene_id, tag_id, provenance)
+        VALUES ('unseen-good', 'unusual', 'scene')
+        """
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    baseline = RecommendationModelStore(connection).scores(builder.build().model_id)["unseen-good"]
+
+    InteractionStore(connection).submit_tag_preferences(
+        [{"preference_id": "unusual", "tag_id": "unusual", "value": 1, "occurred_at_ms": 10}]
+    )
+    rated = RecommendationModelStore(connection).scores(builder.build().model_id)["unseen-good"]
+
+    assert float(rated.components["content"]["value"]) > float(
+        baseline.components["content"]["value"]
+    )
+    assert rated.components["content_neighbor"] == baseline.components["content_neighbor"]
+    assert rated.neighbors == baseline.neighbors
+
+
 def test_model_build_reports_stage_progress(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     progress: list[tuple[int, int]] = []

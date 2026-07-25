@@ -75,7 +75,7 @@ class FeatureConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    algorithm_version: int = 4
+    algorithm_version: int = 5
     affinity_prior: float = 1.0
     affinity_confidence_scale: float = 3.0
     direct_confidence_scale: float = 0.8
