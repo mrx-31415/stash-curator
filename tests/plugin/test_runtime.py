@@ -124,11 +124,33 @@ def test_whisparr_button_is_disabled_until_configured() -> None:
 def test_curator_prefetches_only_the_intended_lane() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "function prefetchLanes" not in source
-    assert "if (!laneByValue.has(lane)) return;" in source
-    assert "loadSlate(lane).then(" in source
-    assert "loadSlate(lane, true).catch(" in source
+    assert "if (!laneByValue.has(lane) || cachedConfigUpdatedAtMs === null) return;" in source
+    assert "loadSlate(lane, page).then(" in source
+    assert "loadSlate(lane, 1, true).catch(" in source
     assert "onMouseEnter: () => prefetchLane(option.value)" in source
     assert "onFocus: () => prefetchLane(option.value)" in source
+
+
+def test_plugin_pages_generated_results_without_repeating_external_searches() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert "function Pager({ page, hasMore, loading, onPage, label })" in source
+    assert "return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`" in source
+    assert "externalItems.slice((page - 1) * pageSize, page * pageSize)" in source
+    assert 'operation: "get_expand", page' in source
+
+
+def test_recommendation_variety_toggle_updates_native_setting_and_cache() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert 'configurePlugin(plugin_id: "stash-curator", input: $input)' in source
+    assert "await configurePlugin({ diversityDisabled: !nextEnabled });" in source
+    assert "configUpdatedAtMs: cachedConfigUpdatedAtMs" in source
+    assert "laneByValue.has(lane) && diversityEnabled !== null" in source
+    assert '"aria-pressed": diversityEnabled' in source
+    assert "icon: faBalanceScale" in source
+    assert "faRandom" not in source
+    assert 'diversityEnabled ? " Balanced" : " Score-first"' in source
 
 
 def test_plugin_ignores_repeated_script_evaluation() -> None:
@@ -208,6 +230,7 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         {
             "databasePath": str(tmp_path / "curator.sqlite3"),
             "pageSize": 12,
+            "diversityDisabled": True,
             "modelUpdateEventThreshold": 7,
         },
     )
@@ -218,6 +241,7 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
             ).fetchone()[0]
         )
         assert config["page_size"] == 12
+        assert config["diversity_enabled"] is False
         assert config["model_update_event_threshold"] == 7
     finally:
         connection.close()
@@ -237,6 +261,13 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         )["whisparr_enabled"]
         is False
     )
+
+
+def test_model_tasks_prepare_recommendation_pages() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "backend.py").read_text(encoding="utf-8")
+
+    assert source.count("_prepare_lanes(connection, model.model_id)") == 2
+    assert '"lane_candidate_caches": lane_caches' in source
 
 
 def test_backend_profiles_only_when_enabled_and_exposes_profile_api(

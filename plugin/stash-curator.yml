@@ -26,9 +26,13 @@ settings:
     description: Leave empty to store data in the plugin's data directory.
     type: STRING
   pageSize:
-    displayName: Scenes per lane
-    description: Number of recommendations shown on each Curator lane. Default 20.
+    displayName: Results per page
+    description: Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20.
     type: NUMBER
+  diversityDisabled:
+    displayName: Disable recommendation variety
+    description: Use score-first ordering instead of avoiding repeated performers, studios, and similar content.
+    type: BOOLEAN
   syncPageSize:
     displayName: Sync page size
     description: Number of Stash records fetched per synchronization request. Default 250.

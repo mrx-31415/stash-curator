@@ -279,10 +279,30 @@ def test_new_slate_builder_reuses_persisted_lane_classifications(
 
     builder = SlateBuilder(connection)
     assert builder.recommend("best_bets", 1).items
-    assert connection.execute("SELECT count(*) FROM model_lane_candidate_cache").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM model_lane_candidate_cache").fetchone()[0] == 1
     assert connection.execute(
         "SELECT 1 FROM application_meta WHERE key='slate:model:best_bets'"
     ).fetchone()
+
+
+def test_longer_slate_extends_the_saved_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    first = SlateBuilder(connection).recommend("best_bets", 2)
+    builder = SlateBuilder(connection)
+    positions = []
+    target = builder._target
+
+    def counted_target(lane: str, position: int, exploration: float):
+        positions.append(position)
+        return target(lane, position, exploration)
+
+    monkeypatch.setattr(builder, "_target", counted_target)
+    extended = builder.recommend("best_bets", 4)
+
+    assert extended.items[:2] == first.items
+    assert positions == [2, 3]
 
 
 def test_prepared_lane_candidates_avoid_rehydrating_model_features(
@@ -364,7 +384,18 @@ def test_direct_play_updates_prebuilt_lanes_without_rebuilding(
 
 def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    slate = SlateBuilder(connection).recommend("best_bets", 4)
+    builder = SlateBuilder(connection)
+    compared_pairs: list[tuple[str, str]] = []
+    similarity = builder._candidate_similarity
+
+    def counted_similarity(left, right):  # type: ignore[no-untyped-def]
+        compared_pairs.append(
+            tuple(sorted((left.classification.scene_id, right.classification.scene_id)))
+        )
+        return similarity(left, right)
+
+    builder._candidate_similarity = counted_similarity  # type: ignore[method-assign]
+    slate = builder.recommend("best_bets", 4)
 
     assert [item.scene_id for item in slate.items] == [
         "a-best",
@@ -379,6 +410,38 @@ def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_pat
     assert slate.items[2].penalties["content"] > 0
     assert all(item.final_utility <= item.lane_value + 0.03 for item in slate.items)
     assert all(item.eligibility["eligible"] is True for item in slate.items)
+    assert len(compared_pairs) == len(set(compared_pairs))
+
+
+def test_diversity_can_be_disabled_without_reusing_diverse_slate(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    diverse = SlateBuilder(connection).recommend("best_bets", 4)
+    score_first = SlateBuilder(connection, diversity_enabled=False).recommend("best_bets", 4)
+
+    assert [item.scene_id for item in diverse.items[:2]] == ["a-best", "l-varied"]
+    assert [item.scene_id for item in score_first.items[:2]] == ["a-best", "b-best"]
+    assert all(
+        not any(item.penalties[name] for name in ("performer", "studio", "content", "history"))
+        and item.bonuses["uncovered_content"] == 0
+        for item in score_first.items
+    )
+
+
+def test_slate_loads_all_lane_candidates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    limits: list[int | None] = []
+    load = LanePolicy.load
+
+    def counted_load(self, model_id, *, lanes=None, limit_per_lane=None):  # type: ignore[no-untyped-def]
+        limits.append(limit_per_lane)
+        return load(self, model_id, lanes=lanes, limit_per_lane=limit_per_lane)
+
+    monkeypatch.setattr(LanePolicy, "load", counted_load)
+
+    SlateBuilder(connection).recommend("best_bets", 2)
+
+    assert limits == [None]
 
 
 def test_slate_applies_feedback_added_after_model_publication(tmp_path: Path) -> None:

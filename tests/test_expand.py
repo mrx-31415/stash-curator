@@ -216,6 +216,14 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
         "external-scene-1",
         "external-scene-2",
     ]
+    first = service.results("scene", count=1)
+    second = service.results("scene", page=2, count=1)
+    assert first["has_more"] is True
+    assert [first["items"][0]["id"], second["items"][0]["id"]] == [
+        "external-scene-1",
+        "external-scene-2",
+    ]
+    assert second["has_more"] is False
     assert len(client.inputs) == 2
 
     try:
