@@ -363,6 +363,130 @@ class CuratorAPI:
         inserted = InteractionStore(self.connection).submit_feedback(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
+    def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
+        inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
+        return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
+
+    def taste_profile(self) -> dict[str, object]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = str(
+            self.connection.execute(
+                "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+            ).fetchone()[0]
+        )
+        direct = {
+            str(row["tag_id"]): float(row["value"])
+            for row in self.connection.execute("SELECT tag_id, value FROM direct_tag_preference")
+        }
+        items: list[dict[str, object]] = []
+        for row in self.connection.execute(
+            """
+            SELECT d.name, d.metadata_json, a.affinity, a.confidence,
+                   a.effective_support
+            FROM feature_definition d
+            LEFT JOIN feature_affinity a
+              ON a.feature_id=d.feature_id AND a.model_id=?
+            WHERE d.feature_version=? AND d.family='content'
+            ORDER BY d.name
+            """,
+            (model_id, feature_version),
+        ):
+            metadata = json.loads(str(row["metadata_json"]))
+            tag_id = str(metadata.get("tag_id") or str(row["name"]).removeprefix("tag:"))
+            scene_count = int(metadata.get("document_frequency") or 0)
+            affinity = float(row["affinity"] or 0)
+            confidence = float(row["confidence"] or 0)
+            direct_value = direct.get(tag_id)
+            prompt = None
+            if direct_value is None and scene_count >= 2:
+                prompt = "belief" if confidence >= 0.35 and abs(affinity) >= 0.15 else "uncertain"
+            items.append(
+                {
+                    "tag_id": tag_id,
+                    "name": str(metadata.get("tag_name") or tag_id),
+                    "inferred_value": affinity,
+                    "confidence": confidence,
+                    "support": float(row["effective_support"] or 0),
+                    "scene_count": scene_count,
+                    "direct_value": direct_value,
+                    "prompt": prompt,
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                item["prompt"] is None,
+                item["prompt"] == "uncertain",
+                -abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": model_id,
+            "items": items,
+        }
+
+    def tag_sentiment_follow_up(self, scene_id: str, limit: int = 3) -> dict[str, object]:
+        if not scene_id or not 1 <= limit <= 3:
+            raise ValueError("scene_id and a limit from 1 to 3 are required")
+        scene_tags = {
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT tag_id FROM scene_tag
+                WHERE scene_id=? AND provenance='scene'
+                """,
+                (scene_id,),
+            )
+        }
+        if (
+            not scene_tags
+            and self.connection.execute(
+                "SELECT 1 FROM source_scene WHERE scene_id=?", (scene_id,)
+            ).fetchone()
+            is None
+        ):
+            raise ValueError(f"unknown scene: {scene_id}")
+        total_scenes = int(
+            self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0]
+        )
+        profile_items = self.taste_profile()["items"]
+        assert isinstance(profile_items, list)
+        candidates = [
+            item
+            for item in profile_items
+            if isinstance(item, dict)
+            and str(item["tag_id"]) in scene_tags
+            and item["direct_value"] is None
+            # ponytail: library-wide prevalence is the existing cheap generic-tag signal.
+            and not (
+                int(item["scene_count"]) >= 5 and int(item["scene_count"]) >= 0.8 * total_scenes
+            )
+        ]
+        candidates.sort(
+            key=lambda item: (
+                0
+                if float(str(item["inferred_value"])) > 0.05
+                else (
+                    1
+                    if float(str(item["confidence"])) < 0.35
+                    or abs(float(str(item["inferred_value"]))) < 0.15
+                    else 2
+                ),
+                -abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "scene_id": scene_id,
+            "items": candidates[:limit],
+        }
+
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
         impressions = [

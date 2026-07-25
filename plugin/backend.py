@@ -525,6 +525,18 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(entries, list):
                 raise ValueError("entries must be a list")
             return api.submit_feedback(entries)
+        if operation == "submit_tag_preferences":
+            entries = args.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("entries must be a list")
+            return api.submit_tag_preferences(entries)
+        if operation == "get_taste_profile":
+            return api.taste_profile()
+        if operation == "get_tag_sentiment_follow_up":
+            return api.tag_sentiment_follow_up(
+                str(args.get("scene_id") or ""),
+                min(3, int(args.get("limit") or 3)),
+            )
         if operation == "submit_events":
             entries = args.get("entries")
             if not isinstance(entries, list):

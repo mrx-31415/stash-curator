@@ -117,6 +117,112 @@ def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
     assert inspected["explanation"]["summary"]
 
 
+def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+
+    profile = api.taste_profile()
+    good = next(item for item in profile["items"] if item["tag_id"] == "good")
+    assert good["name"] == "Familiar Scenario"
+    assert good["scene_count"] == 4
+    assert good["direct_value"] is None
+    assert good["prompt"] in {"belief", "uncertain"}
+
+    assert (
+        api.submit_tag_preferences(
+            [{"preference_id": "direct", "tag_id": "good", "value": 0.5, "occurred_at_ms": 10}]
+        )["accepted"]
+        == 1
+    )
+    good = next(item for item in api.taste_profile()["items"] if item["tag_id"] == "good")
+    assert good["direct_value"] == 0.5
+    assert good["prompt"] is None
+
+
+def test_thumb_down_follow_up_filters_caps_and_keeps_scene_feedback_independent(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    extra_tags = (
+        ("candidate-a", "Candidate A", "a"),
+        ("candidate-b", "Candidate B", "b"),
+        ("candidate-c", "Candidate C", "c"),
+        ("candidate-d", "Candidate D", "d"),
+        ("generic", "Generic", "g"),
+        ("workflow", "[Workflow]", "w"),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)", extra_tags
+    )
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES ('disliked', ?, 'scene')",
+        ((tag_id,) for tag_id, _, _ in extra_tags),
+    )
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES (?, 'generic', 'scene')",
+        (
+            ("old-good",),
+            ("recent-good",),
+            ("unseen-good",),
+            ("unlabeled",),
+            ("unusual",),
+        ),
+    )
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+    api.submit_tag_preferences(
+        [
+            {
+                "preference_id": "answered",
+                "tag_id": "candidate-a",
+                "value": 0.5,
+                "occurred_at_ms": 10,
+            }
+        ]
+    )
+
+    follow_up = api.tag_sentiment_follow_up("disliked")
+
+    assert len(follow_up["items"]) == 3
+    assert {"candidate-a", "generic", "workflow"}.isdisjoint(
+        {item["tag_id"] for item in follow_up["items"]}
+    )
+
+    api.submit_feedback(
+        [
+            {
+                "feedback_id": "follow-up-down",
+                "scene_id": "unusual",
+                "feedback_type": "thumb_down",
+                "occurred_at_ms": 20,
+            }
+        ]
+    )
+    api.submit_tag_preferences(
+        [
+            {
+                "preference_id": "follow-up-tag",
+                "tag_id": "unusual",
+                "value": -1,
+                "occurred_at_ms": 21,
+            }
+        ]
+    )
+    assert (
+        connection.execute(
+            "SELECT feedback_type FROM feedback WHERE feedback_id='follow-up-down'"
+        ).fetchone()[0]
+        == "thumb_down"
+    )
+    assert (
+        connection.execute(
+            "SELECT value FROM direct_tag_preference WHERE preference_id='follow-up-tag'"
+        ).fetchone()[0]
+        == -1
+    )
+
+
 def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
