@@ -142,6 +142,20 @@ def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
     assert "submitTagPreference(tag.tag_id, value);" in source
 
 
+def test_feedback_history_can_undo_or_replace_append_only_actions() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'value: "feedback"' in source
+    assert 'label: "Feedback history"' in source
+    assert 'operation: "get_feedback_history"' in source
+    assert 'operation: "correct_feedback"' in source
+    assert '"Scene removed from Stash"' in source
+    assert '"Replacement feedback"' in source
+    assert 'className: "form-control form-control-sm", value: replacement' in source
+    assert "icon: faThumbsUp,\n      maintenance: true" in source
+    assert "scheduleModelUpdate();" in source
+
+
 def test_external_scene_cards_can_rate_matching_local_tags() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
