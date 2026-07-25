@@ -64,6 +64,13 @@
       description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
     },
     {
+      value: "backups",
+      label: "Backups",
+      icon: faDatabase,
+      maintenance: true,
+      description: "Create, inspect, and safely restore Curator sidecar backups.",
+    },
+    {
       value: "hunt",
       label: "Performer Hunt",
       icon: faCrosshairs,
@@ -1279,6 +1286,79 @@
     );
   }
 
+  function BackupPanel() {
+    const [data, setData] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [message, setMessage] = React.useState("");
+    const [error, setError] = React.useState("");
+    async function load() {
+      try {
+        setData(await operation({ operation: "list_backups" }));
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    React.useEffect(() => { load(); }, []);
+    async function create() {
+      setBusy(true);
+      setError("");
+      try {
+        const result = await operation({ operation: "create_backup" }, 120000);
+        setMessage(`Backup created: ${result.backup_path}`);
+        setData((current) => ({ ...current, items: result.items }));
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function restore(item) {
+      if (!window.confirm(`Restore ${item.id}? Curator will first back up the current sidecar.`)) return;
+      setBusy(true);
+      setError("");
+      try {
+        const result = await operation({
+          operation: "restore_backup",
+          backup_id: item.id,
+          confirmation: `RESTORE ${item.id}`,
+        }, 120000);
+        clearSlateCache();
+        setMessage(`Restored from ${result.restored_from}. Safety backup: ${result.safety_backup}`);
+        await load();
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    return React.createElement(
+      "section",
+      { className: "curator-backup-page" },
+      React.createElement(Button, { size: "sm", disabled: busy, onClick: create }, busy ? "Working…" : "Create backup"),
+      data && React.createElement("p", null, `Backup directory: ${data.backup_directory}`),
+      message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No Curator backups found."),
+      data && data.items.length > 0 && React.createElement(
+        "div",
+        { className: "table-responsive" },
+        React.createElement(
+          "table",
+          { className: "table" },
+          React.createElement("thead", null, React.createElement("tr", null, ["Created", "Size", "File", "Action"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
+          React.createElement("tbody", null, data.items.map((item) => React.createElement(
+            "tr",
+            { key: item.id },
+            React.createElement("td", null, new Date(item.created_at_ms).toLocaleString()),
+            React.createElement("td", null, `${(item.size_bytes / 1048576).toFixed(1)} MB`),
+            React.createElement("td", null, item.id),
+            React.createElement("td", null, React.createElement(Button, { size: "sm", variant: "danger", disabled: busy, onClick: () => restore(item) }, "Restore"))
+          )))
+        )
+      )
+    );
+  }
+
   function ProfilingPanel() {
     const [profiles, setProfiles] = React.useState(null);
     const [selected, setSelected] = React.useState(null);
@@ -1627,6 +1707,7 @@
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),
+      lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       lane === "profiling" && React.createElement(ProfilingPanel),
       (loading || loadingComponents || scenesQuery.loading) &&
