@@ -367,6 +367,28 @@ def test_performer_hunt_requires_a_stashdb_link(tmp_path: Path) -> None:
         raise AssertionError("unlinked performers must be rejected")
 
 
+def test_performer_hunt_does_not_leak_owned_scenes_into_expand(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {
+            "old-good": "owned-external-scene",
+            "old-bad": "hunt-linked",
+        },
+        "scene_phashes": {"0123456789abcdef": "old-good"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    service.performer_hunt(PerformerHuntStashDB(), links, "p1", limit=10)
+
+    identifiers = {item["id"] for item in service.results("scene")["items"]}
+    assert "hunt-linked" not in identifiers
+    assert "hunt-old" in identifiers
+
+
 def test_expand_avoids_adjacent_repeated_performers() -> None:
     def row(identifier: str, performer: str):
         return {
