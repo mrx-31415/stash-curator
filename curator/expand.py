@@ -30,6 +30,7 @@ from curator.taxonomy import (
 )
 
 STASHDB = "https://stashdb.org/graphql"
+PERFORMER_HUNT_LIMIT = 1_000
 SCENES = """
 query CuratorExpandScenes($input: SceneQueryInput!) {
   queryScenes(input: $input) {
@@ -39,6 +40,7 @@ query CuratorExpandScenes($input: SceneQueryInput!) {
       studio { id name }
       tags { id name }
       images { url width height }
+      fingerprints { hash algorithm duration }
       performers { performer {
         id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
         waist_size hip_size breast_type tattoos { location } piercings { location }
@@ -59,6 +61,17 @@ query CuratorSimilarPerformers($input: PerformerQueryInput!) {
   }
 }
 """
+
+
+def normalize_phash(value: object) -> str | None:
+    normalized = str(value or "").strip().casefold()
+    if len(normalized) != 16:
+        return None
+    try:
+        int(normalized, 16)
+    except ValueError:
+        return None
+    return normalized
 
 
 class ExpandService:
@@ -133,14 +146,16 @@ class ExpandService:
         if wildcard:
             self._fetch(client, rows, sources, "wildcard", [], min(100, per_source))
         cutoff = date.today() - timedelta(days=horizon_days)
-        owned = set(links["scenes"].values())
-        candidates = [
-            row
-            for identifier, row in rows.items()
-            if identifier not in owned
-            and self._recent(row, cutoff)
-            and self._matches_gender(row, gender)
-        ]
+        candidates = []
+        for row in rows.values():
+            candidate = self._annotate_local_match(row, links)
+            match = candidate.get("curator_local_match") or {}
+            if (
+                match.get("type") != "stashdb_id"
+                and self._recent(candidate, cutoff)
+                and self._matches_gender(candidate, gender)
+            ):
+                candidates.append(candidate)
         scenes, performers = self._score(candidates, sources, model_id, feature_version, links)
         with transaction(self.connection):
             self.connection.execute("DELETE FROM external_entity")
@@ -186,6 +201,88 @@ class ExpandService:
             "taxonomy_refreshed": taxonomy_refreshed,
         }
 
+    def performer_hunt(
+        self,
+        client: GraphQLClient,
+        links: dict[str, dict[str, str]],
+        performer_id: str,
+        *,
+        limit: int = PERFORMER_HUNT_LIMIT,
+    ) -> dict[str, object]:
+        performer = self.connection.execute(
+            "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
+        ).fetchone()
+        if performer is None:
+            raise ValueError(f"unknown performer: {performer_id}")
+        external_performer_id = links["performers"].get(performer_id)
+        if not external_performer_id:
+            raise ValueError("selected performer is not linked to StashDB")
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        feature_version = FeatureStore(self.connection).current_version()
+        if model_id is None or feature_version is None:
+            raise RuntimeError("no published model")
+
+        rows: dict[str, dict[str, Any]] = {}
+        sources: dict[str, set[str]] = defaultdict(set)
+        total_count, truncated = self._fetch(
+            client,
+            rows,
+            sources,
+            "performers",
+            [external_performer_id],
+            limit,
+        )
+        scenes, _ = self._score(
+            [self._annotate_local_match(row, links) for row in rows.values()],
+            sources,
+            model_id,
+            feature_version,
+            links,
+        )
+        self._merge_external("scene", scenes)
+        shortlisted = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT external_id FROM external_shortlist WHERE entity_type='scene'"
+            )
+        }
+        items = [
+            {
+                **scene,
+                "linked_locally": bool(scene["payload"].get("curator_local_match")),
+                "local_scene_id": (scene["payload"].get("curator_local_match") or {}).get(
+                    "local_scene_id"
+                ),
+                "match_type": (scene["payload"].get("curator_local_match") or {}).get("type"),
+                "shortlisted": scene["id"] in shortlisted,
+            }
+            for scene in scenes
+        ]
+        items.sort(
+            key=lambda item: (
+                str(
+                    item["payload"].get("release_date")
+                    or item["payload"].get("production_date")
+                    or ""
+                ),
+                item["id"],
+            ),
+            reverse=True,
+        )
+        linked_count = sum(bool(item["linked_locally"]) for item in items)
+        return {
+            "ready": True,
+            "performer_id": performer_id,
+            "performer_name": str(performer["name"] or performer_id),
+            "stashdb_total": total_count,
+            "fetched_count": len(items),
+            "linked_count": linked_count,
+            "not_linked_count": len(items) - linked_count,
+            "truncated": truncated,
+            "limit": limit,
+            "items": items,
+        }
+
     def results(
         self,
         entity_type: str,
@@ -201,6 +298,7 @@ class ExpandService:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        hide_phash_matches: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
     ) -> dict[str, object]:
@@ -235,6 +333,12 @@ class ExpandService:
             if float(row["score"]) < minimum_score:
                 continue
             payload = json.loads(row["payload_json"])
+            if (
+                hide_phash_matches
+                and entity_type == "scene"
+                and (payload.get("curator_local_match") or {}).get("type") == "phash"
+            ):
+                continue
             if (
                 performer_id
                 and entity_type == "scene"
@@ -651,6 +755,7 @@ class ExpandService:
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
         favorite_only: bool = False,
+        hide_phash_matches: bool = True,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
@@ -696,11 +801,16 @@ class ExpandService:
             timings["retrieval"] = round((time.perf_counter() - started) * 1000)
             record_duration("python", "external_similar.retrieval", timings["retrieval"])
             stage_started = time.perf_counter()
-            candidates = [
-                value
-                for key, value in rows.items()
-                if key not in set(links["scenes"].values()) and self._matches_gender(value, gender)
-            ]
+            candidates = []
+            for value in rows.values():
+                candidate = self._annotate_local_match(value, links)
+                match_type = (candidate.get("curator_local_match") or {}).get("type")
+                if (
+                    match_type != "stashdb_id"
+                    and (not hide_phash_matches or match_type != "phash")
+                    and self._matches_gender(candidate, gender)
+                ):
+                    candidates.append(candidate)
             candidate_ids = {str(value["id"]) for value in candidates}
             scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
             self._merge_external("scene", scenes)
@@ -784,6 +894,43 @@ class ExpandService:
         timings["total"] = round((time.perf_counter() - started) * 1000)
         result["timings_ms"] = timings
         return result
+
+    @staticmethod
+    def _annotate_local_match(
+        scene: dict[str, Any], links: dict[str, dict[str, str]]
+    ) -> dict[str, Any]:
+        external_id = str(scene["id"])
+        local_scene_id = links.get("scene_ids", {}).get(external_id)
+        if local_scene_id is None:
+            local_scene_id = next(
+                (
+                    local
+                    for local, external in links.get("scenes", {}).items()
+                    if external == external_id
+                ),
+                None,
+            )
+        match_type = "stashdb_id" if local_scene_id else None
+        if local_scene_id is None:
+            for fingerprint in scene.get("fingerprints", []):
+                if str(fingerprint.get("algorithm") or "").casefold() != "phash":
+                    continue
+                value = normalize_phash(fingerprint.get("hash"))
+                if value is None:
+                    continue
+                local_scene_id = links.get("scene_phashes", {}).get(value)
+                if local_scene_id:
+                    match_type = "phash"
+                    break
+        if local_scene_id is None:
+            return scene
+        return {
+            **scene,
+            "curator_local_match": {
+                "type": match_type,
+                "local_scene_id": local_scene_id,
+            },
+        }
 
     def _fetch_probes(
         self,
@@ -1032,11 +1179,12 @@ class ExpandService:
         values: list[str],
         limit: int,
         modifier: str = "INCLUDES",
-    ) -> None:
+    ) -> tuple[int, bool]:
         fetched = 0
         page = 1
+        total = 0
+        page_size = min(250, limit)
         while fetched < limit:
-            page_size = min(250, limit - fetched)
             query: dict[str, object] = {
                 "page": page,
                 "per_page": page_size,
@@ -1046,15 +1194,18 @@ class ExpandService:
             if source != "wildcard":
                 query[source] = {"value": values, "modifier": modifier}
             data = client.execute(SCENES, {"input": query})["queryScenes"]
+            total = int(data["count"])
             batch = data["scenes"]
-            for scene in batch:
+            accepted = batch[: limit - fetched]
+            for scene in accepted:
                 identifier = str(scene["id"])
                 rows.setdefault(identifier, scene)
                 sources[identifier].add(source)
-            fetched += len(batch)
-            if not batch or fetched >= int(data["count"]):
+            fetched += len(accepted)
+            if not batch or fetched >= total:
                 break
             page += 1
+        return total, fetched < total
 
     @staticmethod
     def _recent(scene: dict[str, Any], cutoff: date) -> bool:

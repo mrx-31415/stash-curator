@@ -23,6 +23,18 @@
   max-width: 100%;
 }
 
+.curator-hunt-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.8rem;
+}
+
+.curator-hunt-controls .curator-token-filter {
+  flex: 1 1 18rem;
+}
+
 .curator-brand {
   align-items: center;
   display: flex;
@@ -225,6 +237,7 @@
 .curator-lane-adventure { --lane-color: #ff922b; }
 .curator-lane-similar { --lane-color: #66d9e8; }
 .curator-lane-expand { --lane-color: #f783ac; }
+.curator-lane-hunt { --lane-color: #69db7c; }
 .curator-lane-prune { --lane-color: #ff6b6b; }
 
 .curator-tabs .nav-link svg,
@@ -392,10 +405,12 @@
 
 .curator-similar { --surface-color: #4dabf7; }
 .curator-expand { --surface-color: #ff922b; }
+.curator-hunt { --surface-color: #69db7c; }
 .curator-prune-page { --surface-color: #fa5252; }
 
 .curator-similar .curator-card,
 .curator-expand .curator-card,
+.curator-hunt .curator-card,
 .curator-prune-page .curator-card {
   border-left: 3px solid var(--surface-color);
 }
@@ -1036,6 +1051,17 @@
   padding: 0.25rem 0.4rem;
   position: absolute;
   right: 0.5rem;
+  top: 0.5rem;
+  z-index: 3;
+}
+
+.curator-phash-badge {
+  background: #2b8a3e;
+  border-radius: 0.3rem;
+  font-size: 0.75rem;
+  left: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  position: absolute;
   top: 0.5rem;
   z-index: 3;
 }

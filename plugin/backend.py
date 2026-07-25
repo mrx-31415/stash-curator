@@ -19,7 +19,12 @@ for package_root in (PLUGIN_DIR, PLUGIN_DIR.parent):
 from curator import __version__  # noqa: E402
 from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
-from curator.expand import STASHDB, ExpandService  # noqa: E402
+from curator.expand import (  # noqa: E402
+    PERFORMER_HUNT_LIMIT,
+    STASHDB,
+    ExpandService,
+    normalize_phash,
+)
 from curator.graphql import GraphQLClient  # noqa: E402
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore  # noqa: E402
 from curator.profiling import (  # noqa: E402
@@ -64,7 +69,13 @@ query CuratorExternalLinks($page: Int!, $perPage: Int!) {
   scenes: findScenes(
     scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
-  ) { count scenes { id stash_ids { endpoint stash_id } } }
+  ) {
+    count
+    scenes {
+      id stash_ids { endpoint stash_id }
+      files { fingerprints { type value } }
+    }
+  }
   performers: findPerformers(
     performer_filter: {stash_id_endpoint: {
       endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
@@ -142,12 +153,18 @@ def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
 
 
 def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
-    result: dict[str, dict[str, str]] = {"scenes": {}, "performers": {}, "studios": {}}
+    result: dict[str, dict[str, str]] = {
+        "scenes": {},
+        "scene_ids": {},
+        "scene_phashes": {},
+        "performers": {},
+        "studios": {},
+    }
     page = 1
     while True:
         data = _client(payload).execute(EXTERNAL_LINKS_QUERY, {"page": page, "perPage": 500})
         more = False
-        for kind in result:
+        for kind in ("scenes", "performers", "studios"):
             collection = data[kind]
             for row in collection[kind]:
                 external = next(
@@ -161,6 +178,15 @@ def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
                 )
                 if external:
                     result[kind][str(row["id"])] = external
+                    if kind == "scenes":
+                        result["scene_ids"][external] = str(row["id"])
+                if kind == "scenes":
+                    for file in row.get("files", []):
+                        for fingerprint in file.get("fingerprints", []):
+                            if str(fingerprint.get("type") or "").casefold() == "phash":
+                                value = normalize_phash(fingerprint.get("value"))
+                                if value:
+                                    result["scene_phashes"].setdefault(value, str(row["id"]))
             more |= page * 500 < int(collection["count"])
         if not more:
             return result
@@ -420,10 +446,18 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 studio_query=str(args.get("studio_query") or ""),
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
+                hide_phash_matches=bool(args.get("hide_phash_matches", True)),
                 minimum_score=(
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
                 count=int(args.get("count") or config["page_size"]),
+            )
+        if operation == "get_performer_hunt":
+            return ExpandService(connection).performer_hunt(
+                _stashdb(payload),
+                _external_links(payload),
+                str(args.get("performer_id") or ""),
+                limit=PERFORMER_HUNT_LIMIT,
             )
         if operation == "get_shortlist":
             return api.expand_shortlist()
@@ -442,6 +476,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
                 favorite_only=bool(args.get("favorite_only", False)),
+                hide_phash_matches=bool(args.get("hide_phash_matches", True)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])
                     if args.get("minimum_similarity") is not None

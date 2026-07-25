@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from curator.config import DEFAULT_CONFIG
-from curator.expand import ExpandService
+from curator.expand import ExpandService, normalize_phash
 from curator.features import FeatureStore
 from curator.model import PreferenceModelBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
@@ -49,6 +49,9 @@ class FakeStashDB:
                 "id": "new-external-scene",
                 "title": "A new candidate",
                 "release_date": date.today().isoformat(),
+                "fingerprints": [
+                    {"hash": "d8bc7554c5a178aa", "algorithm": "PHASH", "duration": 120}
+                ],
                 "studio": {"id": "external-studio", "name": "Studio"},
                 "tags": [{"id": "external-tag", "name": "Useful"}],
                 "images": [{"url": "https://example.test/scene.jpg"}],
@@ -74,6 +77,48 @@ class OfflineStashDB:
         raise RuntimeError("offline")
 
 
+class PerformerHuntStashDB(FakeStashDB):
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        page = int(input_data["page"])
+        scenes = [
+            {
+                "id": identifier,
+                "title": identifier,
+                "release_date": release_date,
+                "fingerprints": (
+                    [{"hash": "0123456789abcdef", "algorithm": "PHASH", "duration": 120}]
+                    if identifier == "hunt-new"
+                    else []
+                ),
+                "studio": None,
+                "tags": [],
+                "images": [],
+                "performers": [
+                    {
+                        "performer": {
+                            "id": "known-external-performer",
+                            "name": "Known",
+                            "gender": "FEMALE",
+                            "tattoos": [],
+                            "piercings": [],
+                            "images": [],
+                        }
+                    }
+                ],
+            }
+            for identifier, release_date in (
+                ("hunt-old", "2024-01-01"),
+                ("hunt-linked", "2025-01-01"),
+                ("hunt-new", "2026-01-01"),
+            )
+        ]
+        start = (page - 1) * 2
+        return {"queryScenes": {"count": len(scenes), "scenes": scenes[start : start + 2]}}
+
+
 class TaxonomyStashDB(FakeStashDB):
     url = "https://stashdb.org/graphql"
 
@@ -95,6 +140,12 @@ class TaxonomyStashDB(FakeStashDB):
                 }
             }
         return super().execute(document, variables or {})
+
+
+def test_phash_normalization_accepts_only_exact_64_bit_hex() -> None:
+    assert normalize_phash(" D8BC7554C5A178AA ") == "d8bc7554c5a178aa"
+    assert normalize_phash("shared-phash") is None
+    assert normalize_phash("") is None
 
 
 def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> None:
@@ -182,6 +233,28 @@ def test_refresh_resolves_local_tag_names_from_stashdb_taxonomy(tmp_path: Path) 
     assert "id:external-tag" in service._external_content("old-good")
 
 
+def test_expand_hides_exact_local_phash_matches_by_default(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "scene_phashes": {"d8bc7554c5a178aa": "old-good"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+
+    assert service.results("scene")["items"] == []
+    visible = service.results("scene", hide_phash_matches=False)["items"]
+    assert [item["id"] for item in visible] == ["new-external-scene"]
+    assert visible[0]["payload"]["curator_local_match"] == {
+        "type": "phash",
+        "local_scene_id": "old-good",
+    }
+
+
 def test_expand_wildcard_is_opt_in_and_bad_queries_are_rejected(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
@@ -236,6 +309,61 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
         "external-scene-1",
         "external-scene-2",
     ]
+
+
+def test_performer_hunt_pages_classifies_exact_links_and_discloses_cap(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "hunt-linked"},
+        "scene_phashes": {"0123456789abcdef": "old-good"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    client = PerformerHuntStashDB()
+    service = ExpandService(connection)
+
+    result = service.performer_hunt(client, links, "p1", limit=10)
+
+    assert [item["id"] for item in result["items"]] == [
+        "hunt-new",
+        "hunt-linked",
+        "hunt-old",
+    ]
+    assert result["stashdb_total"] == result["fetched_count"] == 3
+    assert result["linked_count"] == 2
+    assert result["not_linked_count"] == 1
+    assert result["truncated"] is False
+    assert [item["id"] for item in result["items"] if not item["linked_locally"]] == ["hunt-old"]
+    assert result["items"][0]["match_type"] == "phash"
+    assert result["items"][1]["local_scene_id"] == "old-good"
+    assert len(client.inputs) == 2
+    assert all(
+        request["performers"] == {"value": ["known-external-performer"], "modifier": "INCLUDES"}
+        for request in client.inputs
+    )
+
+    capped = service.performer_hunt(PerformerHuntStashDB(), links, "p1", limit=2)
+    assert capped["stashdb_total"] == 3
+    assert capped["fetched_count"] == capped["limit"] == 2
+    assert capped["truncated"] is True
+    assert [item["id"] for item in capped["items"] if not item["linked_locally"]] == ["hunt-old"]
+
+
+def test_performer_hunt_requires_a_stashdb_link(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    try:
+        ExpandService(connection).performer_hunt(
+            PerformerHuntStashDB(),
+            {"scenes": {}, "performers": {}, "studios": {}},
+            "p1",
+        )
+    except ValueError as error:
+        assert str(error) == "selected performer is not linked to StashDB"
+    else:
+        raise AssertionError("unlinked performers must be rejected")
 
 
 def test_expand_avoids_adjacent_repeated_performers() -> None:
@@ -403,13 +531,32 @@ def test_external_similarity_loads_only_positive_anchor_profiles(
 
     monkeypatch.setattr(FeatureStore, "performer_profiles", capture_profiles)
 
-    ExpandService(connection).targeted_similar(
+    hidden = ExpandService(connection).targeted_similar(
         client,
-        {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}},
+        {
+            "scenes": {"old-good": "owned-external-scene"},
+            "scene_phashes": {"d8bc7554c5a178aa": "old-good"},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {},
+        },
         "scene",
         "old-good",
     )
+    visible = ExpandService(connection).targeted_similar(
+        client,
+        {
+            "scenes": {"old-good": "owned-external-scene"},
+            "scene_phashes": {"d8bc7554c5a178aa": "old-good"},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {},
+        },
+        "scene",
+        "old-good",
+        hide_phash_matches=False,
+    )
 
+    assert hidden["items"] == []
+    assert [item["id"] for item in visible["items"]] == ["new-external-scene"]
     tag_query = next(value for value in client.inputs if "tags" in value)
     assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
     assert {"p1"} in requested

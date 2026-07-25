@@ -328,6 +328,7 @@ class CuratorAPI:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        hide_phash_matches: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
     ) -> dict[str, object]:
@@ -344,6 +345,7 @@ class CuratorAPI:
             studio_query=studio_query,
             performer_names=performer_names,
             studio_names=studio_names,
+            hide_phash_matches=hide_phash_matches,
             minimum_score=minimum_score,
             count=count,
         )
