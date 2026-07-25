@@ -9,6 +9,7 @@ import pytest
 import curator.model.builder as builder_module
 from curator.cli import run
 from curator.config import DEFAULT_CONFIG
+from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from curator.storage import MigrationRunner, connect_database
 
@@ -229,6 +230,51 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             component = score.components[family]
             assert isinstance(component, dict)
             assert abs(float(component["value"])) <= bound
+
+
+def test_direct_tag_sentiment_overrides_and_clear_restores_inference(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    baseline = builder.build()
+
+    def affinity(model_id: str) -> tuple[float, dict[str, object]]:
+        row = connection.execute(
+            """
+            SELECT a.affinity, a.metadata_json FROM feature_affinity a
+            JOIN feature_definition d USING(feature_id)
+            WHERE a.model_id=? AND d.name='tag:good'
+            """,
+            (model_id,),
+        ).fetchone()
+        return float(row[0]), json.loads(row[1])
+
+    inferred, _ = affinity(baseline.model_id)
+    store = InteractionStore(connection)
+    store.submit_tag_preferences(
+        [{"preference_id": "negative", "tag_id": "good", "value": -1, "occurred_at_ms": 10}]
+    )
+    negative = builder.build()
+    negative_value, metadata = affinity(negative.model_id)
+    assert negative_value < inferred
+    assert metadata["declared_preference"] == -1
+
+    store.submit_tag_preferences(
+        [{"preference_id": "neutral", "tag_id": "good", "value": 0, "occurred_at_ms": 20}]
+    )
+    neutral = builder.build()
+    assert abs(affinity(neutral.model_id)[0]) < abs(inferred)
+
+    store.submit_tag_preferences(
+        [{"preference_id": "positive", "tag_id": "good", "value": 1, "occurred_at_ms": 30}]
+    )
+    positive = builder.build()
+    assert affinity(positive.model_id)[0] > inferred
+
+    store.submit_tag_preferences(
+        [{"preference_id": "clear", "tag_id": "good", "value": None, "occurred_at_ms": 40}]
+    )
+    restored = builder.build()
+    assert affinity(restored.model_id)[0] == pytest.approx(inferred)
 
 
 def test_model_build_reports_stage_progress(tmp_path: Path) -> None:

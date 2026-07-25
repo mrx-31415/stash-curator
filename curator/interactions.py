@@ -15,6 +15,7 @@ from curator.events import (
     quick_replacement_outcome,
     viewing_outcome,
 )
+from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator
 from curator.ranking import Slate
 from curator.storage import transaction
@@ -27,6 +28,7 @@ FEEDBACK_TYPES = {
     "prune",
     "metadata_wrong",
 }
+TAG_SENTIMENT_VALUES = {-1.0, -0.5, 0.0, 0.5, 1.0}
 
 
 class InteractionStore:
@@ -161,6 +163,80 @@ class InteractionStore:
                 self._apply_feedback(entry)
             if inserted:
                 ModelUpdateCoordinator(self.connection).request("direct_feedback")
+        return inserted
+
+    def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> int:
+        normalized = [self._tag_preference_entry(entry) for entry in entries]
+        inserted = 0
+        with transaction(self.connection):
+            for entry in normalized:
+                current = self.connection.execute(
+                    """
+                    SELECT preference_id, occurred_at_ms FROM direct_tag_preference
+                    WHERE tag_id=?
+                    """,
+                    (entry["tag_id"],),
+                ).fetchone()
+                cursor = self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO direct_tag_preference_history(
+                        preference_id, tag_id, value, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        entry["preference_id"],
+                        entry["tag_id"],
+                        entry["value"],
+                        entry["occurred_at_ms"],
+                    ),
+                )
+                if not cursor.rowcount:
+                    continue
+                inserted += 1
+                if current and (
+                    int(current["occurred_at_ms"]),
+                    str(current["preference_id"]),
+                ) >= (entry["occurred_at_ms"], entry["preference_id"]):
+                    self.connection.execute(
+                        """
+                        UPDATE direct_tag_preference_history SET replaced_by_id=?
+                        WHERE preference_id=?
+                        """,
+                        (current["preference_id"], entry["preference_id"]),
+                    )
+                    continue
+                if current:
+                    self.connection.execute(
+                        """
+                        UPDATE direct_tag_preference_history SET replaced_by_id=?
+                        WHERE preference_id=?
+                        """,
+                        (entry["preference_id"], current["preference_id"]),
+                    )
+                if entry["value"] is None:
+                    self.connection.execute(
+                        "DELETE FROM direct_tag_preference WHERE tag_id=?", (entry["tag_id"],)
+                    )
+                else:
+                    self.connection.execute(
+                        """
+                        INSERT INTO direct_tag_preference(
+                            tag_id, preference_id, value, occurred_at_ms
+                        ) VALUES (?, ?, ?, ?)
+                        ON CONFLICT(tag_id) DO UPDATE SET
+                            preference_id=excluded.preference_id,
+                            value=excluded.value,
+                            occurred_at_ms=excluded.occurred_at_ms
+                        """,
+                        (
+                            entry["tag_id"],
+                            entry["preference_id"],
+                            entry["value"],
+                            entry["occurred_at_ms"],
+                        ),
+                    )
+            if inserted:
+                ModelUpdateCoordinator(self.connection).request("direct_tag_preference")
         return inserted
 
     def submit_sessions(self, entries: list[dict[str, Any]]) -> int:
@@ -327,6 +403,39 @@ class InteractionStore:
             "occurred_at_ms": occurred_at_ms,
             "impression_id": (str(entry["impression_id"]) if entry.get("impression_id") else None),
             "payload": entry.get("payload") if isinstance(entry.get("payload"), dict) else {},
+        }
+
+    def _tag_preference_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        preference_id = str(entry.get("preference_id") or "")
+        tag_id = str(entry.get("tag_id") or "")
+        occurred_at_ms = int(entry.get("occurred_at_ms", -1))
+        value = entry.get("value")
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("tag sentiment must be numeric or null")
+            value = float(value)
+            if value not in TAG_SENTIMENT_VALUES:
+                raise ValueError("tag sentiment must use the fixed five-point scale")
+        if not preference_id or not tag_id or occurred_at_ms < 0:
+            raise ValueError("preference_id, tag_id, and occurred_at_ms are required")
+        feature_version = FeatureStore(self.connection).current_version()
+        if (
+            feature_version is None
+            or self.connection.execute(
+                """
+            SELECT 1 FROM feature_definition
+            WHERE feature_version=? AND family='content' AND name='tag:' || ?
+            """,
+                (feature_version, tag_id),
+            ).fetchone()
+            is None
+        ):
+            raise ValueError(f"unknown or unsupported content tag: {tag_id}")
+        return {
+            "preference_id": preference_id,
+            "tag_id": tag_id,
+            "value": value,
+            "occurred_at_ms": occurred_at_ms,
         }
 
     @staticmethod

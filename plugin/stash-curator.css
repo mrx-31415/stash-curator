@@ -143,6 +143,50 @@
   margin-top: 1rem;
 }
 
+.curator-taste {
+  margin-top: 1rem;
+}
+
+.curator-taste > h2 {
+  font-size: 1.2rem;
+}
+
+.curator-taste-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.curator-taste-item {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  justify-content: space-between;
+  padding: 0.65rem;
+}
+
+.curator-taste-item strong,
+.curator-taste-item small {
+  display: block;
+}
+
+.curator-taste-item .badge {
+  margin-left: 0.5rem;
+}
+
+.curator-taste-item small {
+  color: var(--text-muted, #adb5bd);
+}
+
+.curator-sentiment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
 .curator-profiling-toolbar {
   align-items: center;
   display: flex;

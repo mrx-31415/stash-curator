@@ -49,7 +49,7 @@ class _Affinity:
     confidence: float
     support: float
     scene_count: int
-    contexts: dict[str, int]
+    contexts: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -314,6 +314,15 @@ class PreferenceModelBuilder:
             tuple(row)
             for row in self.connection.execute("SELECT * FROM pruning_candidate ORDER BY scene_id")
         ]
+        tag_preferences = [
+            tuple(row)
+            for row in self.connection.execute(
+                """
+                SELECT tag_id, preference_id, value, occurred_at_ms
+                FROM direct_tag_preference ORDER BY tag_id
+                """
+            )
+        ]
         return hashlib.sha256(
             json.dumps(
                 {
@@ -321,6 +330,7 @@ class PreferenceModelBuilder:
                     "feedback": feedback_state,
                     "exclusions": exclusions,
                     "pruning": pruning,
+                    "tag_preferences": tag_preferences,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -373,6 +383,39 @@ class PreferenceModelBuilder:
                 support,
                 len({scene_id for scene_id, _, _ in values}),
                 {"studios": len(studios), "performers": len(performers)},
+            )
+        tag_features = {
+            str(feature.metadata["tag_id"]): feature.feature_id
+            for features in scene_features.values()
+            for feature in features
+            if feature.family == "content" and feature.metadata.get("tag_id")
+        }
+        for row in self.connection.execute(
+            "SELECT tag_id, value FROM direct_tag_preference ORDER BY tag_id"
+        ):
+            direct_feature_id = tag_features.get(str(row["tag_id"]))
+            if direct_feature_id is None:
+                continue
+            learned = result.get(
+                direct_feature_id,
+                _Affinity(direct_feature_id, 0.0, 0.0, 0.0, 0, {}),
+            )
+            direct_support = 8.0
+            direct_value = float(row["value"])
+            result[direct_feature_id] = _Affinity(
+                direct_feature_id,
+                _clamp(
+                    (learned.affinity * learned.support + direct_value * direct_support)
+                    / (learned.support + direct_support)
+                ),
+                max(learned.confidence, 0.9),
+                learned.support + direct_support,
+                learned.scene_count,
+                {
+                    **learned.contexts,
+                    "declared_preference": direct_value,
+                    "learned_affinity": learned.affinity,
+                },
             )
         return result
 
@@ -483,6 +526,7 @@ class PreferenceModelBuilder:
                             "affinity": affinity.affinity,
                             "confidence": affinity.confidence,
                             "metadata": feature.metadata,
+                            "affinity_metadata": affinity.contexts,
                         }
                     )
                 raw = sum(_number(item["value"]) for item in contributions)

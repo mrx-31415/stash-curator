@@ -46,6 +46,7 @@ class Microplanner:
         "direct.positive": 7,
         "appeal.performer_identity": 6,
         "appeal.content_neighbor": 5,
+        "appeal.tag_declared_positive": 5,
         "appeal.tag_positive": 4,
         "appeal.studio": 3,
         "appeal.performer_similar": 2,
@@ -113,7 +114,13 @@ class Microplanner:
                 self._unit(reason)
                 for reason in reasons
                 if reason.direction == "negative"
-                and reason.code in {"appeal.tag_negative", "fit.cooldown", "fit.not_now"}
+                and reason.code
+                in {
+                    "appeal.tag_declared_negative",
+                    "appeal.tag_negative",
+                    "fit.cooldown",
+                    "fit.not_now",
+                }
             ),
             key=lambda unit: (-unit.strength, unit.reason.code),
         )
@@ -125,10 +132,11 @@ class Microplanner:
             return False
         # A neighbor clause already names the content features creating the
         # relationship, so a separate tag clause normally repeats the same evidence.
-        return {primary.reason.code, candidate.reason.code} != {
-            "appeal.content_neighbor",
-            "appeal.tag_positive",
-        }
+        codes = {primary.reason.code, candidate.reason.code}
+        return not (
+            "appeal.content_neighbor" in codes
+            and bool(codes & {"appeal.tag_positive", "appeal.tag_declared_positive"})
+        )
 
     @staticmethod
     def _narratable(reason: Reason) -> bool:
