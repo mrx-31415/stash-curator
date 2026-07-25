@@ -91,18 +91,29 @@
       description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
     },
     {
+      value: "diagnostics",
+      label: "Diagnostics",
+      icon: faWrench,
+      maintenance: true,
+      description: "Preview and export a privacy-safe status report for bug reports.",
+    },
+    {
       value: "prune",
       label: "Prune",
       icon: faBroom,
+      maintenance: true,
       description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
     {
       value: "taste",
       label: "Taste Profile",
       icon: faTag,
+      maintenance: true,
       description: "Review what Curator has inferred and directly teach it how you feel about tags.",
     },
   ];
+  const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
+  const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
@@ -1668,6 +1679,53 @@
     );
   }
 
+  function DiagnosticsPanel() {
+    const [report, setReport] = React.useState(null);
+    const [message, setMessage] = React.useState("");
+    const [error, setError] = React.useState("");
+    async function load() {
+      setError("");
+      try {
+        setReport(await operation({ operation: "get_diagnostics" }));
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    React.useEffect(() => { load(); }, []);
+    const preview = report ? JSON.stringify(report, null, 2) : "";
+    async function copy() {
+      try {
+        await copyText(preview);
+        setMessage("Diagnostics copied.");
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    function download() {
+      const url = URL.createObjectURL(new Blob([preview], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "stash-curator-diagnostics.json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+    return React.createElement(
+      "section",
+      { className: "curator-diagnostics", role: "tabpanel" },
+      React.createElement("p", null, "This allowlisted report excludes library metadata, identifiers, paths, URLs, credentials, preferences, and SQL. Profiling traces are separate and are not included."),
+      React.createElement(
+        "div",
+        { className: "curator-profiling-toolbar" },
+        React.createElement(Button, { size: "sm", onClick: load }, "Refresh"),
+        React.createElement(Button, { size: "sm", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
+        React.createElement(Button, { size: "sm", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
+      ),
+      message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      report && React.createElement("pre", { className: "curator-diagnostics-preview" }, preview)
+    );
+  }
+
   function CuratorControls({ onRefresh, onProfiling, profilingActive }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
@@ -1908,14 +1966,40 @@
         { className: "curator-header" },
         React.createElement("div", { className: "curator-brand" }, React.createElement("span", { className: "curator-brand-mark", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement("div", null, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste."))),
         React.createElement(
-          Nav,
-          { variant: "tabs", role: "tablist", className: "curator-tabs" },
-          NAV_ITEMS.map((option) =>
+          "div",
+          { className: "curator-navigation" },
+          React.createElement(
+            Nav,
+            { variant: "tabs", role: "tablist", className: "curator-tabs" },
+            PRIMARY_NAV_ITEMS.map((option) =>
+              React.createElement(
+                Nav.Link,
+                { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), onMouseEnter: () => prefetchLane(option.value), onFocus: () => prefetchLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+                React.createElement(FontAwesomeIcon, { icon: option.icon }),
+                React.createElement("span", null, option.label)
+              )
+            )
+          ),
+          React.createElement(
+            "details",
+            { className: "curator-maintenance-menu" },
             React.createElement(
-              Nav.Link,
-              { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), onMouseEnter: () => prefetchLane(option.value), onFocus: () => prefetchLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
-              React.createElement(FontAwesomeIcon, { icon: option.icon }),
-              React.createElement("span", null, option.label)
+              "summary",
+              { className: `nav-link ${laneOption?.maintenance ? "active" : ""}`, title: "Maintenance", "aria-label": laneOption?.maintenance ? `Maintenance: ${laneOption.label}` : "Maintenance" },
+              React.createElement(FontAwesomeIcon, { icon: faWrench }),
+              React.createElement("span", null, "Maintenance")
+            ),
+            React.createElement(
+              "div",
+              { className: "curator-maintenance-items" },
+              MAINTENANCE_ITEMS.map((option) =>
+                React.createElement(
+                  "button",
+                  { key: option.value, type: "button", className: lane === option.value ? "active" : "", onClick: (event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openView(option.value); }, title: option.description, "aria-current": lane === option.value ? "page" : undefined },
+                  React.createElement(FontAwesomeIcon, { icon: option.icon }),
+                  React.createElement("span", null, option.label)
+                )
+              )
             )
           )
         ),
@@ -1955,6 +2039,7 @@
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),
       lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
+      lane === "diagnostics" && React.createElement(DiagnosticsPanel),
       lane === "profiling" && React.createElement(ProfilingPanel),
       (loading || loadingComponents || scenesQuery.loading) &&
         React.createElement(

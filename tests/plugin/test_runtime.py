@@ -209,6 +209,23 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'if (sort !== "suggested")' in source
 
 
+def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_traces() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'value: "diagnostics"' in source
+    assert "icon: faWrench,\n      maintenance: true" in source
+    assert "const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);" in source
+    assert "const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);" in source
+    assert "icon: faBroom,\n      maintenance: true" in source
+    assert "icon: faTag,\n      maintenance: true" in source
+    assert 'className: "curator-maintenance-menu"' in source
+    assert 'React.createElement("span", null, "Maintenance")' in source
+    assert 'operation: "get_diagnostics"' in source
+    assert '"Diagnostics copied."' in source
+    assert 'link.download = "stash-curator-diagnostics.json"' in source
+    assert "Profiling traces are separate and are not included." in source
+
+
 def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
@@ -370,6 +387,105 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.SCHEMA_VERSION == 1
+
+
+def test_diagnostics_allowlist_cannot_emit_representative_private_fields(
+    tmp_path: Path,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_diagnostics", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "PRIVATE_DATABASE.sqlite3"
+    payload = {"args": {"database_path": str(database)}}
+    connection = module._open(payload, {})
+    connection.execute(
+        "UPDATE curator_config SET config_json=? WHERE singleton=1",
+        (
+            json.dumps(
+                {
+                    "url": "PRIVATE_URL",
+                    "api_key": "PRIVATE_KEY",
+                    "preference": "PRIVATE_PREFERENCE",
+                }
+            ),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO source_scene(scene_id, title, source_hash)
+        VALUES ('PRIVATE_ENTITY_ID', 'PRIVATE_TITLE', 'private')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO source_performer(performer_id, name, source_hash)
+        VALUES ('private-performer', 'PRIVATE_PERFORMER', 'private')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO source_tag(tag_id, name, source_hash)
+        VALUES ('private-tag', 'PRIVATE_TAG', 'private')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO curator_job(
+            job_id, job_type, state, started_at_ms, finished_at_ms, summary_json, error
+        ) VALUES (
+            'PRIVATE_JOB_ID', 'sync-build', 'failed', 100, 250,
+            '{"entity":"PRIVATE_ENTITY_ID"}',
+            'PRIVATE_SQL SELECT * FROM feedback at PRIVATE_URL'
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO profile_trace(
+            trace_id, kind, operation, started_at_ms, duration_us, status,
+            span_count, truncated, trace_json
+        ) VALUES (
+            'PRIVATE_TRACE_ID', 'operation', 'test', 1, 1, 'ok', 1, 0,
+            '{"traceEvents":[{"args":{"statement":"PRIVATE_SQL"}}]}'
+        )
+        """
+    )
+    connection.close()
+
+    report = module._api(
+        payload,
+        "get_diagnostics",
+        {"whisparrUrl": "PRIVATE_URL", "whisparrApiKey": "PRIVATE_KEY"},
+    )
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert set(report) == {
+        "report_version",
+        "generated_at_ms",
+        "curator_version",
+        "api_schema_version",
+        "migration",
+        "readiness",
+        "recent_jobs",
+        "timing_ms",
+    }
+    assert report["recent_jobs"][0]["outcome"] == "failed"
+    for private in (
+        str(database),
+        "PRIVATE_URL",
+        "PRIVATE_KEY",
+        "PRIVATE_PREFERENCE",
+        "PRIVATE_ENTITY_ID",
+        "PRIVATE_TITLE",
+        "PRIVATE_PERFORMER",
+        "PRIVATE_TAG",
+        "PRIVATE_JOB_ID",
+        "PRIVATE_TRACE_ID",
+        "PRIVATE_SQL",
+    ):
+        assert private not in serialized
 
 
 def test_external_links_collect_normalized_local_phashes(

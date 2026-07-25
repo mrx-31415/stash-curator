@@ -760,6 +760,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.update_config(values)
         if operation == "get_job_status":
             return _job_status(connection)
+        if operation == "get_diagnostics":
+            return _diagnostics(connection)
         if operation == "list_profiles":
             return {
                 "schema_version": SCHEMA_VERSION,
@@ -827,6 +829,105 @@ def _job_status(connection: Any) -> dict[str, object]:
         for row in rows
     ]
     return {"schema_version": SCHEMA_VERSION, "jobs": jobs}
+
+
+DIAGNOSTIC_JOB_TYPES = {
+    "sync-build",
+    "full-sync-build",
+    "build",
+    "update-model",
+    "prepare",
+    "backup",
+    "expand-refresh",
+}
+
+
+def _diagnostics(connection: Any) -> dict[str, object]:
+    migration = MigrationRunner(connection).status()
+    model = connection.execute(
+        "SELECT 1 FROM model_version WHERE status='published' LIMIT 1"
+    ).fetchone()
+    sync = connection.execute(
+        """
+        SELECT 1 FROM curator_job
+        WHERE job_type IN ('sync-build', 'full-sync-build') AND state='complete' LIMIT 1
+        """
+    ).fetchone()
+    model_update = connection.execute(
+        """
+        SELECT requested_generation, published_generation, last_duration_ms
+        FROM model_update_state WHERE singleton=1
+        """
+    ).fetchone()
+    rows = [
+        row
+        for row in connection.execute(
+            """
+            SELECT job_type, state, started_at_ms, finished_at_ms
+            FROM curator_job ORDER BY started_at_ms DESC LIMIT 50
+            """
+        )
+        if str(row["job_type"]) in DIAGNOSTIC_JOB_TYPES
+    ]
+    recent_jobs = [
+        {
+            "job_type": str(row["job_type"]),
+            "outcome": str(row["state"]),
+            "started_at_ms": int(row["started_at_ms"]),
+            "finished_at_ms": (
+                int(row["finished_at_ms"]) if row["finished_at_ms"] is not None else None
+            ),
+            "duration_ms": (
+                int(row["finished_at_ms"]) - int(row["started_at_ms"])
+                if row["finished_at_ms"] is not None
+                else None
+            ),
+        }
+        for row in rows[:10]
+    ]
+    durations: dict[str, list[int]] = {}
+    for row in rows:
+        if row["finished_at_ms"] is not None:
+            durations.setdefault(str(row["job_type"]), []).append(
+                int(row["finished_at_ms"]) - int(row["started_at_ms"])
+            )
+    return {
+        "report_version": 1,
+        "generated_at_ms": time.time_ns() // 1_000_000,
+        "curator_version": __version__,
+        "api_schema_version": SCHEMA_VERSION,
+        "migration": {
+            "current_version": migration.current_version,
+            "latest_version": migration.latest_version,
+            "pending_count": len(migration.pending_versions),
+        },
+        "readiness": {
+            "sidecar": not migration.pending_versions,
+            "library_sync": sync is not None,
+            "recommendation_model": model is not None,
+            "model_update_pending": (
+                int(model_update["requested_generation"])
+                > int(model_update["published_generation"])
+            ),
+        },
+        "recent_jobs": recent_jobs,
+        "timing_ms": {
+            "last_model_update": (
+                int(model_update["last_duration_ms"])
+                if model_update["last_duration_ms"] is not None
+                else None
+            ),
+            "jobs": [
+                {
+                    "job_type": job_type,
+                    "count": len(values),
+                    "average": round(sum(values) / len(values)),
+                    "maximum": max(values),
+                }
+                for job_type, values in sorted(durations.items())
+            ],
+        },
+    }
 
 
 def _classify_lanes(connection: Any, model: Any) -> int:
