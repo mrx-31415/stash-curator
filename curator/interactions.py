@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from dataclasses import asdict
 from typing import Any
 
+from curator.config import DEFAULT_CONFIG
 from curator.events import (
     DirectSessionInput,
     PlayedRange,
@@ -15,7 +16,6 @@ from curator.events import (
     quick_replacement_outcome,
     viewing_outcome,
 )
-from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator
 from curator.ranking import Slate
 from curator.storage import transaction
@@ -418,15 +418,14 @@ class InteractionStore:
                 raise ValueError("tag sentiment must use the fixed five-point scale")
         if not preference_id or not tag_id or occurred_at_ms < 0:
             raise ValueError("preference_id, tag_id, and occurred_at_ms are required")
-        feature_version = FeatureStore(self.connection).current_version()
+        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
         if (
-            feature_version is None
-            or self.connection.execute(
+            self.connection.execute(
                 """
-            SELECT 1 FROM feature_definition
-            WHERE feature_version=? AND family='content' AND name='tag:' || ?
+            SELECT 1 FROM tag_role
+            WHERE config_version=? AND tag_id=? AND role='content'
             """,
-                (feature_version, tag_id),
+                (config_version, tag_id),
             ).fetchone()
             is None
         ):

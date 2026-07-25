@@ -1160,6 +1160,16 @@ class ExpandService:
                 (model_id, feature_version),
             )
         ]
+        direct_tags = [
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT tag_id FROM direct_tag_preference
+                WHERE value > 0 ORDER BY value DESC, tag_id
+                """
+            )
+        ]
+        local_tags = list(dict.fromkeys((*direct_tags, *local_tags)))
         resolved = self._external_tag_ids(set(local_tags))
         tags = list(dict.fromkeys(resolved[value] for value in local_tags if value in resolved))[
             :20
@@ -1256,6 +1266,19 @@ class ExpandService:
             tag_affinity[f"name:{str(row['name']).casefold()}"] = value
             if row["stash_id"]:
                 tag_affinity[f"id:{row['stash_id']}"] = value
+        for row in self.connection.execute(
+            """
+            SELECT ids.stash_id, t.name, p.value
+            FROM direct_tag_preference p JOIN source_tag t USING(tag_id)
+            LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
+              AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
+            """,
+            (STASHDB,),
+        ):
+            value = float(row["value"])
+            tag_affinity.setdefault(f"name:{str(row['name']).casefold()}", value)
+            if row["stash_id"]:
+                tag_affinity.setdefault(f"id:{row['stash_id']}", value)
         external_studio_appeal = {
             links["studios"][str(row["studio_id"])]: float(row["appeal"])
             for row in self.connection.execute(
