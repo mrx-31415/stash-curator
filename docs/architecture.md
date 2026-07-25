@@ -56,6 +56,10 @@ preference rebuild after a short debounce. They do not rerun library sync. Full
 sync/build and Expand refresh remain one-shot tasks because Stash provides no plugin
 background scheduler/startup hook.
 
+Direct tag sentiments keep append-only replacement history plus one current value per
+tag. Model publication blends that value into the shared content affinity, so local
+recommendations, Similar, Expand, and factual explanations consume the same result.
+
 The only mutation path into Stash is isolated Prune tag application/removal.
 StashDB failures affect external discovery only; cached Expand results and local
 recommendations remain available.

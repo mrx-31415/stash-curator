@@ -17,6 +17,10 @@
       "lead": ["scenes with {tags} have tended to suit you", "your history is positive around {tags}", "{tags} are a recurring positive pattern for you"],
       "support": ["{tags} provide additional support", "your past choices also favour {tags}", "{tags} are another positive signal"]
     },
+    "appeal.tag_declared_positive": {
+      "lead": ["you said you like {tags}", "your declared preference for {tags} is positive", "you explicitly marked {tags} as appealing"],
+      "support": ["you said you like {tags}", "your declared preference also supports {tags}", "{tags} match a preference you set"]
+    },
     "appeal.studio": {
       "lead": ["your history with {studio} is positive", "scenes from {studio} have often suited you", "{studio} has been a reliable source in your library"],
       "support": ["{studio} adds a positive studio signal", "your history with {studio} provides additional support", "{studio} is another familiar source"]
@@ -27,6 +31,9 @@
     },
     "appeal.tag_negative": {
       "boundary": ["your history with {tags} is mixed", "the pattern around {tags} has been less consistent for you", "there is some friction around {tags}"]
+    },
+    "appeal.tag_declared_negative": {
+      "boundary": ["you said you dislike {tags}", "your declared preference for {tags} is negative", "you explicitly marked {tags} as unappealing"]
     },
     "fit.cooldown": {
       "boundary": ["you watched this relatively recently", "it may need a little more time to feel fresh", "recency is holding this back for now"]
