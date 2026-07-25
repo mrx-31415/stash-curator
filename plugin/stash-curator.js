@@ -399,6 +399,9 @@
   function TasteProfilePanel() {
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
+    const [query, setQuery] = React.useState("");
+    const [sort, setSort] = React.useState("suggested");
+    const [status, setStatus] = React.useState("all");
     React.useEffect(() => {
       let active = true;
       operation({ operation: "get_taste_profile" }).then(
@@ -411,18 +414,49 @@
       submitTagPreference(tagId, value);
       setData((current) => ({ ...current, items: current.items.map((item) => item.tag_id === tagId ? { ...item, direct_value: value, prompt: null } : item) }));
     }
+    const visibleItems = data
+      ? data.items
+          .filter((item) =>
+            item.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+            && (status === "all" || (status === "answered") === (item.direct_value !== null))
+          )
+      : [];
+    if (sort !== "suggested") {
+      visibleItems.sort((left, right) => {
+        const difference = sort === "confidence"
+          ? right.confidence - left.confidence
+          : right.scene_count - left.scene_count;
+        return difference || left.name.localeCompare(right.name);
+      });
+    }
     return React.createElement(
       "section",
       { className: "curator-taste", "aria-labelledby": "curator-taste-title" },
       React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
       React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
+      React.createElement(
+        "div",
+        { className: "curator-taste-toolbar" },
+        React.createElement("input", { className: "form-control form-control-sm", type: "search", value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Search tags…", "aria-label": "Search taste profile tags" }),
+        React.createElement("select", { className: "form-control form-control-sm", value: status, onChange: (event) => setStatus(event.target.value), "aria-label": "Filter taste profile tags" },
+          React.createElement("option", { value: "all" }, "All tags"),
+          React.createElement("option", { value: "unanswered" }, "Needs answer"),
+          React.createElement("option", { value: "answered" }, "Answered")
+        ),
+        React.createElement("select", { className: "form-control form-control-sm", value: sort, onChange: (event) => setSort(event.target.value), "aria-label": "Sort taste profile" },
+          React.createElement("option", { value: "suggested" }, "Suggested"),
+          React.createElement("option", { value: "confidence" }, "Confidence"),
+          React.createElement("option", { value: "scenes" }, "Scene count")
+        )
+      ),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       !data && !error && React.createElement("div", { role: "status" }, "Loading taste profile…"),
       data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No supported content tags are available yet."),
+      data && data.items.length > 0 && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No tags match that search."),
       data && React.createElement(
         "div",
         { className: "curator-taste-list" },
-        data.items.map((item) =>
+        visibleItems.map((item) =>
           React.createElement(
             "article",
             { key: item.tag_id, className: "curator-taste-item" },
