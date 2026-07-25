@@ -117,6 +117,29 @@ def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:
     assert inspected["explanation"]["summary"]
 
 
+def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    api = CuratorAPI(connection)
+
+    profile = api.taste_profile()
+    good = next(item for item in profile["items"] if item["tag_id"] == "good")
+    assert good["name"] == "Familiar Scenario"
+    assert good["scene_count"] == 4
+    assert good["direct_value"] is None
+    assert good["prompt"] in {"belief", "uncertain"}
+
+    assert (
+        api.submit_tag_preferences(
+            [{"preference_id": "direct", "tag_id": "good", "value": 0.5, "occurred_at_ms": 10}]
+        )["accepted"]
+        == 1
+    )
+    good = next(item for item in api.taste_profile()["items"] if item["tag_id"] == "good")
+    assert good["direct_value"] == 0.5
+    assert good["prompt"] is None
+
+
 def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

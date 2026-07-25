@@ -363,6 +363,72 @@ class CuratorAPI:
         inserted = InteractionStore(self.connection).submit_feedback(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
+    def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
+        inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
+        return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
+
+    def taste_profile(self) -> dict[str, object]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = str(
+            self.connection.execute(
+                "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+            ).fetchone()[0]
+        )
+        direct = {
+            str(row["tag_id"]): float(row["value"])
+            for row in self.connection.execute("SELECT tag_id, value FROM direct_tag_preference")
+        }
+        items: list[dict[str, object]] = []
+        for row in self.connection.execute(
+            """
+            SELECT d.name, d.metadata_json, a.affinity, a.confidence,
+                   a.effective_support
+            FROM feature_definition d
+            LEFT JOIN feature_affinity a
+              ON a.feature_id=d.feature_id AND a.model_id=?
+            WHERE d.feature_version=? AND d.family='content'
+            ORDER BY d.name
+            """,
+            (model_id, feature_version),
+        ):
+            metadata = json.loads(str(row["metadata_json"]))
+            tag_id = str(metadata.get("tag_id") or str(row["name"]).removeprefix("tag:"))
+            scene_count = int(metadata.get("document_frequency") or 0)
+            affinity = float(row["affinity"] or 0)
+            confidence = float(row["confidence"] or 0)
+            direct_value = direct.get(tag_id)
+            prompt = None
+            if direct_value is None and scene_count >= 2:
+                prompt = "belief" if confidence >= 0.35 and abs(affinity) >= 0.15 else "uncertain"
+            items.append(
+                {
+                    "tag_id": tag_id,
+                    "name": str(metadata.get("tag_name") or tag_id),
+                    "inferred_value": affinity,
+                    "confidence": confidence,
+                    "support": float(row["effective_support"] or 0),
+                    "scene_count": scene_count,
+                    "direct_value": direct_value,
+                    "prompt": prompt,
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                item["prompt"] is None,
+                item["prompt"] == "uncertain",
+                -abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": model_id,
+            "items": items,
+        }
+
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
         impressions = [

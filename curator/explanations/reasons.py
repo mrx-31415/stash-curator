@@ -266,21 +266,32 @@ class ReasonGraphStore:
                 continue
             metadata = item.get("metadata", {})
             metadata = metadata if isinstance(metadata, dict) else {}
+            affinity_metadata = item.get("affinity_metadata", {})
+            affinity_metadata = affinity_metadata if isinstance(affinity_metadata, dict) else {}
+            declared = affinity_metadata.get("declared_preference")
+            code = (
+                ("appeal.tag_declared_positive" if value > 0 else "appeal.tag_declared_negative")
+                if declared is not None
+                else ("appeal.tag_positive" if value > 0 else "appeal.tag_negative")
+            )
             reasons.append(
                 self._reason(
                     score,
                     feature_version,
-                    "appeal.tag_positive" if value > 0 else "appeal.tag_negative",
+                    code,
                     value,
                     _number(item.get("confidence")),
                     "tag",
                     str(metadata.get("tag_id")) if metadata.get("tag_id") else None,
-                    "learned_feature_affinity",
+                    "declared_tag_preference"
+                    if declared is not None
+                    else "learned_feature_affinity",
                     {
                         "name": str(metadata.get("tag_name", "this content pattern")),
                         "related_names": related_names[_direction(value)][:3],
                         "contribution": value,
                         "support": metadata.get("document_frequency"),
+                        "declared_preference": declared,
                     },
                 )
             )
