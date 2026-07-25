@@ -403,6 +403,28 @@
   order: 3;
 }
 
+.curator-setup-checklist {
+  grid-column: 1 / -1;
+  order: 2;
+}
+
+.curator-setup-checklist h2 {
+  font-size: 1.1rem;
+}
+
+.curator-setup-checklist ul {
+  display: grid;
+  gap: 0.3rem;
+  list-style: none;
+  padding: 0;
+}
+
+.curator-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .curator-job-progress {
   background: rgba(255, 255, 255, 0.12);
   border-radius: 999px;
