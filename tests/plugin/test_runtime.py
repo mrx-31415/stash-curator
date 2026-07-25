@@ -335,6 +335,50 @@ def test_external_links_collect_normalized_local_phashes(
     assert links["scene_phashes"] == {"d8bc7554c5a178aa": "local-scene"}
 
 
+def test_first_run_health_reports_setup_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_health", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    runtime = {
+        "version": {"version": "0.31.0"},
+        "jobQueue": [],
+        "configuration": {
+            "general": {
+                "stashBoxes": [{"endpoint": "https://stashdb.org/graphql", "api_key": "configured"}]
+            }
+        },
+    }
+    monkeypatch.setattr(module, "_settings", lambda _payload: {})
+    monkeypatch.setattr(
+        module,
+        "_client",
+        lambda _payload: SimpleNamespace(execute=lambda *_args: runtime),
+    )
+
+    health = module._health({"args": {"database_path": str(tmp_path / "curator.sqlite3")}})
+
+    assert health["sidecar_ready"] is True
+    assert health["database_schema"] == health["database_schema_latest"]
+    assert health["sync_ready"] is False
+    assert health["ready"] is False
+    assert health["stashdb_available"] is True
+
+
+def test_first_run_checklist_starts_setup_and_shows_actionable_errors() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert "health && !health.ready" in source
+    assert "Sidecar and migrations:" in source
+    assert '"optional — not configured"' in source
+    assert 'start("Sync and build recommendations")' in source
+    assert '"Initial sync failed: "' in source
+    assert 'to: "/settings?tab=plugins"' in source
+
+
 def test_reused_model_keeps_existing_lane_classifications(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
