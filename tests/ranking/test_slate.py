@@ -249,6 +249,7 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     lookup = {(item.scene_id, item.lane): item for item in classifications}
 
     assert ("a-best", "best_bets") in lookup
+    assert ("a-best", "discover") not in lookup
     assert ("d-revisit", "revisit") in lookup
     assert lookup[("e-frontier", "discover")].subtype == "frontier"
     assert lookup[("f-stretch", "discover")].subtype == "stretch"
