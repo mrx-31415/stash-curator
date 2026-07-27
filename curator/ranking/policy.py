@@ -149,14 +149,15 @@ class LanePolicy:
                 >= self.config.ranking.best_bet_anchor_percentile
             )
             direct_reliable = score.direct_appeal > 0.10 and score.direct_confidence >= 0.50
-            if (
+            best_bet = (
                 score.current_fit >= self.config.ranking.best_bet_fit
                 and score.confidence >= self.config.ranking.best_bet_confidence
                 and score.metadata_confidence >= self.config.ranking.best_bet_metadata_confidence
                 and relevance >= self.config.ranking.best_bet_relevance
                 and (corroborated or direct_reliable)
                 and scene_id not in played_scene_ids
-            ):
+            )
+            if best_bet:
                 classifications.append(
                     LaneClassification(
                         scene_id,
@@ -208,7 +209,8 @@ class LanePolicy:
                     )
                 )
             if (
-                score.direct_confidence < self.config.ranking.revisit_direct_confidence
+                not best_bet
+                and score.direct_confidence < self.config.ranking.revisit_direct_confidence
                 and strongest_anchor >= self.config.ranking.discover_anchor
             ):
                 if len(negatives) == 1:
