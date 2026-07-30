@@ -36,6 +36,10 @@ from curator.storage.artifacts import (
 )
 from curator.storage.retention import prune_snapshots
 
+# ponytail: 0.005 removed 38% of measured seeds; make configurable only if
+# library-specific timing and quality measurements justify the extra surface.
+PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
+
 
 @dataclass(frozen=True)
 class ModelBuildResult:
@@ -154,7 +158,8 @@ class PreferenceModelBuilder:
         model_digest = hashlib.sha256(
             (
                 f"{feature_version}\0{evidence_fingerprint}\0{self._source_fingerprint()}\0"
-                f"{self.config.canonical_json()}\0{reference_at_ms}"
+                f"{self.config.canonical_json()}\0{PERFORMER_SIMILARITY_AFFINITY_CUTOFF}\0"
+                f"{reference_at_ms}"
             ).encode()
         ).hexdigest()
         model_id = f"model-{model_digest[:20]}"
@@ -968,7 +973,11 @@ class PreferenceModelBuilder:
                 )
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         weights = dict(self.config.feature.performer_block_weights)
-        known = {key: profiles[key] for key in identity_affinity if key in profiles}
+        known = {
+            key: profiles[key]
+            for key, (value, _) in identity_affinity.items()
+            if key in profiles and abs(value) >= PERFORMER_SIMILARITY_AFFINITY_CUTOFF
+        }
         matches_by_performer: dict[str, list[dict[str, object]]] = {
             performer_id: [] for performer_id in profiles
         }
