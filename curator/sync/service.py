@@ -31,6 +31,7 @@ class SyncResult:
     server_version: str
     resumed: bool
     entity_counts: dict[str, int]
+    changed_entity_counts: dict[str, int]
     scene_ids: tuple[str, ...]
 
 
@@ -107,6 +108,7 @@ class SyncService:
             self.repository.resume_run(run_id)
 
         counts: dict[str, int] = {}
+        changed_counts: dict[str, int] = {}
         scene_ids: set[str] = set()
         current_entity: str | None = None
         try:
@@ -120,6 +122,7 @@ class SyncService:
                     entity_count=len(ENTITY_OPERATIONS),
                 )
                 counts[current_entity] = count
+                changed_counts[current_entity] = len(ids)
                 if current_entity == "scene":
                     scene_ids.update(ids)
             current_entity = None
@@ -130,7 +133,13 @@ class SyncService:
             self.repository.fail_run(run_id, current_entity, str(error), self.clock_ms())
             raise
         return SyncResult(
-            run_id, mode, capabilities.server_version, resumed, counts, tuple(sorted(scene_ids))
+            run_id,
+            mode,
+            capabilities.server_version,
+            resumed,
+            counts,
+            changed_counts,
+            tuple(sorted(scene_ids)),
         )
 
     def _sync_entity(
@@ -163,7 +172,7 @@ class SyncService:
                 for timestamp in (self._updated_at(item) for item in adapted.items)
                 if timestamp
             )
-            self.repository.save_page(
+            changed = self.repository.save_page(
                 run_id,
                 operation.entity_type,
                 adapted.items,
@@ -173,7 +182,7 @@ class SyncService:
                 record_seen=full,
             )
             processed += len(adapted.items)
-            ids.extend(item.id for item in adapted.items)
+            ids.extend(changed)
             if self.progress:
                 self.progress(
                     operation.entity_type,

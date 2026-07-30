@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
@@ -64,7 +64,12 @@ class LanePolicy:
         self.connection = connection
         self.config = config
 
-    def classify(self, model_id: str) -> tuple[LaneClassification, ...]:
+    def classify(
+        self,
+        model_id: str,
+        *,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[LaneClassification, ...]:
         scores = RecommendationModelStore(self.connection).scores(model_id)
         eligible_scores = {
             scene_id: score
@@ -116,7 +121,8 @@ class LanePolicy:
             model_id, set(eligible_scores)
         )
         classifications: list[LaneClassification] = []
-        for scene_id, score in sorted(eligible_scores.items()):
+        total = len(eligible_scores)
+        for position, (scene_id, score) in enumerate(sorted(eligible_scores.items()), 1):
             reusable = {
                 family: _component_value(score, family)
                 for family in (
@@ -266,6 +272,10 @@ class LanePolicy:
                     },
                 )
             )
+            if progress and (position == total or position % 250 == 0):
+                progress(position, max(1, total))
+        if progress and not total:
+            progress(1, 1)
         self._persist(
             model_id,
             classifications,

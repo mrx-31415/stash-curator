@@ -7,7 +7,7 @@ import math
 import sqlite3
 import time
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from datetime import date, timedelta
@@ -119,9 +119,12 @@ class ExpandService:
         wildcard: bool = False,
         candidate_limit: int = 1_000,
         now_ms: int | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, object]:
         fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
         taxonomy_refreshed = self._refresh_taxonomy(client, fetched_at_ms)
+        if progress:
+            progress(100, 1_000)
         model_store = RecommendationModelStore(self.connection)
         model_id = model_store.current_model_id()
         if model_id is None:
@@ -131,6 +134,8 @@ class ExpandService:
         ).fetchone()
         feature_version = str(model[0])
         seeds = self._seeds(model_id, feature_version, links)
+        if progress:
+            progress(200, 1_000)
         rows: dict[str, dict[str, Any]] = {}
         sources: dict[str, set[str]] = defaultdict(set)
         filters = (
@@ -140,11 +145,15 @@ class ExpandService:
         )
         active = sum(bool(values) for _, values in filters) + int(wildcard)
         per_source = max(1, math.ceil(candidate_limit / max(1, active)))
-        for source, values in filters:
-            if values:
-                self._fetch(client, rows, sources, source, values, per_source)
+        queries = [(source, values, per_source) for source, values in filters if values]
         if wildcard:
-            self._fetch(client, rows, sources, "wildcard", [], min(100, per_source))
+            queries.append(("wildcard", [], min(100, per_source)))
+        for position, (source, values, limit) in enumerate(queries, 1):
+            self._fetch(client, rows, sources, source, values, limit)
+            if progress:
+                progress(200 + round(450 * position / max(1, len(queries))), 1_000)
+        if progress and not queries:
+            progress(650, 1_000)
         cutoff = date.today() - timedelta(days=horizon_days)
         candidates = []
         for row in rows.values():
@@ -156,7 +165,11 @@ class ExpandService:
                 and self._matches_gender(candidate, gender)
             ):
                 candidates.append(candidate)
+        if progress:
+            progress(750, 1_000)
         scenes, performers = self._score(candidates, sources, model_id, feature_version, links)
+        if progress:
+            progress(900, 1_000)
         with transaction(self.connection):
             self.connection.execute("DELETE FROM external_entity")
             self.connection.executemany(
@@ -195,6 +208,8 @@ class ExpandService:
                     len(performers),
                 ),
             )
+        if progress:
+            progress(1_000, 1_000)
         return {
             "scene_count": len(scenes),
             "performer_count": len(performers),

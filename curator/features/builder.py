@@ -67,14 +67,17 @@ class FeatureBuilder:
         config: CuratorConfig = DEFAULT_CONFIG,
         *,
         clock_ms: Callable[[], int] | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> None:
         self.connection = connection
         self.config = config
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self.progress = progress
 
     def build(self) -> FeatureBuildResult:
         started = time.perf_counter()
         source_fingerprint = self._source_fingerprint()
+        self._report(0.05)
         version_hash = hashlib.sha256(
             f"{source_fingerprint}\0{self.config.feature_json()}".encode()
         ).hexdigest()
@@ -104,7 +107,7 @@ class FeatureBuilder:
                     """,
                     (feature_version,),
                 )
-            return self._result(
+            result = self._result(
                 feature_version,
                 reused=True,
                 timings={
@@ -112,6 +115,8 @@ class FeatureBuilder:
                     "total": round((time.perf_counter() - started) * 1000),
                 },
             )
+            self._report(1.0)
+            return result
         now = self.clock_ms()
         with transaction(self.connection):
             self.connection.execute(
@@ -126,8 +131,11 @@ class FeatureBuilder:
         try:
             build_started = time.perf_counter()
             roles = self._resolve_tag_roles()
+            self._report(0.10)
             scene_features = self._scene_features(roles)
+            self._report(0.45)
             performer_features = self._performer_features(scene_features)
+            self._report(0.60)
             if self._source_fingerprint() != source_fingerprint:
                 raise FeatureBuildError("source cache changed during feature construction")
             all_features = (*scene_features, *performer_features)
@@ -137,7 +145,9 @@ class FeatureBuilder:
                 **self._publish(feature_version, source_fingerprint, roles, all_features),
             }
             timings["total"] = round((time.perf_counter() - started) * 1000)
-            return self._result(feature_version, reused=False, timings=timings)
+            result = self._result(feature_version, reused=False, timings=timings)
+            self._report(1.0)
+            return result
         except Exception as error:
             with transaction(self.connection):
                 self.connection.execute(
@@ -145,6 +155,10 @@ class FeatureBuilder:
                     (str(error)[:2000], feature_version),
                 )
             raise
+
+    def _report(self, fraction: float) -> None:
+        if self.progress:
+            self.progress(round(fraction * 1_000), 1_000)
 
     def _result(
         self, feature_version: str, *, reused: bool, timings: dict[str, int]
@@ -307,7 +321,7 @@ class FeatureBuilder:
         }
         features: list[_Feature] = []
         total = max(1, len(scene_ids))
-        for scene_id in scene_ids:
+        for position, scene_id in enumerate(scene_ids, 1):
             weighted: dict[str, float] = {}
             for tag_id, base in base_vectors[scene_id].items():
                 frequency = document_frequency[tag_id]
@@ -335,6 +349,8 @@ class FeatureBuilder:
                         },
                     )
                 )
+            if position == len(scene_ids) or position % 250 == 0:
+                self._report(0.10 + 0.30 * position / max(1, len(scene_ids)))
         for row in self.connection.execute(
             "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id"
         ):
@@ -452,8 +468,8 @@ class FeatureBuilder:
                    weight_kg, measurements, augmentation, tattoos, piercings
             FROM source_performer ORDER BY performer_id
             """
-        )
-        for row in performer_rows:
+        ).fetchall()
+        for position, row in enumerate(performer_rows, 1):
             performer_id = str(row["performer_id"])
             measurements = parse_measurements(row["measurements"])
             numeric: dict[str, tuple[float, float]] = {}
@@ -552,6 +568,8 @@ class FeatureBuilder:
                         {"provenance": provenance},
                     )
                 )
+            if position == len(performer_rows) or position % 250 == 0:
+                self._report(0.45 + 0.15 * position / max(1, len(performer_rows)))
         return tuple(features)
 
     def _publish(
@@ -689,9 +707,11 @@ class FeatureBuilder:
                     ),
                 )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
+            self._report(0.75)
             indexing_started = time.perf_counter()
             create_indexes(artifact, "feature")
             timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
+            self._report(0.85)
             validation_started = time.perf_counter()
             stored = artifact.execute(
                 """
@@ -719,6 +739,7 @@ class FeatureBuilder:
                 },
             )
             timings["validation"] = round((time.perf_counter() - validation_started) * 1000)
+            self._report(0.93)
             publication_started = time.perf_counter()
             size = publish_file(artifact, temporary, final)
             artifact = None
@@ -751,6 +772,7 @@ class FeatureBuilder:
             published = True
             activate_artifact(self.connection, "feature", final)
             timings["publication"] = round((time.perf_counter() - publication_started) * 1000)
+            self._report(0.98)
             return timings
         finally:
             if not published:

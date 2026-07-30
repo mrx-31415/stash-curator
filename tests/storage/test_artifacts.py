@@ -5,7 +5,7 @@ import pytest
 
 from curator.features import FeatureBuilder, FeatureStore
 from curator.storage import MigrationRunner, StorageError, connect_database, prune_snapshots
-from curator.storage.artifacts import artifact_path, cache_directory
+from curator.storage.artifacts import artifact_path, cache_directory, validate_artifact
 
 
 def _database(path: Path):
@@ -26,6 +26,18 @@ def test_artifact_paths_reject_escape_and_symlinks(tmp_path: Path) -> None:
     linked.symlink_to(tmp_path / "elsewhere")
     with pytest.raises(StorageError, match="unsafe artifact path"):
         artifact_path(core, linked.name)
+
+
+def test_rebuildable_artifact_validation_can_skip_full_file_scan() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute("PRAGMA user_version=1")
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+
+    result = validate_artifact(connection, "model", {"scenes": 2}, check_integrity=False)
+
+    assert result == {"integrity": "skipped", "schema_version": 1, "counts": {"scenes": 2}}
+    assert "PRAGMA quick_check" not in statements
 
 
 def test_reader_keeps_attached_feature_generation_across_publication(

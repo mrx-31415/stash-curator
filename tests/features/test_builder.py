@@ -100,9 +100,17 @@ def _database(path: Path) -> sqlite3.Connection:
 
 def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    builder = FeatureBuilder(connection, CuratorConfig(), clock_ms=lambda: 100)
+    progress: list[tuple[int, int]] = []
+    builder = FeatureBuilder(
+        connection,
+        CuratorConfig(),
+        clock_ms=lambda: 100,
+        progress=lambda processed, total: progress.append((processed, total)),
+    )
 
     first = builder.build()
+    first_progress = tuple(progress)
+    progress.clear()
     statements: list[str] = []
     connection.set_trace_callback(statements.append)
     second = builder.build()
@@ -110,6 +118,13 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
 
     assert second.feature_version == first.feature_version
     assert second.reused is True
+    assert {50, 100, 450, 600, 750, 850, 930, 980, 1_000} <= {
+        processed for processed, total in first_progress if total == 1_000
+    }
+    assert [processed for processed, _ in first_progress] == sorted(
+        processed for processed, _ in first_progress
+    )
+    assert progress[-1] == (1_000, 1_000)
     assert not any("FROM entity_feature" in statement for statement in statements)
     assert set(first.stage_timings_ms) == {
         "lookup",
