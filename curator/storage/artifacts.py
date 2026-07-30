@@ -164,7 +164,7 @@ def create_artifact(
     directory = final.parent
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = artifact_path(database_path(core), f".{expected}.{uuid4().hex}.tmp", temporary=True)
-    connection = sqlite3.connect(temporary, isolation_level=None, timeout=30)
+    connection = sqlite3.connect(temporary.as_uri(), uri=True, isolation_level=None, timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute(f"PRAGMA user_version={ARTIFACT_SCHEMA_VERSION}")

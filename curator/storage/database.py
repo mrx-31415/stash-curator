@@ -119,7 +119,8 @@ def connect_database(
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(
-            path,
+            path.as_uri(),
+            uri=True,
             isolation_level=None,
             timeout=30,
             factory=ProfiledConnection if current_trace() else sqlite3.Connection,
