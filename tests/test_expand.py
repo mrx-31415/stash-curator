@@ -158,9 +158,14 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         "performers": {"p1": "known-external-performer"},
         "studios": {"studio-1": "external-studio"},
     }
+    progress: list[tuple[int, int]] = []
 
     refreshed = ExpandService(connection).refresh(
-        client, links, now_ms=REFERENCE_MS, candidate_limit=10
+        client,
+        links,
+        now_ms=REFERENCE_MS,
+        candidate_limit=10,
+        progress=lambda processed, total: progress.append((processed, total)),
     )
 
     assert refreshed == {
@@ -169,6 +174,10 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         "taxonomy_refreshed": False,
     }
     assert 1 <= len(client.inputs) <= 3
+    assert [processed for processed, _ in progress] == sorted(
+        processed for processed, _ in progress
+    )
+    assert progress[-1] == (1_000, 1_000)
     result = ExpandService(connection).results("scene")
     assert result["ready"] is True
     assert [item["id"] for item in result["items"]] == ["new-external-scene"]

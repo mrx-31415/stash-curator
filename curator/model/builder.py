@@ -127,9 +127,14 @@ class PreferenceModelBuilder:
         # source data nor feature configuration changed. Always ask it for the current
         # version so a feature-only configuration change cannot silently train against
         # stale vectors.
-        feature = FeatureBuilder(self.connection, self.config, clock_ms=self.clock_ms).build()
+        feature = FeatureBuilder(
+            self.connection,
+            self.config,
+            clock_ms=self.clock_ms,
+            progress=lambda processed, total: self._report(0.25 * processed / max(1, total)),
+        ).build()
         feature_version = feature.feature_version
-        self._report(0.05)
+        self._report(0.25)
         timings.update(
             {f"feature_{name}": duration for name, duration in feature.stage_timings_ms.items()}
         )
@@ -142,7 +147,7 @@ class PreferenceModelBuilder:
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
         training_labels = self._training_labels(labels)
-        self._report(0.10)
+        self._report(0.30)
         timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "model.labels", timings["labels"])
         evidence_fingerprint = self._evidence_fingerprint(labels)
@@ -204,7 +209,7 @@ class PreferenceModelBuilder:
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
             label_mean = self._label_mean(training_labels)
             affinities = self._affinities(scene_features, training_labels, label_mean)
-            self._report(0.20)
+            self._report(0.35)
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "model.affinities", timings["affinities"])
             stage_started = time.perf_counter()
@@ -223,7 +228,7 @@ class PreferenceModelBuilder:
             record_duration("python", "model.scores", score_total)
             stage_started = time.perf_counter()
             timings.update(self._publish(model_id, feature_version, affinities, labels, scores))
-            self._report(0.97)
+            self._report(0.98)
             record_duration(
                 "python",
                 "model.publish",
@@ -835,7 +840,7 @@ class PreferenceModelBuilder:
             )
             progress_index = len(preference_vectors) + scene_index
             if self.progress and (scene_index == total_scenes or scene_index % 250 == 0):
-                self._report(0.20 + 0.70 * progress_index / max(1, progress_total))
+                self._report(0.35 + 0.40 * progress_index / max(1, progress_total))
         return tuple(scores)
 
     def _preference_content_vectors(
@@ -942,7 +947,7 @@ class PreferenceModelBuilder:
                 ),
             )
             if self.progress and (vector_index == vector_count or vector_index % 250 == 0):
-                self._report(0.20 + 0.70 * vector_index / max(1, progress_total))
+                self._report(0.35 + 0.40 * vector_index / max(1, progress_total))
         return result
 
     def _performer_similarity_scores(
@@ -1238,6 +1243,7 @@ class PreferenceModelBuilder:
                     for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
                 ),
             )
+            self._report(0.78)
             insert_rows(
                 """
                 INSERT INTO direct_scene_state(
@@ -1260,6 +1266,7 @@ class PreferenceModelBuilder:
                     for scene_id, label in sorted(labels.items())
                 ),
             )
+            self._report(0.81)
             insert_rows(
                 """
                 INSERT INTO model_scene_score(
@@ -1287,16 +1294,30 @@ class PreferenceModelBuilder:
                     for score in scores
                 ),
             )
+            self._report(0.85)
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
             from curator.explanations import ReasonGraphStore
             from curator.ranking import LanePolicy, SlateBuilder
 
             indexing_started = time.perf_counter()
-            LanePolicy(artifact, self.config).classify(model_id)
-            SlateBuilder(artifact, self.config).materialize(model_id, force=True)
+            LanePolicy(artifact, self.config).classify(
+                model_id,
+                progress=lambda processed, total: self._report(
+                    0.85 + 0.02 * processed / max(1, total)
+                ),
+            )
+            SlateBuilder(artifact, self.config).materialize(
+                model_id,
+                force=True,
+                progress=lambda processed, total: self._report(
+                    0.87 + 0.04 * processed / max(1, total)
+                ),
+            )
             ReasonGraphStore(artifact).build(model_id)
+            self._report(0.94)
             create_indexes(artifact, "model")
             timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
+            self._report(0.96)
             validation_started = time.perf_counter()
             stored_count = int(
                 artifact.execute(
@@ -1338,8 +1359,12 @@ class PreferenceModelBuilder:
                     "reason_scenes": int(reason_scene_count),
                     "reasons": int(reason_count),
                 },
+                # ponytail: generated models are atomic and rebuildable; restore the
+                # full-file scan if installed evidence ever shows artifact corruption.
+                check_integrity=False,
             )
             timings["validation"] = round((time.perf_counter() - validation_started) * 1000)
+            self._report(0.97)
             publication_started = time.perf_counter()
             size = publish_file(artifact, temporary, final)
             with transaction(self.connection):
@@ -1378,6 +1403,7 @@ class PreferenceModelBuilder:
             published = True
             activate_artifact(self.connection, "model", final)
             timings["publication"] = round((time.perf_counter() - publication_started) * 1000)
+            self._report(0.98)
             return timings
         finally:
             if not published:

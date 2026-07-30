@@ -159,6 +159,7 @@ def backup_database(
     destination: Path,
     *,
     overwrite: bool = False,
+    progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Create a consistent backup and publish it atomically."""
     destination = destination.expanduser().resolve()
@@ -169,7 +170,15 @@ def backup_database(
     temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
     target = sqlite3.connect(temporary, isolation_level=None)
     try:
-        source.backup(target)
+        source.backup(
+            target,
+            pages=256,
+            progress=(
+                lambda _status, remaining, total: (
+                    progress(total - remaining, total) if progress else None
+                )
+            ),
+        )
         target.close()
         os.replace(temporary, destination)
     except BaseException:
@@ -288,6 +297,7 @@ def compact_legacy_generations(
     *,
     batch_size: int = 5_000,
     max_batches: int | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, object]:
     """Delete rebuildable core rows in restartable transactions."""
     if not 1 <= batch_size <= 50_000:
@@ -300,6 +310,25 @@ def compact_legacy_generations(
 
     feature_ids, model_ids, fingerprint = _compaction_targets(connection)
     target_ids = {"feature_version": feature_ids, "model_id": model_ids}
+
+    def count_remaining() -> int:
+        count = 0
+        for table, generation_column, _ in _LEGACY_DERIVED_TABLES:
+            ids = target_ids[generation_column]
+            if not ids:
+                continue
+            placeholders = ",".join("?" for _ in ids)
+            count += int(
+                connection.execute(
+                    f"SELECT count(*) FROM {table} WHERE {generation_column} IN ({placeholders})",
+                    ids,
+                ).fetchone()[0]
+            )
+        return count
+
+    target_row_count = count_remaining()
+    if progress:
+        progress(0, max(1, target_row_count))
     previous_row = connection.execute(
         "SELECT value FROM application_meta WHERE key='legacy_compaction'"
     ).fetchone()
@@ -354,6 +383,8 @@ def compact_legacy_generations(
                 if not deleted:
                     break
                 batches += 1
+                if progress:
+                    progress(sum(per_table.values()), max(1, target_row_count))
                 if max_batches is not None and batches >= max_batches:
                     stopped = True
                     break
@@ -362,16 +393,9 @@ def compact_legacy_generations(
         if stopped:
             break
 
-    remaining_rows = 0
-    for table, generation_column, _ in _LEGACY_DERIVED_TABLES:
-        ids = target_ids[generation_column]
-        placeholders = ",".join("?" for _ in ids)
-        remaining_rows += int(
-            connection.execute(
-                f"SELECT count(*) FROM {table} WHERE {generation_column} IN ({placeholders})",
-                ids,
-            ).fetchone()[0]
-        )
+    remaining_rows = count_remaining()
+    if progress and not target_row_count:
+        progress(1, 1)
     after_bytes = _logical_database_bytes(connection)
     page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
     result: dict[str, object] = {

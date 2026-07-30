@@ -331,7 +331,19 @@ def test_model_build_reports_stage_progress(tmp_path: Path) -> None:
         progress=lambda processed, total: progress.append((processed, total)),
     ).build()
 
-    assert {(50, 1_000), (100, 1_000), (200, 1_000), (1_000, 1_000)} <= set(progress)
+    assert {
+        (250, 1_000),
+        (300, 1_000),
+        (350, 1_000),
+        (780, 1_000),
+        (850, 1_000),
+        (940, 1_000),
+        (980, 1_000),
+        (1_000, 1_000),
+    } <= set(progress)
+    assert [processed for processed, _ in progress] == sorted(
+        processed for processed, _ in progress
+    )
     assert progress[-1] == (1_000, 1_000)
 
 

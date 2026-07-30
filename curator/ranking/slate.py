@@ -7,6 +7,7 @@ import math
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from heapq import heappop, heappush
 from typing import Any
@@ -123,14 +124,20 @@ class SlateBuilder:
             self.recommend(lane, slate_size)
         return counts
 
-    def materialize(self, model_id: str, *, force: bool = False) -> dict[str, int]:
+    def materialize(
+        self,
+        model_id: str,
+        *,
+        force: bool = False,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, int]:
         if (
             not force
             and self.connection.execute(
                 "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
             ).fetchone()
         ):
-            return {
+            result = {
                 str(row["lane"]): int(row["candidate_count"])
                 for row in self.connection.execute(
                     """
@@ -140,6 +147,9 @@ class SlateBuilder:
                     (model_id,),
                 )
             }
+            if progress:
+                progress(1, 1)
+            return result
         classifications = LanePolicy(self.connection, self.config).load(model_id)
         candidates = self._candidates(model_id, classifications)
         counts = {
@@ -151,6 +161,8 @@ class SlateBuilder:
                 "DELETE FROM model_lane_order_state WHERE model_id=?", (model_id,)
             )
             self.connection.execute("DELETE FROM model_lane_order WHERE model_id=?", (model_id,))
+        completed = 0
+        total = (len(LANES) + 1) * 2
         for lane in (*LANES, "for_you"):
             lane_candidates = tuple(
                 candidate
@@ -186,6 +198,9 @@ class SlateBuilder:
                             )
                         ),
                     )
+                completed += 1
+                if progress:
+                    progress(completed, total)
         with transaction(self.connection):
             self.connection.execute(
                 """

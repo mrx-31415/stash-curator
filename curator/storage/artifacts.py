@@ -224,11 +224,19 @@ def attach_build_sources(
 
 
 def validate_artifact(
-    connection: sqlite3.Connection, kind: str, counts: dict[str, int]
+    connection: sqlite3.Connection,
+    kind: str,
+    counts: dict[str, int],
+    *,
+    check_integrity: bool = True,
 ) -> dict[str, object]:
-    integrity = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+    integrity = (
+        str(connection.execute("PRAGMA quick_check").fetchone()[0])
+        if check_integrity
+        else "skipped"
+    )
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if integrity != "ok" or schema_version != ARTIFACT_SCHEMA_VERSION:
+    if (check_integrity and integrity != "ok") or schema_version != ARTIFACT_SCHEMA_VERSION:
         raise StorageError(
             f"{kind} artifact validation failed: integrity={integrity}, schema={schema_version}"
         )

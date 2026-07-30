@@ -34,14 +34,16 @@ def test_historical_projection_is_idempotent_and_inspectable(
     connection: sqlite3.Connection,
 ) -> None:
     store = HistoricalEventStore(connection)
+    progress: list[tuple[int, int]] = []
 
-    first = store.rebuild()
+    first = store.rebuild(progress=lambda processed, total: progress.append((processed, total)))
     second = store.rebuild()
 
     assert first == second
     assert first.scene_count == 1
     assert first.session_count == 2
     assert first.outcome_count == 2
+    assert progress == [(1, 2), (2, 2)]
     assert connection.execute("SELECT count(*) FROM play_session").fetchone()[0] == 2
     events = connection.execute(
         "SELECT outcome, confidence, payload_json FROM behavior_event ORDER BY occurred_at_ms"

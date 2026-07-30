@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from curator.events.contracts import DEFAULT_CALIBRATION, EventCalibration, NormalizedOutcome
@@ -36,24 +37,35 @@ class HistoricalEventStore:
         self.connection = connection
         self.calibration = calibration
 
-    def rebuild(self, scene_ids: tuple[str, ...] | None = None) -> HistoricalBuildResult:
+    def rebuild(
+        self,
+        scene_ids: tuple[str, ...] | None = None,
+        *,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> HistoricalBuildResult:
         with transaction(self.connection):
             scenes = self._scenes(scene_ids)
             plays = self._plays(scene_ids)
             os = self._os(scene_ids)
-            reconstructions = {
-                scene_id: reconstruct_history(
+            total = max(1, len(scenes) * 2)
+            reconstructions: dict[str, HistoricalReconstruction] = {}
+            for position, (scene_id, duration) in enumerate(scenes, 1):
+                reconstructions[scene_id] = reconstruct_history(
                     scene_id,
                     duration,
                     tuple(plays[scene_id]),
                     tuple(os[scene_id]),
                     calibration=self.calibration,
                 )
-                for scene_id, duration in scenes
-            }
+                if progress and (position == len(scenes) or position % 250 == 0):
+                    progress(position, total)
             self._delete_projection(scene_ids)
-            for reconstruction in reconstructions.values():
+            for position, reconstruction in enumerate(reconstructions.values(), len(scenes) + 1):
                 self._insert_reconstruction(reconstruction)
+                if progress and (position == total or position % 250 == 0):
+                    progress(position, total)
+            if progress and not scenes:
+                progress(1, 1)
         return HistoricalBuildResult(
             scene_count=len(scenes),
             session_count=sum(len(item.sessions) for item in reconstructions.values()),

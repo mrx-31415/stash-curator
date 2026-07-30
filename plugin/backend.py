@@ -120,6 +120,12 @@ def _progress(value: float) -> None:
     _log("p", f"{max(0.0, min(value, 1.0)):.4f}")
 
 
+def _mapped_progress(start: float, end: float) -> Callable[[int, int], None]:
+    return lambda processed, total: _progress(
+        start + (end - start) * min(processed / max(1, total), 1.0)
+    )
+
+
 def _stash_connection(payload: dict[str, Any]) -> tuple[str, dict[str, str]]:
     server = payload.get("server_connection") or {}
     host = server.get("Host") or "127.0.0.1"
@@ -976,19 +982,29 @@ def _diagnostics(connection: Any) -> dict[str, object]:
     }
 
 
-def _classify_lanes(connection: Any, model: Any) -> int:
+def _classify_lanes(
+    connection: Any,
+    model_id: str,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     count = int(
         connection.execute(
-            "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model.model_id,)
+            "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model_id,)
         ).fetchone()[0]
     )
     if count:
+        if progress:
+            progress(1, 1)
         return count
-    return len(LanePolicy(connection).classify(model.model_id))
+    return len(LanePolicy(connection).classify(model_id, progress=progress))
 
 
-def _prepare_lanes(connection: Any, model_id: str) -> dict[str, int]:
-    return SlateBuilder(connection).materialize(model_id)
+def _prepare_lanes(
+    connection: Any,
+    model_id: str,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, int]:
+    return SlateBuilder(connection).materialize(model_id, progress=progress)
 
 
 def _run_task_body(
@@ -1052,7 +1068,7 @@ def _run_task_body(
                 entity: str, processed: int, total: int, position: int, entity_count: int
             ) -> None:
                 fraction = 1.0 if total == 0 else min(processed / total, 1.0)
-                _progress(0.05 + 0.7 * ((position + fraction) / entity_count))
+                _progress(0.03 + 0.52 * ((position + fraction) / entity_count))
                 milestone = int(fraction * 10)
                 if milestone > logged_milestones.get(entity, -1):
                     logged_milestones[entity] = milestone
@@ -1067,43 +1083,67 @@ def _run_task_body(
                     progress=report_sync,
                 ).sync(full=mode == "full-sync-build")
             with span("python", "task.reconcile_prune"):
-                CuratorAPI(connection).reconcile_prune_tag(str(sidecar_config["prune_tag_name"]))
-            _progress(0.78)
+                prune_changed = CuratorAPI(connection).reconcile_prune_tag(
+                    str(sidecar_config["prune_tag_name"])
+                )
+            _progress(0.58)
             _log("i", "Rebuilding historical preference signals")
             with span("python", "task.historical_events"):
                 historical = HistoricalEventStore(connection).rebuild(
-                    None if mode == "full-sync-build" or synced.resumed else synced.scene_ids
+                    None if mode == "full-sync-build" or synced.resumed else synced.scene_ids,
+                    progress=_mapped_progress(0.58, 0.68),
                 )
-            _progress(0.86)
-            _log("i", "Building the recommendation model")
+            _progress(0.68)
             coordinator = ModelUpdateCoordinator(connection)
-            coordinator.request("source_sync")
-            with span("python", "task.model_build"):
-                model = coordinator.drain(
-                    force=True,
-                    max_builds=1,
-                    progress=lambda processed, total: _progress(
-                        0.86 + 0.08 * (processed / max(1, total))
-                    ),
-                )[0]
-            _progress(0.94)
+            source_changed = (
+                mode == "full-sync-build"
+                or synced.resumed
+                or any(synced.changed_entity_counts.values())
+                or prune_changed
+            )
+            current_model_id = RecommendationModelStore(connection).current_model_id()
+            if source_changed or current_model_id is None:
+                coordinator.request("source_sync")
+            if source_changed or coordinator.status().pending or current_model_id is None:
+                _log("i", "Building the recommendation model")
+                with span("python", "task.model_build"):
+                    model = coordinator.drain(
+                        force=True,
+                        max_builds=1,
+                        progress=_mapped_progress(0.68, 0.95),
+                    )[0]
+                model_id = model.model_id
+                stage_timings_ms = model.stage_timings_ms
+            else:
+                _progress(0.95)
+                _log("i", "No Stash changes; keeping the current recommendation model")
+                model_id = current_model_id
+                stage_timings_ms = {}
+            _progress(0.95)
             _log("i", "Organizing scenes into recommendation lanes")
             with span("python", "task.lane_classification"):
-                lane_count = _classify_lanes(connection, model)
-            _progress(0.96)
+                lane_count = _classify_lanes(
+                    connection,
+                    model_id,
+                    progress=_mapped_progress(0.95, 0.97),
+                )
+            _progress(0.97)
             _log("i", "Preparing recommendation pages")
             with span("python", "task.prepare_pages"):
-                lane_caches = _prepare_lanes(connection, model.model_id)
-            _progress(0.98)
-            _log("i", f"Published recommendation model {model.model_id}")
+                lane_caches = _prepare_lanes(
+                    connection, model_id, progress=_mapped_progress(0.97, 0.99)
+                )
+            _progress(0.99)
+            _log("i", f"Recommendation model ready: {model_id}")
             summary: dict[str, object] = {
                 "sync_run_id": synced.run_id,
                 "entity_counts": synced.entity_counts,
+                "changed_entity_counts": synced.changed_entity_counts,
                 "historical_scenes": historical.scene_count,
-                "model_id": model.model_id,
+                "model_id": model_id,
                 "lane_classifications": lane_count,
                 "lane_candidate_caches": lane_caches,
-                "stage_timings_ms": model.stage_timings_ms,
+                "stage_timings_ms": stage_timings_ms,
             }
         elif mode in {"build", "update-model"}:
             _progress(0.1)
@@ -1113,11 +1153,11 @@ def _run_task_body(
             def report_model(processed: int, total: int) -> None:
                 nonlocal model_milestone
                 fraction = 1.0 if total == 0 else min(processed / total, 1.0)
-                _progress(0.12 + 0.78 * fraction)
+                _progress(0.03 + 0.92 * fraction)
                 milestone = int(fraction * 10)
                 if milestone > model_milestone:
                     model_milestone = milestone
-                    _log("i", f"Scoring scenes: {processed}/{total}")
+                    _log("i", f"Building recommendation model: {milestone * 10}%")
 
             coordinator = ModelUpdateCoordinator(connection)
             if mode == "build":
@@ -1130,15 +1170,19 @@ def _run_task_body(
                 _log("i", "No pending preference changes")
             else:
                 model = models[-1]
-                _progress(0.94)
+                _progress(0.95)
                 _log("i", "Organizing scenes into recommendation lanes")
                 with span("python", "task.lane_classification"):
-                    lane_count = _classify_lanes(connection, model)
-                _progress(0.96)
+                    lane_count = _classify_lanes(
+                        connection, model.model_id, progress=_mapped_progress(0.95, 0.97)
+                    )
+                _progress(0.97)
                 _log("i", "Preparing recommendation pages")
                 with span("python", "task.prepare_pages"):
-                    lane_caches = _prepare_lanes(connection, model.model_id)
-                _progress(0.98)
+                    lane_caches = _prepare_lanes(
+                        connection, model.model_id, progress=_mapped_progress(0.97, 0.99)
+                    )
+                _progress(0.99)
                 summary = {
                     "updated": True,
                     "model_id": model.model_id,
@@ -1147,39 +1191,45 @@ def _run_task_body(
                     "stage_timings_ms": model.stage_timings_ms,
                 }
         elif mode == "prepare":
-            _progress(0.1)
-            model_id = RecommendationModelStore(connection).current_model_id()
-            if model_id is None:
+            _progress(0.05)
+            prepared_model_id = RecommendationModelStore(connection).current_model_id()
+            if prepared_model_id is None:
                 raise RuntimeError("no published model; build recommendations first")
             _log("i", "Preparing recommendation pages")
             with span("python", "task.prepare_pages"):
-                lane_caches = _prepare_lanes(connection, model_id)
-            _progress(0.98)
-            summary = {"model_id": model_id, "lane_candidate_caches": lane_caches}
+                lane_caches = _prepare_lanes(
+                    connection, prepared_model_id, progress=_mapped_progress(0.05, 0.99)
+                )
+            _progress(0.99)
+            summary = {"model_id": prepared_model_id, "lane_candidate_caches": lane_caches}
         elif mode == "backup":
-            _progress(0.1)
+            _progress(0.05)
             destination = (
                 _backup_directory(payload, settings) / f"curator-{started_at_ms}.sqlite3.backup"
             )
             with span("python", "task.backup"):
-                backup_database(connection, destination)
+                backup_database(connection, destination, progress=_mapped_progress(0.05, 0.95))
             _progress(0.98)
             summary = {"backup": str(destination)}
         elif mode == "compact":
             _progress(0.1)
             _log("i", "Validating generation artifacts")
             with span("python", "task.compact"):
-                summary = compact_legacy_generations(connection)
+                summary = compact_legacy_generations(
+                    connection, progress=_mapped_progress(0.10, 0.95)
+                )
             _progress(0.98)
         elif mode == "vacuum":
             if compaction_status(connection)["status"] != "complete":
                 raise RuntimeError("compact legacy Curator data before vacuuming")
-            _progress(0.1)
+            _progress(0.05)
             database = _database_path(payload, settings).expanduser().resolve()
             before = database.stat().st_size
             _log("i", "Vacuuming compacted Curator data")
             with span("python", "task.vacuum"):
+                _progress(0.10)
                 connection.execute("VACUUM")
+                _progress(0.94)
                 connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             _progress(0.98)
             summary = {
@@ -1187,11 +1237,10 @@ def _run_task_body(
                 "bytes_after": database.stat().st_size,
             }
         elif mode == "expand-refresh":
-            _progress(0.1)
+            _progress(0.05)
             config = CuratorAPI(connection).config()["config"]
             assert isinstance(config, dict)
             _log("i", "Collecting bounded StashDB candidates")
-            _progress(0.25)
             with span("python", "task.expand_refresh"):
                 summary = ExpandService(connection).refresh(
                     _stashdb(payload),
@@ -1199,6 +1248,7 @@ def _run_task_body(
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),
                     wildcard=bool(config["expand_wildcard"]),
+                    progress=_mapped_progress(0.05, 0.98),
                 )
             _progress(0.98)
         else:

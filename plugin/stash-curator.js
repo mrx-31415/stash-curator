@@ -1843,8 +1843,8 @@
         React.createElement(
           "div",
           { className: "curator-task-buttons" },
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Sync library: fetch changed Stash metadata and refresh recommendations.", "aria-label": "Sync library", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Rebuild model from the existing synchronized data.", "aria-label": "Rebuild model", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button curator-profiling-button", size: "sm", variant: profilingActive ? "primary" : "secondary", title: "Open performance profiles.", "aria-label": "Open performance profiles", "aria-pressed": profilingActive, onClick: onProfiling }, React.createElement(FontAwesomeIcon, { icon: faDev })),
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )

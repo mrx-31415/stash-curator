@@ -119,10 +119,12 @@ class SyncRepository:
         page_high_watermark: str | None,
         now_ms: int,
         record_seen: bool,
-    ) -> None:
+    ) -> tuple[str, ...]:
+        changed: list[str] = []
         with transaction(self.connection):
             for item in items:
-                self._upsert(item)
+                if self._upsert(item):
+                    changed.append(item.id)
                 if record_seen:
                     self.connection.execute(
                         """
@@ -144,6 +146,7 @@ class SyncRepository:
                 """,
                 (str(next_page), pending, now_ms, entity_type, run_id),
             )
+        return tuple(changed)
 
     def complete_entity(self, run_id: str, entity_type: str, now_ms: int) -> None:
         with transaction(self.connection):
@@ -233,7 +236,18 @@ class SyncRepository:
                     (now_ms, entity_type, run_id),
                 )
 
-    def _upsert(self, entity: SourceEntity) -> None:
+    def _upsert(self, entity: SourceEntity) -> bool:
+        table, column = {
+            Tag: ("source_tag", "tag_id"),
+            Studio: ("source_studio", "studio_id"),
+            Performer: ("source_performer", "performer_id"),
+            Scene: ("source_scene", "scene_id"),
+        }[type(entity)]
+        row = self.connection.execute(
+            f"SELECT source_hash FROM {table} WHERE {column}=?", (entity.id,)
+        ).fetchone()
+        if row and row[0] == _hash(entity):
+            return False
         if isinstance(entity, Tag):
             self._upsert_tag(entity)
         elif isinstance(entity, Studio):
@@ -242,10 +256,23 @@ class SyncRepository:
             self._upsert_performer(entity)
         else:
             self._upsert_scene(entity)
+        return True
 
     def _upsert_tag(self, tag: Tag, *, replace_parents: bool = True) -> None:
         for parent in tag.parents:
             self._upsert_tag(parent, replace_parents=False)
+        if not replace_parents:
+            self.connection.execute(
+                """
+                INSERT INTO source_tag(tag_id, name, updated_at, source_hash)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(tag_id) DO UPDATE SET
+                    name=COALESCE(excluded.name, source_tag.name),
+                    updated_at=COALESCE(excluded.updated_at, source_tag.updated_at)
+                """,
+                (tag.id, tag.name, tag.updated_at, _hash(tag)),
+            )
+            return
         self.connection.execute(
             """
             INSERT INTO source_tag(tag_id, name, updated_at, source_hash) VALUES (?, ?, ?, ?)
@@ -366,7 +393,7 @@ class SyncRepository:
 
     def _upsert_scene(self, scene: Scene) -> None:
         if scene.studio:
-            self._upsert_studio(scene.studio)
+            self._upsert_studio(scene.studio, replace_details=False)
         for tag in scene.tags:
             self._upsert_tag(tag, replace_parents=False)
         for performer in scene.performers:

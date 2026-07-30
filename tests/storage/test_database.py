@@ -53,13 +53,25 @@ def test_backup_is_consistent_and_does_not_overwrite(tmp_path: Path) -> None:
     database = tmp_path / "curator.sqlite3"
     backup = tmp_path / "backups" / "curator.sqlite3"
     connection = connect_database(database)
-    connection.execute("CREATE TABLE example(value TEXT NOT NULL) STRICT")
-    connection.execute("INSERT INTO example(value) VALUES ('persisted')")
+    connection.execute("CREATE TABLE example(value TEXT NOT NULL, payload BLOB) STRICT")
+    connection.execute(
+        "INSERT INTO example(value, payload) VALUES ('persisted', zeroblob(2000000))"
+    )
+    progress: list[tuple[int, int]] = []
     derived = database.with_name("curator-derived")
     derived.mkdir()
     (derived / f"model-{'a' * 20}.sqlite3").touch()
     try:
-        assert backup_database(connection, backup) == backup.resolve()
+        assert (
+            backup_database(
+                connection,
+                backup,
+                progress=lambda processed, total: progress.append((processed, total)),
+            )
+            == backup.resolve()
+        )
+        assert len(progress) > 1
+        assert progress[-1][0] == progress[-1][1]
         assert not backup.with_name("curator-derived").exists()
         with pytest.raises(StorageError, match="already exists"):
             backup_database(connection, backup)
@@ -181,13 +193,27 @@ def test_legacy_compaction_is_validated_batched_restartable_and_preserves_durabl
         if str(row[0]) not in derived | {"application_meta"}
     }
 
-    partial = compact_legacy_generations(connection, batch_size=1, max_batches=1)
+    partial_progress: list[tuple[int, int]] = []
+    partial = compact_legacy_generations(
+        connection,
+        batch_size=1,
+        max_batches=1,
+        progress=lambda processed, total: partial_progress.append((processed, total)),
+    )
     assert partial["status"] == "in_progress"
     assert partial["rows_deleted_this_run"] == 1
-    complete = compact_legacy_generations(connection, batch_size=1)
+    complete_progress: list[tuple[int, int]] = []
+    complete = compact_legacy_generations(
+        connection,
+        batch_size=1,
+        progress=lambda processed, total: complete_progress.append((processed, total)),
+    )
     assert complete["status"] == "complete"
     assert complete["rows_deleted"] == 5
     assert complete["rows_remaining"] == 0
+    assert partial_progress == [(0, 5), (1, 5)]
+    assert complete_progress[0] == (0, 4)
+    assert complete_progress[-1] == (4, 4)
     assert connection.execute("SELECT count(*) FROM model_scene_score").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM entity_feature").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM feature_definition").fetchone()[0] == 0

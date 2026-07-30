@@ -853,7 +853,7 @@ class CuratorAPI:
                     ((scene_id,) for scene_id in scene_ids),
                 )
 
-    def reconcile_prune_tag(self, tag_name: str) -> None:
+    def reconcile_prune_tag(self, tag_name: str) -> bool:
         tagged = {
             str(row[0])
             for row in self.connection.execute(
@@ -865,17 +865,33 @@ class CuratorAPI:
             )
         }
         now_ms = time.time_ns() // 1_000_000
+        reason = f"Tagged {tag_name}"
         with transaction(self.connection):
-            self.connection.execute("DELETE FROM pruning_candidate WHERE state='remove'")
-            self.connection.executemany(
+            deleted = self.connection.execute(
                 """
+                DELETE FROM pruning_candidate
+                WHERE state='remove' AND scene_id NOT IN (
+                    SELECT st.scene_id FROM scene_tag st JOIN source_tag t USING(tag_id)
+                    WHERE lower(t.name)=lower(?)
+                )
+                """,
+                (tag_name,),
+            ).rowcount
+            changed = deleted > 0
+            for scene_id in tagged:
+                cursor = self.connection.execute(
+                    """
                 INSERT INTO pruning_candidate(scene_id, state, created_at_ms, updated_at_ms, reason)
                 VALUES (?, 'remove', ?, ?, ?)
                 ON CONFLICT(scene_id) DO UPDATE SET state='remove',
                     updated_at_ms=excluded.updated_at_ms, reason=excluded.reason
+                WHERE pruning_candidate.state!='remove'
+                    OR pruning_candidate.reason IS NOT excluded.reason
                 """,
-                ((scene_id, now_ms, now_ms, f"Tagged {tag_name}") for scene_id in tagged),
-            )
+                    (scene_id, now_ms, now_ms, reason),
+                )
+                changed = changed or cursor.rowcount > 0
+        return changed
 
     def update_pruning(
         self, scene_id: str, state: str, now_ms: int | None = None

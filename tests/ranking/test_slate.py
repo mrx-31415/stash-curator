@@ -245,7 +245,10 @@ def _database(path: Path) -> sqlite3.Connection:
 
 def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    classifications = LanePolicy(connection).classify("model")
+    progress: list[tuple[int, int]] = []
+    classifications = LanePolicy(connection).classify(
+        "model", progress=lambda processed, total: progress.append((processed, total))
+    )
     lookup = {(item.scene_id, item.lane): item for item in classifications}
 
     assert ("a-best", "best_bets") in lookup
@@ -265,6 +268,22 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     assert {
         (item.scene_id, item.lane): item for item in LanePolicy(connection).load("model")
     } == lookup
+    assert progress[-1][0] == progress[-1][1]
+
+
+def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    progress: list[tuple[int, int]] = []
+
+    counts = SlateBuilder(connection).materialize(
+        "model",
+        force=True,
+        progress=lambda processed, total: progress.append((processed, total)),
+    )
+
+    assert set(counts) == {"best_bets", "revisit", "discover", "adventure"}
+    assert progress == [(position, 10) for position in range(1, 11)]
 
 
 def test_new_slate_builder_reuses_persisted_lane_classifications(
