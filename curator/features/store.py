@@ -13,6 +13,7 @@ from curator.features.profiles import (
     SimilarityResult,
     performer_similarity,
 )
+from curator.storage.artifacts import attached_generation_id
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ class FeatureStore:
         self.connection = connection
 
     def current_version(self) -> str | None:
+        if attached := attached_generation_id(self.connection, "feature"):
+            return attached
         row = self.connection.execute(
             "SELECT feature_version FROM feature_build WHERE status = 'published'"
         ).fetchone()

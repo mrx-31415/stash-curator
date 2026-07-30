@@ -41,7 +41,10 @@ from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
+    compact_legacy_generations,
+    compaction_status,
     connect_database,
+    generation_diagnostics,
     transaction,
 )
 from curator.sync import SyncService  # noqa: E402
@@ -255,7 +258,7 @@ def _list_backups(payload: dict[str, Any], settings: dict[str, Any]) -> list[dic
 
 
 def _validate_backup(path: Path) -> None:
-    connection = connect_database(path, readonly=True)
+    connection = connect_database(path, readonly=True, attach_artifacts=False)
     try:
         if str(connection.execute("PRAGMA quick_check").fetchone()[0]) != "ok":
             raise ValueError("backup failed SQLite integrity validation")
@@ -307,6 +310,16 @@ def _backup_control(
             or backup.is_symlink()
         ):
             raise ValueError("select a recognized Curator backup")
+        if operation == "delete_backup":
+            if str(args.get("confirmation") or "") != f"DELETE {backup_id}":
+                raise ValueError("deletion requires explicit confirmation")
+            _validate_backup(backup)
+            backup.unlink()
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "deleted": backup_id,
+                "items": _list_backups(payload, settings),
+            }
         if str(args.get("confirmation") or "") != f"RESTORE {backup_id}":
             raise ValueError("restore requires explicit confirmation")
         _validate_backup(backup)
@@ -318,17 +331,37 @@ def _backup_control(
         connection.close()
     for suffix in ("-wal", "-shm"):
         Path(f"{database}{suffix}").unlink(missing_ok=True)
-    source = connect_database(backup, readonly=True)
+    source = connect_database(backup, readonly=True, attach_artifacts=False)
     try:
         backup_database(source, database, overwrite=True)
     finally:
         source.close()
-    restored = _open(payload, settings)
-    restored.close()
+    restored = connect_database(database, attach_artifacts=False)
+    try:
+        MigrationRunner(restored).migrate(applied_at_ms=now_ms)
+        with transaction(restored):
+            restored.execute(
+                """
+                UPDATE model_version SET status='superseded',
+                    validation_status='restore_invalidated'
+                WHERE status='published'
+                """
+            )
+            restored.execute(
+                """
+                UPDATE feature_build SET status='superseded',
+                    validation_status='restore_invalidated'
+                WHERE status='published'
+                """
+            )
+            restored.execute("DELETE FROM application_meta WHERE key='current_model_id'")
+    finally:
+        restored.close()
     return {
         "schema_version": SCHEMA_VERSION,
         "restored_from": str(backup.resolve()),
         "safety_backup": str(safety),
+        "recommendations_need_rebuilding": True,
     }
 
 
@@ -371,8 +404,15 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         )
 
 
-def _open(payload: dict[str, Any], settings: dict[str, Any] | None = None):  # type: ignore[no-untyped-def]
-    connection = connect_database(_database_path(payload, settings))
+def _open(  # type: ignore[no-untyped-def]
+    payload: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+    *,
+    attach_artifacts: bool = True,
+):
+    connection = connect_database(
+        _database_path(payload, settings), attach_artifacts=attach_artifacts
+    )
     MigrationRunner(connection).migrate(applied_at_ms=time.time_ns() // 1_000_000)
     _apply_plugin_settings(connection, settings or {})
     return connection
@@ -388,6 +428,8 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Apply recent Curator feedback",
         "Prepare recommendation pages",
         "Backup Curator data",
+        "Compact legacy Curator data",
+        "Vacuum compacted Curator data",
         "Refresh Expand cache",
     }
     active_job = next(
@@ -838,6 +880,8 @@ DIAGNOSTIC_JOB_TYPES = {
     "update-model",
     "prepare",
     "backup",
+    "compact",
+    "vacuum",
     "expand-refresh",
 }
 
@@ -910,6 +954,8 @@ def _diagnostics(connection: Any) -> dict[str, object]:
                 > int(model_update["published_generation"])
             ),
         },
+        "generations": generation_diagnostics(connection),
+        "compaction": compaction_status(connection),
         "recent_jobs": recent_jobs,
         "timing_ms": {
             "last_model_update": (
@@ -991,6 +1037,9 @@ def _run_task_body(
             "already_running": True,
             "job_type": str(existing["job_type"]),
         }
+    if mode in {"compact", "vacuum"}:
+        connection.close()
+        connection = _open(payload, settings, attach_artifacts=False)
     _log("i", f"Stash Curator {mode} started")
     _progress(0.01)
     try:
@@ -1116,6 +1165,27 @@ def _run_task_body(
                 backup_database(connection, destination)
             _progress(0.98)
             summary = {"backup": str(destination)}
+        elif mode == "compact":
+            _progress(0.1)
+            _log("i", "Validating generation artifacts")
+            with span("python", "task.compact"):
+                summary = compact_legacy_generations(connection)
+            _progress(0.98)
+        elif mode == "vacuum":
+            if compaction_status(connection)["status"] != "complete":
+                raise RuntimeError("compact legacy Curator data before vacuuming")
+            _progress(0.1)
+            database = _database_path(payload, settings).expanduser().resolve()
+            before = database.stat().st_size
+            _log("i", "Vacuuming compacted Curator data")
+            with span("python", "task.vacuum"):
+                connection.execute("VACUUM")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            _progress(0.98)
+            summary = {
+                "bytes_before": before,
+                "bytes_after": database.stat().st_size,
+            }
         elif mode == "expand-refresh":
             _progress(0.1)
             config = CuratorAPI(connection).config()["config"]
@@ -1206,7 +1276,7 @@ def dispatch(payload: dict[str, Any]) -> dict[str, object]:
         return _health(payload)
     if operation == "round_trip":
         return _round_trip(payload)
-    if operation in {"list_backups", "create_backup", "restore_backup"}:
+    if operation in {"list_backups", "create_backup", "restore_backup", "delete_backup"}:
         return _backup_control(payload, operation, _settings(payload))
     if operation == "reset":
         if str((payload.get("args") or {}).get("confirmation") or "") != "RESET":
@@ -1220,7 +1290,14 @@ def dispatch(payload: dict[str, Any]) -> dict[str, object]:
         connection.close()
         if running:
             raise RuntimeError("cannot reset Curator while a job is running")
-        for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm")):
+        from curator.storage.artifacts import recognized_artifacts
+
+        for path in (
+            database,
+            Path(f"{database}-wal"),
+            Path(f"{database}-shm"),
+            *recognized_artifacts(database),
+        ):
             path.unlink(missing_ok=True)
         connection = _open(payload, settings)
         connection.close()

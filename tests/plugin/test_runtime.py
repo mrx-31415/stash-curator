@@ -72,6 +72,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     installed = tmp_path / "installed"
     assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()
     assert "Prepare recommendation pages" in (installed / "stash-curator.yml").read_text()
+    assert "Compact legacy Curator data" in (installed / "stash-curator.yml").read_text()
+    assert "Vacuum compacted Curator data" in (installed / "stash-curator.yml").read_text()
     javascript = (installed / "stash-curator.js").read_text()
     assert "data:image/png;base64" in javascript
     assert "curator-whisparr-fallback" in javascript
@@ -111,10 +113,12 @@ def test_backup_management_uses_recognized_ids_and_explicit_confirmation() -> No
     assert "backup_id: item.id" in source
     assert "confirmation: `RESTORE ${item.id}`" in source
     assert "Safety backup:" in source
+    assert 'operation: "delete_backup"' in source
+    assert "confirmation: `DELETE ${item.id}`" in source
 
 
 def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
     spec = importlib.util.spec_from_file_location("curator_plugin_backups", backend)
@@ -127,11 +131,37 @@ def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
     settings = {"backupPath": str(backups)}
     connection = module._open(payload, settings)
     module.CuratorAPI(connection).update_config({"page_size": 12}, now_ms=1)
+    connection.execute(
+        """
+        INSERT INTO feature_build(
+            feature_version, status, config_json, source_fingerprint, created_at_ms
+        ) VALUES ('feature', 'published', '{}', 'source', 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO model_version(
+            model_id, status, feature_version, config_json, created_at_ms
+        ) VALUES ('model', 'published', 'feature', '{}', 1)
+        """
+    )
     connection.close()
 
     created = module._backup_control(payload, "create_backup", settings)
     backup_id = Path(str(created["backup_path"])).name
     assert created["items"][0]["id"] == backup_id
+    restore_copy = module._backup_control(payload, "create_backup", settings)
+    restore_id = Path(str(restore_copy["backup_path"])).name
+    safety = backups / "curator-before-job-repair-20260730T060149Z.sqlite3.backup"
+    temporary = backups / f".{backup_id}.temporary"
+    unrelated = backups / "other.sqlite3.backup"
+    linked = backups / "curator-123.sqlite3.backup"
+    incomplete = backups / "curator-124.sqlite3.backup"
+    safety.touch()
+    temporary.touch()
+    unrelated.touch()
+    linked.symlink_to(created["backup_path"])
+    incomplete.touch()
 
     connection = module._open(payload, settings)
     module.CuratorAPI(connection).update_config({"page_size": 30}, now_ms=2)
@@ -144,6 +174,13 @@ def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
     connection.close()
     with pytest.raises(RuntimeError, match="job is running"):
         module._backup_control(payload, "create_backup", settings)
+    payload["args"] = {
+        "database_path": str(database),
+        "backup_id": backup_id,
+        "confirmation": f"DELETE {backup_id}",
+    }
+    with pytest.raises(RuntimeError, match="job is running"):
+        module._backup_control(payload, "delete_backup", settings)
     connection = module._open(payload, settings)
     connection.execute("DELETE FROM curator_job WHERE job_id='running'")
     connection.close()
@@ -155,18 +192,127 @@ def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
     }
     with pytest.raises(ValueError, match="recognized"):
         module._backup_control(payload, "restore_backup", settings)
+    for invalid in (
+        f"../{backup_id}",
+        str(Path(str(created["backup_path"])).resolve()),
+        safety.name,
+        temporary.name,
+        unrelated.name,
+        linked.name,
+    ):
+        payload["args"] = {
+            "database_path": str(database),
+            "backup_id": invalid,
+            "confirmation": f"DELETE {invalid}",
+        }
+        with pytest.raises(ValueError, match="recognized"):
+            module._backup_control(payload, "delete_backup", settings)
+    payload["args"] = {
+        "database_path": str(database),
+        "backup_id": incomplete.name,
+        "confirmation": f"DELETE {incomplete.name}",
+    }
+    with pytest.raises(ValueError, match="incompatible"):
+        module._backup_control(payload, "delete_backup", settings)
     payload["args"] = {
         "database_path": str(database),
         "backup_id": backup_id,
-        "confirmation": f"RESTORE {backup_id}",
+        "confirmation": "DELETE wrong",
+    }
+    with pytest.raises(ValueError, match="confirmation"):
+        module._backup_control(payload, "delete_backup", settings)
+    with monkeypatch.context() as patch:
+        original_unlink = Path.unlink
+
+        def fail_backup_delete(path: Path, *args: object, **kwargs: object) -> None:
+            if path == Path(str(created["backup_path"])):
+                raise OSError("busy")
+            original_unlink(path, *args, **kwargs)
+
+        patch.setattr(Path, "unlink", fail_backup_delete)
+        with pytest.raises(OSError, match="busy"):
+            module._backup_control(
+                {
+                    "args": {
+                        "database_path": str(database),
+                        "backup_id": backup_id,
+                        "confirmation": f"DELETE {backup_id}",
+                    }
+                },
+                "delete_backup",
+                settings,
+            )
+    connection = module._open(payload, settings)
+    assert module.CuratorAPI(connection).config()["config"]["page_size"] == 30
+    assert connection.execute("SELECT status FROM model_version").fetchone()[0] == "published"
+    connection.close()
+    deleted = module._backup_control(
+        {
+            "args": {
+                "database_path": str(database),
+                "backup_id": backup_id,
+                "confirmation": f"DELETE {backup_id}",
+            }
+        },
+        "delete_backup",
+        settings,
+    )
+    assert deleted["deleted"] == backup_id
+    assert not Path(str(created["backup_path"])).exists()
+    assert (
+        safety.is_file()
+        and temporary.is_file()
+        and unrelated.is_file()
+        and linked.is_symlink()
+        and incomplete.is_file()
+    )
+    payload["args"] = {
+        "database_path": str(database),
+        "backup_id": restore_id,
+        "confirmation": f"RESTORE {restore_id}",
     }
     restored = module._backup_control(payload, "restore_backup", settings)
 
-    assert Path(str(restored["restored_from"])).name == backup_id
+    assert Path(str(restored["restored_from"])).name == restore_id
     assert Path(str(restored["safety_backup"])).is_file()
+    assert restored["recommendations_need_rebuilding"] is True
     connection = module._open(payload, settings)
     assert module.CuratorAPI(connection).config()["config"]["page_size"] == 12
+    assert (
+        connection.execute("SELECT status FROM model_version WHERE model_id='model'").fetchone()[0]
+        == "superseded"
+    )
     connection.close()
+
+
+def test_reset_removes_only_core_and_recognized_artifacts(tmp_path: Path) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_reset", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "curator.sqlite3"
+    payload = {
+        "args": {
+            "operation": "reset",
+            "database_path": str(database),
+            "confirmation": "RESET",
+        }
+    }
+    connection = module._open(payload, {})
+    connection.close()
+    derived = tmp_path / "curator-derived"
+    derived.mkdir()
+    artifact = derived / f"model-{'a' * 20}.sqlite3"
+    unrelated = derived / "keep-me.txt"
+    artifact.touch()
+    unrelated.touch()
+
+    assert module.dispatch(payload)["reset"] is True
+
+    assert database.is_file()
+    assert not artifact.exists()
+    assert unrelated.is_file()
 
 
 def test_curator_tabs_update_browser_history() -> None:
@@ -468,6 +614,8 @@ def test_diagnostics_allowlist_cannot_emit_representative_private_fields(
         "api_schema_version",
         "migration",
         "readiness",
+        "generations",
+        "compaction",
         "recent_jobs",
         "timing_ms",
     }
@@ -486,6 +634,23 @@ def test_diagnostics_allowlist_cannot_emit_representative_private_fields(
         "PRIVATE_SQL",
     ):
         assert private not in serialized
+
+
+def test_diagnostics_work_with_an_empty_repaired_job_table(tmp_path: Path) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_empty_jobs", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = {"args": {"database_path": str(tmp_path / "curator.sqlite3")}}
+    connection = module._open(payload, {})
+    connection.execute("DELETE FROM curator_job")
+    connection.close()
+
+    report = module._api(payload, "get_diagnostics", {})
+
+    assert report["recent_jobs"] == []
+    assert report["migration"]["pending_count"] == 0
 
 
 def test_external_links_collect_normalized_local_phashes(
