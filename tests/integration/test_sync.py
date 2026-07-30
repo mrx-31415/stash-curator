@@ -292,3 +292,18 @@ def test_incremental_sync_stops_after_crossing_previous_watermark(
     assert (
         connection.execute("SELECT count(*) FROM source_tag WHERE tag_id = 't3'").fetchone()[0] == 1
     )
+    assert result.changed_entity_counts["tag"] == 1
+    assert result.scene_ids == ()
+
+
+def test_incremental_sync_skips_unchanged_source_rows(connection: sqlite3.Connection) -> None:
+    service = SyncService(SyntheticClient(_entities()), SyncRepository(connection), page_size=2)
+    service.sync()
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+
+    result = service.sync()
+
+    assert not any(result.changed_entity_counts.values())
+    assert result.scene_ids == ()
+    assert not any(statement.startswith("DELETE FROM source_") for statement in statements)

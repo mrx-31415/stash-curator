@@ -214,7 +214,11 @@ def run(argv: Sequence[str] | None = None) -> int:
             synced_historical = HistoricalEventStore(connection).rebuild(
                 None if args.full or synced.resumed else synced.scene_ids
             )
-            ModelUpdateCoordinator(connection).request("source_sync")
+            model_update_pending = bool(
+                args.full or synced.resumed or any(synced.changed_entity_counts.values())
+            )
+            if model_update_pending:
+                ModelUpdateCoordinator(connection).request("source_sync")
         finally:
             connection.close()
         _print_result(
@@ -224,8 +228,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "server_version": synced.server_version,
                 "resumed": synced.resumed,
                 "entity_counts": synced.entity_counts,
+                "changed_entity_counts": synced.changed_entity_counts,
                 "historical_scenes": synced_historical.scene_count,
-                "model_update_pending": True,
+                "model_update_pending": model_update_pending,
             },
             as_json=bool(args.json),
         )

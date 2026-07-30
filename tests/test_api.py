@@ -492,6 +492,16 @@ def test_prune_candidates_are_reversible_tags_not_deletions(tmp_path: Path) -> N
 
     api.record_prune_tags(["disliked"], True, "prune-tag", "[Prune]")
     assert api.prune_candidates("tagged")["items"][0]["scene_id"] == "disliked"
+    updated_at_ms = connection.execute(
+        "SELECT updated_at_ms FROM pruning_candidate WHERE scene_id='disliked'"
+    ).fetchone()[0]
+    assert api.reconcile_prune_tag("[Prune]") is False
+    assert (
+        connection.execute(
+            "SELECT updated_at_ms FROM pruning_candidate WHERE scene_id='disliked'"
+        ).fetchone()[0]
+        == updated_at_ms
+    )
     assert (
         connection.execute(
             "SELECT state FROM pruning_candidate WHERE scene_id='disliked'"
