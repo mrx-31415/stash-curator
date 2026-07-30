@@ -96,6 +96,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     )
     assert json.loads(task.stdout)["output"]["backup"].endswith(".sqlite3.backup")
     assert "Stash Curator backup completed" in task.stderr
+    assert "\x01p\x020.0500" in task.stderr
+    assert "\x01p\x020.9500" in task.stderr
     assert "\x01p\x021.0000" in task.stderr
     with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
         assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
@@ -759,7 +761,7 @@ def test_reused_model_keeps_existing_lane_classifications(
     cursor = SimpleNamespace(fetchone=lambda: (3,))
     connection = SimpleNamespace(execute=lambda *_args: cursor)
 
-    assert module._classify_lanes(connection, SimpleNamespace(model_id="model", reused=True)) == 3
+    assert module._classify_lanes(connection, "model") == 3
 
 
 def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
@@ -809,7 +811,8 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
 def test_model_tasks_prepare_recommendation_pages() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "backend.py").read_text(encoding="utf-8")
 
-    assert source.count("_prepare_lanes(connection, model.model_id)") == 2
+    assert source.count("_mapped_progress(0.97, 0.99)") == 2
+    assert "_mapped_progress(0.05, 0.99)" in source
     assert '"lane_candidate_caches": lane_caches' in source
 
 

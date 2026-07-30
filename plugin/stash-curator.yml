@@ -91,7 +91,7 @@ settings:
     type: BOOLEAN
 tasks:
   - name: Sync and build recommendations
-    description: Incrementally synchronize Stash and publish a fresh model.
+    description: Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.
     execArgs:
       - sync-build
   - name: Full sync and build recommendations
@@ -99,7 +99,7 @@ tasks:
     execArgs:
       - full-sync-build
   - name: Rebuild recommendation model
-    description: Rebuild preferences from the existing sidecar cache.
+    description: Force a recommendation refresh from already-synced data without contacting Stash.
     execArgs:
       - build
   - name: Apply recent Curator feedback

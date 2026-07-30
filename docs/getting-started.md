@@ -48,11 +48,15 @@ local recommendations do not depend on it.
 
 ## Refresh and update
 
-Use **Sync library** when Stash metadata or history changes substantially. Playback
-and Curator feedback use a smaller preference rebuild and do not require a new
-library sync. Stash does not give plugins a reliable background scheduler or startup
-hook, so unattended syncs must call **Sync and build recommendations** through
-Stash's task API from a host scheduler.
+Use **Sync library** after Stash metadata or history changes. It fetches only changed
+records and refreshes recommendations when needed. Use **Rebuild model** to force a
+refresh from Curator's already-synced data; it does not contact Stash. Playback and
+Curator feedback already request a smaller preference rebuild, so neither command is
+normally needed for them.
+
+Stash does not give plugins a reliable background scheduler or startup hook, so
+unattended syncs must call **Sync and build recommendations** through Stash's task API
+from a host scheduler.
 
 Plugin updates come from the same source URL. Back up first, update in Stash, allow
 database migrations to finish, then load Curator and confirm the model is ready.
