@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.storage import transaction
+from curator.storage.artifacts import artifact_attached
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,8 @@ class ReasonGraphStore:
             )
 
     def ensure(self, model_id: str, scene_ids: Collection[str] | None = None) -> None:
+        if artifact_attached(self.connection, "model"):
+            return
         if scene_ids is None:
             if (
                 self.connection.execute(
@@ -229,6 +232,26 @@ class ReasonGraphStore:
         self._neighbor_reason(score, feature_version, reasons)
         self._direct_reasons(score, feature_version, reasons)
         self._fit_reasons(score, feature_version, reasons)
+        if not reasons:
+            reasons.append(
+                Reason(
+                    "fallback",
+                    "neutral",
+                    0.0,
+                    score.confidence,
+                    None,
+                    None,
+                    "standard",
+                    "model_baseline",
+                    {
+                        "appeal": score.appeal,
+                        "current_fit": score.current_fit,
+                        "confidence": score.confidence,
+                    },
+                    score.model_id,
+                    feature_version,
+                )
+            )
         return tuple(
             sorted(
                 reasons,

@@ -83,7 +83,7 @@ class ModelUpdateCoordinator:
                         WHEN requested_generation=published_generation THEN ?
                         ELSE requested_at_ms
                     END,
-                    last_cause=?, last_error=NULL
+                    last_cause=?
                 WHERE singleton=1
                 """,
                 (self.clock_ms(), cause),

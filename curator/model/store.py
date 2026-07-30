@@ -7,6 +7,8 @@ import sqlite3
 from collections.abc import Collection
 from dataclasses import dataclass
 
+from curator.storage.artifacts import attached_generation_id
+
 
 @dataclass(frozen=True)
 class ModelSceneScore:
@@ -30,6 +32,8 @@ class RecommendationModelStore:
         self.connection = connection
 
     def current_model_id(self) -> str | None:
+        if attached := attached_generation_id(self.connection, "model"):
+            return attached
         row = self.connection.execute(
             "SELECT model_id FROM model_version WHERE status='published'"
         ).fetchone()

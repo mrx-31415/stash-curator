@@ -9,6 +9,7 @@ import pytest
 import curator.model.builder as builder_module
 from curator.cli import run
 from curator.config import DEFAULT_CONFIG
+from curator.explanations import ReasonGraphStore
 from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from curator.storage import MigrationRunner, connect_database
@@ -138,6 +139,26 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
 
     assert second.model_id == first.model_id
     assert second.reused is True
+    statements = []
+    connection.set_trace_callback(statements.append)
+    ReasonGraphStore(connection).ensure(first.model_id, set(scores))
+    connection.set_trace_callback(None)
+    assert not any(
+        statement.startswith(("INSERT INTO model_scene_reason", "DELETE FROM model_scene_reason"))
+        for statement in statements
+    )
+    assert {
+        "feature_lookup",
+        "feature_build",
+        "similarity",
+        "scoring",
+        "database_writing",
+        "indexing",
+        "validation",
+        "publication",
+        "cleanup",
+        "total",
+    } <= set(first.stage_timings_ms)
     assert set(scores) == {
         "old-good",
         "recent-good",
@@ -453,6 +474,20 @@ def test_model_build_refreshes_feature_version_after_feature_config_change(
     ).build()
 
     assert second.feature_version != first.feature_version
+    assert second.model_id != first.model_id
+
+
+def test_playback_change_reuses_features_but_rebuilds_model(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    connection.execute(
+        "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES (?, ?, 0)",
+        ("unseen-good", REFERENCE_MS - 2 * DAY_MS),
+    )
+
+    second = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    assert second.feature_version == first.feature_version
     assert second.model_id != first.model_id
 
 

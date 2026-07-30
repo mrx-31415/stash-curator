@@ -326,6 +326,7 @@ class CuratorAPI:
             raise ValueError("unknown recommendation lane")
         where = "WHERE h.lane=?" if lane else ""
         parameters: tuple[object, ...] = (lane,) if lane else ()
+        model_id = RecommendationModelStore(self.connection).current_model_id()
         total = int(
             self.connection.execute(
                 f"SELECT count(*) FROM recommendation_history h {where}",
@@ -338,8 +339,7 @@ class CuratorAPI:
                    i.reason_snapshot_json,
                    EXISTS(
                      SELECT 1 FROM model_scene_score score
-                     JOIN model_version model USING(model_id)
-                     WHERE model.status='published' AND score.scene_id=h.scene_id
+                     WHERE score.model_id=? AND score.scene_id=h.scene_id
                    ) AS current_model
             FROM recommendation_history h
             LEFT JOIN impression_item i
@@ -347,7 +347,7 @@ class CuratorAPI:
             {where}
             ORDER BY h.shown_at_ms DESC, h.history_id DESC LIMIT ? OFFSET ?
             """,
-            (*parameters, page_size, (page - 1) * page_size),
+            (model_id, *parameters, page_size, (page - 1) * page_size),
         )
         items = []
         for row in rows:

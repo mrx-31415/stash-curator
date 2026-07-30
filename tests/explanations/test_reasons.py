@@ -65,6 +65,26 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
     assert explanation.selected_reasons == (reason,)
 
 
+def test_scene_without_specific_evidence_gets_factual_fallback(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        UPDATE model_scene_score
+        SET direct_appeal=0, direct_confidence=0, components_json='{}', neighbors_json='[]'
+        WHERE model_id='model' AND scene_id='a-best'
+        """
+    )
+
+    store = ReasonGraphStore(connection)
+    store.build("model", {"a-best"})
+
+    reason = store.reasons("model", "a-best")[0]
+    assert reason.code == "fallback"
+    assert reason.direction == "neutral"
+    assert reason.provenance == "model_baseline"
+    assert reason.detail.keys() == {"appeal", "current_fit", "confidence"}
+
+
 def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     item = next(

@@ -10,6 +10,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from heapq import nsmallest
 from itertools import batched
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
@@ -21,6 +22,18 @@ from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
 from curator.profiling import record_duration, span
 from curator.storage import ModelStore, transaction
+from curator.storage.artifacts import (
+    ARTIFACT_SCHEMA_VERSION,
+    activate_artifact,
+    artifact_path,
+    attach_build_sources,
+    create_artifact,
+    create_indexes,
+    database_path,
+    discard_artifact,
+    publish_file,
+    validate_artifact,
+)
 from curator.storage.retention import prune_snapshots
 
 
@@ -114,14 +127,17 @@ class PreferenceModelBuilder:
         # source data nor feature configuration changed. Always ask it for the current
         # version so a feature-only configuration change cannot silently train against
         # stale vectors.
-        feature_version = (
-            FeatureBuilder(self.connection, self.config, clock_ms=self.clock_ms)
-            .build()
-            .feature_version
-        )
+        feature = FeatureBuilder(self.connection, self.config, clock_ms=self.clock_ms).build()
+        feature_version = feature.feature_version
         self._report(0.05)
-        timings["features"] = round((time.perf_counter() - stage_started) * 1000)
-        record_duration("python", "model.features", timings["features"])
+        timings.update(
+            {f"feature_{name}": duration for name, duration in feature.stage_timings_ms.items()}
+        )
+        record_duration(
+            "python",
+            "model.features",
+            round((time.perf_counter() - stage_started) * 1000),
+        )
         stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
         labels = self._scene_labels()
@@ -132,15 +148,32 @@ class PreferenceModelBuilder:
         evidence_fingerprint = self._evidence_fingerprint(labels)
         model_digest = hashlib.sha256(
             (
-                f"{feature_version}\0{evidence_fingerprint}\0"
+                f"{feature_version}\0{evidence_fingerprint}\0{self._source_fingerprint()}\0"
                 f"{self.config.canonical_json()}\0{reference_at_ms}"
             ).encode()
         ).hexdigest()
         model_id = f"model-{model_digest[:20]}"
         existing = self.connection.execute(
-            "SELECT status FROM model_version WHERE model_id=?", (model_id,)
+            """
+            SELECT status, artifact_basename, validation_status FROM model_version
+            WHERE model_id=?
+            """,
+            (model_id,),
         ).fetchone()
-        if existing and existing["status"] == "published":
+        if (
+            existing
+            and existing["status"] == "published"
+            and existing["validation_status"] == "valid"
+            and existing["artifact_basename"]
+            and artifact_path(
+                database_path(self.connection), str(existing["artifact_basename"])
+            ).is_file()
+        ):
+            with transaction(self.connection):
+                self.connection.execute(
+                    "UPDATE model_version SET reuse_count=reuse_count+1 WHERE model_id=?",
+                    (model_id,),
+                )
             self._report(1.0)
             timings["total"] = round((time.perf_counter() - started) * 1000)
             return self._result(
@@ -183,18 +216,25 @@ class PreferenceModelBuilder:
                 training_labels,
                 label_mean,
                 reference_at_ms,
+                timings,
             )
-            timings["scores"] = round((time.perf_counter() - stage_started) * 1000)
-            record_duration("python", "model.scores", timings["scores"])
+            score_total = round((time.perf_counter() - stage_started) * 1000)
+            timings["scoring"] = max(0, score_total - timings["similarity"])
+            record_duration("python", "model.scores", score_total)
             stage_started = time.perf_counter()
-            self._publish(model_id, feature_version, affinities, labels, scores)
+            timings.update(self._publish(model_id, feature_version, affinities, labels, scores))
             self._report(0.97)
-            timings["publish"] = round((time.perf_counter() - stage_started) * 1000)
-            record_duration("python", "model.publish", timings["publish"])
+            record_duration(
+                "python",
+                "model.publish",
+                round((time.perf_counter() - stage_started) * 1000),
+            )
         except Exception:
             model_store.fail(model_id)
             raise
+        stage_started = time.perf_counter()
         prune_snapshots(self.connection)
+        timings["cleanup"] = round((time.perf_counter() - stage_started) * 1000)
         self._report(1.0)
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return self._result(model_id, feature_version, len(labels), reused=False, timings=timings)
@@ -343,6 +383,43 @@ class PreferenceModelBuilder:
         ).fetchone()
         return str(row[0]) if row and row[0] else None
 
+    def _source_fingerprint(self) -> str:
+        digest = hashlib.sha256()
+        for label, statement in (
+            (
+                "source_play",
+                """
+                SELECT scene_id, max(played_at_ms) FROM source_play
+                GROUP BY scene_id ORDER BY scene_id
+                """,
+            ),
+            (
+                "source_performer",
+                """
+                SELECT performer_id, favorite, rating100
+                FROM source_performer ORDER BY performer_id
+                """,
+            ),
+            (
+                "source_studio",
+                "SELECT studio_id, favorite FROM source_studio ORDER BY studio_id",
+            ),
+            (
+                "source_file",
+                """
+                SELECT scene_id, max(available) FROM source_file
+                GROUP BY scene_id ORDER BY scene_id
+                """,
+            ),
+        ):
+            digest.update(f"{label}\0".encode())
+            for row in self.connection.execute(statement):
+                digest.update(
+                    json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=False).encode()
+                )
+                digest.update(b"\n")
+        return digest.hexdigest()
+
     def _affinities(
         self,
         scene_features: dict[str, tuple[StoredFeature, ...]],
@@ -452,6 +529,7 @@ class PreferenceModelBuilder:
         training_labels: dict[str, _SceneLabel],
         label_mean: float,
         reference_at_ms: int,
+        timings: dict[str, int],
     ) -> tuple[_Score, ...]:
         with span("python", "model.score_vectors"):
             vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
@@ -461,6 +539,7 @@ class PreferenceModelBuilder:
                 "SELECT scene_id FROM source_scene ORDER BY scene_id"
             )
         ]
+        similarity_started = time.perf_counter()
         with span("python", "model.score_neighbors"):
             preference_vectors, discriminative_tag_count = self._preference_content_vectors(
                 vectors, scene_features, affinities
@@ -473,6 +552,7 @@ class PreferenceModelBuilder:
             performer_similarity_scores = self._performer_similarity_scores(
                 feature_version, scene_features, affinities
             )
+        timings["similarity"] = round((time.perf_counter() - similarity_started) * 1000)
         baseline_support = sum(label.confidence for label in training_labels.values())
         baseline = (
             label_mean * baseline_support / (self.config.model.affinity_prior + baseline_support)
@@ -830,8 +910,11 @@ class PreferenceModelBuilder:
                     continue
                 weight = similarity**3 * labels[other_id].confidence
                 evidence.append((other_id, similarity, weight, labels[other_id].outcome))
-            evidence.sort(key=lambda item: (-item[2], item[0]))
-            selected = evidence[: self.config.model.neighbor_count]
+            selected = nsmallest(
+                self.config.model.neighbor_count,
+                evidence,
+                key=lambda item: (-item[2], item[0]),
+            )
             denominator = sum(item[2] for item in selected)
             outcome_mean = (
                 sum(item[2] * item[3] for item in selected) / denominator if denominator else 0.0
@@ -912,8 +995,11 @@ class PreferenceModelBuilder:
                     )
         result: dict[str, dict[str, object]] = {}
         for performer_id, matches in matches_by_performer.items():
-            matches.sort(key=lambda item: (-_number(item["similarity"]), str(item["performer_id"])))
-            selected = matches[:5]
+            selected = nsmallest(
+                5,
+                matches,
+                key=lambda item: (-_number(item["similarity"]), str(item["performer_id"])),
+            )
             denominator = sum(_number(item["similarity"]) ** 3 for item in selected)
             value = (
                 sum(
@@ -1108,103 +1194,193 @@ class PreferenceModelBuilder:
         affinities: dict[str, _Affinity],
         labels: dict[str, _SceneLabel],
         scores: tuple[_Score, ...],
-    ) -> None:
+    ) -> dict[str, int]:
+        timings: dict[str, int] = {}
+        writing_started = time.perf_counter()
         scores_by_scene = {score.scene_id: score for score in scores}
-        with transaction(self.connection):
-            self.connection.execute("DELETE FROM feature_affinity WHERE model_id=?", (model_id,))
-            self.connection.execute("DELETE FROM direct_scene_state WHERE model_id=?", (model_id,))
-            self.connection.execute("DELETE FROM model_scene_score WHERE model_id=?", (model_id,))
+        feature_row = self.connection.execute(
+            """
+            SELECT artifact_basename FROM feature_build
+            WHERE feature_version=? AND validation_status='valid'
+            """,
+            (feature_version,),
+        ).fetchone()
+        if feature_row is None or not feature_row[0]:
+            raise RuntimeError(f"feature artifact missing for {feature_version}")
+        feature_path = artifact_path(database_path(self.connection), str(feature_row[0]))
+        artifact, temporary, final = create_artifact(self.connection, "model", model_id)
+        attach_build_sources(artifact, self.connection, feature_path)
+        published = False
 
         def insert_rows(sql: str, rows: Iterable[tuple[object, ...]]) -> None:
             for batch in batched(rows, 1_000):
-                with transaction(self.connection):
-                    self.connection.executemany(sql, batch)
+                with transaction(artifact):
+                    artifact.executemany(sql, batch)
 
-        insert_rows(
-            """
-            INSERT INTO feature_affinity(
-                model_id, feature_id, affinity, confidence, effective_support,
-                distinct_scene_count, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                (
-                    model_id,
-                    affinity.feature_id,
-                    affinity.affinity,
-                    affinity.confidence,
-                    affinity.support,
-                    affinity.scene_count,
-                    json.dumps(affinity.contexts, sort_keys=True, separators=(",", ":")),
-                )
-                for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
-            ),
-        )
-        insert_rows(
-            """
-            INSERT INTO direct_scene_state(
-                model_id, scene_id, direct_appeal, effective_evidence, confidence, residual
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                (
-                    model_id,
-                    scene_id,
-                    label.outcome,
-                    label.effective_evidence,
-                    direct_confidence(label.effective_evidence, config=self.config.model),
-                    _clamp(label.outcome - scores_by_scene[scene_id].general_appeal, -2, 2),
-                )
-                for scene_id, label in sorted(labels.items())
-            ),
-        )
-        insert_rows(
-            """
-            INSERT INTO model_scene_score(
-                model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
-                appeal, current_fit, confidence, metadata_confidence, recovery,
-                components_json, neighbors_json, eligibility_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                (
-                    model_id,
-                    score.scene_id,
-                    score.general_appeal,
-                    score.direct_appeal,
-                    score.direct_confidence,
-                    score.appeal,
-                    score.current_fit,
-                    score.confidence,
-                    score.metadata_confidence,
-                    score.recovery,
-                    json.dumps(score.components, sort_keys=True, separators=(",", ":")),
-                    json.dumps(score.neighbors, sort_keys=True, separators=(",", ":")),
-                    json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
-                )
-                for score in scores
-            ),
-        )
-        # Lane orders are immutable model artifacts: finish them before the atomic
-        # status flip so requests never observe a half-published recommendation model.
-        from curator.ranking import LanePolicy, SlateBuilder
-
-        LanePolicy(self.connection, self.config).classify(model_id)
-        SlateBuilder(self.connection, self.config).materialize(model_id, force=True)
-        with transaction(self.connection):
-            self.connection.execute(
-                "UPDATE model_version SET status='superseded' WHERE status='published'"
-            )
-            self.connection.execute(
+        try:
+            insert_rows(
                 """
-                UPDATE model_version SET status='published', published_at_ms=? WHERE model_id=?
+                INSERT INTO feature_affinity(
+                    model_id, feature_id, affinity, confidence, effective_support,
+                    distinct_scene_count, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self.clock_ms(), model_id),
+                (
+                    (
+                        model_id,
+                        affinity.feature_id,
+                        affinity.affinity,
+                        affinity.confidence,
+                        affinity.support,
+                        affinity.scene_count,
+                        json.dumps(affinity.contexts, sort_keys=True, separators=(",", ":")),
+                    )
+                    for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
+                ),
             )
-            self.connection.execute(
+            insert_rows(
                 """
-                INSERT INTO application_meta(key, value) VALUES ('current_model_id', ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                INSERT INTO direct_scene_state(
+                    model_id, scene_id, direct_appeal, effective_evidence, confidence, residual
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        model_id,
+                        scene_id,
+                        label.outcome,
+                        label.effective_evidence,
+                        direct_confidence(label.effective_evidence, config=self.config.model),
+                        _clamp(
+                            label.outcome - scores_by_scene[scene_id].general_appeal,
+                            -2,
+                            2,
+                        ),
+                    )
+                    for scene_id, label in sorted(labels.items())
+                ),
+            )
+            insert_rows(
+                """
+                INSERT INTO model_scene_score(
+                    model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
+                    appeal, current_fit, confidence, metadata_confidence, recovery,
+                    components_json, neighbors_json, eligibility_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        model_id,
+                        score.scene_id,
+                        score.general_appeal,
+                        score.direct_appeal,
+                        score.direct_confidence,
+                        score.appeal,
+                        score.current_fit,
+                        score.confidence,
+                        score.metadata_confidence,
+                        score.recovery,
+                        json.dumps(score.components, sort_keys=True, separators=(",", ":")),
+                        json.dumps(score.neighbors, sort_keys=True, separators=(",", ":")),
+                        json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
+                    )
+                    for score in scores
+                ),
+            )
+            timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
+            from curator.explanations import ReasonGraphStore
+            from curator.ranking import LanePolicy, SlateBuilder
+
+            indexing_started = time.perf_counter()
+            LanePolicy(artifact, self.config).classify(model_id)
+            SlateBuilder(artifact, self.config).materialize(model_id, force=True)
+            ReasonGraphStore(artifact).build(model_id)
+            create_indexes(artifact, "model")
+            timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
+            validation_started = time.perf_counter()
+            stored_count = int(
+                artifact.execute(
+                    "SELECT count(*) FROM model_scene_score WHERE model_id=?", (model_id,)
+                ).fetchone()[0]
+            )
+            lane_count = int(
+                artifact.execute(
+                    "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model_id,)
+                ).fetchone()[0]
+            )
+            reason_scene_count, reason_count = artifact.execute(
+                """
+                SELECT count(DISTINCT scene_id), count(*) FROM model_scene_reason
+                WHERE model_id=?
                 """,
                 (model_id,),
+            ).fetchone()
+            lane_state = artifact.execute(
+                "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+            ).fetchone()
+            if (
+                stored_count != len(scores)
+                or int(reason_scene_count) != stored_count
+                or lane_state is None
+            ):
+                raise RuntimeError(
+                    "model validation failed: "
+                    f"scores={stored_count}/{len(scores)}, "
+                    f"reason scenes={reason_scene_count}/{stored_count}, "
+                    f"lane state={lane_state is not None}"
+                )
+            summary = validate_artifact(
+                artifact,
+                "model",
+                {
+                    "scenes": stored_count,
+                    "lanes": lane_count,
+                    "reason_scenes": int(reason_scene_count),
+                    "reasons": int(reason_count),
+                },
             )
+            timings["validation"] = round((time.perf_counter() - validation_started) * 1000)
+            publication_started = time.perf_counter()
+            size = publish_file(artifact, temporary, final)
+            with transaction(self.connection):
+                self.connection.execute(
+                    "UPDATE model_version SET status='superseded' WHERE status='published'"
+                )
+                self.connection.execute(
+                    """
+                    UPDATE model_version SET status='published', published_at_ms=?,
+                        artifact_basename=?, artifact_schema_version=?, artifact_bytes=?,
+                        scene_count=?, lane_count=?, reason_scene_count=?, reason_count=?,
+                        validation_status='valid', validation_summary_json=?,
+                        cleanup_error=NULL
+                    WHERE model_id=?
+                    """,
+                    (
+                        self.clock_ms(),
+                        final.name,
+                        ARTIFACT_SCHEMA_VERSION,
+                        size,
+                        stored_count,
+                        lane_count,
+                        int(reason_scene_count),
+                        int(reason_count),
+                        json.dumps(summary, sort_keys=True, separators=(",", ":")),
+                        model_id,
+                    ),
+                )
+                self.connection.execute(
+                    """
+                    INSERT INTO application_meta(key, value) VALUES ('current_model_id', ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                    """,
+                    (model_id,),
+                )
+            published = True
+            activate_artifact(self.connection, "model", final)
+            timings["publication"] = round((time.perf_counter() - publication_started) * 1000)
+            return timings
+        finally:
+            if not published:
+                discard_artifact(artifact, temporary)
+                if not temporary.exists():
+                    final.unlink(missing_ok=True)

@@ -361,7 +361,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             model_id = RecommendationModelStore(connection).current_model_id()
             if model_id is None:
                 raise RuntimeError("no published model; run build-model first")
-            ReasonGraphStore(connection).build(model_id)
+            ReasonGraphStore(connection).ensure(model_id)
             explanation = ExplanationService(connection).explain_scene(model_id, str(args.scene_id))
             score = RecommendationModelStore(connection).scores(model_id).get(str(args.scene_id))
             if score is None:

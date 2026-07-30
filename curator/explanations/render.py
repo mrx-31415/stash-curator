@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from curator.explanations.catalog import RealizationCatalog
 from curator.explanations.planner import EvidenceUnit, Microplanner
 from curator.explanations.reasons import Reason, ReasonGraphStore
+from curator.model import RecommendationModelStore
 from curator.ranking import RecommendationItem
+from curator.storage.artifacts import artifact_attached
 
 
 @dataclass(frozen=True)
@@ -33,7 +35,11 @@ class ExplanationService:
 
     def explain_scene(self, model_id: str, scene_id: str) -> Explanation:
         reasons = self.store.reasons(model_id, scene_id)
-        if not reasons and scene_id not in self._ensured:
+        if (
+            not reasons
+            and scene_id not in self._ensured
+            and not artifact_attached(self.connection, "model")
+        ):
             self.store.build(model_id, {scene_id})
             self._ensured.add(scene_id)
             reasons = self.store.reasons(model_id, scene_id)
@@ -42,7 +48,11 @@ class ExplanationService:
     def explain_recommendation(self, item: RecommendationItem) -> Explanation:
         model_id = self._current_model_id()
         base = self.store.reasons(model_id, item.scene_id)
-        if not base and item.scene_id not in self._ensured:
+        if (
+            not base
+            and item.scene_id not in self._ensured
+            and not artifact_attached(self.connection, "model")
+        ):
             self.store.build(model_id, {item.scene_id})
             self._ensured.add(item.scene_id)
             base = self.store.reasons(model_id, item.scene_id)
@@ -53,12 +63,10 @@ class ExplanationService:
         )
 
     def _current_model_id(self) -> str:
-        row = self.connection.execute(
-            "SELECT model_id FROM model_version WHERE status='published'"
-        ).fetchone()
-        if row is None:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
             raise RuntimeError("no published model")
-        return str(row[0])
+        return model_id
 
     def _ranking_reasons(self, model_id: str, item: RecommendationItem) -> tuple[Reason, ...]:
         row = self.connection.execute(

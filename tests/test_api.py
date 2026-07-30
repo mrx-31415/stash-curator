@@ -38,7 +38,15 @@ def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -
             (result["model_id"],),
         )
     }
-    assert explained <= {str(item["scene_id"]) for item in result["items"]}
+    scored = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT scene_id FROM model_scene_score WHERE model_id=?",
+            (result["model_id"],),
+        )
+    }
+    assert explained == scored
+    assert {str(item["scene_id"]) for item in result["items"]} <= explained
     assert (
         connection.execute(
             "SELECT count(*) FROM impression WHERE impression_id='api-impression'"
