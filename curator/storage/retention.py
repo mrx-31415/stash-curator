@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from curator.storage.artifacts import artifact_path, database_path
 from curator.storage.database import transaction
 
 
@@ -29,50 +30,102 @@ def prune_snapshots(
             """
         )
     }
-    models = [
-        str(row[0])
+    model_rows = [
+        (str(row["model_id"]), str(row["artifact_basename"]) if row["artifact_basename"] else None)
         for row in connection.execute(
             """
-            SELECT model_id FROM model_version
-            WHERE status IN ('superseded', 'failed')
+            SELECT model_id, artifact_basename FROM model_version
+            WHERE status IN ('superseded', 'failed') OR (
+                status='building' AND created_at_ms < COALESCE(
+                    (SELECT max(created_at_ms) FROM model_version WHERE status='published'),
+                    created_at_ms
+                )
+            )
             ORDER BY COALESCE(published_at_ms, created_at_ms), model_id
             """
         )
-        if str(row[0]) not in retained_models
+        if str(row["model_id"]) not in retained_models
     ]
-    model_deletes = models if limit is None else models[:limit]
+    model_deletes = model_rows if limit is None else model_rows[:limit]
 
     referenced_features = {
         str(row["feature_version"])
         for row in connection.execute("SELECT model_id, feature_version FROM model_version")
-        if str(row["model_id"]) not in model_deletes
+        if str(row["model_id"]) not in {model_id for model_id, _ in model_deletes}
     }
-    features = [
-        str(row[0])
+    feature_rows = [
+        (
+            str(row["feature_version"]),
+            str(row["artifact_basename"]) if row["artifact_basename"] else None,
+        )
         for row in connection.execute(
             """
-            SELECT feature_version FROM feature_build
+            SELECT feature_version, artifact_basename FROM feature_build
             WHERE status IN ('superseded', 'failed')
             ORDER BY COALESCE(published_at_ms, created_at_ms), feature_version
             """
         )
-        if str(row[0]) not in referenced_features
+        if str(row["feature_version"]) not in referenced_features
     ]
-    feature_deletes = features if limit is None else features[:limit]
+    feature_deletes = feature_rows if limit is None else feature_rows[:limit]
     if not dry_run and (model_deletes or feature_deletes):
+        successful_models: list[tuple[str, str | None]] = []
+        successful_features: list[tuple[str, str | None]] = []
+        core_path = database_path(connection)
+        for table, identifier, rows, successful in (
+            ("model_version", "model_id", model_deletes, successful_models),
+            ("feature_build", "feature_version", feature_deletes, successful_features),
+        ):
+            for item, basename in rows:
+                if basename:
+                    try:
+                        artifact_path(core_path, basename).unlink(missing_ok=True)
+                    except OSError as error:
+                        with transaction(connection):
+                            connection.execute(
+                                f"UPDATE {table} SET cleanup_error=? WHERE {identifier}=?",
+                                (str(error)[:2000], item),
+                            )
+                        continue
+                successful.append((item, basename))
         with transaction(connection):
-            connection.executemany(
-                "DELETE FROM model_version WHERE model_id=?", ((item,) for item in model_deletes)
-            )
-            for version in feature_deletes:
-                connection.execute("DELETE FROM entity_feature WHERE feature_version=?", (version,))
-                connection.execute(
-                    "DELETE FROM feature_definition WHERE feature_version=?", (version,)
-                )
-                connection.execute("DELETE FROM feature_build WHERE feature_version=?", (version,))
+            for model_id, basename in successful_models:
+                if basename:
+                    connection.execute(
+                        """
+                        UPDATE model_version SET artifact_basename=NULL,
+                            validation_status='retired', cleanup_error=NULL
+                        WHERE model_id=?
+                        """,
+                        (model_id,),
+                    )
+                else:
+                    connection.execute("DELETE FROM model_version WHERE model_id=?", (model_id,))
+            for version, basename in successful_features:
+                if basename:
+                    connection.execute(
+                        """
+                        UPDATE feature_build SET artifact_basename=NULL,
+                            validation_status='retired', cleanup_error=NULL
+                        WHERE feature_version=?
+                        """,
+                        (version,),
+                    )
+                else:
+                    connection.execute(
+                        "DELETE FROM entity_feature WHERE feature_version=?", (version,)
+                    )
+                    connection.execute(
+                        "DELETE FROM feature_definition WHERE feature_version=?", (version,)
+                    )
+                    connection.execute(
+                        "DELETE FROM feature_build WHERE feature_version=?", (version,)
+                    )
+        model_deletes = successful_models
+        feature_deletes = successful_features
     return RetentionResult(
-        len(models),
-        len(features),
+        len(model_rows),
+        len(feature_rows),
         len(model_deletes) if not dry_run else 0,
         len(feature_deletes) if not dry_run else 0,
     )

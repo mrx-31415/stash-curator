@@ -11,10 +11,30 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
         runner = MigrationRunner(connection)
         before = runner.status()
         assert before.current_version == 0
-        assert before.pending_versions == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+        assert before.pending_versions == (
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+        )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 16
+        assert after.current_version == 19
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -46,6 +66,9 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='index' AND name='model_scene_score_prune_idx'"
         ).fetchone()
+        assert not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='model_lane_order_scene_idx'"
+        ).fetchone()
     finally:
         connection.close()
 
@@ -60,6 +83,47 @@ def test_changed_applied_migration_is_rejected(tmp_path: Path) -> None:
             runner.status()
     finally:
         connection.close()
+
+
+def test_feature_count_migration_backfills_existing_builds(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    runner = MigrationRunner(connection)
+    original = runner.migrations
+    runner.migrations = original[:-2]
+    runner.migrate(applied_at_ms=1)
+    connection.execute(
+        """
+        INSERT INTO feature_build(
+            feature_version, status, config_json, source_fingerprint, created_at_ms
+        ) VALUES ('fv-old', 'published', '{}', 'source', 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO feature_definition(
+            feature_id, feature_version, family, name, provenance
+        ) VALUES ('f1', 'fv-old', 'content', 'tag:one', 'test')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO entity_feature(
+            feature_version, entity_type, entity_id, feature_id, value, confidence
+        ) VALUES ('fv-old', 'scene', 's1', 'f1', 1, 1)
+        """
+    )
+
+    runner.migrations = original
+    runner.migrate(applied_at_ms=2)
+
+    assert tuple(
+        connection.execute(
+            """
+            SELECT scene_count, performer_count, feature_count FROM feature_build
+            WHERE feature_version='fv-old'
+            """
+        ).fetchone()
+    ) == (1, 0, 1)
 
 
 def test_unknown_future_migration_is_rejected(tmp_path: Path) -> None:
@@ -87,7 +151,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 16
+        assert MigrationRunner(reader).status().current_version == 19
     finally:
         writer.rollback()
         reader.close()
@@ -113,7 +177,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 16
+        assert second_runner.migrate(applied_at_ms=2).current_version == 19
     finally:
         second.close()
         first.close()

@@ -20,6 +20,17 @@ from curator.features.measurements import (
 )
 from curator.features.tag_roles import TagRole, TagRoleResolver, TagRoleResult
 from curator.storage import transaction
+from curator.storage.artifacts import (
+    ARTIFACT_SCHEMA_VERSION,
+    activate_artifact,
+    artifact_path,
+    create_artifact,
+    create_indexes,
+    database_path,
+    discard_artifact,
+    publish_file,
+    validate_artifact,
+)
 from curator.taxonomy import TaxonomyIndex
 from curator.taxonomy.store import CATEGORY_ROLE_FINGERPRINT
 
@@ -35,6 +46,7 @@ class FeatureBuildResult:
     performer_count: int
     feature_count: int
     reused: bool
+    stage_timings_ms: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -61,16 +73,45 @@ class FeatureBuilder:
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
 
     def build(self) -> FeatureBuildResult:
+        started = time.perf_counter()
         source_fingerprint = self._source_fingerprint()
         version_hash = hashlib.sha256(
             f"{source_fingerprint}\0{self.config.feature_json()}".encode()
         ).hexdigest()
         feature_version = f"fv-{version_hash[:20]}"
         existing = self.connection.execute(
-            "SELECT status FROM feature_build WHERE feature_version = ?", (feature_version,)
+            """
+            SELECT status, artifact_basename, validation_status FROM feature_build
+            WHERE feature_version = ?
+            """,
+            (feature_version,),
         ).fetchone()
-        if existing and existing["status"] == "published":
-            return self._result(feature_version, reused=True)
+        lookup_ms = round((time.perf_counter() - started) * 1000)
+        if (
+            existing
+            and existing["status"] == "published"
+            and existing["validation_status"] == "valid"
+            and existing["artifact_basename"]
+            and artifact_path(
+                database_path(self.connection), str(existing["artifact_basename"])
+            ).is_file()
+        ):
+            with transaction(self.connection):
+                self.connection.execute(
+                    """
+                    UPDATE feature_build SET reuse_count=reuse_count+1
+                    WHERE feature_version=?
+                    """,
+                    (feature_version,),
+                )
+            return self._result(
+                feature_version,
+                reused=True,
+                timings={
+                    "lookup": lookup_ms,
+                    "total": round((time.perf_counter() - started) * 1000),
+                },
+            )
         now = self.clock_ms()
         with transaction(self.connection):
             self.connection.execute(
@@ -83,14 +124,20 @@ class FeatureBuilder:
                 (feature_version, self.config.feature_json(), source_fingerprint, now),
             )
         try:
+            build_started = time.perf_counter()
             roles = self._resolve_tag_roles()
             scene_features = self._scene_features(roles)
             performer_features = self._performer_features(scene_features)
             if self._source_fingerprint() != source_fingerprint:
                 raise FeatureBuildError("source cache changed during feature construction")
             all_features = (*scene_features, *performer_features)
-            self._publish(feature_version, source_fingerprint, roles, all_features)
-            return self._result(feature_version, reused=False)
+            timings = {
+                "lookup": lookup_ms,
+                "build": round((time.perf_counter() - build_started) * 1000),
+                **self._publish(feature_version, source_fingerprint, roles, all_features),
+            }
+            timings["total"] = round((time.perf_counter() - started) * 1000)
+            return self._result(feature_version, reused=False, timings=timings)
         except Exception as error:
             with transaction(self.connection):
                 self.connection.execute(
@@ -99,46 +146,79 @@ class FeatureBuilder:
                 )
             raise
 
-    def _result(self, feature_version: str, *, reused: bool) -> FeatureBuildResult:
-        scene_count = self.connection.execute(
+    def _result(
+        self, feature_version: str, *, reused: bool, timings: dict[str, int]
+    ) -> FeatureBuildResult:
+        row = self.connection.execute(
             """
-            SELECT count(DISTINCT entity_id) FROM entity_feature
-            WHERE feature_version = ? AND entity_type = 'scene'
+            SELECT scene_count, performer_count, feature_count FROM feature_build
+            WHERE feature_version = ?
             """,
             (feature_version,),
-        ).fetchone()[0]
-        performer_count = self.connection.execute(
-            """
-            SELECT count(DISTINCT entity_id) FROM entity_feature
-            WHERE feature_version = ? AND entity_type = 'performer'
-            """,
-            (feature_version,),
-        ).fetchone()[0]
-        feature_count = self.connection.execute(
-            "SELECT count(*) FROM feature_definition WHERE feature_version = ?",
-            (feature_version,),
-        ).fetchone()[0]
+        ).fetchone()
+        if row is None or any(
+            row[key] is None for key in ("scene_count", "performer_count", "feature_count")
+        ):
+            raise FeatureBuildError(f"feature build counts missing for {feature_version}")
         return FeatureBuildResult(
-            feature_version, int(scene_count), int(performer_count), int(feature_count), reused
+            feature_version,
+            int(row["scene_count"]),
+            int(row["performer_count"]),
+            int(row["feature_count"]),
+            reused,
+            timings,
         )
 
     def _source_fingerprint(self) -> str:
         digest = hashlib.sha256()
-        for table, id_column in (
-            ("source_tag", "tag_id"),
-            ("source_studio", "studio_id"),
-            ("source_performer", "performer_id"),
-            ("source_scene", "scene_id"),
+        for label, statement in (
+            ("source_tag", "SELECT tag_id, name FROM source_tag ORDER BY tag_id"),
+            (
+                "source_performer",
+                """
+                SELECT performer_id, birthdate, ethnicity, eye_color, hair_color,
+                       height_cm, weight_kg, measurements, augmentation, tattoos, piercings
+                FROM source_performer ORDER BY performer_id
+                """,
+            ),
+            (
+                "source_scene",
+                "SELECT scene_id, scene_date, studio_id FROM source_scene ORDER BY scene_id",
+            ),
+            (
+                "scene_performer",
+                "SELECT scene_id, performer_id FROM scene_performer "
+                "ORDER BY scene_id, performer_id",
+            ),
+            (
+                "scene_tag",
+                "SELECT scene_id, tag_id, provenance FROM scene_tag "
+                "ORDER BY scene_id, tag_id, provenance",
+            ),
+            (
+                "scene_marker",
+                "SELECT marker_id, scene_id, primary_tag_id FROM scene_marker ORDER BY marker_id",
+            ),
+            (
+                "marker_tag",
+                "SELECT marker_id, tag_id FROM marker_tag ORDER BY marker_id, tag_id",
+            ),
+            (
+                "tag_parent",
+                "SELECT tag_id, parent_tag_id FROM tag_parent ORDER BY tag_id, parent_tag_id",
+            ),
+            (
+                "source_tag_stash_id",
+                "SELECT tag_id, endpoint, stash_id FROM source_tag_stash_id "
+                "ORDER BY tag_id, endpoint",
+            ),
         ):
-            rows = self.connection.execute(
-                f"SELECT {id_column}, source_hash FROM {table} ORDER BY {id_column}"
-            )
-            for row in rows:
-                digest.update(f"{table}\0{row[0]}\0{row[1]}\n".encode())
-        for row in self.connection.execute(
-            "SELECT tag_id, endpoint, stash_id FROM source_tag_stash_id ORDER BY tag_id, endpoint"
-        ):
-            digest.update(f"source_tag_stash_id\0{row[0]}\0{row[1]}\0{row[2]}\n".encode())
+            digest.update(f"{label}\0".encode())
+            for row in self.connection.execute(statement):
+                digest.update(
+                    json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=False).encode()
+                )
+                digest.update(b"\n")
         row = self.connection.execute(
             "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
         ).fetchone()
@@ -480,127 +560,203 @@ class FeatureBuilder:
         source_fingerprint: str,
         roles: dict[str, TagRoleResult],
         features: tuple[_Feature, ...],
-    ) -> None:
+    ) -> dict[str, int]:
         config_version = f"cfg-{self.config.feature_fingerprint()[:20]}"
         definitions: dict[tuple[str, str, str], tuple[str, dict[str, object]]] = {}
         for feature in features:
             key = (feature.entity_type, feature.family, feature.name)
             definitions.setdefault(key, (self._feature_id(feature_version, *key), feature.metadata))
-        with transaction(self.connection):
-            self.connection.execute(
-                "DELETE FROM feature_definition WHERE feature_version = ?", (feature_version,)
-            )
-            self.connection.execute(
-                "DELETE FROM tag_role WHERE config_version = ?", (config_version,)
-            )
-            self.connection.executemany(
-                """
-                INSERT INTO tag_role(tag_id, config_version, role, resolution_reason)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    (tag_id, config_version, result.role.value, result.reason)
+        scene_count = len(
+            {feature.entity_id for feature in features if feature.entity_type == "scene"}
+        )
+        performer_count = len(
+            {feature.entity_id for feature in features if feature.entity_type == "performer"}
+        )
+        timings: dict[str, int] = {}
+        writing_started = time.perf_counter()
+        artifact = None
+        temporary = None
+        final = None
+        published = False
+        artifact, temporary, final = create_artifact(self.connection, "feature", feature_version)
+        try:
+            with transaction(self.connection):
+                self.connection.execute(
+                    "DELETE FROM tag_role WHERE config_version = ?", (config_version,)
+                )
+                self.connection.executemany(
+                    """
+                    INSERT INTO tag_role(tag_id, config_version, role, resolution_reason)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (tag_id, config_version, result.role.value, result.reason)
+                        for tag_id, result in sorted(roles.items())
+                    ),
+                )
+                taxonomy_rows = [
+                    (tag_id, result.taxonomy)
                     for tag_id, result in sorted(roles.items())
-                ),
-            )
-            taxonomy_rows = [
-                (tag_id, result.taxonomy)
-                for tag_id, result in sorted(roles.items())
-                if result.taxonomy is not None
-            ]
-            self.connection.executemany(
-                """
-                INSERT INTO tag_taxonomy_match(
-                    local_tag_id, snapshot_id, external_tag_id, external_category_id,
-                    match_method, confidence, ambiguity_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(local_tag_id, snapshot_id) DO UPDATE SET
-                    external_tag_id=excluded.external_tag_id,
-                    external_category_id=excluded.external_category_id,
-                    match_method=excluded.match_method,
-                    confidence=excluded.confidence,
-                    ambiguity_count=excluded.ambiguity_count
-                """,
-                (
+                    if result.taxonomy is not None
+                ]
+                self.connection.executemany(
+                    """
+                    INSERT INTO tag_taxonomy_match(
+                        local_tag_id, snapshot_id, external_tag_id, external_category_id,
+                        match_method, confidence, ambiguity_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(local_tag_id, snapshot_id) DO UPDATE SET
+                        external_tag_id=excluded.external_tag_id,
+                        external_category_id=excluded.external_category_id,
+                        match_method=excluded.match_method,
+                        confidence=excluded.confidence,
+                        ambiguity_count=excluded.ambiguity_count
+                    """,
                     (
-                        tag_id,
-                        taxonomy.snapshot_id,
-                        taxonomy.external_tag_id,
-                        taxonomy.external_category_id,
-                        taxonomy.method,
-                        taxonomy.confidence,
-                        taxonomy.ambiguity_count,
-                    )
-                    for tag_id, taxonomy in taxonomy_rows
-                ),
-            )
-            self.connection.executemany(
-                """
-                INSERT INTO feature_definition(
-                    feature_id, feature_version, family, name, provenance, metadata_json
-                ) VALUES (?, ?, ?, ?, 'feature_builder', ?)
-                """,
-                (
+                        (
+                            tag_id,
+                            taxonomy.snapshot_id,
+                            taxonomy.external_tag_id,
+                            taxonomy.external_category_id,
+                            taxonomy.method,
+                            taxonomy.confidence,
+                            taxonomy.ambiguity_count,
+                        )
+                        for tag_id, taxonomy in taxonomy_rows
+                    ),
+                )
+            with transaction(artifact):
+                artifact.executemany(
+                    """
+                    INSERT INTO feature_definition(
+                        feature_id, feature_version, family, name, provenance, metadata_json
+                    ) VALUES (?, ?, ?, ?, 'feature_builder', ?)
+                    """,
                     (
-                        feature_id,
+                        (
+                            feature_id,
+                            feature_version,
+                            family,
+                            name,
+                            json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+                        )
+                        for (entity_type, family, name), (feature_id, metadata) in sorted(
+                            definitions.items()
+                        )
+                    ),
+                )
+                artifact.executemany(
+                    """
+                    INSERT INTO entity_feature(
+                        feature_version, entity_type, entity_id, feature_id, value, confidence
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            feature_version,
+                            feature.entity_type,
+                            feature.entity_id,
+                            definitions[(feature.entity_type, feature.family, feature.name)][0],
+                            feature.value,
+                            feature.confidence,
+                        )
+                        for feature in sorted(
+                            features,
+                            key=lambda item: (
+                                item.entity_type,
+                                item.entity_id,
+                                item.family,
+                                item.name,
+                            ),
+                        )
+                    ),
+                )
+                artifact.executemany(
+                    """
+                    INSERT INTO scene_content_search(
+                        feature_version, feature_id, scene_id, value
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            feature_version,
+                            definitions[(feature.entity_type, feature.family, feature.name)][0],
+                            feature.entity_id,
+                            feature.value,
+                        )
+                        for feature in features
+                        if feature.entity_type == "scene" and feature.family == "content"
+                    ),
+                )
+            timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
+            indexing_started = time.perf_counter()
+            create_indexes(artifact, "feature")
+            timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
+            validation_started = time.perf_counter()
+            stored = artifact.execute(
+                """
+                SELECT
+                    (SELECT count(DISTINCT entity_id) FROM entity_feature
+                     WHERE feature_version=? AND entity_type='scene'),
+                    (SELECT count(DISTINCT entity_id) FROM entity_feature
+                     WHERE feature_version=? AND entity_type='performer'),
+                    (SELECT count(*) FROM feature_definition WHERE feature_version=?)
+                """,
+                (feature_version, feature_version, feature_version),
+            ).fetchone()
+            expected = (scene_count, performer_count, len(definitions))
+            if tuple(stored) != expected:
+                raise FeatureBuildError(
+                    f"feature validation failed: expected {expected}, stored {tuple(stored)}"
+                )
+            summary = validate_artifact(
+                artifact,
+                "feature",
+                {
+                    "scenes": scene_count,
+                    "performers": performer_count,
+                    "features": len(definitions),
+                },
+            )
+            timings["validation"] = round((time.perf_counter() - validation_started) * 1000)
+            publication_started = time.perf_counter()
+            size = publish_file(artifact, temporary, final)
+            artifact = None
+            with transaction(self.connection):
+                self.connection.execute(
+                    "UPDATE feature_build SET status='superseded' WHERE status='published'"
+                )
+                self.connection.execute(
+                    """
+                    UPDATE feature_build SET status='published', source_fingerprint=?,
+                        published_at_ms=?, error=NULL, scene_count=?, performer_count=?,
+                        feature_count=?, artifact_basename=?, artifact_schema_version=?,
+                        artifact_bytes=?, validation_status='valid',
+                        validation_summary_json=?, cleanup_error=NULL
+                    WHERE feature_version=?
+                    """,
+                    (
+                        source_fingerprint,
+                        self.clock_ms(),
+                        scene_count,
+                        performer_count,
+                        len(definitions),
+                        final.name,
+                        ARTIFACT_SCHEMA_VERSION,
+                        size,
+                        json.dumps(summary, sort_keys=True, separators=(",", ":")),
                         feature_version,
-                        family,
-                        name,
-                        json.dumps(metadata, sort_keys=True, separators=(",", ":")),
-                    )
-                    for (entity_type, family, name), (feature_id, metadata) in sorted(
-                        definitions.items()
-                    )
-                ),
-            )
-            self.connection.executemany(
-                """
-                INSERT INTO entity_feature(
-                    feature_version, entity_type, entity_id, feature_id, value, confidence
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    (
-                        feature_version,
-                        feature.entity_type,
-                        feature.entity_id,
-                        definitions[(feature.entity_type, feature.family, feature.name)][0],
-                        feature.value,
-                        feature.confidence,
-                    )
-                    for feature in sorted(
-                        features,
-                        key=lambda item: (item.entity_type, item.entity_id, item.family, item.name),
-                    )
-                ),
-            )
-            self.connection.execute("DELETE FROM scene_content_search")
-            self.connection.executemany(
-                """
-                INSERT INTO scene_content_search(feature_version, feature_id, scene_id, value)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    (
-                        feature_version,
-                        definitions[(feature.entity_type, feature.family, feature.name)][0],
-                        feature.entity_id,
-                        feature.value,
-                    )
-                    for feature in features
-                    if feature.entity_type == "scene" and feature.family == "content"
-                ),
-            )
-            self.connection.execute(
-                "UPDATE feature_build SET status='superseded' WHERE status='published'"
-            )
-            self.connection.execute(
-                """
-                UPDATE feature_build SET status='published', source_fingerprint=?,
-                    published_at_ms=?, error=NULL WHERE feature_version=?
-                """,
-                (source_fingerprint, self.clock_ms(), feature_version),
-            )
+                    ),
+                )
+            published = True
+            activate_artifact(self.connection, "feature", final)
+            timings["publication"] = round((time.perf_counter() - publication_started) * 1000)
+            return timings
+        finally:
+            if not published:
+                discard_artifact(artifact, temporary)
+                if final is not None and temporary is not None and not temporary.exists():
+                    final.unlink(missing_ok=True)
 
     @staticmethod
     def _feature_id(feature_version: str, entity_type: str, family: str, name: str) -> str:

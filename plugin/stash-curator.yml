@@ -114,6 +114,14 @@ tasks:
     description: Create a timestamped sidecar backup in the plugin data directory.
     execArgs:
       - backup
+  - name: Compact legacy Curator data
+    description: Delete rebuildable legacy rows after validating published generation artifacts.
+    execArgs:
+      - compact
+  - name: Vacuum compacted Curator data
+    description: Explicitly reclaim file space after legacy compaction completes.
+    execArgs:
+      - vacuum
   - name: Refresh Expand cache
     description: Refresh promising StashDB scenes and performers without affecting library sync.
     execArgs:
