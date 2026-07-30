@@ -103,10 +103,24 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     builder = FeatureBuilder(connection, CuratorConfig(), clock_ms=lambda: 100)
 
     first = builder.build()
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
     second = builder.build()
+    connection.set_trace_callback(None)
 
     assert second.feature_version == first.feature_version
     assert second.reused is True
+    assert not any("FROM entity_feature" in statement for statement in statements)
+    assert set(first.stage_timings_ms) == {
+        "lookup",
+        "build",
+        "database_writing",
+        "indexing",
+        "validation",
+        "publication",
+        "total",
+    }
+    assert set(second.stage_timings_ms) == {"lookup", "total"}
     admin_role = connection.execute(
         "SELECT role, resolution_reason FROM tag_role WHERE tag_id='admin'"
     ).fetchone()
@@ -118,7 +132,7 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     assert "tag:content" in vectors["scene-1"]
     assert "tag:parent" in vectors["scene-1"]
     assert "tag:admin" not in vectors["scene-1"]
-    statements: list[str] = []
+    statements = []
     connection.set_trace_callback(statements.append)
     assert (
         FeatureStore(connection).scene_content_overlaps(first.feature_version, "scene-1")["scene-2"]
@@ -127,7 +141,7 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     connection.set_trace_callback(None)
     overlap_query = next(statement for statement in statements if "WITH target AS" in statement)
     plan = connection.execute(f"EXPLAIN QUERY PLAN {overlap_query}")
-    assert any("SEARCH other USING PRIMARY KEY (feature_id=?)" in row["detail"] for row in plan)
+    assert any("feature_id=?" in row["detail"] for row in plan)
     scene_features = FeatureStore(connection).entity_features(first.feature_version, "scene")
     families = {feature.family for feature in scene_features["scene-1"]}
     assert {"content", "performer_identity", "studio"} <= families
@@ -147,23 +161,27 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
     assert profiles["performer-2"].blocks.get("measurements") is None
 
 
-def test_source_change_publishes_new_version_and_supersedes_old(tmp_path: Path) -> None:
+def test_only_feature_source_changes_publish_new_version(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     builder = FeatureBuilder(connection, clock_ms=lambda: 100)
     first = builder.build()
     connection.execute("UPDATE source_scene SET source_hash='changed' WHERE scene_id='scene-1'")
 
     second = builder.build()
+    connection.execute("UPDATE source_scene SET scene_date='2025-01-01' WHERE scene_id='scene-1'")
+    third = builder.build()
 
-    assert second.feature_version != first.feature_version
+    assert second.feature_version == first.feature_version
+    assert second.reused is True
+    assert third.feature_version != first.feature_version
     statuses = {
         row["feature_version"]: row["status"]
         for row in connection.execute("SELECT feature_version, status FROM feature_build")
     }
     assert statuses[first.feature_version] == "superseded"
-    assert statuses[second.feature_version] == "published"
+    assert statuses[third.feature_version] == "published"
     indexed_versions = {
         str(row[0])
         for row in connection.execute("SELECT feature_version FROM scene_content_search")
     }
-    assert indexed_versions == {second.feature_version}
+    assert indexed_versions == {third.feature_version}

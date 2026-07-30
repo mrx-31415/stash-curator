@@ -49,6 +49,15 @@ def test_failed_update_remains_pending(tmp_path: Path, monkeypatch: pytest.Monke
     assert coordinator.status().pending is True
     assert coordinator.status().last_error == "build failed"
 
+    coordinator.request("manual_retry")
+    assert coordinator.status().last_error == "build failed"
+    monkeypatch.setattr(
+        PreferenceModelBuilder,
+        "build",
+        lambda _builder: ModelBuildResult("model", "features", 1, 1, False, {"total": 1}),
+    )
+    assert len(coordinator.drain(force=True, max_builds=1)) == 1
+
 
 def test_coordinator_does_not_duplicate_an_active_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

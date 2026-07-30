@@ -1565,6 +1565,24 @@
         setBusy(false);
       }
     }
+    async function remove(item) {
+      if (!window.confirm(`Delete completed Curator backup ${item.id}?`)) return;
+      setBusy(true);
+      setError("");
+      try {
+        const result = await operation({
+          operation: "delete_backup",
+          backup_id: item.id,
+          confirmation: `DELETE ${item.id}`,
+        });
+        setMessage(`Deleted backup ${result.deleted}.`);
+        setData((current) => ({ ...current, items: result.items }));
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
     return React.createElement(
       "section",
       { className: "curator-backup-page" },
@@ -1586,7 +1604,7 @@
             React.createElement("td", null, new Date(item.created_at_ms).toLocaleString()),
             React.createElement("td", null, `${(item.size_bytes / 1048576).toFixed(1)} MB`),
             React.createElement("td", null, item.id),
-            React.createElement("td", null, React.createElement(Button, { size: "sm", variant: "danger", disabled: busy, onClick: () => restore(item) }, "Restore"))
+            React.createElement("td", null, React.createElement(Button, { size: "sm", disabled: busy, onClick: () => restore(item) }, "Restore"), " ", React.createElement(Button, { size: "sm", variant: "danger", disabled: busy, onClick: () => remove(item) }, "Delete"))
           )))
         )
       )
