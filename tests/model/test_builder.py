@@ -358,6 +358,39 @@ def test_model_compares_known_performer_pairs_once(
     assert counted.call_count == 3
 
 
+def test_model_ignores_negligible_performer_similarity_seeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    built = builder.build()
+    scene_features = builder_module.FeatureStore(connection).entity_features(
+        built.feature_version, "scene"
+    )
+    identities = {
+        feature.name.removeprefix("performer:"): feature
+        for features in scene_features.values()
+        for feature in features
+        if feature.family == "performer_identity"
+    }
+    affinities = {
+        identities[performer_id].feature_id: builder_module._Affinity(
+            identities[performer_id].feature_id, value, 1.0, 1.0, 1, {}
+        )
+        for performer_id, value in (("p1", 0.006), ("p2", 0.004))
+    }
+    counted = Mock(wraps=builder_module.performer_similarity)
+    monkeypatch.setattr(builder_module, "performer_similarity", counted)
+
+    builder._performer_similarity_scores(built.feature_version, scene_features, affinities)
+
+    compared = {
+        frozenset((call.args[0].performer_id, call.args[1].performer_id))
+        for call in counted.call_args_list
+    }
+    assert compared == {frozenset(("p1", "p2")), frozenset(("p1", "p3"))}
+
+
 def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(
