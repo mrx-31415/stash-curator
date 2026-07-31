@@ -45,6 +45,20 @@ ADVENTUROUS_PATTERN = (
     "discover",
     "adventure",
 )
+QUERIED_SCORE_FIRST_LANES = frozenset({"best_bets", "revisit", "discover"})
+SCORE_FIRST_RANKING_JSON = json.dumps(
+    {
+        "penalties": {
+            "performer": 0.0,
+            "studio": 0.0,
+            "content": 0.0,
+            "history": 0.0,
+            "live_cooldown": 0.0,
+        },
+        "bonuses": {"uncovered_content": 0.0},
+    },
+    separators=(",", ":"),
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +118,7 @@ class SlateBuilder:
         self._history_similarities: dict[str, float] = {}
         self._live_fit: dict[str, float] = {}
         self._live_cooldown: dict[str, float] = {}
+        self.materialize_timings_ms: dict[str, int] = {}
 
     def prepare(self, model_id: str, *, slate_size: int = 60) -> dict[str, int]:
         policy = LanePolicy(self.connection, self.config)
@@ -162,14 +177,19 @@ class SlateBuilder:
             )
             self.connection.execute("DELETE FROM model_lane_order WHERE model_id=?", (model_id,))
         completed = 0
-        total = (len(LANES) + 1) * 2
+        total = len(LANES) + 3
+        timings = {"score_first_ordering": 0, "varied_ordering": 0}
         for lane in (*LANES, "for_you"):
             lane_candidates = tuple(
                 candidate
                 for candidate in candidates
                 if lane == "for_you" or candidate.classification.lane == lane
             )
-            for ordering, varied in (("score_first", False), ("varied", True)):
+            orderings = [("varied", True)]
+            if lane not in QUERIED_SCORE_FIRST_LANES:
+                orderings.insert(0, ("score_first", False))
+            for ordering, varied in orderings:
+                ordering_started = time.perf_counter()
                 ordered = self._build_order(lane, lane_candidates, varied=varied)
                 with transaction(self.connection):
                     self.connection.executemany(
@@ -198,6 +218,9 @@ class SlateBuilder:
                             )
                         ),
                     )
+                timings[f"{ordering}_ordering"] += round(
+                    (time.perf_counter() - ordering_started) * 1000
+                )
                 completed += 1
                 if progress:
                     progress(completed, total)
@@ -208,6 +231,9 @@ class SlateBuilder:
                 """,
                 (model_id, time.time_ns() // 1_000_000),
             )
+        self.materialize_timings_ms = timings
+        for name, duration in timings.items():
+            record_duration("python", f"ranking.{name}", duration)
         return counts
 
     def _build_order(
@@ -631,6 +657,7 @@ class SlateBuilder:
         ).fetchone():
             return None
         ordering = "varied" if self.diversity_enabled else "score_first"
+        query_score_first = not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES
         direct_plays = {
             str(row["scene_id"]): int(row["last_played"])
             for row in self.connection.execute(
@@ -653,15 +680,28 @@ class SlateBuilder:
         offset = 0
         chunk_size = max(100, count)
         while len(selected_rows) < count:
-            rows = self.connection.execute(
-                """
-                SELECT position, scene_id, source_lane, utility, ranking_json
-                FROM model_lane_order
-                WHERE model_id=? AND lane=? AND ordering=?
-                ORDER BY position LIMIT ? OFFSET ?
-                """,
-                (model_id, lane, ordering, chunk_size, offset),
-            ).fetchall()
+            if query_score_first:
+                rows = self.connection.execute(
+                    """
+                    SELECT 0 AS position, scene_id, lane AS source_lane,
+                           lane_value AS utility, ? AS ranking_json
+                    FROM model_scene_lane
+                    WHERE model_id=? AND lane=?
+                    ORDER BY lane_value DESC, scene_id
+                    LIMIT ? OFFSET ?
+                    """,
+                    (SCORE_FIRST_RANKING_JSON, model_id, lane, chunk_size, offset),
+                ).fetchall()
+            else:
+                rows = self.connection.execute(
+                    """
+                    SELECT position, scene_id, source_lane, utility, ranking_json
+                    FROM model_lane_order
+                    WHERE model_id=? AND lane=? AND ordering=?
+                    ORDER BY position LIMIT ? OFFSET ?
+                    """,
+                    (model_id, lane, ordering, chunk_size, offset),
+                ).fetchall()
             if not rows:
                 break
             offset += len(rows)

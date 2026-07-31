@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from curator.api import CuratorAPI
+from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.similarity import SimilarityService
@@ -10,9 +11,16 @@ from curator.storage import connect_database
 from tests.model.test_builder import REFERENCE_MS, _database
 
 
-def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -> None:
+def test_slate_api_defers_explanations_until_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    monkeypatch.setattr(
+        ExplanationService,
+        "ensure",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("eager explanation")),
+    )
 
     result = CuratorAPI(connection).get_slate(
         "for_you", 3, impression_id="api-impression", now_ms=REFERENCE_MS
@@ -26,27 +34,22 @@ def test_slate_api_records_impression_and_bundles_explanations(tmp_path: Path) -
         "model_update",
         "ranking",
         "impression",
-        "explanations",
         "total",
     }
     assert len(result["items"]) == 3
-    assert all(item["explanation"] for item in result["items"])
-    explained = {
-        str(row[0])
-        for row in connection.execute(
-            "SELECT DISTINCT scene_id FROM model_scene_reason WHERE model_id=?",
+    assert all(
+        "explanation" not in item and "supporting_reasons" not in item for item in result["items"]
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM model_scene_reason WHERE model_id=?",
             (result["model_id"],),
-        )
-    }
-    scored = {
-        str(row[0])
-        for row in connection.execute(
-            "SELECT scene_id FROM model_scene_score WHERE model_id=?",
-            (result["model_id"],),
-        )
-    }
-    assert explained == scored
-    assert {str(item["scene_id"]) for item in result["items"]} <= explained
+        ).fetchone()[0]
+        == 0
+    )
+    explanation = CuratorAPI(connection).explanation(str(result["items"][0]["scene_id"]))
+    assert explanation["summary"]
+    assert explanation["supporting_reasons"]
     assert (
         connection.execute(
             "SELECT count(*) FROM impression WHERE impression_id='api-impression'"
