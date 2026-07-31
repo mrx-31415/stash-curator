@@ -6,6 +6,7 @@ from curator.api import CuratorAPI
 from curator.explanations import ExplanationService
 from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
+from curator.ranking import Slate, SlateBuilder
 from curator.similarity import SimilarityService
 from curator.storage import connect_database
 from tests.model.test_builder import REFERENCE_MS, _database
@@ -128,7 +129,7 @@ def test_slate_api_pages_one_ranked_prefix_with_global_positions(
     second = api.get_slate("for_you", 1, page=2, impression_id="page-2", now_ms=REFERENCE_MS)
 
     assert first["has_more"] is True
-    assert first["total"] >= len(first["items"])
+    assert first["total"] == whole["total"]
     assert first["ranking_timings_ms"]["materialized"] == 1
     assert [first["items"][0]["scene_id"], second["items"][0]["scene_id"]] == [
         item["scene_id"] for item in whole["items"]
@@ -145,6 +146,26 @@ def test_slate_api_pages_one_ranked_prefix_with_global_positions(
     assert (
         api.get_slate("for_you", 2, now_ms=REFERENCE_MS)["ranking_timings_ms"]["materialized"] == 1
     )
+
+
+def test_slate_api_materializes_only_through_requested_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    requested_counts: list[int] = []
+    recommend = SlateBuilder.recommend
+
+    def observed(self: SlateBuilder, lane: str, count: int, *, exploration: float = 0) -> Slate:
+        requested_counts.append(count)
+        return recommend(self, lane, count, exploration=exploration)
+
+    monkeypatch.setattr(SlateBuilder, "recommend", observed)
+
+    result = CuratorAPI(connection).get_slate("adventure", 1, page=2, now_ms=REFERENCE_MS)
+
+    assert result["items"]
+    assert requested_counts == [2]
 
 
 def test_scene_inspector_returns_complete_score_state(tmp_path: Path) -> None:

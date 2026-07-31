@@ -327,6 +327,22 @@ def test_queried_score_first_lanes_match_full_materialized_order(tmp_path: Path)
         assert [item.scene_id for item in slate.items] == scene_ids
 
 
+def test_available_count_matches_live_materialized_slate(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    for diversity_enabled in (True, False):
+        builder = SlateBuilder(connection, diversity_enabled=diversity_enabled)
+        builder.materialize("model", force=True)
+        for lane in ("for_you", "best_bets", "revisit", "discover", "adventure"):
+            slate = builder._load_materialized_slate("model", lane, 100)
+            assert slate is not None
+            assert builder.available_count("model", lane) == len(slate.items)
+            excluded = {slate.items[0].scene_id} if slate.items else set()
+            assert builder.available_count("model", lane, exclude_scene_ids=excluded) == len(
+                [item for item in slate.items if item.scene_id not in excluded]
+            )
+
+
 def test_new_slate_builder_reuses_persisted_lane_classifications(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
