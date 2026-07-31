@@ -62,6 +62,7 @@ class CuratorAPI:
         coordinator = ModelUpdateCoordinator(
             self.connection, debounce_ms=int(config["debounce_ms"])
         )
+        model_id = RecommendationModelStore(self.connection).current_model_id()
         # Model builds can take minutes on a large library. The plugin schedules them as
         # native background tasks; slate requests always use the last published model.
         timings["model_update"] = round((time.perf_counter() - started) * 1000)
@@ -70,16 +71,11 @@ class CuratorAPI:
         excluded = exclude_scene_ids or set()
         start = (page - 1) * count
         end = page * count
-        built = SlateBuilder(
-            self.connection, diversity_enabled=bool(config["diversity_enabled"])
-        ).recommend(lane, end + len(excluded), exploration=exploration)
-        available = tuple(item for item in built.items if item.scene_id not in excluded)
-        selected = available[start:end]
         if lane == "for_you":
             candidate_count = int(
                 self.connection.execute(
                     "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=?",
-                    (built.model_id,),
+                    (model_id,),
                 ).fetchone()[0]
             )
         else:
@@ -89,9 +85,18 @@ class CuratorAPI:
                     SELECT count(DISTINCT scene_id) FROM model_scene_lane
                     WHERE model_id=? AND lane=?
                     """,
-                    (built.model_id, lane),
+                    (model_id, lane),
                 ).fetchone()[0]
             )
+        built = SlateBuilder(
+            self.connection, diversity_enabled=bool(config["diversity_enabled"])
+        ).recommend(
+            lane,
+            max(end + len(excluded), candidate_count + len(excluded)),
+            exploration=exploration,
+        )
+        available = tuple(item for item in built.items if item.scene_id not in excluded)
+        selected = available[start:end]
         slate = Slate(
             built.model_id,
             built.lane,
@@ -130,8 +135,8 @@ class CuratorAPI:
             "lane": lane,
             "page": page,
             "page_size": count,
-            # ponytail: candidate count is an optimistic bound; exact lookahead reranks a card.
-            "has_more": len(available) >= end and candidate_count > end + len(excluded),
+            "total": len(available),
+            "has_more": len(available) > end,
             "items": items,
             "diagnostics": list(slate.diagnostics),
             "timings_ms": timings,
@@ -231,8 +236,12 @@ class CuratorAPI:
             table, id_column, label_column = "source_performer", "performer_id", "name"
         else:
             raise ValueError(f"unsupported similar entity type: {entity_type}")
-        available = tuple(item for item in results if item.entity_id not in excluded)
+        raw_results = results
+        available = tuple(item for item in raw_results if item.entity_id not in excluded)
         results = available[start:end]
+        total = max(
+            0, service.total_count - len(excluded & {item.entity_id for item in raw_results})
+        )
         labels = {
             str(row[id_column]): str(row[label_column] or "")
             for row in self.connection.execute(f"SELECT {id_column}, {label_column} FROM {table}")
@@ -266,7 +275,8 @@ class CuratorAPI:
             "impression_id": impression_id if entity_type == "scene" else None,
             "page": page,
             "page_size": count,
-            "has_more": len(available) > end,
+            "total": total,
+            "has_more": total > end,
             "timings_ms": service.timings_ms,
             "items": [
                 {
@@ -380,8 +390,8 @@ class CuratorAPI:
             count=count,
         )
 
-    def expand_shortlist(self) -> dict[str, object]:
-        return ExpandService(self.connection).shortlist_results()
+    def expand_shortlist(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
+        return ExpandService(self.connection).shortlist_results(page=page, count=page_size)
 
     def update_shortlist(self, entity_type: str, external_id: str, selected: bool) -> None:
         ExpandService(self.connection).shortlist(entity_type, external_id, selected)
