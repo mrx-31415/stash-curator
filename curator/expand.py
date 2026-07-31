@@ -291,6 +291,7 @@ class ExpandService:
             "performer_name": str(performer["name"] or performer_id),
             "stashdb_total": total_count,
             "fetched_count": len(items),
+            "total": len(items),
             "linked_count": linked_count,
             "not_linked_count": len(items) - linked_count,
             "truncated": truncated,
@@ -329,6 +330,7 @@ class ExpandService:
                 "ready": False,
                 "page": page,
                 "page_size": count,
+                "total": 0,
                 "has_more": False,
                 "items": [],
             }
@@ -409,6 +411,7 @@ class ExpandService:
             "expires_at_ms": int(cache["expires_at_ms"]),
             "page": page,
             "page_size": count,
+            "total": len(rows),
             "has_more": len(rows) > end,
             "items": rows[start:end],
         }
@@ -503,7 +506,12 @@ class ExpandService:
                 ),
             )
 
-    def shortlist_results(self) -> dict[str, object]:
+    def shortlist_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
+        if page < 1 or not 1 <= count <= 500:
+            raise ValueError("invalid shortlist page")
+        total = int(
+            self.connection.execute("SELECT count(*) FROM external_shortlist").fetchone()[0]
+        )
         items = [
             {
                 "entity_type": str(row["entity_type"]),
@@ -515,10 +523,18 @@ class ExpandService:
                 "added_at_ms": int(row["added_at_ms"]),
             }
             for row in self.connection.execute(
-                "SELECT * FROM external_shortlist ORDER BY added_at_ms DESC"
+                "SELECT * FROM external_shortlist ORDER BY added_at_ms DESC LIMIT ? OFFSET ?",
+                (count, (page - 1) * count),
             )
         ]
-        return {"ready": True, "items": items}
+        return {
+            "ready": True,
+            "page": page,
+            "page_size": count,
+            "total": total,
+            "has_more": page * count < total,
+            "items": items,
+        }
 
     def similar(
         self,
@@ -897,12 +913,14 @@ class ExpandService:
         )
         raw_items = result["items"]
         assert isinstance(raw_items, list)
-        result["items"] = [
+        filtered_items = [
             item
             for item in raw_items
             if not gender or self._payload_matches_gender(item["payload"], entity_type, gender)
         ][:count]
-        result["ready"] = bool(result["items"])
+        result["items"] = filtered_items
+        result["total"] = len(filtered_items)
+        result["ready"] = bool(filtered_items)
         timings["ranking"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "external_similar.filter_and_rank", timings["ranking"])
         timings["total"] = round((time.perf_counter() - started) * 1000)

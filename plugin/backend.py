@@ -633,7 +633,12 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 limit=PERFORMER_HUNT_LIMIT,
             )
         if operation == "get_shortlist":
-            return api.expand_shortlist()
+            config = api.config()["config"]
+            assert isinstance(config, dict)
+            return api.expand_shortlist(
+                page=int(args.get("page") or 1),
+                page_size=int(args.get("page_size") or config["page_size"]),
+            )
         if operation == "get_external_similar":
             config = api.config()["config"]
             assert isinstance(config, dict)

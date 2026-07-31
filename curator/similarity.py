@@ -58,6 +58,7 @@ class SimilarityService:
                 )
             }
         self.timings_ms = {"initialization": round((time.perf_counter() - started) * 1000)}
+        self.total_count = 0
         record_duration("python", "similarity.initialization", self.timings_ms["initialization"])
 
     def scenes(
@@ -202,6 +203,7 @@ class SimilarityService:
                 )
             )
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
+        self.total_count = len(ranked)
         selected = self._diverse_scenes(ranked, performers, count)
         self.timings_ms["ranking"] = round((time.perf_counter() - started) * 1000)
         record_duration("python", "similarity.filter_and_rank", self.timings_ms["ranking"])
@@ -278,7 +280,9 @@ class SimilarityService:
                     },
                 )
             )
-        return tuple(sorted(results, key=lambda item: (-item.rank_score, item.entity_id))[:count])
+        ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
+        self.total_count = len(ranked)
+        return tuple(ranked[:count])
 
     def _performer_genders(self) -> dict[str, str]:
         return {
