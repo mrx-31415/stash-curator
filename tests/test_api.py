@@ -128,6 +128,7 @@ def test_slate_api_pages_one_ranked_prefix_with_global_positions(
     second = api.get_slate("for_you", 1, page=2, impression_id="page-2", now_ms=REFERENCE_MS)
 
     assert first["has_more"] is True
+    assert first["total"] >= len(first["items"])
     assert first["ranking_timings_ms"]["materialized"] == 1
     assert [first["items"][0]["scene_id"], second["items"][0]["scene_id"]] == [
         item["scene_id"] for item in whole["items"]
@@ -374,6 +375,7 @@ def test_local_similarity_pages_one_ranked_prefix(tmp_path: Path) -> None:
     second = api.similar("scene", "old-good", 1, page=2)
 
     assert first["has_more"] is True
+    assert first["total"] == whole["total"]
     assert [first["items"][0]["entity_id"], second["items"][0]["entity_id"]] == [
         item["entity_id"] for item in whole["items"]
     ]

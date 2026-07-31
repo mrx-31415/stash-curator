@@ -302,6 +302,7 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
     first = service.results("scene", count=1)
     second = service.results("scene", page=2, count=1)
     assert first["has_more"] is True
+    assert first["total"] == 2
     assert [first["items"][0]["id"], second["items"][0]["id"]] == [
         "external-scene-1",
         "external-scene-2",
@@ -319,6 +320,27 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
         "external-scene-1",
         "external-scene-2",
     ]
+
+
+def test_shortlist_pages_report_exact_total(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        """
+        INSERT INTO external_shortlist(
+            entity_type, external_id, payload_json, score, sources_json, added_at_ms
+        ) VALUES ('scene', ?, '{}', 0, '[]', ?)
+        """,
+        [("first", 1), ("second", 2)],
+    )
+
+    service = ExpandService(connection)
+    first = service.shortlist_results(page=1, count=1)
+    second = service.shortlist_results(page=2, count=1)
+
+    assert first["total"] == 2
+    assert first["has_more"] is True
+    assert second["has_more"] is False
+    assert [item["id"] for item in first["items"] + second["items"]] == ["second", "first"]
 
 
 def test_performer_hunt_pages_classifies_exact_links_and_discloses_cap(tmp_path: Path) -> None:
@@ -341,6 +363,7 @@ def test_performer_hunt_pages_classifies_exact_links_and_discloses_cap(tmp_path:
         "hunt-old",
     ]
     assert result["stashdb_total"] == result["fetched_count"] == 3
+    assert result["total"] == result["fetched_count"]
     assert result["linked_count"] == 2
     assert result["not_linked_count"] == 1
     assert result["truncated"] is False

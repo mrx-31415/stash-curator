@@ -205,14 +205,50 @@
     similarityCache.clear();
   }
 
-  function Pager({ page, hasMore, loading, onPage, label }) {
-    if (page === 1 && !hasMore) return null;
+  function writePage(history, routeLocation, param, value, replace = false) {
+    const route = new URLSearchParams(routeLocation.search);
+    route.set(param, String(Math.max(1, Math.floor(Number(value) || 1))));
+    history[replace ? "replace" : "push"]({ pathname: routeLocation.pathname, search: route.toString() });
+  }
+
+  function useUrlPage(param) {
+    const history = useHistory();
+    const routeLocation = useLocation();
+    const raw = new URLSearchParams(routeLocation.search).get(param);
+    const parsed = Number(raw);
+    const page = Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+    React.useEffect(() => {
+      if (raw !== null && parsed !== page) writePage(history, routeLocation, param, page, true);
+    }, [param, raw, page, routeLocation.pathname, routeLocation.search]);
+    return [page, (value, options = {}) => {
+      const next = typeof value === "function" ? value(page) : value;
+      if (Math.max(1, Math.floor(Number(next) || 1)) !== page || options.replace) {
+        writePage(history, routeLocation, param, next, options.replace);
+      }
+    }];
+  }
+
+  function pagerPages(page, totalPages) {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+    const values = [1, totalPages, page - 1, page, page + 1].filter((value) => value >= 1 && value <= totalPages);
+    const pages = [...new Set(values)].sort((left, right) => left - right);
+    return pages.flatMap((value, index) => index && value - pages[index - 1] > 1 ? [null, value] : [value]);
+  }
+
+  function Pager({ page, total, pageSize, hasMore, loading, onPage, label }) {
+    const totalPages = total === undefined
+      ? Math.max(page, page + (hasMore ? 1 : 0))
+      : Math.max(1, Math.ceil(total / Math.max(1, pageSize || 1)));
+    if (page === 1 && totalPages === 1) return null;
     return React.createElement(
       "nav",
       { className: "curator-pager", "aria-label": label },
-      React.createElement(Button, { size: "sm", disabled: loading || page === 1, onClick: () => onPage(page - 1) }, "Previous"),
-      React.createElement("span", null, `Page ${page}`),
-      React.createElement(Button, { size: "sm", disabled: loading || !hasMore, onClick: () => onPage(page + 1) }, "Next")
+      React.createElement(Button, { size: "sm", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
+      pagerPages(page, totalPages).map((value, index) => value === null
+        ? React.createElement("span", { key: `ellipsis-${index}`, className: "curator-pager-ellipsis", "aria-hidden": "true" }, "…")
+        : React.createElement(Button, { key: value, size: "sm", variant: value === page ? "primary" : "secondary", disabled: loading || value === page, onClick: () => onPage(value), "aria-label": `Page ${value}`, "aria-current": value === page ? "page" : undefined }, value)),
+      React.createElement("span", { className: "curator-pager-summary" }, `Page ${page} of ${totalPages}`),
+      React.createElement(Button, { size: "sm", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
     );
   }
 
@@ -785,7 +821,7 @@
   }
 
   function FeedbackHistoryPanel() {
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage("page_feedback");
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
@@ -800,6 +836,12 @@
       );
       return () => { active = false; };
     }, [page, version]);
+    React.useEffect(() => {
+      if (data?.page === page) {
+        const last = Math.max(1, Math.ceil(data.total / data.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, page]);
     const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
     const scenesQuery = GQL.useFindScenesQuery({
       variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
@@ -822,7 +864,7 @@
           React.createElement("tbody", null, data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) })))
         )
       ),
-      data && React.createElement(Pager, { page, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
     );
   }
 
@@ -987,7 +1029,7 @@
   }
 
   function RecommendationHistoryPanel() {
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage("page_history");
     const [laneFilter, setLaneFilter] = React.useState("");
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
@@ -1002,6 +1044,12 @@
       );
       return () => { active = false; };
     }, [page, laneFilter]);
+    React.useEffect(() => {
+      if (data?.page === page) {
+        const last = Math.max(1, Math.ceil(data.total / data.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, page]);
     const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
     const scenesQuery = GQL.useFindScenesQuery({
       variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
@@ -1045,7 +1093,7 @@
           )
         )
       )),
-      data && React.createElement(Pager, { page, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Recommendation history pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Recommendation history pages" })
     );
   }
 
@@ -1108,7 +1156,7 @@
     const [result, setResult] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(false);
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage("page_similar");
     const [pageSize, setPageSize] = React.useState(20);
     const [excludedIds, setExcludedIds] = React.useState([]);
     const [gender, setGender] = React.useState(initialFilters.gender ?? "FEMALE");
@@ -1188,7 +1236,7 @@
       load(entity.id, entity.title || entity.name || `#${entity.id}`, entityType, source, gender, 1, []);
     }
     React.useEffect(() => {
-      if (initialId) load(initialId, initialLabel, initialType, "library");
+      if (initialId) load(initialId, initialLabel, initialType, "library", gender, page);
     }, []);
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
@@ -1228,6 +1276,12 @@
     function showFollowUp(followUp) {
       setFollowUps((current) => [...current.filter((item) => item.scene_id !== followUp.scene_id), followUp]);
     }
+    React.useEffect(() => {
+      if (!result) return;
+      const total = source === "stashdb" ? externalItems.length : result.total;
+      const last = Math.max(1, Math.ceil(total / (source === "stashdb" ? pageSize : result.page_size)));
+      if (page > last) setPage(last, { replace: true });
+    }, [result, source, externalItems.length, page, pageSize]);
     async function shortlistExternal(item, kind) {
       try {
         await operation({ operation: "update_shortlist", entity_type: kind, external_id: item.id, selected: !item.shortlisted });
@@ -1299,7 +1353,7 @@
         { className: "curator-grid curator-external-grid" },
         items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (id) => location.assign(`/plugins/stash-curator?view=expand&performer=${id}`), onWhisparr: sendWhisparr, whisparrEnabled }))
       ),
-      result && React.createElement(Pager, { page, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
+      result && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
   }
 
@@ -1307,7 +1361,7 @@
     const { SceneCard } = Api.components;
     const [view, setView] = React.useState("candidates");
     const [aggressiveness, setAggressiveness] = React.useState(0);
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage(`page_prune_${view}`);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
@@ -1321,6 +1375,12 @@
       );
       return () => { active = false; };
     }, [view, aggressiveness, page, version]);
+    React.useEffect(() => {
+      if (data?.page === page) {
+        const last = Math.max(1, Math.ceil(data.total / data.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, page]);
     const ids = data?.items.map((item) => item.scene_id) || [];
     const scenesQuery = GQL.useFindScenesQuery({
       variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
@@ -1353,7 +1413,7 @@
         React.createElement(
           "div",
           { className: "btn-group", role: "group", "aria-label": "Prune view" },
-          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => (setView(value), setPage(1)) }, label))
+          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => setView(value) }, label))
         ),
         view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => (setAggressiveness(Number(event.target.value)), setPage(1)), "aria-label": "Prune prediction aggressiveness" })),
         view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
@@ -1377,7 +1437,7 @@
           );
         })
       ),
-      data && data.total > data.page_size && React.createElement("nav", { className: "curator-pager", "aria-label": "Prune pages" }, React.createElement(Button, { size: "sm", disabled: page === 1, onClick: () => setPage((value) => value - 1) }, "Previous"), React.createElement("span", null, `Page ${page} of ${Math.ceil(data.total / data.page_size)}`), React.createElement(Button, { size: "sm", disabled: page * data.page_size >= data.total, onClick: () => setPage((value) => value + 1) }, "Next"))
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: setPage, label: "Prune pages" })
     );
   }
 
@@ -1398,7 +1458,7 @@
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage(entityType === "hunt" ? "page_hunt" : `page_expand_${entityType}`);
     const [error, setError] = React.useState("");
     const [message, setMessage] = React.useState("");
     const [version, setVersion] = React.useState(0);
@@ -1418,7 +1478,7 @@
       setLoading(true);
       setError("");
       const request = entityType === "shortlist"
-        ? { operation: "get_shortlist" }
+        ? { operation: "get_shortlist", page }
         : entityType === "hunt"
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id) }
           : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
@@ -1462,7 +1522,6 @@
       setHuntPerformer(values.at(-1) || null);
     }
     function showPerformerScenes(id) {
-      setPage(1);
       setEntityType("scene");
       setPerformerId(id);
     }
@@ -1501,14 +1560,23 @@
       ? huntItems.slice((page - 1) * pageSize, page * pageSize)
       : data?.items || [];
     const huntHasMore = entityType === "hunt" && page * pageSize < huntItems.length;
+    React.useEffect(() => {
+      if (!data?.ready) return;
+      const total = entityType === "hunt" ? huntItems.length : data.total;
+      const size = entityType === "hunt" ? pageSize : data.page_size;
+      if (entityType === "hunt" || data.page === page) {
+        const last = Math.max(1, Math.ceil(total / Math.max(1, size)));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, entityType, huntItems.length, page, pageSize]);
     return React.createElement(
       "section",
       { className: huntOnly ? "curator-hunt" : "curator-expand" },
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
-        !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
-        !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setPage(1), setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
+        !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
+        !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => (setPage(1), setSort(event.target.value)), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => (setPage(1), setPerformerId(null)) }, "Clear performer filter"),
@@ -1539,7 +1607,7 @@
           return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
         })
       ),
-      entityType !== "shortlist" && data?.ready && React.createElement(Pager, { page, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: setPage, label: entityType === "hunt" ? "Performer Hunt pages" : "Expand pages" })
+      data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: setPage, label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" })
     );
   }
 
@@ -1890,7 +1958,7 @@
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
-    const [page, setPage] = React.useState(1);
+    const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
@@ -1939,6 +2007,12 @@
         active = false;
       };
     }, [lane, page, refreshKey, configReady]);
+    React.useEffect(() => {
+      if (slate?.page === page) {
+        const last = Math.max(1, Math.ceil(slate.total / slate.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [slate, page]);
 
     const laneOption = NAV_ITEMS.find((option) => option.value === lane);
 
@@ -1974,7 +2048,6 @@
     function openView(view) {
       if (view === lane) return;
       setFollowUps([]);
-      setPage(1);
       route.set("view", view);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
@@ -2101,7 +2174,7 @@
             { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
             slate.items.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
           ),
-          React.createElement(Pager, { page, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
+          React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )
     );
   }

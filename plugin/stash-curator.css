@@ -791,6 +791,10 @@
   margin-top: 0.8rem;
 }
 
+.curator-pager-ellipsis {
+  padding: 0.35rem 0.15rem;
+}
+
 .curator-prune-toolbar {
   margin: 0.8rem 0;
 }

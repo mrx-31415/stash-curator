@@ -441,7 +441,21 @@ def test_curator_prefetches_only_the_intended_lane() -> None:
 def test_plugin_pages_generated_results_without_repeating_external_searches() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
 
-    assert "function Pager({ page, hasMore, loading, onPage, label })" in source
+    assert "function Pager({ page, total, pageSize, hasMore, loading, onPage, label })" in source
+    assert "function useUrlPage(param)" in source
+    assert '"aria-current": value === page ? "page" : undefined' in source
+    assert "pagerPages(page, totalPages)" in source
+    for param in (
+        "page_for_you",
+        "page_feedback",
+        "page_history",
+        "page_similar",
+        "page_prune_${view}",
+        "page_expand_${entityType}",
+        "page_hunt",
+    ):
+        assert param in source
+    assert "setPage(last, { replace: true })" in source
     assert "return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`" in source
     assert "externalItems.slice((page - 1) * pageSize, page * pageSize)" in source
     assert 'operation: "get_expand", page' in source
