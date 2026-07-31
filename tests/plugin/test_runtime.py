@@ -514,6 +514,9 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'className: "image-thumbnail"' in source
     assert 'className: "tag-item tag-link badge badge-secondary"' in source
     assert 'React.createElement("summary", null, "Why this?")' in source
+    assert '{ className: "curator-evidence", onToggle: explain }' in source
+    assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
+    assert '"Explaining…"' in source
     assert 'React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`)' in source
     assert 'React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`)' in source
     assert (

@@ -46,7 +46,8 @@ therefore be varied without pretending your preferences changed.
 
 ## Why the explanation is trustworthy
 
-Every explanation is planned from stored reason codes and evidence. Deterministic
-prose combines the strongest facts, while the expanded score tree exposes the
-underlying contributions, confidence, timing changes, exploration reason, and final
-lane choice. The wording may vary; the evidence cannot invent new facts.
+Every explanation is planned from reason codes derived from published model evidence.
+Curator derives it when you expand **Why this?**, keeping the recommendation page
+fast. Deterministic prose combines the strongest facts, while the expanded score tree
+exposes the underlying contributions, confidence, timing changes, exploration reason,
+and final lane choice. The wording may vary; the evidence cannot invent new facts.

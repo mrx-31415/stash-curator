@@ -65,6 +65,17 @@ def test_reason_graph_is_versioned_truthful_and_deterministic(tmp_path: Path) ->
     assert explanation.selected_reasons == (reason,)
 
 
+def test_derived_reasons_match_persisted_reasons(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    _add_explainable_content(connection)
+    store = ReasonGraphStore(connection)
+
+    derived = store.derive("model", {"a-best", "d-revisit"})
+    store.build("model", derived)
+
+    assert derived == {scene_id: store.reasons("model", scene_id) for scene_id in sorted(derived)}
+
+
 def test_scene_without_specific_evidence_gets_factual_fallback(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(

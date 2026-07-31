@@ -110,29 +110,7 @@ class CuratorAPI:
         InteractionStore(self.connection).record_impression(impression_id, slate, now_ms, context)
         timings["impression"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "slate.impression", timings["impression"])
-        stage_started = time.perf_counter()
-        explanations = ExplanationService(self.connection)
-        explanations.ensure(slate.model_id, {item.scene_id for item in slate.items})
-        items = []
-        for item in slate.items:
-            explanation = explanations.explain_recommendation(item)
-            payload = asdict(item)
-            payload["impression_id"] = impression_id
-            payload["explanation"] = explanation.summary
-            payload["supporting_reasons"] = [
-                {
-                    "code": reason.code,
-                    "direction": reason.direction,
-                    "magnitude": reason.magnitude,
-                    "subject_type": reason.subject_type,
-                    "subject_id": reason.subject_id,
-                    "detail": reason.detail,
-                }
-                for reason in explanation.selected_reasons
-            ]
-            items.append(payload)
-        timings["explanations"] = round((time.perf_counter() - stage_started) * 1000)
-        record_duration("python", "slate.explanations", timings["explanations"])
+        items = [{**asdict(item), "impression_id": impression_id} for item in slate.items]
         timings["total"] = round((time.perf_counter() - started) * 1000)
         return {
             "schema_version": API_SCHEMA_VERSION,
@@ -311,6 +289,7 @@ class CuratorAPI:
             "scene_id": scene_id,
             "summary": explanation.summary,
             "reasons": [asdict(reason) for reason in explanation.all_reasons],
+            "supporting_reasons": [asdict(reason) for reason in explanation.selected_reasons],
         }
 
     def recommendation_history(

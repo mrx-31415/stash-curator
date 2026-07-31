@@ -276,14 +276,55 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
     LanePolicy(connection).classify("model")
     progress: list[tuple[int, int]] = []
 
-    counts = SlateBuilder(connection).materialize(
+    builder = SlateBuilder(connection)
+    counts = builder.materialize(
         "model",
         force=True,
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
     assert set(counts) == {"best_bets", "revisit", "discover", "adventure"}
-    assert progress == [(position, 10) for position in range(1, 11)]
+    assert progress == [(position, 7) for position in range(1, 8)]
+    assert set(builder.materialize_timings_ms) == {
+        "score_first_ordering",
+        "varied_ordering",
+    }
+    assert {
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT lane FROM model_lane_order
+            WHERE model_id='model' AND ordering='score_first'
+            """
+        )
+    } == {"adventure", "for_you"}
+
+
+def test_queried_score_first_lanes_match_full_materialized_order(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    classifications = LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection, diversity_enabled=False)
+    candidates = builder._candidates("model", classifications)
+    expected = {
+        lane: [
+            candidate.classification.scene_id
+            for candidate, *_rest in builder._build_order(
+                lane,
+                tuple(
+                    candidate for candidate in candidates if candidate.classification.lane == lane
+                ),
+                varied=False,
+            )
+        ]
+        for lane in ("best_bets", "revisit", "discover")
+    }
+
+    builder.materialize("model", force=True)
+
+    for lane, scene_ids in expected.items():
+        slate = builder._load_materialized_slate("model", lane, len(scene_ids))
+        assert slate is not None
+        assert [item.scene_id for item in slate.items] == scene_ids
 
 
 def test_new_slate_builder_reuses_persisted_lane_classifications(

@@ -193,7 +193,7 @@ def create_indexes(connection: sqlite3.Connection, kind: str) -> None:
             CREATE INDEX model_scene_score_prune_idx
             ON model_scene_score(model_id, appeal, confidence, scene_id);
             CREATE INDEX model_scene_lane_value_idx
-            ON model_scene_lane(model_id, lane, lane_value DESC);
+            ON model_scene_lane(model_id, lane, lane_value DESC, scene_id);
             CREATE INDEX model_scene_lane_appeal_idx
             ON model_scene_lane(model_id, scene_id, appeal);
             """

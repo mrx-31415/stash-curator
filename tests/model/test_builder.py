@@ -153,6 +153,11 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
         "similarity",
         "scoring",
         "database_writing",
+        "lane_classification",
+        "score_first_ordering",
+        "varied_ordering",
+        "reason_generation",
+        "sqlite_index_creation",
         "indexing",
         "validation",
         "publication",
@@ -190,6 +195,12 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
     assert connection.execute(
         "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (first.model_id,)
     ).fetchone()
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM model_scene_reason WHERE model_id=?", (first.model_id,)
+        ).fetchone()[0]
+        == 0
+    )
     assert {
         str(row[0])
         for row in connection.execute(
@@ -197,6 +208,16 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             (first.model_id,),
         )
     } == {"score_first", "varied"}
+    assert {
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT lane FROM model_lane_order
+            WHERE model_id=? AND ordering='score_first'
+            """,
+            (first.model_id,),
+        )
+    } == {"adventure", "for_you"}
     assert [
         str(row[0])
         for row in connection.execute(
@@ -519,6 +540,21 @@ def test_model_build_refreshes_feature_version_after_feature_config_change(
     ).build()
 
     assert second.feature_version != first.feature_version
+    assert second.model_id != first.model_id
+
+
+def test_model_build_version_invalidates_published_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    monkeypatch.setattr(
+        builder_module, "MODEL_BUILD_VERSION", builder_module.MODEL_BUILD_VERSION + 1
+    )
+
+    second = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    assert second.reused is False
     assert second.model_id != first.model_id
 
 

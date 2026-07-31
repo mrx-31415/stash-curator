@@ -829,6 +829,13 @@
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
+    const [explanation, setExplanation] = React.useState(
+      item.explanation
+        ? { summary: item.explanation, supporting_reasons: item.supporting_reasons || [] }
+        : null
+    );
+    const [explanationLoading, setExplanationLoading] = React.useState(false);
+    const [explanationError, setExplanationError] = React.useState("");
     React.useEffect(() => {
       let timer;
       let qualified = false;
@@ -873,6 +880,20 @@
         })
       );
     }
+    async function explain(event) {
+      if (!event.currentTarget.open || explanation || explanationLoading) return;
+      setExplanationLoading(true);
+      setExplanationError("");
+      try {
+        setExplanation(
+          await operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)
+        );
+      } catch (failure) {
+        setExplanationError(failure.message);
+      } finally {
+        setExplanationLoading(false);
+      }
+    }
     return React.createElement(
       "article",
       { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
@@ -892,13 +913,15 @@
           { className: "curator-card-details" },
           React.createElement(
             "details",
-            { className: "curator-evidence" },
+            { className: "curator-evidence", onToggle: explain },
             React.createElement("summary", null, "Why this?"),
-            React.createElement("p", { className: "curator-explanation" }, item.explanation),
-            React.createElement(
+            explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
+            explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
+            explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
+            explanation && React.createElement(
               "ul",
               null,
-              item.supporting_reasons.map((reason, index) =>
+              explanation.supporting_reasons.map((reason, index) =>
                 React.createElement(
                   "li",
                   { key: `${reason.code}-${index}` },
@@ -2076,7 +2099,7 @@
           React.createElement(
             "section",
             { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
-            slate.items.map((item) => React.createElement(RecommendationCard, { key: item.scene_id, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+            slate.items.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
           ),
           React.createElement(Pager, { page, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )
