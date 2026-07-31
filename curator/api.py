@@ -71,31 +71,37 @@ class CuratorAPI:
         excluded = exclude_scene_ids or set()
         start = (page - 1) * count
         end = page * count
-        if lane == "for_you":
-            candidate_count = int(
-                self.connection.execute(
-                    "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=?",
-                    (model_id,),
-                ).fetchone()[0]
-            )
-        else:
-            candidate_count = int(
-                self.connection.execute(
-                    """
-                    SELECT count(DISTINCT scene_id) FROM model_scene_lane
-                    WHERE model_id=? AND lane=?
-                    """,
-                    (model_id, lane),
-                ).fetchone()[0]
-            )
-        built = SlateBuilder(
-            self.connection, diversity_enabled=bool(config["diversity_enabled"])
-        ).recommend(
-            lane,
-            max(end + len(excluded), candidate_count + len(excluded)),
-            exploration=exploration,
+        builder = SlateBuilder(self.connection, diversity_enabled=bool(config["diversity_enabled"]))
+        total = (
+            builder.available_count(model_id, lane, exclude_scene_ids=excluded)
+            if exploration == 0
+            else None
         )
+        if total is None:
+            if lane == "for_you":
+                candidate_count = int(
+                    self.connection.execute(
+                        "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=?",
+                        (model_id,),
+                    ).fetchone()[0]
+                )
+            else:
+                candidate_count = int(
+                    self.connection.execute(
+                        """
+                        SELECT count(DISTINCT scene_id) FROM model_scene_lane
+                        WHERE model_id=? AND lane=?
+                        """,
+                        (model_id, lane),
+                    ).fetchone()[0]
+                )
+            request_count = max(end + len(excluded), candidate_count + len(excluded))
+        else:
+            request_count = end + len(excluded)
+        built = builder.recommend(lane, request_count, exploration=exploration)
         available = tuple(item for item in built.items if item.scene_id not in excluded)
+        if total is None:
+            total = len(available)
         selected = available[start:end]
         slate = Slate(
             built.model_id,
@@ -135,8 +141,8 @@ class CuratorAPI:
             "lane": lane,
             "page": page,
             "page_size": count,
-            "total": len(available),
-            "has_more": len(available) > end,
+            "total": total,
+            "has_more": total > end,
             "items": items,
             "diagnostics": list(slate.diagnostics),
             "timings_ms": timings,
