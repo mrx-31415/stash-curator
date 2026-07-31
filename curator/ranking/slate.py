@@ -658,24 +658,8 @@ class SlateBuilder:
             return None
         ordering = "varied" if self.diversity_enabled else "score_first"
         query_score_first = not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES
-        direct_plays = {
-            str(row["scene_id"]): int(row["last_played"])
-            for row in self.connection.execute(
-                """
-                SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
-                WHERE provenance='direct_player' GROUP BY scene_id
-                """
-            )
-        }
         now_ms = time.time_ns() // 1_000_000
-        unrecovered_direct_plays = {
-            scene_id
-            for scene_id, played_at_ms in direct_plays.items()
-            if scene_recovery(
-                max(0.0, (now_ms - played_at_ms) / 86_400_000), config=self.config.model
-            )
-            < 0.10
-        }
+        direct_plays, unrecovered_direct_plays = self._direct_play_filters(now_ms)
         selected_rows: list[sqlite3.Row] = []
         offset = 0
         chunk_size = max(100, count)
@@ -712,13 +696,8 @@ class SlateBuilder:
             selected_rows.extend(
                 row
                 for row in rows
-                if bool(eligibility.get(str(row["scene_id"]), {}).get("eligible", False))
-                and not (
-                    str(row["source_lane"]) == "best_bets" and str(row["scene_id"]) in direct_plays
-                )
-                and not (
-                    str(row["source_lane"]) == "revisit"
-                    and str(row["scene_id"]) in unrecovered_direct_plays
+                if self._materialized_row_is_eligible(
+                    row, eligibility, direct_plays, unrecovered_direct_plays
                 )
             )
             if len(rows) < chunk_size:
@@ -796,6 +775,92 @@ class SlateBuilder:
             tuple(items),
             (),
             {"materialized": 1, "selection": elapsed, "total": elapsed},
+        )
+
+    def available_count(
+        self,
+        model_id: str | None,
+        lane: str,
+        *,
+        exclude_scene_ids: set[str] | None = None,
+    ) -> int | None:
+        """Count a materialized lane without hydrating recommendation items."""
+        started = time.perf_counter()
+        if model_id is None:
+            return None
+        if not self.connection.execute(
+            "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+        ).fetchone():
+            return None
+        ordering = "varied" if self.diversity_enabled else "score_first"
+        query_score_first = not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES
+        if query_score_first:
+            rows = self.connection.execute(
+                """
+                SELECT scene_id, lane AS source_lane
+                FROM model_scene_lane
+                WHERE model_id=? AND lane=?
+                """,
+                (model_id, lane),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT scene_id, source_lane
+                FROM model_lane_order
+                WHERE model_id=? AND lane=? AND ordering=?
+                """,
+                (model_id, lane, ordering),
+            ).fetchall()
+        excluded = exclude_scene_ids or set()
+        rows = [row for row in rows if str(row["scene_id"]) not in excluded]
+        scene_ids = {str(row["scene_id"]) for row in rows}
+        now_ms = time.time_ns() // 1_000_000
+        eligibility = scene_eligibility(self.connection, now_ms, self.config, scene_ids=scene_ids)
+        direct_plays, unrecovered_direct_plays = self._direct_play_filters(now_ms)
+        total = sum(
+            self._materialized_row_is_eligible(
+                row, eligibility, direct_plays, unrecovered_direct_plays
+            )
+            for row in rows
+        )
+        elapsed = round((time.perf_counter() - started) * 1_000)
+        record_duration("python", "ranking.available_count", elapsed)
+        return total
+
+    def _direct_play_filters(self, now_ms: int) -> tuple[dict[str, int], set[str]]:
+        direct_plays = {
+            str(row["scene_id"]): int(row["last_played"])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
+                WHERE provenance='direct_player' GROUP BY scene_id
+                """
+            )
+        }
+        unrecovered_direct_plays = {
+            scene_id
+            for scene_id, played_at_ms in direct_plays.items()
+            if scene_recovery(
+                max(0.0, (now_ms - played_at_ms) / 86_400_000), config=self.config.model
+            )
+            < 0.10
+        }
+        return direct_plays, unrecovered_direct_plays
+
+    @staticmethod
+    def _materialized_row_is_eligible(
+        row: sqlite3.Row,
+        eligibility: dict[str, dict[str, object]],
+        direct_plays: dict[str, int],
+        unrecovered_direct_plays: set[str],
+    ) -> bool:
+        scene_id = str(row["scene_id"])
+        source_lane = str(row["source_lane"])
+        return (
+            bool(eligibility.get(scene_id, {}).get("eligible", False))
+            and not (source_lane == "best_bets" and scene_id in direct_plays)
+            and not (source_lane == "revisit" and scene_id in unrecovered_direct_plays)
         )
 
     def _save_prepared_slate(self, slate: Slate) -> None:
