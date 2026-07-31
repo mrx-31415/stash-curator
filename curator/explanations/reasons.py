@@ -45,20 +45,7 @@ class ReasonGraphStore:
 
     def build(self, model_id: str, scene_ids: Collection[str] | None = None) -> None:
         selected = set(map(str, scene_ids)) if scene_ids is not None else None
-        scores = RecommendationModelStore(self.connection).scores(model_id, selected)
-        row = self.connection.execute(
-            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
-        ).fetchone()
-        if row is None:
-            raise RuntimeError(f"unknown model: {model_id}")
-        feature_version = str(row[0])
-        self._prepare_neighbor_context(
-            model_id, feature_version, scores, targeted=selected is not None
-        )
-        graphs = {
-            scene_id: self._scene_reasons(score, feature_version)
-            for scene_id, score in scores.items()
-        }
+        graphs = self._derive(model_id, selected)
         with transaction(self.connection):
             if selected is None:
                 self.connection.execute(
@@ -98,6 +85,25 @@ class ReasonGraphStore:
                     for index, reason in enumerate(reasons)
                 ),
             )
+
+    def derive(self, model_id: str, scene_ids: Collection[str]) -> dict[str, tuple[Reason, ...]]:
+        return self._derive(model_id, set(map(str, scene_ids)))
+
+    def _derive(self, model_id: str, selected: set[str] | None) -> dict[str, tuple[Reason, ...]]:
+        scores = RecommendationModelStore(self.connection).scores(model_id, selected)
+        row = self.connection.execute(
+            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"unknown model: {model_id}")
+        feature_version = str(row[0])
+        self._prepare_neighbor_context(
+            model_id, feature_version, scores, targeted=selected is not None
+        )
+        return {
+            scene_id: self._scene_reasons(score, feature_version)
+            for scene_id, score in scores.items()
+        }
 
     def ensure(self, model_id: str, scene_ids: Collection[str] | None = None) -> None:
         if artifact_attached(self.connection, "model"):
