@@ -49,6 +49,7 @@ class ReportGenerator:
         slate_builder = SlateBuilder(self.connection)
         for lane in lanes:
             slate = slate_builder.recommend(lane, count)
+            explanation_service.ensure(model_id, {item.scene_id for item in slate.items})
             lane_counts[lane] = len(slate.items)
             cards = []
             for item in slate.items:

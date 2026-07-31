@@ -28,39 +28,53 @@ class ExplanationService:
         self.planner = Microplanner()
         self.catalog = RealizationCatalog.load()
         self._ensured: set[str] = set()
+        self._derived: dict[tuple[str, str], tuple[Reason, ...]] = {}
 
     def ensure(self, model_id: str, scene_ids: Collection[str]) -> None:
-        self.store.ensure(model_id, scene_ids)
-        self._ensured.update(map(str, scene_ids))
+        selected = set(map(str, scene_ids))
+        if artifact_attached(self.connection, "model"):
+            missing = set()
+            for scene_id in selected:
+                if reasons := self.store.reasons(model_id, scene_id):
+                    self._derived[(model_id, scene_id)] = reasons
+                else:
+                    missing.add(scene_id)
+            derived = self.store.derive(model_id, missing)
+            self._derived.update(
+                ((model_id, scene_id), derived.get(scene_id, ())) for scene_id in missing
+            )
+        else:
+            self.store.ensure(model_id, selected)
+        self._ensured.update(selected)
 
     def explain_scene(self, model_id: str, scene_id: str) -> Explanation:
-        reasons = self.store.reasons(model_id, scene_id)
-        if (
-            not reasons
-            and scene_id not in self._ensured
-            and not artifact_attached(self.connection, "model")
-        ):
-            self.store.build(model_id, {scene_id})
-            self._ensured.add(scene_id)
-            reasons = self.store.reasons(model_id, scene_id)
+        reasons = self._reasons(model_id, scene_id)
         return self._render(reasons, f"{model_id}\0{scene_id}")
 
     def explain_recommendation(self, item: RecommendationItem) -> Explanation:
         model_id = self._current_model_id()
-        base = self.store.reasons(model_id, item.scene_id)
-        if (
-            not base
-            and item.scene_id not in self._ensured
-            and not artifact_attached(self.connection, "model")
-        ):
-            self.store.build(model_id, {item.scene_id})
-            self._ensured.add(item.scene_id)
-            base = self.store.reasons(model_id, item.scene_id)
+        base = self._reasons(model_id, item.scene_id)
         reasons = (*base, *self._ranking_reasons(model_id, item))
         return self._render(
             reasons,
             f"{model_id}\0{item.scene_id}\0{item.lane}\0{item.source_lane}\0{item.position}",
         )
+
+    def _reasons(self, model_id: str, scene_id: str) -> tuple[Reason, ...]:
+        key = (model_id, scene_id)
+        if key in self._derived:
+            return self._derived[key]
+        reasons = self.store.reasons(model_id, scene_id)
+        if reasons:
+            return reasons
+        if artifact_attached(self.connection, "model"):
+            derived = self.store.derive(model_id, {scene_id})
+            self._derived[key] = derived.get(scene_id, ())
+        elif scene_id not in self._ensured:
+            self.store.build(model_id, {scene_id})
+            self._ensured.add(scene_id)
+            return self.store.reasons(model_id, scene_id)
+        return self._derived.get(key, ())
 
     def _current_model_id(self) -> str:
         model_id = RecommendationModelStore(self.connection).current_model_id()

@@ -39,6 +39,7 @@ from curator.storage.retention import prune_snapshots
 # ponytail: 0.005 removed 38% of measured seeds; make configurable only if
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
+MODEL_BUILD_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ class PreferenceModelBuilder:
             (
                 f"{feature_version}\0{evidence_fingerprint}\0{self._source_fingerprint()}\0"
                 f"{self.config.canonical_json()}\0{PERFORMER_SIMILARITY_AFFINITY_CUTOFF}\0"
-                f"{reference_at_ms}"
+                f"{MODEL_BUILD_VERSION}\0{reference_at_ms}"
             ).encode()
         ).hexdigest()
         model_id = f"model-{model_digest[:20]}"
@@ -191,7 +192,11 @@ class PreferenceModelBuilder:
             )
 
         model_config_json = json.dumps(
-            {"config": asdict(self.config), "reference_at_ms": reference_at_ms},
+            {
+                "config": asdict(self.config),
+                "model_build_version": MODEL_BUILD_VERSION,
+                "reference_at_ms": reference_at_ms,
+            },
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -1305,26 +1310,38 @@ class PreferenceModelBuilder:
             )
             self._report(0.85)
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
-            from curator.explanations import ReasonGraphStore
             from curator.ranking import LanePolicy, SlateBuilder
 
             indexing_started = time.perf_counter()
+            stage_started = time.perf_counter()
             LanePolicy(artifact, self.config).classify(
                 model_id,
                 progress=lambda processed, total: self._report(
                     0.85 + 0.02 * processed / max(1, total)
                 ),
             )
-            SlateBuilder(artifact, self.config).materialize(
+            timings["lane_classification"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration("python", "model.lane_classification", timings["lane_classification"])
+            slate_builder = SlateBuilder(artifact, self.config)
+            slate_builder.materialize(
                 model_id,
                 force=True,
                 progress=lambda processed, total: self._report(
                     0.87 + 0.04 * processed / max(1, total)
                 ),
             )
-            ReasonGraphStore(artifact).build(model_id)
+            timings.update(slate_builder.materialize_timings_ms)
+            for name in ("score_first_ordering", "varied_ordering"):
+                record_duration("python", f"model.{name}", timings[name])
+            timings["reason_generation"] = 0
+            record_duration("python", "model.reason_generation", 0)
             self._report(0.94)
+            stage_started = time.perf_counter()
             create_indexes(artifact, "model")
+            timings["sqlite_index_creation"] = round((time.perf_counter() - stage_started) * 1000)
+            record_duration(
+                "python", "model.sqlite_index_creation", timings["sqlite_index_creation"]
+            )
             timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
             self._report(0.96)
             validation_started = time.perf_counter()
@@ -1338,25 +1355,14 @@ class PreferenceModelBuilder:
                     "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model_id,)
                 ).fetchone()[0]
             )
-            reason_scene_count, reason_count = artifact.execute(
-                """
-                SELECT count(DISTINCT scene_id), count(*) FROM model_scene_reason
-                WHERE model_id=?
-                """,
-                (model_id,),
-            ).fetchone()
+            reason_scene_count = reason_count = 0
             lane_state = artifact.execute(
                 "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
             ).fetchone()
-            if (
-                stored_count != len(scores)
-                or int(reason_scene_count) != stored_count
-                or lane_state is None
-            ):
+            if stored_count != len(scores) or lane_state is None:
                 raise RuntimeError(
                     "model validation failed: "
                     f"scores={stored_count}/{len(scores)}, "
-                    f"reason scenes={reason_scene_count}/{stored_count}, "
                     f"lane state={lane_state is not None}"
                 )
             summary = validate_artifact(
