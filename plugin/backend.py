@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import sys
 import time
 from collections.abc import Callable
@@ -95,6 +96,26 @@ query CuratorExternalLinks($page: Int!, $perPage: Int!) {
   ) { count studios { id stash_ids { endpoint stash_id } } }
 }
 """
+EXTERNAL_LINKS_STATE_QUERY = """
+query CuratorExternalLinksState {
+  scenes: findScenes(
+    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count scenes { updated_at } }
+  performers: findPerformers(
+    performer_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count performers { updated_at } }
+  studios: findStudios(
+    studio_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count studios { updated_at } }
+}
+"""
 FIND_PRUNE_TAG = """
 query CuratorFindPruneTag($name: String!) {
   findTags(filter: {q: $name, per_page: 20}) { tags { id name } }
@@ -163,7 +184,59 @@ def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
     )
 
 
-def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+EXTERNAL_LINKS_CACHE_KEY = "external_links"
+
+
+def _external_links_state(payload: dict[str, Any]) -> str:
+    """Cheap description of the linked library, so the full scan can be skipped."""
+    data = _client(payload).execute(EXTERNAL_LINKS_STATE_QUERY)
+    return json.dumps(
+        {
+            kind: [
+                int(data[kind]["count"]),
+                str((data[kind][kind][:1] or [{}])[0].get("updated_at") or ""),
+            ]
+            for kind in ("scenes", "performers", "studios")
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _cached_external_links(
+    connection: sqlite3.Connection, state: str
+) -> dict[str, dict[str, str]] | None:
+    row = connection.execute(
+        "SELECT value FROM application_meta WHERE key=?", (EXTERNAL_LINKS_CACHE_KEY,)
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(str(row[0]))
+    except json.JSONDecodeError:
+        return None
+    if payload.get("state") != state:
+        return None
+    links = payload.get("links")
+    return links if isinstance(links, dict) else None
+
+
+def _external_links(
+    payload: dict[str, Any],
+    connection: sqlite3.Connection | None = None,
+    *,
+    refresh: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Map local entities to their StashDB ids, reusing the last scan while Stash is unchanged.
+
+    Rebuilding this walks every linked scene for its fingerprints, which dominates the cost of
+    the operations that need it, so it is kept until Stash reports a different library.
+    """
+    state = _external_links_state(payload) if connection is not None else ""
+    if connection is not None and not refresh:
+        cached = _cached_external_links(connection, state)
+        if cached is not None:
+            return cached
     result: dict[str, dict[str, str]] = {
         "scenes": {},
         "scene_ids": {},
@@ -200,8 +273,21 @@ def _external_links(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
                                     result["scene_phashes"].setdefault(value, str(row["id"]))
             more |= page * 500 < int(collection["count"])
         if not more:
-            return result
+            break
         page += 1
+    if connection is not None:
+        with transaction(connection):
+            connection.execute(
+                """
+                INSERT INTO application_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (
+                    EXTERNAL_LINKS_CACHE_KEY,
+                    json.dumps({"state": state, "links": result}, separators=(",", ":")),
+                ),
+            )
+    return result
 
 
 def _settings(payload: dict[str, Any]) -> dict[str, Any]:
@@ -628,7 +714,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "get_performer_hunt":
             return ExpandService(connection).performer_hunt(
                 _stashdb(payload),
-                _external_links(payload),
+                _external_links(payload, connection),
                 str(args.get("performer_id") or ""),
                 limit=PERFORMER_HUNT_LIMIT,
             )
@@ -644,7 +730,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             assert isinstance(config, dict)
             return ExpandService(connection).targeted_similar(
                 _stashdb(payload),
-                _external_links(payload),
+                _external_links(payload, connection),
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
                 count=100,
@@ -1249,7 +1335,8 @@ def _run_task_body(
             with span("python", "task.expand_refresh"):
                 summary = ExpandService(connection).refresh(
                     _stashdb(payload),
-                    _external_links(payload),
+                    # The refresh task is the escape hatch when Stash under-reports a change.
+                    _external_links(payload, connection, refresh=True),
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),
                     wildcard=bool(config["expand_wildcard"]),
