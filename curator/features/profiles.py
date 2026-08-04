@@ -82,40 +82,73 @@ def _numeric(left: dict[str, ProfileValue], right: dict[str, ProfileValue]) -> f
     return sum(values) / len(values)
 
 
-def performer_similarity(
+def block_similarity(
+    left: PerformerProfile,
+    right: PerformerProfile,
+    block: str,
+) -> float | None:
+    """Compare one shared block, or return None when it carries no usable evidence."""
+    if block not in left.blocks or block not in right.blocks:
+        return None
+    if block in NUMERIC_BLOCKS:
+        return _numeric(left.blocks[block], right.blocks[block])
+    return _cosine(left.blocks[block], right.blocks[block], left.norms[block], right.norms[block])
+
+
+def block_similarities(
     left: PerformerProfile,
     right: PerformerProfile,
     block_weights: dict[str, float],
-) -> SimilarityResult:
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Per-block similarities and the weights they were measured with."""
     similarities: dict[str, float] = {}
     used_weights: dict[str, float] = {}
     for block in sorted(set(left.blocks) & set(right.blocks)):
         weight = block_weights.get(block, 0.0)
         if weight <= 0:
             continue
-        similarity = (
-            _numeric(left.blocks[block], right.blocks[block])
-            if block in NUMERIC_BLOCKS
-            else _cosine(
-                left.blocks[block], right.blocks[block], left.norms[block], right.norms[block]
-            )
-        )
+        similarity = block_similarity(left, right, block)
         if similarity is None:
             continue
         similarities[block] = similarity
         used_weights[block] = weight
+    return similarities, used_weights
+
+
+def similarity_penalty(left: PerformerProfile, right: PerformerProfile) -> float:
+    """Scale contradicting body evidence down; depends on no block that varies by scene."""
+    penalty = 1.0
+    left_cup = left.blocks.get("measurements", {}).get("cup_index")
+    right_cup = right.blocks.get("measurements", {}).get("cup_index")
+    if left_cup and right_cup:
+        penalty *= math.exp(-0.18 * max(0.0, abs(left_cup.value - right_cup.value) - 1))
+    left_aug = set(left.blocks.get("augmentation", {}))
+    right_aug = set(right.blocks.get("augmentation", {}))
+    if left_aug and right_aug and not left_aug & right_aug:
+        penalty *= 0.65
+    return penalty
+
+
+def combine_similarities(
+    left: PerformerProfile,
+    right: PerformerProfile,
+    similarities: dict[str, float],
+    used_weights: dict[str, float],
+) -> SimilarityResult:
+    """Weight measured blocks into one score, so callers can reuse per-block work."""
     denominator = sum(used_weights.values())
     total = (
         sum(similarities[block] * used_weights[block] for block in similarities) / denominator
         if denominator
         else 0.0
     )
-    left_cup = left.blocks.get("measurements", {}).get("cup_index")
-    right_cup = right.blocks.get("measurements", {}).get("cup_index")
-    if left_cup and right_cup:
-        total *= math.exp(-0.18 * max(0.0, abs(left_cup.value - right_cup.value) - 1))
-    left_aug = set(left.blocks.get("augmentation", {}))
-    right_aug = set(right.blocks.get("augmentation", {}))
-    if left_aug and right_aug and not left_aug & right_aug:
-        total *= 0.65
-    return SimilarityResult(total, similarities, used_weights)
+    return SimilarityResult(total * similarity_penalty(left, right), similarities, used_weights)
+
+
+def performer_similarity(
+    left: PerformerProfile,
+    right: PerformerProfile,
+    block_weights: dict[str, float],
+) -> SimilarityResult:
+    similarities, used_weights = block_similarities(left, right, block_weights)
+    return combine_similarities(left, right, similarities, used_weights)
