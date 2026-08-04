@@ -10,13 +10,20 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, PerformerProfile, performer_similarity
 from curator.features.measurements import CUP_ALIASES, augmentation_category
-from curator.features.profiles import ProfileValue
+from curator.features.profiles import (
+    ProfileValue,
+    block_similarities,
+    block_similarity,
+    combine_similarities,
+    similarity_penalty,
+)
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
@@ -72,6 +79,97 @@ def normalize_phash(value: object) -> str | None:
     except ValueError:
         return None
     return normalized
+
+
+@dataclass(frozen=True)
+class _AnchorTerms:
+    """One anchor comparison with everything that does not vary by scene already measured."""
+
+    anchor: PerformerProfile
+    evidence: dict[str, Any]
+    similarities: dict[str, float]
+    weights: dict[str, float]
+    numerator: float
+    denominator: float
+    penalty: float
+
+
+class _AnchorMatcher:
+    """Match external performers against local anchors, reusing work across their scenes.
+
+    A performer appears in many of the scenes a hunt returns, and only their age at recording
+    differs between those appearances. Measuring every block for every appearance repeats the
+    same comparisons hundreds of times, so the scene-independent blocks are measured once per
+    performer and combined with a fresh age term for each scene.
+    """
+
+    def __init__(
+        self,
+        anchors: list[tuple[PerformerProfile, dict[str, Any]]],
+        weights: dict[str, float],
+    ) -> None:
+        self.anchors = anchors
+        self.weights = weights
+        self.age_weight = weights.get("age", 0.0)
+        self.relevant = sum(value for key, value in weights.items() if key != "content")
+        self._terms: dict[str, tuple[_AnchorTerms, ...]] = {}
+
+    def _timeless(self, performer: dict[str, Any]) -> tuple[_AnchorTerms, ...]:
+        external_id = str(performer["id"])
+        cached = self._terms.get(external_id)
+        if cached is not None:
+            return cached
+        profile = ExpandService._profile(performer)
+        undated = PerformerProfile(
+            profile.performer_id,
+            {block: values for block, values in profile.blocks.items() if block != "age"},
+        )
+        terms = []
+        for anchor, evidence in self.anchors:
+            similarities, used = block_similarities(undated, anchor, self.weights)
+            terms.append(
+                _AnchorTerms(
+                    anchor,
+                    evidence,
+                    similarities,
+                    used,
+                    sum(similarities[block] * used[block] for block in similarities),
+                    sum(used.values()),
+                    similarity_penalty(undated, anchor),
+                )
+            )
+        self._terms[external_id] = tuple(terms)
+        return self._terms[external_id]
+
+    def best(
+        self, performer: dict[str, Any], recorded: object
+    ) -> tuple[float, ProfileSimilarityResult, float, dict[str, Any]] | None:
+        terms = self._timeless(performer)
+        if not terms:
+            return None
+        profile = ExpandService._profile(performer, recorded)
+        chosen: _AnchorTerms | None = None
+        chosen_age: float | None = None
+        best_value = -1.0
+        for term in terms:
+            age = block_similarity(profile, term.anchor, "age") if self.age_weight > 0 else None
+            numerator = term.numerator + (age * self.age_weight if age is not None else 0.0)
+            denominator = term.denominator + (self.age_weight if age is not None else 0.0)
+            similarity = (numerator / denominator if denominator else 0.0) * term.penalty
+            coverage = min(1.0, denominator / self.relevant) if self.relevant else 0.0
+            value = similarity * math.sqrt(coverage)
+            if value > best_value:
+                best_value, chosen, chosen_age = value, term, age
+        if chosen is None:
+            return None
+        similarities = dict(chosen.similarities)
+        weights = dict(chosen.weights)
+        if chosen_age is not None:
+            similarities["age"] = chosen_age
+            weights["age"] = self.age_weight
+        result = combine_similarities(profile, chosen.anchor, similarities, weights)
+        coverage = min(1.0, sum(weights.values()) / self.relevant) if self.relevant else 0.0
+        return result.similarity * math.sqrt(coverage), result, coverage, chosen.evidence
 
 
 class ExpandService:
@@ -1336,6 +1434,7 @@ class ExpandService:
             (profiles[key], item) for key, item in evidence_by_local.items() if key in profiles
         ]
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
+        matcher = _AnchorMatcher(anchors, weights)
         performer_rows: dict[str, dict[str, Any]] = {}
         scene_rows = []
         for scene in scenes:
@@ -1362,18 +1461,14 @@ class ExpandService:
             for performer in cast:
                 external_id = str(performer["id"])
                 local = evidence.get(external_id)
-                profile = self._profile(
-                    performer, scene.get("production_date") or scene.get("release_date")
-                )
-                matches = (
-                    [
-                        (*self._profile_match(profile, anchor, weights), anchor_evidence)
-                        for anchor, anchor_evidence in anchors
-                    ]
+                match = (
+                    matcher.best(
+                        performer,
+                        scene.get("production_date") or scene.get("release_date"),
+                    )
                     if local is None
-                    else []
+                    else None
                 )
-                match = max(matches, key=lambda item: item[0]) if matches else None
                 strength = float(match[3].get("strength", 0)) if match else 0.0
                 similarity_value = max(
                     similarity_value, (match[0] if match else 0.0) * strength * cast_weight
