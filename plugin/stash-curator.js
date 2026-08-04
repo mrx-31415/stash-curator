@@ -2027,6 +2027,12 @@
     const scenes = new Map(
       (scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene])
     );
+    // A scene deleted in Stash lingers in the model until the next sync; hide it rather than
+    // draw a placeholder card. Only once the lookup resolved, or everything looks deleted.
+    const resolved = !scenesQuery.loading && !scenesQuery.error && Boolean(scenesQuery.data);
+    const visibleItems = resolved
+      ? (slate?.items || []).filter((item) => scenes.has(String(item.scene_id)))
+      : slate?.items || [];
     function remove(sceneId) {
       clearSlateCache();
       const excluded = laneExclusions.get(lane) || new Set();
@@ -2168,11 +2174,11 @@
         React.createElement(
           React.Fragment,
           null,
-          slate.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "Nothing qualifies for this lane right now."),
+          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, "Nothing qualifies for this lane right now."),
           React.createElement(
             "section",
             { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
-            slate.items.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+            visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
           ),
           React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )

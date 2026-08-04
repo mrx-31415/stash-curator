@@ -17,6 +17,14 @@ def _hash(entity: SourceEntity | SourceFile | Marker) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+ENTITY_TABLES = {
+    "tag": ("source_tag", "tag_id"),
+    "studio": ("source_studio", "studio_id"),
+    "performer": ("source_performer", "performer_id"),
+    "scene": ("source_scene", "scene_id"),
+}
+
+
 def _later(left: str | None, right: str | None) -> str | None:
     values = [value for value in (left, right) if value]
     return max(values, default=None)
@@ -160,55 +168,77 @@ class SyncRepository:
                 (now_ms, entity_type, run_id),
             )
 
+    def entity_count(self, entity_type: str) -> int:
+        table, _ = ENTITY_TABLES[entity_type]
+        row = self.connection.execute(f"SELECT count(*) FROM {table}").fetchone()
+        return int(row[0])
+
+    def delete_absent(self, entity_type: str, present_ids: set[str]) -> tuple[str, ...]:
+        """Remove entities Stash no longer has, given a complete id sweep."""
+        table, column = ENTITY_TABLES[entity_type]
+        with transaction(self.connection):
+            deleted = tuple(
+                sorted(
+                    str(row[0])
+                    for row in self.connection.execute(f"SELECT {column} FROM {table}")
+                    if str(row[0]) not in present_ids
+                )
+            )
+            self._delete_entities(entity_type, deleted)
+        return deleted
+
     def reconcile(self, run_id: str) -> None:
         """Delete only entities absent from a successfully traversed full snapshot."""
         with transaction(self.connection):
-            self.connection.execute(
-                """
-                DELETE FROM source_scene WHERE NOT EXISTS (
-                    SELECT 1 FROM sync_seen
-                    WHERE run_id = ? AND entity_type = 'scene' AND entity_id = scene_id
+            # Scenes first: their markers hold the tag references SQLite will not cascade.
+            for entity_type in ("scene", "performer", "tag", "studio"):
+                table, column = ENTITY_TABLES[entity_type]
+                deleted = tuple(
+                    str(row[0])
+                    for row in self.connection.execute(
+                        f"""
+                        SELECT {column} FROM {table} WHERE NOT EXISTS (
+                            SELECT 1 FROM sync_seen
+                            WHERE run_id = ? AND entity_type = ? AND entity_id = {column}
+                        )
+                        """,
+                        (run_id, entity_type),
+                    )
                 )
-                """,
-                (run_id,),
+                self._delete_entities(entity_type, deleted)
+
+    def _delete_entities(self, entity_type: str, deleted: tuple[str, ...]) -> None:
+        """Delete entities, releasing the references SQLite does not cascade."""
+        if not deleted:
+            return
+        table, column = ENTITY_TABLES[entity_type]
+        self.connection.execute("CREATE TEMP TABLE IF NOT EXISTS deleted_entity(entity_id TEXT)")
+        self.connection.execute("DELETE FROM deleted_entity")
+        self.connection.executemany(
+            "INSERT INTO deleted_entity(entity_id) VALUES (?)",
+            ((identifier,) for identifier in deleted),
+        )
+        if entity_type == "tag":
+            # Stash drops a marker along with its primary tag, and nothing here reads a
+            # marker without one.
+            self.connection.execute(
+                "DELETE FROM scene_marker "
+                "WHERE primary_tag_id IN (SELECT entity_id FROM deleted_entity)"
+            )
+        elif entity_type == "studio":
+            # A child studio and a scene both outlive the studio they point at.
+            self.connection.execute(
+                "UPDATE source_studio SET parent_studio_id = NULL "
+                "WHERE parent_studio_id IN (SELECT entity_id FROM deleted_entity)"
             )
             self.connection.execute(
-                """
-                DELETE FROM source_performer WHERE NOT EXISTS (
-                    SELECT 1 FROM sync_seen
-                    WHERE run_id = ? AND entity_type = 'performer' AND entity_id = performer_id
-                )
-                """,
-                (run_id,),
+                "UPDATE source_scene SET studio_id = NULL "
+                "WHERE studio_id IN (SELECT entity_id FROM deleted_entity)"
             )
-            self.connection.execute(
-                """
-                DELETE FROM source_tag WHERE NOT EXISTS (
-                    SELECT 1 FROM sync_seen
-                    WHERE run_id = ? AND entity_type = 'tag' AND entity_id = tag_id
-                )
-                """,
-                (run_id,),
-            )
-            self.connection.execute(
-                """
-                UPDATE source_studio SET parent_studio_id = NULL
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM sync_seen
-                    WHERE run_id = ? AND entity_type = 'studio' AND entity_id = studio_id
-                )
-                """,
-                (run_id,),
-            )
-            self.connection.execute(
-                """
-                DELETE FROM source_studio WHERE NOT EXISTS (
-                    SELECT 1 FROM sync_seen
-                    WHERE run_id = ? AND entity_type = 'studio' AND entity_id = studio_id
-                )
-                """,
-                (run_id,),
-            )
+        self.connection.execute(
+            f"DELETE FROM {table} WHERE {column} IN (SELECT entity_id FROM deleted_entity)"
+        )
+        self.connection.execute("DELETE FROM deleted_entity")
 
     def finish_run(self, run_id: str, now_ms: int) -> None:
         with transaction(self.connection):
