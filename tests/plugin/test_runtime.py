@@ -880,3 +880,66 @@ def test_backend_profiles_only_when_enabled_and_exposes_profile_api(
         module._api(payload, "clear_profiles", {"profilingEnabled": False})
     payload["args"] = {"database_path": str(database), "confirmation": "CLEAR"}
     assert module._api(payload, "clear_profiles", {"profilingEnabled": False})["deleted"] == 1
+
+
+def test_external_links_reuse_the_last_scan_until_stash_reports_a_change(
+    tmp_path: Path,
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_links", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    connection = module._open({"args": {"database_path": str(tmp_path / "curator.sqlite3")}}, {})
+
+    scanned = 0
+    state = {"count": 1, "updated_at": "2026-01-01T00:00:00Z"}
+
+    class FakeClient:
+        def execute(self, document: str, variables: object = None) -> dict[str, object]:
+            nonlocal scanned
+            if "CuratorExternalLinksState" in document:
+                return {
+                    kind: {"count": state["count"], kind: [{"updated_at": state["updated_at"]}]}
+                    for kind in ("scenes", "performers", "studios")
+                }
+            scanned += 1
+            return {
+                "scenes": {
+                    "count": 1,
+                    "scenes": [
+                        {
+                            "id": "7",
+                            "stash_ids": [
+                                {"endpoint": module.STASHDB, "stash_id": "external-scene"}
+                            ],
+                            "files": [
+                                {"fingerprints": [{"type": "phash", "value": "0123456789abcdef"}]}
+                            ],
+                        }
+                    ],
+                },
+                "performers": {"count": 0, "performers": []},
+                "studios": {"count": 0, "studios": []},
+            }
+
+    module._client = lambda payload: FakeClient()
+    first = module._external_links({}, connection)
+
+    assert scanned == 1
+    assert first["scenes"] == {"7": "external-scene"}
+    assert first["scene_phashes"] == {"0123456789abcdef": "7"}
+
+    assert module._external_links({}, connection) == first
+    assert scanned == 1, "an unchanged library must not be walked again"
+
+    module._external_links({}, connection, refresh=True)
+    assert scanned == 2, "the refresh task must be able to force a rescan"
+
+    state["updated_at"] = "2026-02-02T00:00:00Z"
+    module._external_links({}, connection)
+    assert scanned == 3, "an edited library must invalidate the cache"
+
+    state["count"] = 2
+    module._external_links({}, connection)
+    assert scanned == 4, "an added or deleted link must invalidate the cache"

@@ -73,3 +73,65 @@ def test_cosine_norms_are_computed_once(monkeypatch) -> None:
     performer_similarity(profile, profile, WEIGHTS)
 
     assert sqrt.call_count == 1
+
+
+def test_reusing_block_work_matches_measuring_every_block() -> None:
+    """Expand caches the scene-independent blocks; the split must not move the score."""
+    weights = {**WEIGHTS, "age": 0.6, "ethnicity": 0.8}
+    anchor = PerformerProfile(
+        "anchor",
+        {
+            "measurements": {
+                "cup_index": ProfileValue(4, 1),
+                "waist_inches": ProfileValue(25, 1),
+            },
+            "height": {"height_cm": ProfileValue(170, 1)},
+            "ethnicity": {"ethnicity:white": ProfileValue(1, 0.9)},
+            "augmentation": {"augmented": ProfileValue(1, 1)},
+            "age": {"age_recording": ProfileValue(29.5, 0.9)},
+        },
+    )
+    undated_blocks = {
+        "measurements": {"cup_index": ProfileValue(5, 1), "waist_inches": ProfileValue(27, 1)},
+        "height": {"height_cm": ProfileValue(165, 1)},
+        "ethnicity": {"ethnicity:white": ProfileValue(1, 0.9)},
+        "augmentation": {"natural": ProfileValue(1, 1)},
+    }
+    undated = PerformerProfile("candidate", undated_blocks)
+    similarities, used = profiles_module.block_similarities(undated, anchor, weights)
+    numerator = sum(similarities[block] * used[block] for block in similarities)
+    denominator = sum(used.values())
+    penalty = profiles_module.similarity_penalty(undated, anchor)
+
+    for age in (21.0, 29.5, 44.25):
+        dated = PerformerProfile(
+            "candidate", {**undated_blocks, "age": {"age_recording": ProfileValue(age, 0.9)}}
+        )
+        age_similarity = profiles_module.block_similarity(dated, anchor, "age")
+        assert age_similarity is not None
+        reused = (numerator + age_similarity * weights["age"]) / (denominator + weights["age"])
+        direct = performer_similarity(dated, anchor, weights)
+
+        assert reused * penalty == direct.similarity
+        assert (
+            profiles_module.combine_similarities(
+                dated,
+                anchor,
+                {**similarities, "age": age_similarity},
+                {**used, "age": weights["age"]},
+            )
+            == direct
+        )
+
+
+def test_block_work_split_handles_a_missing_age_block() -> None:
+    anchor = PerformerProfile("anchor", {"height": {"height_cm": ProfileValue(170, 1)}})
+    ageless = PerformerProfile("candidate", {"height": {"height_cm": ProfileValue(168, 1)}})
+    similarities, used = profiles_module.block_similarities(
+        ageless, anchor, {**WEIGHTS, "age": 0.6}
+    )
+
+    assert profiles_module.block_similarity(ageless, anchor, "age") is None
+    assert profiles_module.combine_similarities(
+        ageless, anchor, similarities, used
+    ) == performer_similarity(ageless, anchor, {**WEIGHTS, "age": 0.6})
