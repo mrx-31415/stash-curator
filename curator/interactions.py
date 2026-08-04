@@ -10,6 +10,7 @@ from typing import Any
 
 from curator.config import DEFAULT_CONFIG
 from curator.events import (
+    OBSERVED_PLAYBACK_SQL,
     DirectSessionInput,
     PlayedRange,
     SessionOrigin,
@@ -353,11 +354,17 @@ class InteractionStore:
                 if not cursor.rowcount:
                     continue
                 inserted += 1
-                outcome = viewing_outcome(session.active_seconds, session.ended_at_ms)
-                if outcome is not None:
-                    self._insert_signal(
-                        f"{session.session_id}:view", session.scene_id, session.session_id, outcome
-                    )
+                # Without observed playback there is no viewing evidence to grade; reading the
+                # empty session as a short exit would penalize a scene the user may have watched.
+                if session.observed_playback:
+                    outcome = viewing_outcome(session.active_seconds, session.ended_at_ms)
+                    if outcome is not None:
+                        self._insert_signal(
+                            f"{session.session_id}:view",
+                            session.scene_id,
+                            session.session_id,
+                            outcome,
+                        )
                 self._insert_replacement(session)
             if inserted:
                 ModelUpdateCoordinator(self.connection).request("session_outcome")
@@ -408,10 +415,12 @@ class InteractionStore:
         )
 
     def _insert_replacement(self, replacement: DirectSessionInput) -> None:
+        # Only a session whose playback was observed can be judged as abandoned early.
         row = self.connection.execute(
-            """
+            f"""
             SELECT summary_json FROM play_session
             WHERE provenance='direct_player' AND session_id<>? AND ended_at_ms<=?
+            AND {OBSERVED_PLAYBACK_SQL}
             ORDER BY ended_at_ms DESC LIMIT 1
             """,
             (replacement.session_id, replacement.started_at_ms),
