@@ -1186,10 +1186,13 @@ def _run_task_body(
                 )
             _progress(0.68)
             coordinator = ModelUpdateCoordinator(connection)
+            for entity, removed in sorted(synced.deleted_entity_counts.items()):
+                _log("i", f"Removed {removed} {entity}s deleted from Stash")
             source_changed = (
                 mode == "full-sync-build"
                 or synced.resumed
                 or any(synced.changed_entity_counts.values())
+                or any(synced.deleted_entity_counts.values())
                 or prune_changed
             )
             current_model_id = RecommendationModelStore(connection).current_model_id()

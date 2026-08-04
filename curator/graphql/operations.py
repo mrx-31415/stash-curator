@@ -28,6 +28,18 @@ def _played_since(watermark: str | None) -> dict[str, object]:
     return {"sceneFilter": criteria}
 
 
+def _ids_document(name: str, root_key: str, items_key: str) -> str:
+    """An id-only sweep, sorted by id so appends never shift an unread page."""
+    return f"""
+query {name}($page: Int!, $perPage: Int!) {{
+  {root_key}(filter: {{page: $page, per_page: $perPage, sort: "id", direction: ASC}}) {{
+    count
+    {items_key} {{ id }}
+  }}
+}}
+"""
+
+
 @dataclass(frozen=True)
 class EntityOperation:
     """A paginated source entity query and its response keys."""
@@ -41,6 +53,7 @@ class EntityOperation:
     watermark_of: Callable[[SourceEntity], str | None] = field(default=_updated_at)
     variables_for: Callable[[str | None], dict[str, object]] | None = None
     incremental_only: bool = False
+    ids_document: str | None = None
 
 
 CAPABILITIES = """
@@ -70,6 +83,7 @@ query CuratorTags($page: Int!, $perPage: Int!, $sort: String!, $direction: SortD
 """,
     "findTags",
     "tags",
+    ids_document=_ids_document("CuratorTagIds", "findTags", "tags"),
 )
 
 STUDIOS = EntityOperation(
@@ -88,6 +102,7 @@ query CuratorStudios($page: Int!, $perPage: Int!, $sort: String!, $direction: So
 """,
     "findStudios",
     "studios",
+    ids_document=_ids_document("CuratorStudioIds", "findStudios", "studios"),
 )
 
 PERFORMERS = EntityOperation(
@@ -109,6 +124,7 @@ query CuratorPerformers(
 """,
     "findPerformers",
     "performers",
+    ids_document=_ids_document("CuratorPerformerIds", "findPerformers", "performers"),
 )
 
 SCENE_FIELDS = """
@@ -137,6 +153,7 @@ query CuratorScenes($page: Int!, $perPage: Int!, $sort: String!, $direction: Sor
 """,
     "findScenes",
     "scenes",
+    ids_document=_ids_document("CuratorSceneIds", "findScenes", "scenes"),
 )
 
 # Stash does not touch scenes.updated_at when it records a play, so the scene pass above can
@@ -167,4 +184,12 @@ query CuratorScenePlays(
 )
 
 ENTITY_OPERATIONS = (TAGS, STUDIOS, PERFORMERS, SCENES, SCENE_PLAYS)
-ALL_DOCUMENTS = (CAPABILITIES, *(operation.document for operation in ENTITY_OPERATIONS))
+ALL_DOCUMENTS = (
+    CAPABILITIES,
+    *(operation.document for operation in ENTITY_OPERATIONS),
+    *(
+        operation.ids_document
+        for operation in ENTITY_OPERATIONS
+        if operation.ids_document is not None
+    ),
+)

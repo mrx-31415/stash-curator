@@ -416,6 +416,18 @@ def test_feedback_history_can_undo_or_replace_append_only_actions() -> None:
     assert "scheduleModelUpdate();" in source
 
 
+def test_recommendation_grid_hides_scenes_stash_no_longer_has() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert (
+        "const resolved = !scenesQuery.loading && !scenesQuery.error && Boolean(scenesQuery.data);"
+        in source
+    )
+    assert "scenes.has(String(item.scene_id))" in source
+    assert "visibleItems.map((item) => React.createElement(RecommendationCard" in source
+    assert "visibleItems.length === 0 && React.createElement" in source
+
+
 def test_external_scene_cards_can_rate_matching_local_tags() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 

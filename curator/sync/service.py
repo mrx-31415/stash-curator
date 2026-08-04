@@ -5,12 +5,15 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
-from curator.graphql.adapters import adapt_page
+from curator.graphql.adapters import adapt_id_page, adapt_page
 from curator.graphql.operations import CAPABILITIES, ENTITY_OPERATIONS, EntityOperation
 from curator.sync.repository import SyncRepository
+
+# Id-only rows are small, and the sweep cost is dominated by per-request overhead.
+SWEEP_PAGE_SIZE = 5_000
 
 
 class QueryClient(Protocol):
@@ -33,6 +36,7 @@ class SyncResult:
     entity_counts: dict[str, int]
     changed_entity_counts: dict[str, int]
     scene_ids: tuple[str, ...]
+    deleted_entity_counts: dict[str, int] = field(default_factory=dict)
 
 
 def probe_capabilities(client: QueryClient) -> Capabilities:
@@ -115,6 +119,7 @@ class SyncService:
 
         counts: dict[str, int] = {}
         changed_counts: dict[str, int] = {}
+        deleted_counts: dict[str, int] = {}
         scene_ids: set[str] = set()
         current_entity: str | None = None
         # A full sweep walks every scene by id, so the incremental play pass adds nothing.
@@ -140,6 +145,13 @@ class SyncService:
             current_entity = None
             if full:
                 self.repository.reconcile(run_id)
+            else:
+                for operation in operations:
+                    current_entity = operation.entity_type
+                    deleted = self._prune_deleted(operation)
+                    if deleted:
+                        deleted_counts[operation.entity_type] = len(deleted)
+                current_entity = None
             self.repository.finish_run(run_id, self.clock_ms())
         except Exception as error:
             self.repository.fail_run(run_id, current_entity, str(error), self.clock_ms())
@@ -152,7 +164,45 @@ class SyncService:
             counts,
             changed_counts,
             tuple(sorted(scene_ids)),
+            deleted_counts,
         )
+
+    def _prune_deleted(self, operation: EntityOperation) -> tuple[str, ...]:
+        """Drop entities Stash no longer has.
+
+        Incremental passes only ever add: a deleted entity has no updated_at to carry it past
+        the watermark, so it lingers until a full sync. Stash exposes no deletion feed, so
+        the only way to see one is to compare id sets. The count probe is a single cheap
+        request; the sweep behind it runs only once drift actually exists.
+        """
+        if operation.ids_document is None:
+            return ()
+        local_total = self.repository.entity_count(operation.entity_type)
+        probe = self.client.execute(operation.ids_document, {"page": 1, "perPage": 0})
+        remote_total = adapt_id_page(
+            probe, root_key=operation.root_key, items_key=operation.items_key
+        ).total
+        # The passes above already applied every addition, so local can only exceed remote by
+        # entities Stash has dropped.
+        if local_total <= remote_total:
+            return ()
+        present: set[str] = set()
+        page = 1
+        while True:
+            data = self.client.execute(
+                operation.ids_document, {"page": page, "perPage": SWEEP_PAGE_SIZE}
+            )
+            adapted = adapt_id_page(
+                data, root_key=operation.root_key, items_key=operation.items_key
+            )
+            present.update(adapted.ids)
+            if not adapted.ids or len(present) >= adapted.total:
+                break
+            page += 1
+        if not present:
+            # An empty library is indistinguishable from a broken response; never act on it.
+            return ()
+        return self.repository.delete_absent(operation.entity_type, present)
 
     def _sync_entity(
         self,

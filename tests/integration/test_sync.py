@@ -138,6 +138,15 @@ class SyntheticClient:
                     ]
                 },
             }
+        id_names = {
+            "CuratorTagIds": ("tag", "findTags", "tags"),
+            "CuratorStudioIds": ("studio", "findStudios", "studios"),
+            "CuratorPerformerIds": ("performer", "findPerformers", "performers"),
+            "CuratorSceneIds": ("scene", "findScenes", "scenes"),
+        }
+        sweep = next((value for name, value in id_names.items() if name in document), None)
+        if sweep is not None:
+            return self._id_page(sweep, variables)
         names = {
             "CuratorTags": ("tag", "findTags", "tags"),
             "CuratorStudios": ("studio", "findStudios", "studios"),
@@ -167,6 +176,26 @@ class SyntheticClient:
         )
         start = (page - 1) * per_page
         return {root: {"count": len(all_items), collection: all_items[start : start + per_page]}}
+
+    def _id_page(
+        self, sweep: tuple[str, str, str], variables: Mapping[str, object] | None
+    ) -> dict[str, object]:
+        entity_type, root, collection = sweep
+        assert variables is not None
+        page = variables["page"]
+        per_page = variables["perPage"]
+        assert isinstance(page, int)
+        assert isinstance(per_page, int)
+        self.calls.append((f"{entity_type}_ids", page))
+        self.variables.append((f"{entity_type}_ids", dict(variables)))
+        items = sorted(self.entities[entity_type], key=lambda item: str(item["id"]))
+        start = (page - 1) * per_page
+        return {
+            root: {
+                "count": len(items),
+                collection: [{"id": item["id"]} for item in items[start : start + per_page]],
+            }
+        }
 
     @staticmethod
     def _ordered(
@@ -368,6 +397,161 @@ def test_full_sync_reconciles_deleted_source_entities(connection: sqlite3.Connec
     assert scene_ids == ["2"]
     assert tag_ids == ["t2"]
     assert connection.execute("SELECT favorite FROM source_performer").fetchone()[0] == 1
+
+
+def _swept(client: SyntheticClient) -> set[str]:
+    """Entity types whose id sweep ran, as opposed to only its count probe."""
+    return {
+        entity
+        for entity, variables in client.variables
+        if entity.endswith("_ids") and int(str(variables["perPage"])) > 0
+    }
+
+
+def test_incremental_sync_removes_entities_deleted_from_stash(
+    connection: sqlite3.Connection,
+) -> None:
+    entities = _entities()
+    client = SyntheticClient(entities)
+    service = SyncService(client, SyncRepository(connection), page_size=2)
+    service.sync()
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+
+    # A deleted scene has no updated_at to carry it past the watermark, so only an id sweep
+    # can observe it.
+    entities["scene"] = [scene for scene in entities["scene"] if scene["id"] != "1"]
+    entities["tag"] = [tag for tag in entities["tag"] if tag["id"] != "t2"]
+    client.calls.clear()
+    client.variables.clear()
+
+    result = service.sync()
+
+    assert [row[0] for row in connection.execute("SELECT scene_id FROM source_scene")] == ["2"]
+    assert [row[0] for row in connection.execute("SELECT tag_id FROM source_tag")] == ["t1"]
+    assert result.deleted_entity_counts == {"scene": 1, "tag": 1}
+    # Dependent rows follow the scene out.
+    assert (
+        connection.execute("SELECT count(*) FROM source_play WHERE scene_id='1'").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM source_file WHERE scene_id='1'").fetchone()[0] == 0
+    )
+    # Only the drifted entities are swept; the rest stop at their count probe.
+    assert _swept(client) == {"scene_ids", "tag_ids"}
+
+
+def test_incremental_sync_releases_references_sqlite_will_not_cascade(
+    connection: sqlite3.Connection,
+) -> None:
+    entities = _entities()
+    entities["studio"].append(_studio("s2"))
+    marked = entities["scene"][0]
+    marked["scene_markers"] = [
+        {
+            "id": "m1",
+            "seconds": 10.0,
+            "end_seconds": None,
+            "primary_tag": _tag("t2"),
+            "tags": [],
+        }
+    ]
+    client = SyntheticClient(entities)
+    service = SyncService(client, SyncRepository(connection), page_size=2)
+    service.sync()
+    assert connection.execute("SELECT count(*) FROM scene_marker").fetchone()[0] == 1
+
+    # The surviving scenes still point at both: their marker's primary tag and their studio.
+    entities["tag"] = [tag for tag in entities["tag"] if tag["id"] != "t2"]
+    entities["studio"] = [studio for studio in entities["studio"] if studio["id"] != "s1"]
+
+    result = service.sync()
+
+    assert result.deleted_entity_counts == {"tag": 1, "studio": 1}
+    assert connection.execute("SELECT count(*) FROM scene_marker").fetchone()[0] == 0
+    assert [row[0] for row in connection.execute("SELECT studio_id FROM source_studio")] == ["s2"]
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+    assert connection.execute("SELECT DISTINCT studio_id FROM source_scene").fetchone()[0] is None
+
+
+def test_full_sync_releases_references_sqlite_will_not_cascade(
+    connection: sqlite3.Connection,
+) -> None:
+    entities = _entities()
+    entities["scene"][0]["scene_markers"] = [
+        {
+            "id": "m1",
+            "seconds": 10.0,
+            "end_seconds": None,
+            "primary_tag": _tag("t2"),
+            "tags": [],
+        }
+    ]
+    SyncService(
+        SyntheticClient(entities),
+        SyncRepository(connection),
+        page_size=2,
+        id_factory=lambda: "run-1",
+    ).sync(full=True)
+
+    reduced = _entities()
+    reduced["tag"] = [_tag("t1")]
+    reduced["studio"] = []
+    SyncService(
+        SyntheticClient(reduced),
+        SyncRepository(connection),
+        page_size=2,
+        id_factory=lambda: "run-2",
+    ).sync(full=True)
+
+    assert connection.execute("SELECT count(*) FROM scene_marker").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM source_studio").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+
+
+def test_incremental_sync_probes_for_deletions_without_sweeping_ids(
+    connection: sqlite3.Connection,
+) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=2)
+    service.sync()
+    client.calls.clear()
+    client.variables.clear()
+
+    result = service.sync()
+
+    # Every entity is probed for drift, but a matching count costs nothing more.
+    assert result.deleted_entity_counts == {}
+    assert [call for call in client.calls if call[0].endswith("_ids")] == [
+        ("tag_ids", 1),
+        ("studio_ids", 1),
+        ("performer_ids", 1),
+        ("scene_ids", 1),
+    ]
+    assert _swept(client) == set()
+
+
+def test_incremental_sync_keeps_local_entities_when_stash_returns_none(
+    connection: sqlite3.Connection,
+) -> None:
+    entities = _entities()
+    client = SyntheticClient(entities)
+    service = SyncService(client, SyncRepository(connection), page_size=2)
+    service.sync()
+
+    # An empty response is indistinguishable from a broken one, so it must never delete.
+    entities["scene"] = []
+
+    result = service.sync()
+
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+    assert result.deleted_entity_counts == {}
+
+
+def test_full_sync_does_not_run_the_deletion_sweep(connection: sqlite3.Connection) -> None:
+    client = SyntheticClient(_entities())
+    SyncService(client, SyncRepository(connection), page_size=2).sync(full=True)
+
+    assert not [call for call in client.calls if call[0].endswith("_ids")]
 
 
 def test_incremental_sync_stops_after_crossing_previous_watermark(

@@ -102,6 +102,12 @@ class EntityPage:
     items: tuple[SourceEntity, ...]
 
 
+@dataclass(frozen=True)
+class IdPage:
+    total: int
+    ids: tuple[str, ...]
+
+
 def _object(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AdapterError(f"{label} must be an object")
@@ -241,6 +247,17 @@ def adapt_scene(value: object) -> Scene:
         ),
         files=files,
         markers=tuple(markers),
+    )
+
+
+def adapt_id_page(data: Mapping[str, Any], *, root_key: str, items_key: str) -> IdPage:
+    """Adapt one id-only find* response page."""
+    root = _object(data.get(root_key), root_key)
+    count = root.get("count")
+    if not isinstance(count, int):
+        raise AdapterError(f"{root_key}.count must be an integer")
+    return IdPage(
+        count, tuple(_id(item, items_key) for item in _objects(root.get(items_key), items_key))
     )
 
 
