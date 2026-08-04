@@ -399,7 +399,13 @@ def test_performer_hunt_requires_a_stashdb_link(tmp_path: Path) -> None:
         raise AssertionError("unlinked performers must be rejected")
 
 
-def test_performer_hunt_does_not_leak_owned_scenes_into_expand(tmp_path: Path) -> None:
+def test_performer_hunt_results_stay_out_of_expand(tmp_path: Path) -> None:
+    """A performer's whole catalog must not dilute the general Expand browse.
+
+    Hunting one performer used to merge every unowned scene it returned into the
+    same pool Expand reads from, so hunting several performers back to back left
+    their catalogs mixed into Expand with no way to tell them apart.
+    """
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     links = {
@@ -414,11 +420,62 @@ def test_performer_hunt_does_not_leak_owned_scenes_into_expand(tmp_path: Path) -
     service = ExpandService(connection)
 
     service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    before = {item["id"] for item in service.results("scene")["items"]}
     service.performer_hunt(PerformerHuntStashDB(), links, "p1", limit=10)
 
     identifiers = {item["id"] for item in service.results("scene")["items"]}
+    assert identifiers == before
+    assert "hunt-old" not in identifiers
     assert "hunt-linked" not in identifiers
-    assert "hunt-old" in identifiers
+
+
+def test_performer_hunt_results_remain_shortlistable(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "scene_phashes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+
+    service.performer_hunt(PerformerHuntStashDB(), links, "p1", limit=10)
+    service.shortlist("scene", "hunt-old", True)
+
+    assert [item["id"] for item in service.shortlist_results()["items"]] == ["hunt-old"]
+
+
+def test_expand_candidate_pool_survives_a_later_explore_merge(tmp_path: Path) -> None:
+    """A scene refresh() legitimately placed in Expand must survive a later hunt.
+
+    Both write through the same upsert keyed only by (entity_type, external_id);
+    without care, an 'explore' merge that happens to revisit a 'candidate' scene
+    would downgrade it out of Expand until the next refresh.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "scene_phashes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    assert "new-external-scene" in {
+        item["id"] for item in service.results("scene", gender="")["items"]
+    }
+
+    service._merge_external(
+        "scene",
+        [{"id": "new-external-scene", "payload": {}, "score": 0.5, "sources": ["performers"]}],
+    )
+
+    assert "new-external-scene" in {
+        item["id"] for item in service.results("scene", gender="")["items"]
+    }
 
 
 def test_expand_avoids_adjacent_repeated_performers() -> None:

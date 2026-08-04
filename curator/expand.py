@@ -273,8 +273,8 @@ class ExpandService:
             self.connection.executemany(
                 """
                 INSERT INTO external_entity(
-                  entity_type, external_id, payload_json, score, sources_json, fetched_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  entity_type, external_id, payload_json, score, sources_json, fetched_at_ms, pool
+                ) VALUES (?, ?, ?, ?, ?, ?, 'candidate')
                 """,
                 (
                     (
@@ -443,7 +443,8 @@ class ExpandService:
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         for row in self.connection.execute(
-            "SELECT * FROM external_entity WHERE entity_type=?", (entity_type,)
+            "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'",
+            (entity_type,),
         ):
             if float(row["score"]) < minimum_score:
                 continue
@@ -1089,17 +1090,29 @@ class ExpandService:
                     sources[identifier].update(values)
         return rows, sources
 
-    def _merge_external(self, entity_type: str, items: Iterable[dict[str, Any]]) -> None:
+    def _merge_external(
+        self, entity_type: str, items: Iterable[dict[str, Any]], *, pool: str = "explore"
+    ) -> None:
+        """Merge discovered entities so they can be shortlisted or chained into.
+
+        Callers that browse on the user's behalf (a performer hunt, a "similar to
+        this" probe) merge with the default 'explore' pool: the row becomes
+        shortlistable and usable as a similarity anchor, but stays out of the
+        general Expand browse (`results()`), which only shows `refresh()`'s own
+        'candidate' pool. Otherwise one performer's whole catalog, or one scene's
+        probe, would bleed into another's Expand results until the next refresh.
+        """
         now_ms = time.time_ns() // 1_000_000
         with transaction(self.connection):
             self.connection.executemany(
                 """
                 INSERT INTO external_entity(
-                  entity_type, external_id, payload_json, score, sources_json, fetched_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                  entity_type, external_id, payload_json, score, sources_json, fetched_at_ms, pool
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(entity_type, external_id) DO UPDATE SET
                   payload_json=excluded.payload_json, score=excluded.score,
-                  sources_json=excluded.sources_json, fetched_at_ms=excluded.fetched_at_ms
+                  sources_json=excluded.sources_json, fetched_at_ms=excluded.fetched_at_ms,
+                  pool=CASE WHEN pool='candidate' THEN 'candidate' ELSE excluded.pool END
                 """,
                 (
                     (
@@ -1109,6 +1122,7 @@ class ExpandService:
                         float(item["score"]),
                         json.dumps(item["sources"], separators=(",", ":")),
                         now_ms,
+                        pool,
                     )
                     for item in items
                 ),
