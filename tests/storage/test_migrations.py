@@ -32,10 +32,11 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             18,
             19,
             20,
+            21,
         )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 20
+        assert after.current_version == 21
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -90,7 +91,7 @@ def test_feature_count_migration_backfills_existing_builds(tmp_path: Path) -> No
     connection = connect_database(tmp_path / "curator.sqlite3")
     runner = MigrationRunner(connection)
     original = runner.migrations
-    runner.migrations = original[:-3]
+    runner.migrations = [migration for migration in original if migration.version < 18]
     runner.migrate(applied_at_ms=1)
     connection.execute(
         """
@@ -131,7 +132,7 @@ def test_unobserved_penalty_migration_keeps_graded_evidence(tmp_path: Path) -> N
     connection = connect_database(tmp_path / "curator.sqlite3")
     runner = MigrationRunner(connection)
     original = runner.migrations
-    runner.migrations = original[:-1]
+    runner.migrations = [migration for migration in original if migration.version < 20]
     runner.migrate(applied_at_ms=1)
     sessions = (
         ("empty", "opened", 0.0, '{"played_ranges":[],"maximum_position_seconds":0.0}'),
@@ -191,7 +192,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 20
+        assert MigrationRunner(reader).status().current_version == 21
     finally:
         writer.rollback()
         reader.close()
@@ -217,7 +218,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 20
+        assert second_runner.migrate(applied_at_ms=2).current_version == 21
     finally:
         second.close()
         first.close()
