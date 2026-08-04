@@ -13,6 +13,7 @@ from heapq import heappop, heappush
 from typing import Any
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
+from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.features import FeatureStore
 from curator.model import RecommendationModelStore
 from curator.model.boundaries import scene_eligibility
@@ -832,9 +833,9 @@ class SlateBuilder:
         direct_plays = {
             str(row["scene_id"]): int(row["last_played"])
             for row in self.connection.execute(
-                """
+                f"""
                 SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
-                WHERE provenance='direct_player' GROUP BY scene_id
+                WHERE provenance='direct_player' AND {OBSERVED_PLAYBACK_SQL} GROUP BY scene_id
                 """
             )
         }
@@ -911,6 +912,7 @@ class SlateBuilder:
                 f"""
                 SELECT scene_id FROM play_session
                 WHERE ended_at_ms>=? AND scene_id IN ({placeholders})
+                AND (provenance<>'direct_player' OR {OBSERVED_PLAYBACK_SQL})
                 """,
                 (created_at_ms, *scene_ids),
             )

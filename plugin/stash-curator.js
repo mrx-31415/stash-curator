@@ -2231,6 +2231,15 @@
     enqueue({ ...value, ended_at_ms: Date.now(), natural_completion: naturalCompletion });
   }
 
+  // ponytail: getPlayer() resolves one registered Video.js wrapper, which goes stale when Stash
+  // rebuilds the player for a scene. Bind the media element itself and re-bind when it changes,
+  // so a replaced player cannot silently record a session that observed nothing.
+  function mediaElement() {
+    const player = Api.utils.InteractiveUtils.getPlayer();
+    const root = player && !player.isDisposed?.() ? player.el?.() : null;
+    return root?.querySelector("video") || document.querySelector(".video-js video, video.vjs-tech");
+  }
+
   function attachPlayer(pathname) {
     const match = pathname.match(/^\/scenes\/(\d+)/);
     if (!match) {
@@ -2240,70 +2249,100 @@
     const sceneId = match[1];
     if (tracker?.value.scene_id === sceneId) return;
     finishTracker(false);
-    function findPlayer(attempt = 0) {
-      if (location.pathname !== pathname || tracker?.value.scene_id === sceneId) return;
-      const player = Api.utils.InteractiveUtils.getPlayer();
-      if (!player) {
-        if (attempt < 20) setTimeout(() => findPlayer(attempt + 1), 250);
-        return;
-      }
-      let origin = null;
-      try {
-        origin = JSON.parse(sessionStorage.getItem(ORIGIN_KEY) || "null");
-      } catch (_) {}
-      if (origin?.scene_id !== sceneId) origin = null;
-      if (origin) sessionStorage.removeItem(ORIGIN_KEY);
-      const started = Date.now();
-      const handlers = {};
-      const value = {
-        session_id: uuid(),
-        scene_id: sceneId,
-        started_at_ms: started,
-        active_seconds: 0,
-        origin: origin ? "curator" : "stash",
-        source_route: pathname,
-        start_position_seconds: Number(player.currentTime() || 0),
-        maximum_position_seconds: Number(player.currentTime() || 0),
-        final_position_seconds: Number(player.currentTime() || 0),
-        played_ranges: [],
-        seek_destinations_seconds: [],
-        ...(origin || {}),
-      };
-      let playing = false;
-      let lastWall = performance.now();
-      let rangeStart = null;
-      function tick() {
-        const now = performance.now();
-        if (playing) value.active_seconds += Math.min(5, Math.max(0, (now - lastWall) / 1000));
-        lastWall = now;
-        const position = Number(player.currentTime() || 0);
-        value.final_position_seconds = position;
-        value.maximum_position_seconds = Math.max(value.maximum_position_seconds, position);
-      }
-      function closeRange() {
-        if (rangeStart === null) return;
-        const end = Number(player.currentTime() || rangeStart);
-        if (end >= rangeStart) value.played_ranges.push({ start_seconds: rangeStart, end_seconds: end });
-        rangeStart = null;
-      }
-      handlers.play = () => { lastWall = performance.now(); };
-      handlers.playing = () => { tick(); playing = true; rangeStart ??= Number(player.currentTime() || 0); };
-      handlers.waiting = () => { tick(); playing = false; closeRange(); };
-      handlers.pause = () => { tick(); playing = false; closeRange(); };
-      handlers.timeupdate = tick;
-      handlers.seeking = () => { tick(); closeRange(); };
-      handlers.seeked = () => { value.seek_destinations_seconds.push(Number(player.currentTime() || 0)); if (playing) rangeStart = Number(player.currentTime() || 0); };
-      handlers.ended = () => finishTracker(true);
-      Object.entries(handlers).forEach(([event, handler]) => player.on(event, handler));
-      tracker = {
-        value,
-        tick,
-        closeRange,
-        detach: () => Object.entries(handlers).forEach(([event, handler]) => player.off(event, handler)),
-      };
-      if (!player.paused()) handlers.playing();
+    let origin = null;
+    try {
+      origin = JSON.parse(sessionStorage.getItem(ORIGIN_KEY) || "null");
+    } catch (_) {}
+    if (origin?.scene_id !== sceneId) origin = null;
+    if (origin) sessionStorage.removeItem(ORIGIN_KEY);
+    const value = {
+      session_id: uuid(),
+      scene_id: sceneId,
+      started_at_ms: Date.now(),
+      active_seconds: 0,
+      origin: origin ? "curator" : "stash",
+      source_route: pathname,
+      start_position_seconds: 0,
+      maximum_position_seconds: 0,
+      final_position_seconds: 0,
+      played_ranges: [],
+      seek_destinations_seconds: [],
+      ...(origin || {}),
+    };
+    let media = null;
+    let playing = false;
+    let positioned = false;
+    let lastWall = performance.now();
+    let rangeStart = null;
+    function position() {
+      return Number(media?.currentTime || 0);
     }
-    setTimeout(findPlayer, 250);
+    function tick() {
+      const now = performance.now();
+      if (playing) value.active_seconds += Math.min(5, Math.max(0, (now - lastWall) / 1000));
+      lastWall = now;
+      // A replaced or removed element reports nothing; keep the last position we did observe.
+      if (!media) return;
+      const current = position();
+      // Stash resumes part-way into a scene, so the opening position is only known once the
+      // media reports one. Until then a zero would understate everything watched before it.
+      if (!positioned && current > 0) {
+        positioned = true;
+        value.start_position_seconds = current;
+      }
+      value.final_position_seconds = current;
+      value.maximum_position_seconds = Math.max(value.maximum_position_seconds, current);
+    }
+    function closeRange() {
+      if (rangeStart === null) return;
+      const end = Math.max(rangeStart, position());
+      value.played_ranges.push({ start_seconds: rangeStart, end_seconds: end });
+      rangeStart = null;
+    }
+    const handlers = {
+      play: () => { lastWall = performance.now(); },
+      playing: () => { tick(); playing = true; rangeStart ??= position(); },
+      waiting: () => { tick(); playing = false; closeRange(); },
+      pause: () => { tick(); playing = false; closeRange(); },
+      timeupdate: tick,
+      seeking: () => { tick(); closeRange(); },
+      seeked: () => { value.seek_destinations_seconds.push(position()); if (playing) rangeStart = position(); },
+      ended: () => finishTracker(true),
+    };
+    function unbind() {
+      if (!media) return;
+      Object.entries(handlers).forEach(([event, handler]) => media.removeEventListener(event, handler));
+      media = null;
+    }
+    function bind(element) {
+      if (media === element) return;
+      tick();
+      closeRange();
+      playing = false;
+      unbind();
+      media = element;
+      Object.entries(handlers).forEach(([event, handler]) => media.addEventListener(event, handler));
+      if (!media.paused) handlers.playing();
+      else tick();
+    }
+    // Playback can begin long after navigation, and the element can be replaced mid-scene.
+    const watch = setInterval(() => {
+      if (location.pathname !== pathname) return;
+      const element = mediaElement();
+      if (element && element.isConnected) bind(element);
+      else if (media && !media.isConnected) { tick(); closeRange(); playing = false; unbind(); }
+    }, 500);
+    tracker = {
+      value,
+      tick,
+      closeRange,
+      detach: () => {
+        clearInterval(watch);
+        unbind();
+      },
+    };
+    const element = mediaElement();
+    if (element?.isConnected) bind(element);
   }
 
   Api.register.route("/plugins/stash-curator", CuratorPage);

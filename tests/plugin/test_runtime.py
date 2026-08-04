@@ -103,6 +103,18 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
 
 
+def test_playback_capture_binds_the_media_element_and_rebinds_when_replaced() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    # A Video.js wrapper resolved once goes stale when Stash rebuilds the player, which
+    # silently produced sessions with no observed playback.
+    assert "media.addEventListener(event, handler)" in source
+    assert "media.removeEventListener(event, handler)" in source
+    assert "player.on(event, handler)" not in source
+    assert "element.isConnected" in source
+    assert "!media.isConnected" in source
+
+
 def test_backup_management_uses_recognized_ids_and_explicit_confirmation() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 

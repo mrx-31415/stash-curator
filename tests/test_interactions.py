@@ -123,6 +123,81 @@ def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> N
     assert not any('"primary_signal":"quick_replacement"' in item for item in signals)
 
 
+def test_session_without_observed_playback_records_no_view_evidence(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    store = InteractionStore(connection)
+    unobserved = {
+        "session_id": "opened-only",
+        "scene_id": "watched-elsewhere",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 31_000,
+        "active_seconds": 0,
+        "origin": "stash",
+        "source_route": "/scenes/watched-elsewhere",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 0,
+        "final_position_seconds": 0,
+    }
+
+    assert store.submit_sessions([unobserved]) == 1
+
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM play_session WHERE scene_id='watched-elsewhere'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM behavior_event WHERE scene_id='watched-elsewhere'"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_unobserved_session_is_never_graded_as_abandoned(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    store = InteractionStore(connection)
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, model_id, config_version)
+        VALUES ('impression', 1, 'best_bets', NULL, 'config')
+        """
+    )
+    curator_choice = {
+        "session_id": "curator-choice",
+        "scene_id": "chosen",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 31_000,
+        "active_seconds": 0,
+        "origin": "curator",
+        "impression_id": "impression",
+        "source_route": "/plugins/stash-curator",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 0,
+        "final_position_seconds": 0,
+    }
+    replacement = {
+        **curator_choice,
+        "session_id": "replacement",
+        "scene_id": "next-scene",
+        "started_at_ms": 60_000,
+        "ended_at_ms": 180_000,
+        "active_seconds": 120,
+        "maximum_position_seconds": 120,
+        "final_position_seconds": 120,
+    }
+
+    assert store.submit_sessions([curator_choice, replacement]) == 2
+
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM behavior_event WHERE scene_id='chosen'"
+        ).fetchone()[0]
+        == 0
+    )
+
+
 def test_never_show_and_pruning_apply_operational_state(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     store = InteractionStore(connection)
