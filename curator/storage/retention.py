@@ -112,11 +112,13 @@ def prune_snapshots(
                         (version,),
                     )
                 else:
+                    # An attached artifact shadows these names with a temp view, and a view
+                    # cannot be deleted from; the rows being retired are the core ones.
                     connection.execute(
-                        "DELETE FROM entity_feature WHERE feature_version=?", (version,)
+                        "DELETE FROM main.entity_feature WHERE feature_version=?", (version,)
                     )
                     connection.execute(
-                        "DELETE FROM feature_definition WHERE feature_version=?", (version,)
+                        "DELETE FROM main.feature_definition WHERE feature_version=?", (version,)
                     )
                     connection.execute(
                         "DELETE FROM feature_build WHERE feature_version=?", (version,)
