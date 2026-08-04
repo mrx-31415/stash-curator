@@ -459,6 +459,95 @@ def test_direct_play_updates_prebuilt_lanes_without_rebuilding(
     assert not any(item.scene_id == "d-revisit" for item in builder.recommend("revisit", 5).items)
 
 
+_UNOBSERVED_SUMMARY = (
+    '{"played_ranges":[],"start_position_seconds":0.0,"maximum_position_seconds":0.0}'
+)
+
+
+def _play_session(
+    connection: sqlite3.Connection,
+    session_id: str,
+    scene_id: str,
+    ended_at_ms: int,
+    *,
+    active_seconds: float,
+    summary_json: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO play_session(
+            session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
+            provenance, confidence, summary_json
+        ) VALUES (?, ?, ?, ?, ?, 'direct_player', 1, ?)
+        """,
+        (
+            session_id,
+            scene_id,
+            max(0, ended_at_ms - 1_000),
+            ended_at_ms,
+            active_seconds,
+            summary_json,
+        ),
+    )
+
+
+def test_session_without_observed_playback_does_not_suppress_best_bets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = SlateBuilder(connection)
+    now_ms = 100 * 86_400_000
+    monkeypatch.setattr("curator.ranking.slate.time.time_ns", lambda: now_ms * 1_000_000)
+    builder.prepare("model")
+    _play_session(
+        connection,
+        "opened-only",
+        "a-best",
+        now_ms,
+        active_seconds=0.0,
+        summary_json=_UNOBSERVED_SUMMARY,
+    )
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
+
+    _play_session(
+        connection,
+        "watched",
+        "a-best",
+        now_ms,
+        active_seconds=0.0,
+        summary_json='{"played_ranges":[],"start_position_seconds":0.0,'
+        '"maximum_position_seconds":42.0}',
+    )
+
+    assert builder.recommend("best_bets", 1).items[0].scene_id != "a-best"
+
+
+def test_lane_classification_uses_plays_captured_since_the_last_sync(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    _play_session(
+        connection,
+        "watched",
+        "a-best",
+        2,
+        active_seconds=120.0,
+        summary_json=_UNOBSERVED_SUMMARY,
+    )
+    _play_session(
+        connection,
+        "opened-only",
+        "b-best",
+        2,
+        active_seconds=0.0,
+        summary_json=_UNOBSERVED_SUMMARY,
+    )
+
+    lanes = {(item.scene_id, item.lane) for item in LanePolicy(connection).classify("model")}
+
+    assert ("a-best", "best_bets") not in lanes
+    assert ("b-best", "best_bets") in lanes
+
+
 def test_greedy_slate_enforces_adjacency_and_soft_penalties_only_reorder(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     builder = SlateBuilder(connection)

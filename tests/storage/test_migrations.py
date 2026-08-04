@@ -31,10 +31,11 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             17,
             18,
             19,
+            20,
         )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 19
+        assert after.current_version == 20
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -89,7 +90,7 @@ def test_feature_count_migration_backfills_existing_builds(tmp_path: Path) -> No
     connection = connect_database(tmp_path / "curator.sqlite3")
     runner = MigrationRunner(connection)
     original = runner.migrations
-    runner.migrations = original[:-2]
+    runner.migrations = original[:-3]
     runner.migrate(applied_at_ms=1)
     connection.execute(
         """
@@ -126,6 +127,45 @@ def test_feature_count_migration_backfills_existing_builds(tmp_path: Path) -> No
     ) == (1, 0, 1)
 
 
+def test_unobserved_penalty_migration_keeps_graded_evidence(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    runner = MigrationRunner(connection)
+    original = runner.migrations
+    runner.migrations = original[:-1]
+    runner.migrate(applied_at_ms=1)
+    sessions = (
+        ("empty", "opened", 0.0, '{"played_ranges":[],"maximum_position_seconds":0.0}'),
+        ("watched", "played", 120.0, '{"played_ranges":[],"maximum_position_seconds":120.0}'),
+    )
+    for session_id, scene_id, active_seconds, summary in sessions:
+        connection.execute(
+            """
+            INSERT INTO play_session(
+                session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
+                provenance, confidence, summary_json
+            ) VALUES (?, ?, 0, 1000, ?, 'direct_player', 1, ?)
+            """,
+            (session_id, scene_id, active_seconds, summary),
+        )
+        connection.execute(
+            """
+            INSERT INTO behavior_event(
+                event_id, event_type, scene_id, occurred_at_ms, outcome, confidence,
+                provenance, session_id
+            ) VALUES (?, 'occasion_outcome', ?, 1000, -0.1, 0.8, 'direct_player', ?)
+            """,
+            (f"{session_id}:view", scene_id, session_id),
+        )
+
+    runner.migrations = original
+    runner.migrate(applied_at_ms=2)
+
+    assert [
+        str(row[0])
+        for row in connection.execute("SELECT scene_id FROM behavior_event ORDER BY scene_id")
+    ] == ["played"]
+
+
 def test_unknown_future_migration_is_rejected(tmp_path: Path) -> None:
     connection = connect_database(tmp_path / "curator.sqlite3")
     try:
@@ -151,7 +191,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 19
+        assert MigrationRunner(reader).status().current_version == 20
     finally:
         writer.rollback()
         reader.close()
@@ -177,7 +217,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 19
+        assert second_runner.migrate(applied_at_ms=2).current_version == 20
     finally:
         second.close()
         first.close()

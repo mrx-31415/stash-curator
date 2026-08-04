@@ -1,6 +1,7 @@
 """Behavioral session and outcome normalization."""
 
 from curator.events.contracts import (
+    OBSERVED_PLAYBACK_SQL,
     DirectSessionInput,
     EventCalibration,
     NormalizedOutcome,
@@ -14,6 +15,7 @@ from curator.events.replacements import quick_replacement_outcome
 from curator.events.repository import HistoricalEventStore
 
 __all__ = [
+    "OBSERVED_PLAYBACK_SQL",
     "DirectSessionInput",
     "EventCalibration",
     "HistoricalEventStore",

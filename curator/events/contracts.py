@@ -130,6 +130,29 @@ class DirectSessionInput:
         if self.origin is SessionOrigin.CURATOR and self.impression_id is None:
             raise ValueError("Curator-originated sessions require an impression_id")
 
+    @property
+    def observed_playback(self) -> bool:
+        """Whether the browser actually watched the video advance.
+
+        A tracker that never receives player events reports elapsed wall time with no active
+        seconds and no progress. That is missing evidence, not a short exit, so it must not be
+        read as watching behavior.
+        """
+        return (
+            self.active_seconds > 0
+            or bool(self.played_ranges)
+            or self.maximum_position_seconds > self.start_position_seconds
+        )
+
+
+# The same test as DirectSessionInput.observed_playback, against a stored play_session row.
+OBSERVED_PLAYBACK_SQL = """(
+    active_seconds > 0
+    OR json_array_length(COALESCE(json_extract(summary_json, '$.played_ranges'), '[]')) > 0
+    OR COALESCE(json_extract(summary_json, '$.maximum_position_seconds'), 0)
+       > COALESCE(json_extract(summary_json, '$.start_position_seconds'), 0)
+)"""
+
 
 @dataclass(frozen=True)
 class OutcomeSignal:
