@@ -9,6 +9,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
+from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.storage import transaction
@@ -76,10 +77,7 @@ class LanePolicy:
             for scene_id, score in scores.items()
             if bool(score.eligibility.get("eligible", False))
         }
-        played_scene_ids = {
-            str(row[0])
-            for row in self.connection.execute("SELECT DISTINCT scene_id FROM source_play")
-        }
+        played_scene_ids = self._played_scene_ids()
         content_ranks = _percentiles(
             {
                 scene_id: _component_value(score, "content")
@@ -325,6 +323,24 @@ class LanePolicy:
             for row in rows
         )
 
+    def _played_scene_ids(self) -> set[str]:
+        """Scenes the user has watched, from Stash history and from Curator's own player.
+
+        Stash only reports a play once its own threshold is met and a sync has run since, so
+        classification would otherwise keep offering back scenes watched in this session.
+        """
+        return {
+            str(row[0])
+            for row in self.connection.execute(
+                f"""
+                SELECT DISTINCT scene_id FROM source_play
+                UNION
+                SELECT DISTINCT scene_id FROM play_session
+                WHERE provenance<>'direct_player' OR {OBSERVED_PLAYBACK_SQL}
+                """
+            )
+        }
+
     @staticmethod
     def _adventure_subtype(
         score: ModelSceneScore,
@@ -350,10 +366,7 @@ class LanePolicy:
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         vectors = FeatureStore(self.connection).scene_content_vectors(str(feature_row[0]))
-        played = {
-            str(row[0])
-            for row in self.connection.execute("SELECT DISTINCT scene_id FROM source_play")
-        }
+        played = self._played_scene_ids()
         library_count: dict[str, int] = {}
         played_count: dict[str, int] = {}
         for scene_id, vector in vectors.items():
@@ -376,20 +389,14 @@ class LanePolicy:
             gaps[scene_id] = weighted_gap / weight if weight else 0.0
         coverage_ranks = _percentiles(gaps)
 
-        known_performers = {
-            str(row[0])
-            for row in self.connection.execute(
-                """
-                SELECT DISTINCT sp.performer_id FROM scene_performer sp
-                JOIN source_play p ON p.scene_id=sp.scene_id
-                """
-            )
-        }
         performers: dict[str, list[str]] = {}
         for row in self.connection.execute(
             "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, position"
         ):
             performers.setdefault(str(row["scene_id"]), []).append(str(row["performer_id"]))
+        known_performers = {
+            performer for scene_id in played for performer in performers.get(scene_id, ())
+        }
         unknown_performers = {
             scene_id: (
                 sum(performer not in known_performers for performer in performers.get(scene_id, ()))
@@ -399,20 +406,14 @@ class LanePolicy:
             )
             for scene_id in scene_ids
         }
-        known_studios = {
-            str(row[0])
-            for row in self.connection.execute(
-                """
-                SELECT DISTINCT s.studio_id FROM source_scene s
-                JOIN source_play p ON p.scene_id=s.scene_id WHERE s.studio_id IS NOT NULL
-                """
-            )
-        }
         scene_studios = {
             str(row["scene_id"]): str(row["studio_id"])
             for row in self.connection.execute(
                 "SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL"
             )
+        }
+        known_studios = {
+            scene_studios[scene_id] for scene_id in played if scene_id in scene_studios
         }
         unknown_studios = {
             scene_id: float(

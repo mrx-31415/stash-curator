@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from curator.graphql.adapters import SourceEntity, adapt_page
+from curator.graphql.adapters import adapt_page
 from curator.graphql.operations import CAPABILITIES, ENTITY_OPERATIONS, EntityOperation
 from curator.sync.repository import SyncRepository
 
@@ -58,13 +58,19 @@ def probe_capabilities(client: QueryClient) -> Capabilities:
         "performerType": {"id", "updated_at", "favorite", "weight", "fake_tits"},
         "tagType": {"id", "updated_at", "stash_ids"},
     }
-    for type_key, required_fields in requirements.items():
+    # last_played_at is how the play pass observes plays; Stash never bumps scene updated_at
+    # for one, so without it view history would silently stop updating.
+    for type_key, required_fields in {
+        **requirements,
+        "sceneFilterType": {"play_count", "last_played_at"},
+    }.items():
+        field_key = "inputFields" if type_key.endswith("FilterType") else "fields"
         type_data = data.get(type_key)
-        if not isinstance(type_data, Mapping) or not isinstance(type_data.get("fields"), list):
+        if not isinstance(type_data, Mapping) or not isinstance(type_data.get(field_key), list):
             raise RuntimeError(f"Stash capability probe is missing {type_key}")
         available = {
             field["name"]
-            for field in type_data["fields"]
+            for field in type_data[field_key]
             if isinstance(field, Mapping) and isinstance(field.get("name"), str)
         }
         missing = sorted(required_fields - available)
@@ -111,19 +117,25 @@ class SyncService:
         changed_counts: dict[str, int] = {}
         scene_ids: set[str] = set()
         current_entity: str | None = None
+        # A full sweep walks every scene by id, so the incremental play pass adds nothing.
+        operations = tuple(
+            operation
+            for operation in ENTITY_OPERATIONS
+            if not (full and operation.incremental_only)
+        )
         try:
-            for position, operation in enumerate(ENTITY_OPERATIONS):
+            for position, operation in enumerate(operations):
                 current_entity = operation.entity_type
                 count, ids = self._sync_entity(
                     run_id,
                     operation,
                     full=full,
                     position=position,
-                    entity_count=len(ENTITY_OPERATIONS),
+                    entity_count=len(operations),
                 )
                 counts[current_entity] = count
                 changed_counts[current_entity] = len(ids)
-                if current_entity == "scene":
+                if operation.items_key == "scenes":
                     scene_ids.update(ids)
             current_entity = None
             if full:
@@ -159,17 +171,26 @@ class SyncService:
         baseline, _ = self.repository.cursor_watermarks(operation.entity_type)
         processed = 0
         ids: list[str] = []
-        sort = "id" if full else "updated_at"
+        sort = "id" if full else operation.sort
         direction = "ASC" if full else "DESC"
+        variables: dict[str, object] = (
+            operation.variables_for(baseline) if operation.variables_for else {}
+        )
         while True:
             data = self.client.execute(
                 operation.document,
-                {"page": page, "perPage": self.page_size, "sort": sort, "direction": direction},
+                {
+                    "page": page,
+                    "perPage": self.page_size,
+                    "sort": sort,
+                    "direction": direction,
+                    **variables,
+                },
             )
             adapted = adapt_page(data, root_key=operation.root_key, items_key=operation.items_key)
             timestamps = tuple(
                 timestamp
-                for timestamp in (self._updated_at(item) for item in adapted.items)
+                for timestamp in (operation.watermark_of(item) for item in adapted.items)
                 if timestamp
             )
             changed = self.repository.save_page(
@@ -199,7 +220,3 @@ class SyncService:
                 self.repository.complete_entity(run_id, operation.entity_type, self.clock_ms())
                 return processed, tuple(ids)
             page += 1
-
-    @staticmethod
-    def _updated_at(item: SourceEntity) -> str | None:
-        return item.updated_at
