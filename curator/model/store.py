@@ -50,9 +50,33 @@ class RecommendationModelStore:
             where += f" AND scene_id IN ({','.join('?' for _ in scene_ids)})"
             parameters.extend(scene_ids)
         rows = self.connection.execute(
-            f"SELECT * FROM model_scene_score WHERE {where} ORDER BY scene_id",
+            f"""
+            SELECT model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
+                appeal, current_fit, confidence, metadata_confidence, recovery,
+                components_json, eligibility_json
+            FROM model_scene_score WHERE {where} ORDER BY scene_id
+            """,
             parameters,
         )
+        # Assembled in Python rather than via SQL json_object(): SQLite's JSON1 serializes
+        # REAL values with only ~15 significant digits, silently losing precision on the
+        # last one or two digits compared to Python's full float64 round-trip.
+        neighbors_by_scene: dict[str, list[dict[str, object]]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT scene_id, neighbor_scene_id, similarity, weight, outcome
+            FROM model_scene_neighbor WHERE {where} ORDER BY scene_id, rank
+            """,
+            parameters,
+        ):
+            neighbors_by_scene.setdefault(str(row["scene_id"]), []).append(
+                {
+                    "scene_id": str(row["neighbor_scene_id"]),
+                    "similarity": float(row["similarity"]),
+                    "weight": float(row["weight"]),
+                    "outcome": float(row["outcome"]),
+                }
+            )
         return {
             str(row["scene_id"]): ModelSceneScore(
                 model_id=str(row["model_id"]),
@@ -66,7 +90,7 @@ class RecommendationModelStore:
                 metadata_confidence=float(row["metadata_confidence"]),
                 recovery=float(row["recovery"]),
                 components=json.loads(row["components_json"]),
-                neighbors=tuple(json.loads(row["neighbors_json"])),
+                neighbors=tuple(neighbors_by_scene.get(str(row["scene_id"]), ())),
                 eligibility=json.loads(row["eligibility_json"]),
             )
             for row in rows
