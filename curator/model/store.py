@@ -39,6 +39,32 @@ class RecommendationModelStore:
         ).fetchone()
         return str(row[0]) if row else None
 
+    def _neighbors_by_scene(
+        self, model_id: str, scene_ids: Collection[str] | None = None
+    ) -> dict[str, list[dict[str, object]]]:
+        where = "model_id=?"
+        parameters: list[object] = [model_id]
+        if scene_ids is not None:
+            where += f" AND scene_id IN ({','.join('?' for _ in scene_ids)})"
+            parameters.extend(scene_ids)
+        neighbors_by_scene: dict[str, list[dict[str, object]]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT scene_id, neighbor_scene_id, similarity, weight, outcome
+            FROM model_scene_neighbor WHERE {where} ORDER BY scene_id, rank
+            """,
+            parameters,
+        ):
+            neighbors_by_scene.setdefault(str(row["scene_id"]), []).append(
+                {
+                    "scene_id": str(row["neighbor_scene_id"]),
+                    "similarity": float(row["similarity"]),
+                    "weight": float(row["weight"]),
+                    "outcome": float(row["outcome"]),
+                }
+            )
+        return neighbors_by_scene
+
     def scores(
         self, model_id: str, scene_ids: Collection[str] | None = None
     ) -> dict[str, ModelSceneScore]:
@@ -61,22 +87,7 @@ class RecommendationModelStore:
         # Assembled in Python rather than via SQL json_object(): SQLite's JSON1 serializes
         # REAL values with only ~15 significant digits, silently losing precision on the
         # last one or two digits compared to Python's full float64 round-trip.
-        neighbors_by_scene: dict[str, list[dict[str, object]]] = {}
-        for row in self.connection.execute(
-            f"""
-            SELECT scene_id, neighbor_scene_id, similarity, weight, outcome
-            FROM model_scene_neighbor WHERE {where} ORDER BY scene_id, rank
-            """,
-            parameters,
-        ):
-            neighbors_by_scene.setdefault(str(row["scene_id"]), []).append(
-                {
-                    "scene_id": str(row["neighbor_scene_id"]),
-                    "similarity": float(row["similarity"]),
-                    "weight": float(row["weight"]),
-                    "outcome": float(row["outcome"]),
-                }
-            )
+        neighbors_by_scene = self._neighbors_by_scene(model_id, scene_ids)
         return {
             str(row["scene_id"]): ModelSceneScore(
                 model_id=str(row["model_id"]),
@@ -90,6 +101,46 @@ class RecommendationModelStore:
                 metadata_confidence=float(row["metadata_confidence"]),
                 recovery=float(row["recovery"]),
                 components=json.loads(row["components_json"]),
+                neighbors=tuple(neighbors_by_scene.get(str(row["scene_id"]), ())),
+                eligibility=json.loads(row["eligibility_json"]),
+            )
+            for row in rows
+        }
+
+    def classification_data(self, model_id: str) -> dict[str, ModelSceneScore]:
+        """Lean scene scores for lane classification.
+
+        Classification reads only the six family values and the direct signals, so this
+        avoids parsing the full components_json (which carries top-contributor metadata
+        for runtime explanations) for every scene. Falls back to the full scores for
+        artifacts published before the classification_json column existed.
+        """
+        try:
+            rows = self.connection.execute(
+                """
+                SELECT model_id, scene_id, direct_appeal, direct_confidence,
+                    appeal, current_fit, confidence, metadata_confidence, recovery,
+                    classification_json, eligibility_json
+                FROM model_scene_score WHERE model_id=? ORDER BY scene_id
+                """,
+                (model_id,),
+            )
+        except sqlite3.OperationalError:
+            return self.scores(model_id)
+        neighbors_by_scene = self._neighbors_by_scene(model_id)
+        return {
+            str(row["scene_id"]): ModelSceneScore(
+                model_id=str(row["model_id"]),
+                scene_id=str(row["scene_id"]),
+                general_appeal=0.0,
+                direct_appeal=float(row["direct_appeal"]),
+                direct_confidence=float(row["direct_confidence"]),
+                appeal=float(row["appeal"]),
+                current_fit=float(row["current_fit"]),
+                confidence=float(row["confidence"]),
+                metadata_confidence=float(row["metadata_confidence"]),
+                recovery=float(row["recovery"]),
+                components=json.loads(row["classification_json"]),
                 neighbors=tuple(neighbors_by_scene.get(str(row["scene_id"]), ())),
                 eligibility=json.loads(row["eligibility_json"]),
             )
