@@ -31,19 +31,11 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
         (json.dumps(components),),
     )
     connection.execute(
-        "UPDATE model_scene_score SET neighbors_json=? WHERE scene_id='a-best'",
-        (
-            json.dumps(
-                [
-                    {
-                        "scene_id": "b-best",
-                        "similarity": 0.72,
-                        "weight": 0.31,
-                        "outcome": 0.8,
-                    }
-                ]
-            ),
-        ),
+        """
+        INSERT INTO model_scene_neighbor(
+            model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+        ) VALUES ('model', 'a-best', 0, 'b-best', 0.72, 0.31, 0.8)
+        """
     )
     output = tmp_path / "report.html"
 

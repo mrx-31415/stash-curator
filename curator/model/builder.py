@@ -39,7 +39,7 @@ from curator.storage.retention import prune_snapshots
 # ponytail: 0.005 removed 38% of measured seeds; make configurable only if
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
-MODEL_BUILD_VERSION = 2
+MODEL_BUILD_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -1291,8 +1291,8 @@ class PreferenceModelBuilder:
                 INSERT INTO model_scene_score(
                     model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
                     appeal, current_fit, confidence, metadata_confidence, recovery,
-                    components_json, neighbors_json, eligibility_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    components_json, eligibility_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -1307,10 +1307,29 @@ class PreferenceModelBuilder:
                         score.metadata_confidence,
                         score.recovery,
                         json.dumps(score.components, sort_keys=True, separators=(",", ":")),
-                        json.dumps(score.neighbors, sort_keys=True, separators=(",", ":")),
                         json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
                     )
                     for score in scores
+                ),
+            )
+            insert_rows(
+                """
+                INSERT INTO model_scene_neighbor(
+                    model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        model_id,
+                        score.scene_id,
+                        rank,
+                        neighbor["scene_id"],
+                        neighbor["similarity"],
+                        neighbor["weight"],
+                        neighbor["outcome"],
+                    )
+                    for score in scores
+                    for rank, neighbor in enumerate(score.neighbors)
                 ),
             )
             self._report(0.85)

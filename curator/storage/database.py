@@ -25,6 +25,7 @@ _LEGACY_DERIVED_TABLES = (
     ("model_lane_order", "model_id", ("model_id", "lane", "ordering", "position")),
     ("model_scene_lane", "model_id", ("model_id", "scene_id", "lane")),
     ("model_scene_score", "model_id", ("model_id", "scene_id")),
+    ("model_scene_neighbor", "model_id", ("model_id", "scene_id", "rank")),
     ("direct_scene_state", "model_id", ("model_id", "scene_id")),
     ("feature_affinity", "model_id", ("model_id", "feature_id")),
     ("model_lane_candidate_cache", "model_id", ("model_id", "lane")),

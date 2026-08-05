@@ -184,6 +184,14 @@ def test_legacy_compaction_is_validated_batched_restartable_and_preserves_durabl
         """,
         ((model_id,) for model_id in model_ids),
     )
+    connection.executemany(
+        """
+        INSERT INTO model_scene_neighbor(
+            model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+        ) VALUES (?, 'scene', 0, 'scene', 0, 0, 0)
+        """,
+        ((model_id,) for model_id in model_ids),
+    )
     derived = {table for table, _, _ in _LEGACY_DERIVED_TABLES}
     durable_counts = {
         str(row[0]): int(connection.execute(f"SELECT count(*) FROM {row[0]}").fetchone()[0])
@@ -209,12 +217,13 @@ def test_legacy_compaction_is_validated_batched_restartable_and_preserves_durabl
         progress=lambda processed, total: complete_progress.append((processed, total)),
     )
     assert complete["status"] == "complete"
-    assert complete["rows_deleted"] == 5
+    assert complete["rows_deleted"] == 7
     assert complete["rows_remaining"] == 0
-    assert partial_progress == [(0, 5), (1, 5)]
-    assert complete_progress[0] == (0, 4)
-    assert complete_progress[-1] == (4, 4)
+    assert partial_progress == [(0, 7), (1, 7)]
+    assert complete_progress[0] == (0, 6)
+    assert complete_progress[-1] == (6, 6)
     assert connection.execute("SELECT count(*) FROM model_scene_score").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM model_scene_neighbor").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM entity_feature").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM feature_definition").fetchone()[0] == 0
     assert connection.execute("SELECT count(*) FROM feature_affinity").fetchone()[0] == 0
