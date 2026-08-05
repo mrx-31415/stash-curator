@@ -332,6 +332,7 @@ class InteractionStore:
     def submit_sessions(self, entries: list[dict[str, Any]]) -> int:
         sessions = [self._session(entry) for entry in entries]
         inserted = 0
+        signaled = False
         with transaction(self.connection):
             for session in sessions:
                 cursor = self.connection.execute(
@@ -359,14 +360,17 @@ class InteractionStore:
                 if session.observed_playback:
                     outcome = viewing_outcome(session.active_seconds, session.ended_at_ms)
                     if outcome is not None:
-                        self._insert_signal(
+                        signaled |= self._insert_signal(
                             f"{session.session_id}:view",
                             session.scene_id,
                             session.session_id,
                             outcome,
                         )
-                self._insert_replacement(session)
-            if inserted:
+                signaled |= self._insert_replacement(session)
+            # A session that merely opened a scene without any observed playback or
+            # replacement evidence carries no preference signal; requesting a model update
+            # for it would repeatedly wake "Apply recent Curator feedback" on plain browsing.
+            if signaled:
                 ModelUpdateCoordinator(self.connection).request("session_outcome")
         return inserted
 
@@ -414,7 +418,7 @@ class InteractionStore:
             (entry["scene_id"], entry["occurred_at_ms"], entry["occurred_at_ms"], reason),
         )
 
-    def _insert_replacement(self, replacement: DirectSessionInput) -> None:
+    def _insert_replacement(self, replacement: DirectSessionInput) -> bool:
         # Only a session whose playback was observed can be judged as abandoned early.
         row = self.connection.execute(
             f"""
@@ -426,7 +430,7 @@ class InteractionStore:
             (replacement.session_id, replacement.started_at_ms),
         ).fetchone()
         if row is None:
-            return
+            return False
         original = self._session(json.loads(row[0]))
         positive = bool(
             self.connection.execute(
@@ -440,18 +444,19 @@ class InteractionStore:
         signal = quick_replacement_outcome(
             original, replacement, intervening_positive_feedback=positive
         )
-        if signal is not None:
-            self._insert_signal(
-                f"{replacement.session_id}:replacement",
-                original.scene_id,
-                original.session_id,
-                signal,
-            )
+        if signal is None:
+            return False
+        return self._insert_signal(
+            f"{replacement.session_id}:replacement",
+            original.scene_id,
+            original.session_id,
+            signal,
+        )
 
     def _insert_signal(
         self, event_id: str, scene_id: str, session_id: str | None, signal: Any
-    ) -> None:
-        self.connection.execute(
+    ) -> bool:
+        cursor = self.connection.execute(
             """
             INSERT OR IGNORE INTO behavior_event(
                 event_id, event_type, scene_id, occurred_at_ms, outcome, confidence,
@@ -469,6 +474,7 @@ class InteractionStore:
                 json.dumps({"primary_signal": signal.signal_type}, separators=(",", ":")),
             ),
         )
+        return bool(cursor.rowcount)
 
     @staticmethod
     def _impression_entry(entry: dict[str, Any]) -> dict[str, Any]:
