@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from curator.interactions import InteractionStore
-from curator.model import PreferenceModelBuilder
+from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.ranking import SlateBuilder
 from tests.model.test_builder import REFERENCE_MS, _database
 
@@ -153,6 +153,10 @@ def test_session_without_observed_playback_records_no_view_evidence(tmp_path: Pa
         ).fetchone()[0]
         == 0
     )
+    # A page open that produced no evidence must not wake "Apply recent Curator
+    # feedback" on the next Curator visit; otherwise plain browsing would keep
+    # marking the model dirty forever.
+    assert not ModelUpdateCoordinator(connection).status().pending
 
 
 def test_unobserved_session_is_never_graded_as_abandoned(tmp_path: Path) -> None:
