@@ -11,8 +11,8 @@ from uuid import uuid4
 
 from curator.storage.database import StorageError
 
-ARTIFACT_SCHEMA_VERSION = 2
-SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2})
+ARTIFACT_SCHEMA_VERSION = 3
+SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 _FINAL_NAME = re.compile(r"(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.sqlite3")
 _TEMP_NAME = re.compile(r"\.(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.[0-9a-f]{32}\.tmp")
 FEATURE_TABLES = ("feature_definition", "entity_feature", "scene_content_search")
@@ -79,6 +79,7 @@ CREATE TABLE model_scene_score (
     metadata_confidence REAL NOT NULL CHECK (metadata_confidence BETWEEN 0 AND 1),
     recovery REAL NOT NULL CHECK (recovery BETWEEN 0 AND 1),
     components_json TEXT NOT NULL,
+    classification_json TEXT NOT NULL DEFAULT '{}',
     eligibility_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (model_id, scene_id)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_neighbor (
