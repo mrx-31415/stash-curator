@@ -30,6 +30,7 @@ def _score(
     structure: float = 0.0,
     signals: tuple[str, ...] = (),
     eligible: bool = True,
+    neighbors: tuple[dict[str, object], ...] = (),
 ) -> None:
     components = {
         "baseline": _component(0),
@@ -51,8 +52,8 @@ def _score(
         INSERT INTO model_scene_score(
             model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
             appeal, current_fit, confidence, metadata_confidence, recovery,
-            components_json, neighbors_json, eligibility_json
-        ) VALUES ('model', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)
+            components_json, eligibility_json
+        ) VALUES ('model', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             scene_id,
@@ -66,6 +67,24 @@ def _score(
             recovery,
             json.dumps(components),
             json.dumps({"eligible": eligible, "reasons": [] if eligible else ["excluded"]}),
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO model_scene_neighbor(
+            model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+        ) VALUES ('model', ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            (
+                scene_id,
+                rank,
+                item["scene_id"],
+                item["similarity"],
+                item["weight"],
+                item["outcome"],
+            )
+            for rank, item in enumerate(neighbors)
         ),
     )
 

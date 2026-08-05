@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from curator.storage.database import StorageError
 
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
 SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2})
 _FINAL_NAME = re.compile(r"(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.sqlite3")
 _TEMP_NAME = re.compile(r"\.(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.[0-9a-f]{32}\.tmp")
@@ -20,6 +20,7 @@ MODEL_TABLES = (
     "feature_affinity",
     "direct_scene_state",
     "model_scene_score",
+    "model_scene_neighbor",
     "model_scene_reason",
     "model_scene_lane",
     "model_lane_candidate_cache",
@@ -77,8 +78,14 @@ CREATE TABLE model_scene_score (
     confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
     metadata_confidence REAL NOT NULL CHECK (metadata_confidence BETWEEN 0 AND 1),
     recovery REAL NOT NULL CHECK (recovery BETWEEN 0 AND 1),
-    components_json TEXT NOT NULL, neighbors_json TEXT NOT NULL DEFAULT '[]',
+    components_json TEXT NOT NULL,
     eligibility_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (model_id, scene_id)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE model_scene_neighbor (
+    model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
+    rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 4), neighbor_scene_id TEXT NOT NULL,
+    similarity REAL NOT NULL, weight REAL NOT NULL, outcome REAL NOT NULL,
+    PRIMARY KEY (model_id, scene_id, rank)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_reason (
     model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
