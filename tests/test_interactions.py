@@ -123,8 +123,43 @@ def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> N
     assert not any('"primary_signal":"quick_replacement"' in item for item in signals)
 
 
+def test_session_for_a_scene_not_yet_synced_is_dropped_not_fatal(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    store = InteractionStore(connection)
+    # The live Stash tracker names whatever scene is on screen, which can be one added to
+    # Stash after Curator's last sync. OR IGNORE does not cover foreign key violations, so
+    # this must be caught explicitly rather than aborting the whole submitted batch.
+    unsynced = {
+        "session_id": "too-new",
+        "scene_id": "not-yet-synced",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 11_000,
+        "active_seconds": 10,
+        "origin": "stash",
+        "source_route": "/scenes/not-yet-synced",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 10,
+        "final_position_seconds": 10,
+    }
+    known = {
+        **unsynced,
+        "session_id": "known",
+        "scene_id": "old-good",
+        "source_route": "/scenes/old-good",
+    }
+
+    assert store.submit_sessions([unsynced, known]) == 1
+    assert not connection.execute(
+        "SELECT 1 FROM play_session WHERE scene_id='not-yet-synced'"
+    ).fetchone()
+    assert connection.execute("SELECT 1 FROM play_session WHERE scene_id='old-good'").fetchone()
+
+
 def test_session_without_observed_playback_records_no_view_evidence(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        "INSERT INTO source_scene(scene_id, source_hash) VALUES ('watched-elsewhere', 'hash')"
+    )
     store = InteractionStore(connection)
     unobserved = {
         "session_id": "opened-only",
@@ -161,6 +196,10 @@ def test_session_without_observed_playback_records_no_view_evidence(tmp_path: Pa
 
 def test_unobserved_session_is_never_graded_as_abandoned(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, source_hash) VALUES (?, ?)",
+        (("chosen", "hash-chosen"), ("next-scene", "hash-next")),
+    )
     store = InteractionStore(connection)
     connection.execute(
         """
