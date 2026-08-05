@@ -242,6 +242,81 @@ def test_performer_similarity_numpy_matches_python(tmp_path: Path) -> None:
             assert numpy_match["similarity"] == pytest.approx(python_match["similarity"], rel=1e-6)
 
 
+def test_classification_data_matches_full_scores_for_lane_values(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    model_id = builder.build().model_id
+    store = RecommendationModelStore(connection)
+    full = store.scores(model_id)
+    lean = store.classification_data(model_id)
+    assert set(lean) == set(full)
+    for scene_id, lean_score in lean.items():
+        full_score = full[scene_id]
+        assert lean_score.current_fit == full_score.current_fit
+        assert lean_score.confidence == full_score.confidence
+        assert lean_score.metadata_confidence == full_score.metadata_confidence
+        assert lean_score.recovery == full_score.recovery
+        assert lean_score.direct_appeal == full_score.direct_appeal
+        assert lean_score.direct_confidence == full_score.direct_confidence
+        assert lean_score.appeal == full_score.appeal
+        assert lean_score.eligibility == full_score.eligibility
+        assert lean_score.neighbors == full_score.neighbors
+        for family in (
+            "content",
+            "content_neighbor",
+            "performer_identity",
+            "performer_similarity",
+            "studio",
+            "structure",
+        ):
+            assert lean_score.components[family]["value"] == pytest.approx(
+                full_score.components[family]["value"], rel=1e-12
+            )
+        assert (
+            lean_score.components["direct"]["signals"] == full_score.components["direct"]["signals"]
+        )
+
+
+def test_classification_data_falls_back_for_pre_classification_artifacts(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    # The migrated core model_scene_score predates the classification_json column;
+    # classification_data must fall back to the full scores read for such artifacts.
+    connection.execute("PRAGMA foreign_keys=OFF")
+    try:
+        connection.execute(
+            """
+            INSERT INTO model_scene_score(
+                model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
+                appeal, current_fit, confidence, metadata_confidence, recovery,
+                components_json, neighbors_json, eligibility_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "model",
+                "scene",
+                0.0,
+                0.1,
+                0.2,
+                0.3,
+                0.4,
+                0.5,
+                0.6,
+                0.7,
+                '{"content": {"value": 0.25}}',
+                "[]",
+                '{"eligible": true, "reasons": []}',
+            ),
+        )
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+    store = RecommendationModelStore(connection)
+    lean = store.classification_data("model")
+    assert lean["scene"].components["content"]["value"] == 0.25
+    assert lean["scene"].appeal == 0.3
+
+
 def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     statements: list[str] = []
