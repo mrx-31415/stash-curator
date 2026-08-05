@@ -8,6 +8,7 @@ import sqlite3
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
+from curator import optional_deps
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.features import FeatureStore
@@ -41,6 +42,28 @@ def _number(value: object) -> float:
 def _percentiles(values: dict[str, float]) -> dict[str, float]:
     if not values:
         return {}
+    np = optional_deps.np
+    if np is not None:
+        ids = np.fromiter(values.keys(), dtype=object)
+        sorted_values = np.fromiter(values.values(), dtype=np.float64)
+        order = np.lexsort((ids, sorted_values))
+        sorted_values = sorted_values[order]
+        sorted_ids = ids[order]
+        count = len(sorted_values)
+        denominator = max(1, count - 1)
+        # Group boundaries where the value changes; percentiles use the midpoint of
+        # each tied group's positions, matching the pure-Python loop below.
+        groups = np.flatnonzero(
+            np.concatenate(([True], sorted_values[1:] != sorted_values[:-1], [True]))
+        )
+        starts = groups[:-1]
+        ends = groups[1:]
+        mids = (starts + ends - 1) / 2
+        percentiles = np.repeat(mids / denominator, ends - starts)
+        return {
+            str(scene_id): float(value)
+            for scene_id, value in zip(sorted_ids, percentiles, strict=True)
+        }
     ordered = sorted(values.items(), key=lambda item: (item[1], item[0]))
     denominator = max(1, len(ordered) - 1)
     result: dict[str, float] = {}
@@ -71,7 +94,7 @@ class LanePolicy:
         *,
         progress: Callable[[int, int], None] | None = None,
     ) -> tuple[LaneClassification, ...]:
-        scores = RecommendationModelStore(self.connection).scores(model_id)
+        scores = RecommendationModelStore(self.connection).classification_data(model_id)
         eligible_scores = {
             scene_id: score
             for scene_id, score in scores.items()

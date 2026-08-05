@@ -41,7 +41,7 @@ from curator.storage.retention import prune_snapshots
 # ponytail: 0.005 removed 38% of measured seeds; make configurable only if
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
-MODEL_BUILD_VERSION = 3
+MODEL_BUILD_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,35 @@ def _clamp(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
 
 def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+_CLASSIFICATION_FAMILIES = (
+    "content",
+    "content_neighbor",
+    "performer_identity",
+    "performer_similarity",
+    "studio",
+    "structure",
+)
+
+
+def _classification_payload(components: dict[str, object]) -> dict[str, object]:
+    """Slim component view that lane classification reads.
+
+    Classification only needs the six family values and the direct signals; this
+    avoids storing (and later parsing) the full components_json with its
+    top-contributor metadata for every scene.
+    """
+    payload: dict[str, object] = {}
+    for family in _CLASSIFICATION_FAMILIES:
+        component = components.get(family)
+        value = component.get("value") if isinstance(component, dict) else 0.0
+        payload[family] = {"value": _number(value)}
+    direct = components.get("direct")
+    payload["direct"] = {
+        "signals": list(direct.get("signals", [])) if isinstance(direct, dict) else []
+    }
+    return payload
 
 
 def _numpy_cosine_matrix(
@@ -1704,8 +1733,8 @@ class PreferenceModelBuilder:
                 INSERT INTO model_scene_score(
                     model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
                     appeal, current_fit, confidence, metadata_confidence, recovery,
-                    components_json, eligibility_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    components_json, classification_json, eligibility_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     (
@@ -1720,6 +1749,15 @@ class PreferenceModelBuilder:
                         score.metadata_confidence,
                         score.recovery,
                         json.dumps(score.components, sort_keys=True, separators=(",", ":")),
+                        # Lane classification reads only the six family values and the
+                        # direct signals; keeping them in a small document avoids
+                        # parsing the full components_json (with its top-contributor
+                        # metadata for explanations) for every scene on every build.
+                        json.dumps(
+                            _classification_payload(score.components),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
                         json.dumps(score.eligibility, sort_keys=True, separators=(",", ":")),
                     )
                     for score in scores
