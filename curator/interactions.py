@@ -335,23 +335,31 @@ class InteractionStore:
         signaled = False
         with transaction(self.connection):
             for session in sessions:
-                cursor = self.connection.execute(
-                    """
-                    INSERT OR IGNORE INTO play_session(
-                        session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
-                        provenance, confidence, impression_id, summary_json
-                    ) VALUES (?, ?, ?, ?, ?, 'direct_player', 1, ?, ?)
-                    """,
-                    (
-                        session.session_id,
-                        session.scene_id,
-                        session.started_at_ms,
-                        session.ended_at_ms,
-                        session.active_seconds,
-                        session.impression_id,
-                        json.dumps(asdict(session), sort_keys=True, separators=(",", ":")),
-                    ),
-                )
+                try:
+                    cursor = self.connection.execute(
+                        """
+                        INSERT OR IGNORE INTO play_session(
+                            session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
+                            provenance, confidence, impression_id, summary_json
+                        ) VALUES (?, ?, ?, ?, ?, 'direct_player', 1, ?, ?)
+                        """,
+                        (
+                            session.session_id,
+                            session.scene_id,
+                            session.started_at_ms,
+                            session.ended_at_ms,
+                            session.active_seconds,
+                            session.impression_id,
+                            json.dumps(asdict(session), sort_keys=True, separators=(",", ":")),
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    # The live tracker reports whatever scene Stash is playing, which can name
+                    # a scene added after Curator's last sync. OR IGNORE does not cover foreign
+                    # key violations, so this scene_id would otherwise abort the whole batch;
+                    # drop just this session and keep going, since a later sync plus a later
+                    # watch will record it normally.
+                    continue
                 if not cursor.rowcount:
                     continue
                 inserted += 1
