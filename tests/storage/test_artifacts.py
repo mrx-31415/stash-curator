@@ -9,6 +9,7 @@ from curator.storage.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
     artifact_path,
     cache_directory,
+    create_artifact,
     validate_artifact,
 )
 
@@ -17,6 +18,17 @@ def _database(path: Path):
     connection = connect_database(path)
     MigrationRunner(connection).migrate(applied_at_ms=1)
     return connection
+
+
+def test_artifact_connection_uses_build_sized_cache_and_mmap(tmp_path: Path) -> None:
+    core = _database(tmp_path / "curator.sqlite3")
+    artifact, temporary, _ = create_artifact(core, "feature", "fv-" + "a" * 20)
+    try:
+        assert artifact.execute("PRAGMA cache_size").fetchone()[0] == -262144
+        assert artifact.execute("PRAGMA mmap_size").fetchone()[0] == 1073741824
+    finally:
+        artifact.close()
+        temporary.unlink(missing_ok=True)
 
 
 def test_artifact_paths_reject_escape_and_symlinks(tmp_path: Path) -> None:

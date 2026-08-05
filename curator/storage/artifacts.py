@@ -175,6 +175,14 @@ def create_artifact(
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute(f"PRAGMA user_version={ARTIFACT_SCHEMA_VERSION}")
+    # Publication writes hundreds of thousands of rows and then creates indexes over
+    # a file that grows to hundreds of MiB through this connection. SQLite's 2 MiB
+    # default cache turns that into cold random I/O; a 256 MiB cache plus memory
+    # mapping keeps the index builds and the attached feature-generation reads in
+    # memory. The temporary file is exclusively owned by this process, so mapping it
+    # is safe: nothing else can modify or replace it while it is open.
+    connection.execute("PRAGMA cache_size = -262144")
+    connection.execute("PRAGMA mmap_size = 1073741824")
     connection.executescript(FEATURE_SCHEMA if kind == "feature" else MODEL_SCHEMA)
     connection.execute(
         "INSERT INTO artifact_meta(kind, generation_id, schema_version) VALUES (?, ?, ?)",

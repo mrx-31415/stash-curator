@@ -17,6 +17,7 @@ class PerformerProfile:
     performer_id: str
     blocks: dict[str, dict[str, ProfileValue]]
     norms: dict[str, float] = field(init=False, repr=False, compare=False)
+    keys: dict[str, frozenset[str]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -27,6 +28,13 @@ class PerformerProfile:
                 for block, values in self.blocks.items()
                 if block not in NUMERIC_BLOCKS
             },
+        )
+        # Frozen key sets avoid rebuilding a set from each block dict on every
+        # similarity call; the builder compares every profile against every known
+        # profile, so this is the difference between tens of millions of conversions
+        # and a single hash each.
+        object.__setattr__(
+            self, "keys", {block: frozenset(values) for block, values in self.blocks.items()}
         )
 
 
@@ -57,28 +65,53 @@ def _cosine(
     right: dict[str, ProfileValue],
     left_norm: float,
     right_norm: float,
+    left_keys: frozenset[str] | None = None,
+    right_keys: frozenset[str] | None = None,
 ) -> float | None:
-    shared = set(left) & set(right)
+    # Precomputed frozensets keep the same iteration order as freshly built sets
+    # (both derive from the same dict insertion order), so dot-product accumulation
+    # stays bit-identical to the previous set(left) & set(right) form.
+    shared = (left_keys or frozenset(left)) & (right_keys or frozenset(right))
     if not shared:
         return 0.0
-    dot = sum(left[key].value * right[key].value for key in shared)
+    dot = 0.0
+    confidence_sum = 0.0
+    for key in shared:
+        left_value = left[key]
+        right_value = right[key]
+        dot += left_value.value * right_value.value
+        right_confidence = right_value.confidence
+        left_confidence = left_value.confidence
+        confidence_sum += (
+            left_confidence if left_confidence < right_confidence else right_confidence
+        )
     if left_norm == 0 or right_norm == 0:
         return None
-    confidence = sum(min(left[key].confidence, right[key].confidence) for key in shared) / len(
-        shared
-    )
+    confidence = confidence_sum / len(shared)
     return max(0.0, min(1.0, dot / (left_norm * right_norm) * confidence))
 
 
-def _numeric(left: dict[str, ProfileValue], right: dict[str, ProfileValue]) -> float | None:
-    shared = set(left) & set(right)
+def _numeric(
+    left: dict[str, ProfileValue],
+    right: dict[str, ProfileValue],
+    left_keys: frozenset[str] | None = None,
+    right_keys: frozenset[str] | None = None,
+) -> float | None:
+    shared = (left_keys or frozenset(left)) & (right_keys or frozenset(right))
     if not shared:
         return None
     values = []
     for key in sorted(shared):
         scale = NUMERIC_SCALES.get(key, 1.0)
-        closeness = math.exp(-abs(left[key].value - right[key].value) / scale)
-        values.append(closeness * min(left[key].confidence, right[key].confidence))
+        left_value = left[key]
+        right_value = right[key]
+        closeness = math.exp(-abs(left_value.value - right_value.value) / scale)
+        right_confidence = right_value.confidence
+        left_confidence = left_value.confidence
+        values.append(
+            closeness
+            * (left_confidence if left_confidence < right_confidence else right_confidence)
+        )
     return sum(values) / len(values)
 
 
@@ -91,8 +124,17 @@ def block_similarity(
     if block not in left.blocks or block not in right.blocks:
         return None
     if block in NUMERIC_BLOCKS:
-        return _numeric(left.blocks[block], right.blocks[block])
-    return _cosine(left.blocks[block], right.blocks[block], left.norms[block], right.norms[block])
+        return _numeric(
+            left.blocks[block], right.blocks[block], left.keys[block], right.keys[block]
+        )
+    return _cosine(
+        left.blocks[block],
+        right.blocks[block],
+        left.norms[block],
+        right.norms[block],
+        left.keys[block],
+        right.keys[block],
+    )
 
 
 def block_similarities(

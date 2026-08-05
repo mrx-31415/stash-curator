@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+import pytest
+
 import curator.features.profiles as profiles_module
 from curator.features.profiles import PerformerProfile, ProfileValue, performer_similarity
 
@@ -62,6 +64,30 @@ def test_cup_and_augmentation_conflicts_reduce_similarity() -> None:
         performer_similarity(close, close, WEIGHTS).similarity
         > performer_similarity(close, conflict, WEIGHTS).similarity
     )
+
+
+def test_cosine_via_cached_keys_matches_fresh_set_math() -> None:
+    left = PerformerProfile(
+        "left",
+        {"eyes": {"eye:blue": ProfileValue(1, 0.9), "eye:brown": ProfileValue(0.2, 0.7)}},
+    )
+    right = PerformerProfile(
+        "right",
+        {"eyes": {"eye:blue": ProfileValue(0.8, 0.8), "eye:green": ProfileValue(1, 1)}},
+    )
+    cached = profiles_module.block_similarity(left, right, "eyes")
+    shared = set(left.blocks["eyes"]) & set(right.blocks["eyes"])
+    assert shared == {"eye:blue"}
+    dot = sum(left.blocks["eyes"][key].value * right.blocks["eyes"][key].value for key in shared)
+    confidence = sum(
+        min(left.blocks["eyes"][key].confidence, right.blocks["eyes"][key].confidence)
+        for key in shared
+    ) / len(shared)
+    expected = max(
+        0.0,
+        min(1.0, dot / (left.norms["eyes"] * right.norms["eyes"]) * confidence),
+    )
+    assert cached == pytest.approx(expected, rel=1e-12)
 
 
 def test_cosine_norms_are_computed_once(monkeypatch) -> None:

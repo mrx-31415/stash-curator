@@ -18,6 +18,7 @@ curator = "curator.cli:main"
 [dependency-groups]
 dev = [
   "mypy>=1.14",
+  "numpy>=2.5,<3",
   "pytest>=8.3",
   "ruff>=0.9",
 ]

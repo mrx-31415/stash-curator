@@ -1,4 +1,5 @@
 import json
+import math
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -125,6 +126,120 @@ def _database(path: Path) -> sqlite3.Connection:
         (REFERENCE_MS - 100 * DAY_MS,),
     )
     return connection
+
+
+def test_satiation_content_dots_match_naive_recent_loop() -> None:
+    reference = REFERENCE_MS
+    candidate = {"shared_a": 0.8, "shared_b": 0.6, "unique_c": 0.4}
+    recents = [
+        ("candidate", reference, {"shared_a": 5.0}),
+        ("recent-1", reference - DAY_MS, {"shared_a": 1.0, "other": 0.2}),
+        ("recent-2", reference - 3 * DAY_MS, {"shared_a": 0.3, "shared_b": 0.5}),
+    ]
+    context = {
+        "reference": reference,
+        "performers": {},
+        "studios": {},
+        "scene_performers": {},
+        "scene_studios": {},
+        "not_now": {},
+        "recent_by_name": {
+            "shared_a": [(0, 5.0), (1, 1.0), (2, 0.3)],
+            "shared_b": [(2, 0.5)],
+        },
+        "recent_scene_ids": ["candidate", "recent-1", "recent-2"],
+        "recent_played": [reference, reference - DAY_MS, reference - 3 * DAY_MS],
+        "scene_vectors": {"candidate": candidate},
+    }
+    builder = PreferenceModelBuilder(None)
+
+    naive = 0.0
+    for recent_scene, played_at, vector in recents:
+        if recent_scene == "candidate":
+            continue
+        cosine = sum(value * vector.get(name, 0.0) for name, value in candidate.items())
+        days = max(0.0, (reference - played_at) / DAY_MS)
+        naive = max(naive, 0.04 * cosine * math.exp(-days / 7))
+
+    result = builder._satiation("candidate", 1.0, context)
+    assert result == pytest.approx(min(builder.config.model.satiation_bound, naive), rel=1e-12)
+
+
+def test_content_neighbors_numpy_matches_python() -> None:
+    builder = PreferenceModelBuilder(None)
+    vectors = {
+        "s1": {"a": 1.0, "b": 0.5},
+        "s2": {"a": 0.8, "c": 0.3},
+        "s3": {"d": 1.0},
+        "s4": {"a": 0.6, "b": 0.7, "c": 0.2},
+    }
+    labels = {
+        "s1": builder_module._SceneLabel(0.8, 0.9, 1.0, ("o",)),
+        "s2": builder_module._SceneLabel(-0.4, 0.7, 0.8, ("o",)),
+        "s3": builder_module._SceneLabel(0.1, 0.5, 0.6, ("o",)),
+    }
+    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+        pytest.skip("numpy is not installed")
+    numpy_result = builder._content_neighbors_numpy(vectors, labels, 0.2, 8)
+    python_result = builder._content_neighbors_python(vectors, labels, 0.2, 8)
+    assert set(numpy_result) == set(python_result)
+    for scene_id in vectors:
+        numpy_evidence = numpy_result[scene_id]
+        python_evidence = python_result[scene_id]
+        assert numpy_evidence.value == pytest.approx(python_evidence.value, rel=1e-9)
+        assert numpy_evidence.outcome_mean == pytest.approx(python_evidence.outcome_mean, rel=1e-9)
+        assert numpy_evidence.lift == pytest.approx(python_evidence.lift, rel=1e-9)
+        assert numpy_evidence.confidence == pytest.approx(python_evidence.confidence, rel=1e-9)
+        assert numpy_evidence.total_weight == pytest.approx(python_evidence.total_weight, rel=1e-9)
+        assert [n["scene_id"] for n in numpy_evidence.neighbors] == [
+            n["scene_id"] for n in python_evidence.neighbors
+        ]
+        for numpy_neighbor, python_neighbor in zip(
+            numpy_evidence.neighbors, python_evidence.neighbors, strict=True
+        ):
+            assert numpy_neighbor["similarity"] == pytest.approx(
+                python_neighbor["similarity"], rel=1e-9
+            )
+            assert numpy_neighbor["weight"] == pytest.approx(python_neighbor["weight"], rel=1e-9)
+            assert numpy_neighbor["outcome"] == pytest.approx(python_neighbor["outcome"], rel=1e-9)
+
+
+def test_performer_similarity_numpy_matches_python(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    built = builder.build()
+    scene_features = builder_module.FeatureStore(connection).entity_features(
+        built.feature_version, "scene"
+    )
+    labels = builder._scene_labels()
+    training_labels = builder._training_labels(labels)
+    label_mean = builder._label_mean(training_labels)
+    affinities = builder._affinities(scene_features, training_labels, label_mean)
+    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+        pytest.skip("numpy is not installed")
+    numpy_result = builder._performer_similarity_scores_numpy(
+        built.feature_version, scene_features, affinities
+    )
+    python_result = builder._performer_similarity_scores_python(
+        built.feature_version, scene_features, affinities
+    )
+    assert set(numpy_result) == set(python_result)
+    for performer_id in numpy_result:
+        assert numpy_result[performer_id]["value"] == pytest.approx(
+            python_result[performer_id]["value"], rel=1e-6
+        )
+        assert numpy_result[performer_id]["confidence"] == pytest.approx(
+            python_result[performer_id]["confidence"], rel=1e-6
+        )
+        assert [m["performer_id"] for m in numpy_result[performer_id]["matches"]] == [
+            m["performer_id"] for m in python_result[performer_id]["matches"]
+        ]
+        for numpy_match, python_match in zip(
+            numpy_result[performer_id]["matches"],
+            python_result[performer_id]["matches"],
+            strict=True,
+        ):
+            assert numpy_match["similarity"] == pytest.approx(python_match["similarity"], rel=1e-6)
 
 
 def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: Path) -> None:
@@ -374,6 +489,9 @@ def test_model_compares_known_performer_pairs_once(
     connection = _database(tmp_path / "curator.sqlite3")
     counted = Mock(wraps=builder_module.performer_similarity)
     monkeypatch.setattr(builder_module, "performer_similarity", counted)
+    # The pair-count contract belongs to the pure-Python implementation; the numpy
+    # path never calls performer_similarity and is covered by its own parity tests.
+    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
 
     assert counted.call_count == 3
@@ -402,6 +520,7 @@ def test_model_ignores_negligible_performer_similarity_seeds(
     }
     counted = Mock(wraps=builder_module.performer_similarity)
     monkeypatch.setattr(builder_module, "performer_similarity", counted)
+    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
 
     builder._performer_similarity_scores(built.feature_version, scene_features, affinities)
 
