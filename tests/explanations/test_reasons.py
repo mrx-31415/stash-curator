@@ -81,7 +81,7 @@ def test_scene_without_specific_evidence_gets_factual_fallback(tmp_path: Path) -
     connection.execute(
         """
         UPDATE model_scene_score
-        SET direct_appeal=0, direct_confidence=0, components_json='{}', neighbors_json='[]'
+        SET direct_appeal=0, direct_confidence=0, components_json='{}'
         WHERE model_id='model' AND scene_id='a-best'
         """
     )
@@ -150,19 +150,11 @@ def test_content_neighbor_explanation_keeps_scene_names_in_evidence(tmp_path: Pa
         (("feature-x", 0.2), ("feature-q", -0.1)),
     )
     connection.execute(
-        "UPDATE model_scene_score SET neighbors_json=? WHERE scene_id='a-best'",
-        (
-            json.dumps(
-                [
-                    {
-                        "scene_id": "b-best",
-                        "similarity": 0.72,
-                        "weight": 0.31,
-                        "outcome": 0.8,
-                    }
-                ]
-            ),
-        ),
+        """
+        INSERT INTO model_scene_neighbor(
+            model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+        ) VALUES ('model', 'a-best', 0, 'b-best', 0.72, 0.31, 0.8)
+        """
     )
 
     explanation = ExplanationService(connection).explain_scene("model", "a-best")

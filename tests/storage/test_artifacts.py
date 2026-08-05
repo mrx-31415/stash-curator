@@ -5,7 +5,12 @@ import pytest
 
 from curator.features import FeatureBuilder, FeatureStore
 from curator.storage import MigrationRunner, StorageError, connect_database, prune_snapshots
-from curator.storage.artifacts import artifact_path, cache_directory, validate_artifact
+from curator.storage.artifacts import (
+    ARTIFACT_SCHEMA_VERSION,
+    artifact_path,
+    cache_directory,
+    validate_artifact,
+)
 
 
 def _database(path: Path):
@@ -30,13 +35,17 @@ def test_artifact_paths_reject_escape_and_symlinks(tmp_path: Path) -> None:
 
 def test_rebuildable_artifact_validation_can_skip_full_file_scan() -> None:
     connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA user_version=1")
+    connection.execute(f"PRAGMA user_version={ARTIFACT_SCHEMA_VERSION}")
     statements: list[str] = []
     connection.set_trace_callback(statements.append)
 
     result = validate_artifact(connection, "model", {"scenes": 2}, check_integrity=False)
 
-    assert result == {"integrity": "skipped", "schema_version": 1, "counts": {"scenes": 2}}
+    assert result == {
+        "integrity": "skipped",
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "counts": {"scenes": 2},
+    }
     assert "PRAGMA quick_check" not in statements
 
 
