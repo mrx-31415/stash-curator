@@ -12,11 +12,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from heapq import nsmallest
 from itertools import batched
+from typing import Any
 
+from curator import optional_deps
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
-from curator.features.profiles import performer_similarity
+from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES, performer_similarity
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
@@ -108,6 +110,69 @@ def _clamp(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
 
 def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _numpy_cosine_matrix(
+    np: Any,
+    values: Any,
+    known_values: Any,
+    confidences: Any,
+    known_confidences: Any,
+    norms: Any,
+    known_norms: Any,
+) -> Any:
+    """Vectorized block cosine for profile blocks that use the shared-key dot product.
+
+    Matches the pure-Python _cosine: dot over shared keys divided by the product of
+    norms, scaled by the mean of the pairwise minimum confidences, clamped to [0, 1].
+    """
+    dot = values @ known_values.T
+    # Shared counts never exceed the feature count, so float32 is exact and uses the
+    # BLAS matmul path; the confidence mean is then computed in float64.
+    shared = ((values != 0).astype(np.float32) @ (known_values != 0).astype(np.float32).T).astype(
+        np.float64
+    )
+    confidence_sum = np.zeros((values.shape[0], known_values.shape[0]), dtype=np.float64)
+    for column in range(values.shape[1]):
+        if not confidences[:, column].any() or not known_confidences[:, column].any():
+            continue
+        confidence_sum += np.minimum.outer(confidences[:, column], known_confidences[:, column])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        confidence = np.where(shared > 0, confidence_sum / shared, 0.0)
+        cosine = dot / (norms[:, None] * known_norms[None, :]) * confidence
+    return np.clip(cosine, 0.0, 1.0)
+
+
+def _numpy_numeric_matrix(
+    np: Any,
+    values: Any,
+    known_values: Any,
+    confidences: Any,
+    known_confidences: Any,
+    scales: Any,
+) -> tuple[Any, Any]:
+    """Vectorized numeric-block closeness and shared-key counts.
+
+    Mirrors the pure-Python _numeric: each shared key contributes
+    exp(-abs difference / scale) * min confidence; the block value is the mean over
+    the shared keys.
+    """
+    value = np.zeros((values.shape[0], known_values.shape[0]), dtype=np.float64)
+    count = np.zeros_like(value)
+    for column in range(values.shape[1]):
+        both = np.outer(values[:, column] != 0, known_values[:, column] != 0)
+        if not both.any():
+            continue
+        closeness = np.exp(
+            -np.abs(np.subtract.outer(values[:, column], known_values[:, column])) / scales[column]
+        )
+        value += (
+            closeness
+            * np.minimum.outer(confidences[:, column], known_confidences[:, column])
+            * both
+        )
+        count += both
+    return value, count
 
 
 class PreferenceModelBuilder:
@@ -900,6 +965,17 @@ class PreferenceModelBuilder:
         label_mean: float,
         progress_total: int,
     ) -> dict[str, _NeighborEvidence]:
+        if optional_deps.NUMPY_AVAILABLE:
+            return self._content_neighbors_numpy(vectors, labels, label_mean, progress_total)
+        return self._content_neighbors_python(vectors, labels, label_mean, progress_total)
+
+    def _content_neighbors_python(
+        self,
+        vectors: dict[str, dict[str, float]],
+        labels: dict[str, _SceneLabel],
+        label_mean: float,
+        progress_total: int,
+    ) -> dict[str, _NeighborEvidence]:
         inverted: dict[str, list[tuple[str, float]]] = defaultdict(list)
         vector_count = len(vectors)
         for scene_id, vector in vectors.items():
@@ -960,7 +1036,132 @@ class PreferenceModelBuilder:
                 self._report(0.35 + 0.40 * vector_index / max(1, progress_total))
         return result
 
+    def _content_neighbors_numpy(
+        self,
+        vectors: dict[str, dict[str, float]],
+        labels: dict[str, _SceneLabel],
+        label_mean: float,
+        progress_total: int,
+    ) -> dict[str, _NeighborEvidence]:
+        np = optional_deps.np
+        assert np is not None
+        scene_ids = list(vectors)
+        # Labels for scenes that left Stash have no vector; they cannot act as
+        # candidates, mirroring the pure-Python inverted index over vectors only.
+        labeled_ids = sorted(scene_id for scene_id in labels if scene_id in vectors)
+        default = _NeighborEvidence(0.0, 0.0, 0.0, 0.0, 0.0, ())
+        result: dict[str, _NeighborEvidence] = {}
+        if not labeled_ids:
+            return {scene_id: default for scene_id in scene_ids}
+        column_names = sorted({name for scene_id in labeled_ids for name in vectors[scene_id]})
+        if not column_names:
+            return {scene_id: default for scene_id in scene_ids}
+        column_index = {name: index for index, name in enumerate(column_names)}
+        labeled_position = {scene_id: column for column, scene_id in enumerate(labeled_ids)}
+        labeled_values = np.zeros((len(labeled_ids), len(column_names)), dtype=np.float64)
+        for column, scene_id in enumerate(labeled_ids):
+            for name, value in vectors[scene_id].items():
+                labeled_values[column, column_index[name]] = value
+        target_values = np.zeros((len(scene_ids), len(column_names)), dtype=np.float64)
+        for row, scene_id in enumerate(scene_ids):
+            for name, value in vectors[scene_id].items():
+                if name not in column_index:
+                    continue
+                target_values[row, column_index[name]] = value
+        labeled_conf = np.array(
+            [labels[scene_id].confidence for scene_id in labeled_ids], dtype=np.float64
+        )
+        labeled_outcome = np.array(
+            [labels[scene_id].outcome for scene_id in labeled_ids], dtype=np.float64
+        )
+        labeled_binary = (labeled_values != 0).astype(np.float32)
+        target_binary = (target_values != 0).astype(np.float32)
+        self_column = np.array(
+            [labeled_position.get(scene_id, -1) for scene_id in scene_ids], dtype=np.int32
+        )
+        minimum_similarity = self.config.model.minimum_neighbor_similarity
+        neighbor_count = self.config.model.neighbor_count
+        confidence_scale = self.config.model.neighbor_confidence_scale
+        vector_count = len(scene_ids)
+        for start in range(0, vector_count, 4096):
+            end = min(start + 4096, vector_count)
+            similarities = target_values[start:end] @ labeled_values.T
+            # Shared counts never exceed the feature count, so float32 is exact and
+            # uses the BLAS matmul path (integer matmul has no optimized loop); the
+            # overlap factor is then computed in float64 to match the Python path.
+            shared = (target_binary[start:end] @ labeled_binary.T).astype(np.float64)
+            similarities *= 1.0 - np.exp(-shared / 4.0)
+            weights = similarities**3 * labeled_conf[np.newaxis, :]
+            valid = similarities >= minimum_similarity
+            for local_row in range(end - start):
+                own = int(self_column[start + local_row])
+                if own >= 0:
+                    valid[local_row, own] = False
+            for local_row in range(end - start):
+                scene_id = scene_ids[start + local_row]
+                valid_indices = np.flatnonzero(valid[local_row])
+                if len(valid_indices) == 0:
+                    result[scene_id] = default
+                    continue
+                row_weights = weights[local_row, valid_indices]
+                chosen = min(neighbor_count, len(row_weights))
+                boundary = float(
+                    np.partition(row_weights, len(row_weights) - chosen)[len(row_weights) - chosen]
+                )
+                candidates = valid_indices[row_weights >= boundary]
+                evidence = [
+                    (
+                        labeled_ids[int(column)],
+                        float(similarities[local_row, int(column)]),
+                        float(weights[local_row, int(column)]),
+                        float(labeled_outcome[int(column)]),
+                    )
+                    for column in candidates
+                ]
+                evidence.sort(key=lambda item: (-item[2], item[0]))
+                selected = evidence[:neighbor_count]
+                denominator = sum(item[2] for item in selected)
+                outcome_mean = (
+                    sum(item[2] * item[3] for item in selected) / denominator
+                    if denominator
+                    else 0.0
+                )
+                lift = outcome_mean - label_mean if denominator else 0.0
+                confidence = 1 - math.exp(-denominator / confidence_scale) if denominator else 0.0
+                result[scene_id] = _NeighborEvidence(
+                    lift * confidence,
+                    outcome_mean,
+                    lift,
+                    confidence,
+                    denominator,
+                    tuple(
+                        {
+                            "scene_id": item[0],
+                            "similarity": item[1],
+                            "weight": item[2],
+                            "outcome": item[3],
+                        }
+                        for item in selected[:5]
+                    ),
+                )
+                index = start + local_row + 1
+                if self.progress and (index == vector_count or index % 250 == 0):
+                    self._report(0.35 + 0.40 * index / max(1, progress_total))
+        return result
+
     def _performer_similarity_scores(
+        self,
+        feature_version: str,
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> dict[str, dict[str, object]]:
+        if optional_deps.NUMPY_AVAILABLE:
+            return self._performer_similarity_scores_numpy(
+                feature_version, scene_features, affinities
+            )
+        return self._performer_similarity_scores_python(feature_version, scene_features, affinities)
+
+    def _performer_similarity_scores_python(
         self,
         feature_version: str,
         scene_features: dict[str, tuple[StoredFeature, ...]],
@@ -1045,6 +1246,203 @@ class PreferenceModelBuilder:
             }
         return result
 
+    def _performer_similarity_scores_numpy(
+        self,
+        feature_version: str,
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> dict[str, dict[str, object]]:
+        np = optional_deps.np
+        assert np is not None
+        identity_affinity: dict[str, tuple[float, float]] = {}
+        for features in scene_features.values():
+            for feature in features:
+                if feature.family != "performer_identity" or feature.feature_id not in affinities:
+                    continue
+                affinity = affinities[feature.feature_id]
+                identity_affinity[feature.name.removeprefix("performer:")] = (
+                    affinity.affinity * affinity.confidence,
+                    affinity.confidence,
+                )
+        profiles = FeatureStore(self.connection).performer_profiles(feature_version)
+        weights = dict(self.config.feature.performer_block_weights)
+        known = {
+            key: profiles[key]
+            for key, (value, _) in identity_affinity.items()
+            if key in profiles and abs(value) >= PERFORMER_SIMILARITY_AFFINITY_CUTOFF
+        }
+        profile_ids = list(profiles)
+        known_ids = list(known)
+        known_position = {performer_id: column for column, performer_id in enumerate(known_ids)}
+        known_affinity = np.array(
+            [identity_affinity[performer_id][0] for performer_id in known_ids], dtype=np.float64
+        )
+        known_confidence = np.array(
+            [identity_affinity[performer_id][1] for performer_id in known_ids], dtype=np.float64
+        )
+        block_names = sorted({block for profile in profiles.values() for block in profile.blocks})
+        block_keys = {
+            block: sorted(
+                {key for profile in profiles.values() for key in profile.blocks.get(block, {})}
+            )
+            for block in block_names
+        }
+        values: dict[str, Any] = {}
+        confidences: dict[str, Any] = {}
+        present: dict[str, Any] = {}
+        for block in block_names:
+            keys = block_keys[block]
+            key_position = {key: column for column, key in enumerate(keys)}
+            block_values = np.zeros((len(profile_ids), len(keys)), dtype=np.float64)
+            block_confidences = np.zeros_like(block_values)
+            block_present = np.zeros(len(profile_ids), dtype=bool)
+            for row, performer_id in enumerate(profile_ids):
+                entries = profiles[performer_id].blocks.get(block)
+                if not entries:
+                    continue
+                block_present[row] = True
+                for key, item in entries.items():
+                    block_values[row, key_position[key]] = item.value
+                    block_confidences[row, key_position[key]] = item.confidence
+            values[block] = block_values
+            confidences[block] = block_confidences
+            present[block] = block_present
+        known_positions = np.array(
+            [profile_ids.index(performer_id) for performer_id in known_ids], dtype=np.int64
+        )
+        known_values = {block: values[block][known_positions, :] for block in block_names}
+        known_confidences = {block: confidences[block][known_positions, :] for block in block_names}
+        known_present = {block: present[block][known_positions] for block in block_names}
+        numerator = np.zeros((len(profile_ids), len(known_ids)), dtype=np.float64)
+        denominator = np.zeros_like(numerator)
+        block_similarities: dict[str, Any] = {}
+        used: dict[str, Any] = {}
+        for block in block_names:
+            weight = weights.get(block, 0.0)
+            if weight <= 0:
+                continue
+            both_present = np.outer(present[block], known_present[block])
+            if block in NUMERIC_BLOCKS:
+                numeric_values, numeric_counts = _numpy_numeric_matrix(
+                    np,
+                    values[block],
+                    known_values[block],
+                    confidences[block],
+                    known_confidences[block],
+                    np.array(
+                        [NUMERIC_SCALES.get(key, 1.0) for key in block_keys[block]],
+                        dtype=np.float64,
+                    ),
+                )
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    block_value = np.divide(
+                        numeric_values,
+                        numeric_counts,
+                        out=np.zeros_like(numeric_values),
+                        where=numeric_counts > 0,
+                    )
+                block_used = both_present & (numeric_counts > 0)
+            else:
+                norms = np.array(
+                    [profiles[performer_id].norms.get(block, 0.0) for performer_id in profile_ids],
+                    dtype=np.float64,
+                )
+                known_norms = norms[known_positions]
+                block_value = _numpy_cosine_matrix(
+                    np,
+                    values[block],
+                    known_values[block],
+                    confidences[block],
+                    known_confidences[block],
+                    norms,
+                    known_norms,
+                )
+                block_used = both_present & (norms[:, None] != 0) & (known_norms[None, :] != 0)
+            block_similarities[block] = block_value
+            used[block] = block_used
+            numerator += block_value * block_used * weight
+            denominator += block_used * weight
+        penalty = np.ones((len(profile_ids), len(known_ids)), dtype=np.float64)
+        measurements = values.get("measurements")
+        if measurements is not None and measurements.shape[1]:
+            cup_position = (
+                block_keys["measurements"].index("cup_index")
+                if "cup_index" in block_keys["measurements"]
+                else -1
+            )
+            if cup_position >= 0:
+                cup_all = measurements[:, cup_position]
+                cup_known = known_values["measurements"][:, cup_position]
+                both_cup = np.outer(cup_all != 0, cup_known != 0)
+                cup_difference = np.abs(np.subtract.outer(cup_all, cup_known))
+                penalty *= np.where(
+                    both_cup, np.exp(-0.18 * np.maximum(0.0, cup_difference - 1.0)), 1.0
+                )
+        augmentation = values.get("augmentation")
+        if augmentation is not None and augmentation.shape[1]:
+            augmentation_binary = (augmentation != 0).astype(np.float32)
+            known_augmentation_binary = (known_values["augmentation"] != 0).astype(np.float32)
+            shared_augmentation = augmentation_binary @ known_augmentation_binary.T
+            both_augmentation = np.outer(
+                augmentation_binary.any(axis=1), known_augmentation_binary.any(axis=1)
+            )
+            penalty *= np.where(both_augmentation & (shared_augmentation == 0), 0.65, 1.0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            similarity = np.where(denominator > 0, numerator / denominator * penalty, 0.0)
+        result: dict[str, dict[str, object]] = {}
+        for performer_index, performer_id in enumerate(profile_ids):
+            row = similarity[performer_index]
+            candidates = [
+                (known_ids[column], float(row[column]))
+                for column in range(len(known_ids))
+                if known_ids[column] != performer_id and float(row[column]) > 0
+            ]
+            selected = nsmallest(
+                5,
+                candidates,
+                key=lambda item: (-item[1], item[0]),
+            )
+            denominator = sum(item[1] ** 3 for item in selected)
+            value = (
+                sum(
+                    float(known_affinity[known_position[item[0]]]) * item[1] ** 3
+                    for item in selected
+                )
+                / denominator
+                if denominator
+                else 0.0
+            )
+            confidence = (
+                sum(
+                    float(known_confidence[known_position[item[0]]]) * item[1] ** 3
+                    for item in selected
+                )
+                / denominator
+                if denominator
+                else 0.0
+            )
+            result[performer_id] = {
+                "value": value,
+                "confidence": confidence,
+                "matches": [
+                    {
+                        "performer_id": known_id,
+                        "similarity": score,
+                        "affinity": identity_affinity[known_id][0],
+                        "confidence": identity_affinity[known_id][1],
+                        "blocks": {
+                            block: float(
+                                block_similarities[block][performer_index, known_position[known_id]]
+                            )
+                            for block in used
+                            if bool(used[block][performer_index, known_position[known_id]])
+                        },
+                    }
+                    for known_id, score in selected[:3]
+                ],
+            }
+        return result
+
     def _performer_priors(self) -> dict[str, _Prior]:
         result: dict[str, _Prior] = {}
         for row in self.connection.execute(
@@ -1118,7 +1516,9 @@ class PreferenceModelBuilder:
         ).fetchall()
         performers: dict[str, int] = {}
         studios: dict[str, int] = {}
-        recent_vectors = []
+        recent_by_name: dict[str, list[tuple[int, float]]] = {}
+        recent_scene_ids: list[str] = []
+        recent_played: list[int] = []
         for row in rows:
             scene_id = str(row["scene_id"])
             played_at = int(row["played_at"])
@@ -1129,7 +1529,11 @@ class PreferenceModelBuilder:
             for performer_id in scene_performers.get(scene_id, ()):
                 performers[performer_id] = max(played_at, performers.get(performer_id, 0))
             if scene_id in vectors:
-                recent_vectors.append((scene_id, played_at, vectors[scene_id]))
+                index = len(recent_scene_ids)
+                recent_scene_ids.append(scene_id)
+                recent_played.append(played_at)
+                for name, value in vectors[scene_id].items():
+                    recent_by_name.setdefault(name, []).append((index, value))
         return {
             "reference": reference_at_ms,
             "performers": performers,
@@ -1137,7 +1541,11 @@ class PreferenceModelBuilder:
             "scene_performers": scene_performers,
             "scene_studios": scene_studios,
             "not_now": not_now,
-            "vectors": recent_vectors,
+            # Transposed recent-content index: satiation dots accumulate once per
+            # candidate feature instead of once per (feature, recent scene) pair.
+            "recent_by_name": recent_by_name,
+            "recent_scene_ids": recent_scene_ids,
+            "recent_played": recent_played,
             "scene_vectors": vectors,
         }
 
@@ -1169,19 +1577,24 @@ class PreferenceModelBuilder:
             days = max(0.0, (reference - timestamp) / 86_400_000)
             studio_penalty = 0.03 * math.exp(-days / 7)
         content_penalty = 0.0
-        recent_vectors = context["vectors"]
+        recent_by_name = context["recent_by_name"]
+        recent_scene_ids = context["recent_scene_ids"]
+        recent_played = context["recent_played"]
         scene_vectors = context["scene_vectors"]
-        assert isinstance(recent_vectors, list)
+        assert isinstance(recent_by_name, dict)
+        assert isinstance(recent_scene_ids, list)
+        assert isinstance(recent_played, list)
         assert isinstance(scene_vectors, dict)
         candidate = scene_vectors.get(scene_id, {})
         if isinstance(candidate, dict) and candidate:
-            for recent_scene, played_at, vector in recent_vectors:
-                if recent_scene == scene_id or not isinstance(vector, dict):
+            dots: dict[int, float] = {}
+            for name, value in candidate.items():
+                for index, recent_value in recent_by_name.get(name, ()):
+                    dots[index] = dots.get(index, 0.0) + value * recent_value
+            for index, cosine in dots.items():
+                if recent_scene_ids[index] == scene_id:
                     continue
-                cosine = sum(
-                    float(value) * float(vector.get(name, 0.0)) for name, value in candidate.items()
-                )
-                days = max(0.0, (reference - int(played_at)) / 86_400_000)
+                days = max(0.0, (reference - recent_played[index]) / 86_400_000)
                 content_penalty = max(content_penalty, 0.04 * cosine * math.exp(-days / 7))
         return min(
             self.config.model.satiation_bound,
