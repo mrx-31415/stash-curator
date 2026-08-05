@@ -74,6 +74,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "Prepare recommendation pages" in (installed / "stash-curator.yml").read_text()
     assert "Compact legacy Curator data" in (installed / "stash-curator.yml").read_text()
     assert "Vacuum compacted Curator data" in (installed / "stash-curator.yml").read_text()
+    assert "Install optional dependencies" in (installed / "stash-curator.yml").read_text()
+    assert "numpy==2.5.1" in (installed / "packages" / "curator-tools.txt").read_text()
     javascript = (installed / "stash-curator.js").read_text()
     assert "data:image/png;base64" in javascript
     assert "curator-whisparr-fallback" in javascript
@@ -297,6 +299,90 @@ def test_backup_controls_validate_ids_refuse_jobs_and_restore_with_safety_copy(
         == "superseded"
     )
     connection.close()
+
+
+def test_install_optional_deps_creates_venv_and_installs_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_install_deps", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    plugin_dir = tmp_path / "stash-curator"
+    (plugin_dir / "packages").mkdir(parents=True)
+    requirements = plugin_dir / "packages" / "curator-tools.txt"
+    requirements.write_text("numpy==2.5.1\n", encoding="utf-8")
+    monkeypatch.setattr(module, "PLUGIN_DIR", plugin_dir)
+    created: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        module,
+        "create_venv",
+        lambda path, with_pip: created.append((path, with_pip)),
+    )
+    installed: list[list[str]] = []
+    monkeypatch.setattr(
+        module,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda command, **_: (
+                installed.append(command)
+                or SimpleNamespace(returncode=0, stderr="", stdout="installed numpy")
+            )
+        ),
+    )
+
+    result = module._install_optional_deps()
+
+    assert created == [(plugin_dir / "venv", True)]
+    assert installed[0][-3:] == ["install", "-r", str(requirements)]
+    assert result == {
+        "status": "ok",
+        "venv": str(plugin_dir / "venv"),
+        "requirements": str(requirements),
+    }
+
+
+def test_install_optional_deps_refuses_missing_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_install_deps_missing", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "PLUGIN_DIR", tmp_path)
+
+    with pytest.raises(RuntimeError, match="missing optional dependency manifest"):
+        module._install_optional_deps()
+
+
+def test_install_optional_deps_surfaces_pip_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_install_deps_failure", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    plugin_dir = tmp_path / "stash-curator"
+    (plugin_dir / "packages").mkdir(parents=True)
+    (plugin_dir / "packages" / "curator-tools.txt").write_text("numpy\n", encoding="utf-8")
+    (plugin_dir / "venv").mkdir()
+    (plugin_dir / "venv" / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+    monkeypatch.setattr(module, "PLUGIN_DIR", plugin_dir)
+    monkeypatch.setattr(
+        module,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda command, **_: SimpleNamespace(
+                returncode=1, stderr="no matching distribution", stdout=""
+            )
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="pip install failed"):
+        module._install_optional_deps()
 
 
 def test_reset_removes_only_core_and_recognized_artifacts(tmp_path: Path) -> None:

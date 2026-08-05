@@ -130,6 +130,16 @@ def connect_database(
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 30000")
+    # A 128 MiB page cache turns the repeated full scans of the hundreds-of-MiB
+    # generation artifacts during a model build from cold disk reads into page-cache
+    # hits. Read-only connections additionally memory-map the file: that is safe and
+    # read-only connections see the same coherent pages via the unified OS buffer
+    # cache. Writable connections stay on the pager because the sidecar is shared
+    # with other processes and the files can be replaced by maintenance operations
+    # (for example VACUUM), where a stale mapping could serve obsolete data.
+    connection.execute("PRAGMA cache_size = -131072")
+    if readonly:
+        connection.execute("PRAGMA mmap_size = 536870912")
     if not readonly:
         if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).casefold() != "wal":
             connection.execute("PRAGMA journal_mode = WAL")

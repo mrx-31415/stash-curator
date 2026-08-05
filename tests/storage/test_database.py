@@ -22,8 +22,19 @@ def test_connection_enables_required_pragmas(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+        assert connection.execute("PRAGMA cache_size").fetchone()[0] == -131072
     finally:
         connection.close()
+
+
+def test_readonly_connection_memory_maps_the_database(tmp_path: Path) -> None:
+    database = tmp_path / "curator.sqlite3"
+    connect_database(database).close()
+    readonly = connect_database(database, readonly=True)
+    try:
+        assert readonly.execute("PRAGMA mmap_size").fetchone()[0] == 536870912
+    finally:
+        readonly.close()
 
 
 def test_transaction_rolls_back_on_failure(tmp_path: Path) -> None:
