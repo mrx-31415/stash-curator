@@ -126,3 +126,7 @@ tasks:
     description: Refresh promising StashDB scenes and performers without affecting library sync.
     execArgs:
       - expand-refresh
+  - name: Install optional dependencies
+    description: Install numpy acceleration into a plugin-local virtual environment. The model builder falls back to pure Python when this is not run.
+    execArgs:
+      - install-deps
