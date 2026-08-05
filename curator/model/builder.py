@@ -1278,6 +1278,11 @@ class PreferenceModelBuilder:
                         ),
                     )
                     for scene_id, label in sorted(labels.items())
+                    # A scene deleted from Stash since these signals were recorded has no
+                    # score to compare against. feedback carries no foreign key to
+                    # source_scene (unlike behavior_event/play_session) because it is kept
+                    # as user-facing history past scene deletion, so this can still happen.
+                    if scene_id in scores_by_scene
                 ),
             )
             self._report(0.81)

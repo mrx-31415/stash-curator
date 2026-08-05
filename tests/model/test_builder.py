@@ -434,6 +434,32 @@ def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path
     ).fetchone()
 
 
+def test_feedback_for_a_scene_deleted_from_stash_does_not_crash_the_build(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    # feedback carries no foreign key to source_scene, so it can still reference a scene
+    # deleted from Stash after the feedback was given (kept as user-facing history) — unlike
+    # behavior_event and play_session, which cascade out with the scene.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, occurred_at_ms)
+        VALUES ('orphaned', 'removed-scene', 'thumb_up', ?)
+        """,
+        (REFERENCE_MS,),
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    labels = builder._scene_labels()
+    assert "removed-scene" in labels
+
+    result = builder.build()
+
+    assert not connection.execute(
+        "SELECT 1 FROM direct_scene_state WHERE model_id=? AND scene_id='removed-scene'",
+        (result.model_id,),
+    ).fetchone()
+
+
 def test_failed_rebuild_cannot_replace_published_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

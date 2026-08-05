@@ -416,6 +416,17 @@ def test_incremental_sync_removes_entities_deleted_from_stash(
     service = SyncService(client, SyncRepository(connection), page_size=2)
     service.sync()
     assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+    # Curator's own playback telemetry has no foreign key to source_scene, so a deletion
+    # sweep is the only thing that can ever clean it up.
+    connection.execute(
+        "INSERT INTO play_session(session_id, scene_id, started_at_ms, provenance, confidence) "
+        "VALUES ('session-1', '1', 100, 'stash', 1.0)"
+    )
+    connection.execute(
+        "INSERT INTO behavior_event(event_id, event_type, scene_id, occurred_at_ms, confidence, "
+        "provenance) VALUES ('event-1', 'play_started', '1', 100, 1.0, 'stash')"
+    )
+    connection.commit()
 
     # A deleted scene has no updated_at to carry it past the watermark, so only an id sweep
     # can observe it.
@@ -435,6 +446,14 @@ def test_incremental_sync_removes_entities_deleted_from_stash(
     )
     assert (
         connection.execute("SELECT count(*) FROM source_file WHERE scene_id='1'").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM play_session WHERE scene_id='1'").fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM behavior_event WHERE scene_id='1'").fetchone()[0]
+        == 0
     )
     # Only the drifted entities are swept; the rest stop at their count probe.
     assert _swept(client) == {"scene_ids", "tag_ids"}
