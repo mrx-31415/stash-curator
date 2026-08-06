@@ -910,22 +910,26 @@ class ExpandService:
                 )
                 if row[0] and str(row[0]) in links["studios"]
             ]
-            tag_ids = [
-                key.removeprefix("id:")
-                for key in sorted(content, key=content.__getitem__, reverse=True)
-                if key.startswith("id:")
-            ][:5]
+            tag_ids = self._probe_tag_ids(content)
+            tight_tag_ids = tag_ids[:3]
+            probes = [
+                ("tags", tag_ids, 250, "INCLUDES", "DATE"),
+                ("tags", tag_ids, 250, "INCLUDES", "POPULARITY"),
+                ("performers", performers, 150, "INCLUDES", "DATE"),
+                ("performers", performers, 150, "INCLUDES", "POPULARITY"),
+                ("studios", studios, 150, "INCLUDES", "DATE"),
+                ("studios", studios, 150, "INCLUDES", "POPULARITY"),
+            ]
+            if len(tight_tag_ids) >= 2:
+                probes.extend(
+                    (
+                        ("tags", tight_tag_ids, 100, "INCLUDES_ALL", "DATE"),
+                        ("tags", tight_tag_ids, 100, "INCLUDES_ALL", "POPULARITY"),
+                    )
+                )
             rows, sources = self._fetch_probes(
                 client,
-                [
-                    probe
-                    for probe in (
-                        ("tags", tag_ids, 100, "INCLUDES"),
-                        ("performers", performers, 75, "INCLUDES"),
-                        ("studios", studios, 75, "INCLUDES"),
-                    )
-                    if probe[1]
-                ],
+                [probe for probe in probes if probe[1]],
             )
             timings["retrieval"] = round((time.perf_counter() - started) * 1000)
             record_duration("python", "external_similar.retrieval", timings["retrieval"])
@@ -947,22 +951,14 @@ class ExpandService:
             record_duration("python", "external_similar.scoring", timings["scoring"])
         elif entity_type == "performer":
             target_row = self.connection.execute(
-                "SELECT gender, ethnicity FROM source_performer WHERE performer_id=?",
+                "SELECT gender, ethnicity, birthdate FROM source_performer WHERE performer_id=?",
                 (entity_id,),
             ).fetchone()
             if target_row is None:
                 raise ValueError(f"unknown performer: {entity_id}")
-            query: dict[str, object] = {
-                "page": 1,
-                "per_page": 500,
-                "sort": "POPULARITY",
-                "direction": "DESC",
-            }
             selected_gender = gender or str(target_row["gender"] or "")
-            if selected_gender:
-                query["gender"] = selected_gender
             ethnicity = str(target_row["ethnicity"] or "").upper().replace(" ", "_")
-            if ethnicity in {
+            if ethnicity not in {
                 "CAUCASIAN",
                 "BLACK",
                 "ASIAN",
@@ -972,10 +968,13 @@ class ExpandService:
                 "MIXED",
                 "OTHER",
             }:
-                query["ethnicity"] = ethnicity
-            candidates = client.execute(PERFORMERS, {"input": query})["queryPerformers"][
-                "performers"
-            ]
+                ethnicity = ""
+            target = (
+                FeatureStore(self.connection).performer_profiles(feature_version).get(entity_id)
+            )
+            if target is not None:
+                target = self._with_age(target, target_row["birthdate"])
+            candidates = self._fetch_performer_pool(client, target, selected_gender, ethnicity)
             owned = set(links["performers"].values())
             candidate_ids = {
                 str(payload["id"]) for payload in candidates if str(payload["id"]) not in owned
@@ -1026,6 +1025,100 @@ class ExpandService:
         result["timings_ms"] = timings
         return result
 
+    def _probe_tag_ids(self, content: dict[str, float]) -> list[str]:
+        """Mapped tag ids ordered by rarity, the tags that define a theme.
+
+        Normalized content weights saturate to near-equal values on well-tagged
+        scenes, so weight ordering is effectively noise. Document frequency is
+        the stable signal: the rarest mapped tags (Student, Teacher, School)
+        are the distinctive ones, while common tags (Fingering, All Sex) only
+        dilute the candidate pool. Missing frequencies fall back to weight.
+        """
+        ids = [
+            key.removeprefix("id:")
+            for key in sorted(content, key=content.__getitem__, reverse=True)
+            if key.startswith("id:")
+        ]
+        if not ids:
+            return []
+        local_ids = {
+            str(row["stash_id"]): str(row["tag_id"])
+            for row in self.connection.execute(
+                f"""
+                SELECT tag_id, stash_id FROM source_tag_stash_id
+                WHERE lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))
+                  AND stash_id IN ({",".join("?" for _ in ids)})
+                """,
+                (STASHDB, *ids),
+            )
+        }
+        frequencies: dict[str, int] = {}
+        if local_ids:
+            for row in self.connection.execute(
+                f"""
+                SELECT replace(name, 'tag:', '') AS local_id, metadata_json
+                FROM feature_definition
+                WHERE family='content' AND name IN ({",".join("?" for _ in local_ids.values())})
+                """,
+                [f"tag:{identifier}" for identifier in local_ids.values()],
+            ):
+                try:
+                    frequencies[str(row["local_id"])] = int(
+                        json.loads(str(row["metadata_json"]))["document_frequency"]
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+        return sorted(
+            ids,
+            key=lambda identifier: (
+                frequencies.get(local_ids.get(identifier, ""), 10**9),
+                -content.get(f"id:{identifier}", 0.0),
+            ),
+        )[:10]
+
+    def _fetch_performer_pool(
+        self,
+        client: GraphQLClient,
+        target: PerformerProfile | None,
+        gender: str,
+        ethnicity: str,
+    ) -> list[dict[str, Any]]:
+        """Union popularity-ranked StashDB performer pools biased toward the target.
+
+        StashDB's queryPerformers honors age, gender, and ethnicity filters but
+        silently ignores the schema's body-attribute criteria (height, cup size,
+        breast type, ...), so the target profile can only narrow retrieval with
+        an age floor. The unfiltered popularity query stays as a recall floor;
+        the re-ranker picks the closest profiles from the union.
+        """
+        base: dict[str, object] = {
+            "page": 1,
+            "per_page": 500,
+            "sort": "POPULARITY",
+            "direction": "DESC",
+        }
+        if gender:
+            base["gender"] = gender
+        if ethnicity:
+            base["ethnicity"] = ethnicity
+        queries = [dict(base)]
+        age = target.blocks.get("age", {}).get("age_recording") if target else None
+        if age is not None:
+            lower = int(age.value - 12)
+            if lower >= 25:
+                queries.append({**base, "age": {"value": lower, "modifier": "GREATER_THAN"}})
+
+        def fetch(query: dict[str, object]) -> Any:
+            return client.execute(PERFORMERS, {"input": query})["queryPerformers"]["performers"]
+
+        pooled: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+            futures = [executor.submit(copy_context().run, fetch, query) for query in queries]
+            for future in futures:
+                for performer in future.result():
+                    pooled.setdefault(str(performer["id"]), performer)
+        return list(pooled.values())
+
     @staticmethod
     def _annotate_local_match(
         scene: dict[str, Any], links: dict[str, dict[str, str]]
@@ -1066,13 +1159,13 @@ class ExpandService:
     def _fetch_probes(
         self,
         client: GraphQLClient,
-        probes: list[tuple[str, list[str], int, str]],
+        probes: list[tuple[str, list[str], int, str, str]],
     ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
         if not probes:
             return {}, defaultdict(set)
 
         def fetch(
-            probe: tuple[str, list[str], int, str],
+            probe: tuple[str, list[str], int, str, str],
         ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
             rows: dict[str, dict[str, Any]] = {}
             sources: dict[str, set[str]] = defaultdict(set)
@@ -1333,6 +1426,7 @@ class ExpandService:
         values: list[str],
         limit: int,
         modifier: str = "INCLUDES",
+        sort: str = "DATE",
     ) -> tuple[int, bool]:
         fetched = 0
         page = 1
@@ -1342,7 +1436,7 @@ class ExpandService:
             query: dict[str, object] = {
                 "page": page,
                 "per_page": page_size,
-                "sort": "DATE" if source != "wildcard" else "TRENDING",
+                "sort": "TRENDING" if source == "wildcard" else sort,
                 "direction": "DESC",
             }
             if source != "wildcard":
