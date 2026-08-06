@@ -18,6 +18,7 @@ from curator import optional_deps
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
+from curator.features.builder import _fingerprint_table
 from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES, performer_similarity
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
@@ -521,12 +522,7 @@ class PreferenceModelBuilder:
                 """,
             ),
         ):
-            digest.update(f"{label}\0".encode())
-            for row in self.connection.execute(statement):
-                digest.update(
-                    json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=False).encode()
-                )
-                digest.update(b"\n")
+            _fingerprint_table(self.connection, digest, label, statement)
         return digest.hexdigest()
 
     def _affinities(

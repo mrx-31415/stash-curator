@@ -11,6 +11,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.features.measurements import (
@@ -37,6 +38,31 @@ from curator.taxonomy.store import CATEGORY_ROLE_FINGERPRINT
 
 class FeatureBuildError(RuntimeError):
     pass
+
+
+def _fingerprint_table(
+    connection: sqlite3.Connection,
+    digest: Any,
+    label: str,
+    statement: str,
+) -> None:
+    """Hash one ordered source table into the fingerprint digest.
+
+    Rows are json-encoded in batches of a thousand and hashed with a single digest
+    update per batch; batching keeps the encoding collision-free (JSON escaping) while
+    cutting per-row json.dumps and hashlib call overhead by roughly an order of
+    magnitude on the multi-hundred-thousand-row tables.
+    """
+    digest.update(f"{label}\0".encode())
+    batch: list[tuple[object, ...]] = []
+    for row in connection.execute(statement):
+        batch.append(tuple(row))
+        if len(batch) == 1_000:
+            digest.update(json.dumps(batch, separators=(",", ":"), ensure_ascii=False).encode())
+            batch = []
+    if batch:
+        digest.update(json.dumps(batch, separators=(",", ":"), ensure_ascii=False).encode())
+    digest.update(b"\n")
 
 
 @dataclass(frozen=True)
@@ -227,12 +253,7 @@ class FeatureBuilder:
                 "ORDER BY tag_id, endpoint",
             ),
         ):
-            digest.update(f"{label}\0".encode())
-            for row in self.connection.execute(statement):
-                digest.update(
-                    json.dumps(tuple(row), separators=(",", ":"), ensure_ascii=False).encode()
-                )
-                digest.update(b"\n")
+            _fingerprint_table(self.connection, digest, label, statement)
         row = self.connection.execute(
             "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
         ).fetchone()
@@ -583,7 +604,14 @@ class FeatureBuilder:
         definitions: dict[tuple[str, str, str], tuple[str, dict[str, object]]] = {}
         for feature in features:
             key = (feature.entity_type, feature.family, feature.name)
-            definitions.setdefault(key, (self._feature_id(feature_version, *key), feature.metadata))
+            # Membership check instead of setdefault: the default argument of
+            # setdefault is evaluated eagerly for every feature, wasting a sha256
+            # per duplicate instead of once per definition.
+            if key not in definitions:
+                definitions[key] = (
+                    self._feature_id(feature_version, *key),
+                    feature.metadata,
+                )
         scene_count = len(
             {feature.entity_id for feature in features if feature.entity_type == "scene"}
         )

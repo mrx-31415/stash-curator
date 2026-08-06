@@ -98,6 +98,29 @@ def _database(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def test_fingerprint_table_is_deterministic_and_change_sensitive(tmp_path: Path) -> None:
+    import hashlib
+
+    from curator.features.builder import _fingerprint_table
+
+    connection = _database(tmp_path / "curator.sqlite3")
+
+    def fingerprint() -> str:
+        digest = hashlib.sha256()
+        _fingerprint_table(
+            connection,
+            digest,
+            "source_tag",
+            "SELECT tag_id, name FROM source_tag ORDER BY tag_id",
+        )
+        return digest.hexdigest()
+
+    first = fingerprint()
+    assert fingerprint() == first
+    connection.execute("UPDATE source_tag SET name='Changed' WHERE tag_id='parent'")
+    assert fingerprint() != first
+
+
 def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     progress: list[tuple[int, int]] = []
