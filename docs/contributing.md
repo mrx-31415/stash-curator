@@ -68,10 +68,13 @@ for the deployment rationale.
 ## Releases
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please)
-and Conventional Commits. The one thing to keep consistent is **PR titles**: prefix
-them with a conventional type (`feat:`, `fix:`, `docs:`, `perf:`, `chore:`, ...) and
-merge with squash so the title becomes the commit subject. A workflow checks every
-PR title and fails otherwise.
+and Conventional Commits. The one thing to keep consistent is **commit subjects**:
+prefix them with a conventional type (`feat:`, `fix:`, `docs:`, `perf:`, `chore:`, ...)
+and merge with squash so the PR title becomes the commit subject. A workflow checks
+every PR title, and a local `.githooks/commit-msg` hook checks commits before they
+are made (the same hook directory as the pre-push verifier; enable it with
+`git config core.hooksPath .githooks`). Use `--no-verify` only when a subject is
+truly exempt.
 
 On every push to `main`, release-please compares the merged commits against the last
 release, opens a `chore(main): release vX.Y.Z` pull request that bumps

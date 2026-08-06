@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Commit-msg hook: keep subjects in Conventional Commits format.
+
+release-please derives versions and the changelog from commit subjects, and
+the PR-title workflow enforces the same format at pull-request time. This hook
+catches local commits before they are made so non-conventional subjects cannot
+slip past the changelog. Bypass with --no-verify if a subject is truly exempt.
+"""
+
+import re
+import sys
+
+TYPES = ("feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert")
+PATTERN = re.compile(rf"^(?:{'|'.join(TYPES)})(?:\([a-z0-9-]+\))?!?: .+$")
+# Git-generated or machine subjects that are not authored by hand.
+EXEMPT_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ", "amend! ", "Initial commit")
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        return 0
+    try:
+        with open(sys.argv[1], encoding="utf-8") as source:
+            subject = source.readline().strip()
+    except OSError:
+        return 0
+    if not subject or subject.startswith(EXEMPT_PREFIXES) or PATTERN.match(subject):
+        return 0
+    print("commit-msg: subject must be Conventional Commits for release-please changelogs.")
+    print(f"  got:      {subject}")
+    print("  expected: <type>(<scope>): <description>   e.g. 'feat: add lane ordering'")
+    print(f"  types:    {' '.join(TYPES)}")
+    print("  breaking: 'feat!: ...' or a 'BREAKING CHANGE:' footer")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
