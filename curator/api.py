@@ -154,7 +154,11 @@ class CuratorAPI:
         if model_id is None:
             raise RuntimeError("no published model")
         if entity_type == "scene":
-            score = RecommendationModelStore(self.connection).scores(model_id).get(entity_id)
+            score = (
+                RecommendationModelStore(self.connection)
+                .scores(model_id, {entity_id})
+                .get(entity_id)
+            )
             if score is None:
                 raise ValueError(f"unknown scene: {entity_id}")
             return {
