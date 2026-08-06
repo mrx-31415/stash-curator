@@ -143,6 +143,98 @@ class TaxonomyStashDB(FakeStashDB):
         return super().execute(document, variables or {})
 
 
+class PerformerPoolStashDB:
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        age = input_data.get("age")
+        if age and age["modifier"] == "GREATER_THAN":
+            performers = [
+                {
+                    "id": "mature-lookalike",
+                    "name": "Mature Lookalike",
+                    "gender": "FEMALE",
+                    "ethnicity": "Caucasian",
+                    "hair_color": "Black",
+                    "eye_color": "Brown",
+                    "height": 170,
+                    "cup_size": "DD",
+                    "band_size": 34,
+                    "waist_size": 24,
+                    "hip_size": 36,
+                    "breast_type": "AUGMENTED",
+                    "scene_count": 600,
+                    "tattoos": [],
+                    "piercings": [],
+                    "images": [],
+                }
+            ]
+        else:
+            performers = [
+                {
+                    "id": "young-popular",
+                    "name": "Young Popular",
+                    "gender": "FEMALE",
+                    "ethnicity": "Caucasian",
+                    "hair_color": "Blonde",
+                    "eye_color": "Blue",
+                    "height": 165,
+                    "cup_size": "B",
+                    "band_size": 32,
+                    "waist_size": 24,
+                    "hip_size": 34,
+                    "breast_type": "NATURAL",
+                    "scene_count": 5,
+                    "tattoos": [],
+                    "piercings": [],
+                    "images": [],
+                }
+            ]
+        return {"queryPerformers": {"performers": performers}}
+
+
+class PopularityPoolStashDB:
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        popular = {
+            "id": "popular-performer",
+            "name": "Popular Performer",
+            "gender": "FEMALE",
+            "ethnicity": "Caucasian",
+            "hair_color": "Blonde",
+            "eye_color": "Blue",
+            "height": 170,
+            "cup_size": "D",
+            "band_size": 34,
+            "waist_size": 25,
+            "hip_size": 36,
+            "breast_type": "AUGMENTED",
+            "scene_count": 600,
+            "tattoos": [],
+            "piercings": [],
+            "images": [],
+        }
+        obscure = {
+            **popular,
+            "id": "obscure-performer",
+            "name": "Obscure Performer",
+            "hair_color": "Black",
+            "cup_size": "DD",
+            "waist_size": 24,
+            "scene_count": 8,
+        }
+        return {"queryPerformers": {"performers": [popular, obscure]}}
+
+
 def test_phash_normalization_accepts_only_exact_64_bit_hex() -> None:
     assert normalize_phash(" D8BC7554C5A178AA ") == "d8bc7554c5a178aa"
     assert normalize_phash("shared-phash") is None
@@ -669,9 +761,209 @@ def test_external_similarity_loads_only_positive_anchor_profiles(
 
     assert hidden["items"] == []
     assert [item["id"] for item in visible["items"]] == ["new-external-scene"]
-    tag_query = next(value for value in client.inputs if "tags" in value)
-    assert tag_query["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
+    tag_queries = [value for value in client.inputs if "tags" in value]
+    assert {value["sort"] for value in tag_queries} == {"DATE", "POPULARITY"}
+    assert all(
+        value["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
+        for value in tag_queries
+    )
     assert {"p1"} in requested
+
+
+def test_targeted_scene_similar_probes_both_sorts_and_tight_tag_sets(
+    tmp_path: Path,
+) -> None:
+    """Targeted scene similar must retrieve both newest and most-viewed matches.
+
+    A single date-sorted probe caps the pool at the latest releases; a popularity
+    probe reaches the representative scenes, and an INCLUDES_ALL probe on the
+    most distinctive tags pins exact thematic twins.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+        (
+            ("specific-one", "Specific One", "s1"),
+            ("specific-two", "Specific Two", "s2"),
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO scene_marker(marker_id, scene_id, seconds, primary_tag_id, source_hash) "
+        "VALUES (?, 'old-good', 0, ?, ?)",
+        (
+            ("marker-specific-one", "specific-one", "marker-hash-one"),
+            ("marker-specific-two", "specific-two", "marker-hash-two"),
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        (
+            ("good", "https://stashdb.org/graphql", "external-good"),
+            ("specific-one", "https://stashdb.org/graphql", "external-specific-one"),
+            ("specific-two", "https://stashdb.org/graphql", "external-specific-two"),
+        ),
+    )
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    client = FakeStashDB()
+    service = ExpandService(connection)
+
+    result = service.targeted_similar(
+        client,
+        {
+            "scenes": {"old-good": "owned-external-scene"},
+            "scene_phashes": {"d8bc7554c5a178aa": "old-good"},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {"studio-1": "external-studio"},
+        },
+        "scene",
+        "old-good",
+        hide_phash_matches=False,
+    )
+
+    tag_queries = [value for value in client.inputs if "tags" in value]
+    assert {value["sort"] for value in tag_queries} == {"DATE", "POPULARITY"}
+    assert {value["tags"]["modifier"] for value in tag_queries} == {
+        "INCLUDES",
+        "INCLUDES_ALL",
+    }
+    broad = [value for value in tag_queries if value["tags"]["modifier"] == "INCLUDES"]
+    assert all(value["per_page"] == 250 for value in broad)
+    assert all(len(value["tags"]["value"]) == 3 for value in broad)
+    tight = [value for value in tag_queries if value["tags"]["modifier"] == "INCLUDES_ALL"]
+    assert all(value["per_page"] == 100 for value in tight)
+    assert all(len(value["tags"]["value"]) == 3 for value in tight)
+    assert [item["id"] for item in result["items"]] == ["new-external-scene"]
+
+
+def test_probe_tag_ids_orders_by_rarity_then_weight(tmp_path: Path) -> None:
+    """Probe tags must be the rarest mapped tags, not the highest-weighted.
+
+    Content weights saturate to near-equal values on well-tagged scenes, so a
+    high-frequency tag with a slightly higher weight must not displace the rare
+    tags that define the theme from the tight INCLUDES_ALL probe.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+        (
+            ("school", "School", "school"),
+            ("teacher", "Teacher", "teacher"),
+            ("student", "Student", "student"),
+            ("common", "Common", "common"),
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        (
+            ("school", "https://stashdb.org/graphql", "ext-school"),
+            ("teacher", "https://stashdb.org/graphql", "ext-teacher"),
+            ("student", "https://stashdb.org/graphql", "ext-student"),
+            ("common", "https://stashdb.org/graphql", "ext-common"),
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT INTO feature_definition(
+            feature_id, feature_version, family, name, provenance, metadata_json
+        ) VALUES (?, 'unit', 'content', ?, 'test', ?)
+        """,
+        (
+            ("f-school", "tag:school", '{"document_frequency": 449}'),
+            ("f-teacher", "tag:teacher", '{"document_frequency": 295}'),
+            ("f-student", "tag:student", '{"document_frequency": 220}'),
+            ("f-common", "tag:common", '{"document_frequency": 5000}'),
+        ),
+    )
+    content = {
+        "id:ext-school": 0.2813,  # highest weight, but only fourth-rarest
+        "id:ext-teacher": 0.2801,
+        "id:ext-student": 0.2794,
+        "id:ext-common": 0.2790,
+    }
+    service = ExpandService(connection)
+
+    assert service._probe_tag_ids(content) == [
+        "ext-student",
+        "ext-teacher",
+        "ext-school",
+        "ext-common",
+    ]
+
+
+def test_targeted_performer_similar_narrows_retrieval_to_target_age(
+    tmp_path: Path,
+) -> None:
+    """Performer retrieval must add an age floor for mature targets.
+
+    Popularity-ranked pools skew young, so a mature target used to get young
+    lookalikes that never matched its age block. The age-constrained query brings
+    same-or-older performers into the pool, and the re-ranker ranks them first.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("UPDATE source_performer SET birthdate='1969-01-01' WHERE performer_id='p1'")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    client = PerformerPoolStashDB()
+    service = ExpandService(connection)
+
+    result = service.targeted_similar(
+        client,
+        {
+            "scenes": {},
+            "scene_phashes": {},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {},
+        },
+        "performer",
+        "p1",
+        gender="FEMALE",
+    )
+
+    assert len(client.inputs) == 2
+    assert all(value["sort"] == "POPULARITY" for value in client.inputs)
+    assert all(value["gender"] == "FEMALE" for value in client.inputs)
+    fallback = next(value for value in client.inputs if "age" not in value)
+    assert fallback["per_page"] == 500
+    age_query = next(value for value in client.inputs if "age" in value)
+    expected_lower = max(0, int(ExpandService._age("1969-01-01") - 12))
+    assert expected_lower >= 25
+    assert age_query["age"] == {"value": expected_lower, "modifier": "GREATER_THAN"}
+    identifiers = [item["id"] for item in result["items"]]
+    assert identifiers == ["mature-lookalike"]
+    assert "young-popular" not in identifiers
+
+
+def test_targeted_performer_similar_prefers_established_performers(
+    tmp_path: Path,
+) -> None:
+    """Career size must break similarity ties in the final ranking.
+
+    A perfectly matching obscure performer used to outrank an established one
+    with a slightly weaker profile match, because every retrieved candidate had
+    the same neutral appeal. Scene count re-orders them: the established
+    performer wins even though its raw similarity is lower.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    client = PopularityPoolStashDB()
+    service = ExpandService(connection)
+
+    result = service.targeted_similar(
+        client,
+        {
+            "scenes": {},
+            "scene_phashes": {},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {},
+        },
+        "performer",
+        "p1",
+        gender="FEMALE",
+    )
+
+    identifiers = [item["id"] for item in result["items"]]
+    assert identifiers == ["popular-performer", "obscure-performer"]
+    assert result["items"][0]["similarity"] < result["items"][1]["similarity"]
+    assert result["items"][0]["score"] > result["items"][1]["score"]
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:
