@@ -6,7 +6,9 @@ permalink: /architecture/
 # Architecture
 
 Curator is a self-contained external raw plugin with no runtime dependencies beyond
-Python 3.12+. Stash loads `plugin/backend.py`; the browser UI is one JavaScript file
+Python 3.12+. Optional numpy acceleration is provisioned on demand into a
+plugin-local venv (see Runtime components); without it, the same code paths run in
+pure Python. Stash loads `plugin/backend.py`; the browser UI is one JavaScript file
 and one CSS file, and model code lives in the packaged `curator` module.
 
 ```text
@@ -41,6 +43,13 @@ source cache ──► normalized events                  StashDB
   orders.
 - `curator/similarity.py`, `curator/expand.py`, and `curator/explanations/` serve
   Similar, StashDB discovery, and factual reasons.
+- `curator/optional_deps.py` and the **Install optional dependencies** task provide
+  the optional numpy acceleration: the task creates a versioned venv beside the
+  plugin and pip-installs `plugin/packages/curator-tools.txt`; `backend.py` adds the
+  venv's site-packages to `sys.path` when present. The content-neighbor and
+  performer-similarity stages use numpy (BLAS matmuls) when importable and fall back
+  to their pure-Python implementations otherwise, so builds are deterministic and
+  correct in either mode.
 - `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
 
 ## Data flow and failure boundaries

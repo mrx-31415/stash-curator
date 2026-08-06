@@ -30,6 +30,24 @@ A full reconciliation is available as **Full sync and build recommendations** on
 Tasks page. Use it when source records were deleted or an incremental sync appears
 out of date; it is not required for routine refreshes.
 
+## Optional acceleration
+
+Curator runs entirely on the Python standard library, and everything works without
+any extra packages. Model builds get measurably faster when **numpy** is available,
+so a one-shot task installs it for you:
+
+1. In Stash, open **Tasks** and run **Install optional dependencies** once.
+2. The task creates a plugin-local virtual environment and pip-installs the pinned
+   requirements from `packages/curator-tools.txt` into it.
+3. Then run **Sync and build recommendations** as usual.
+
+The numpy paths accelerate the two similarity stages (content neighbors and
+performer similarity), which are the largest part of a first build. Without it, the
+model builder falls back to its pure-Python implementations, so skipping the task is
+always safe. The venv lives in the plugin directory and survives plugin updates;
+re-run the task only if the Python interpreter Stash uses for plugins changes
+version.
+
 ## Configure
 
 Curator's settings live with Stash's plugin settings. Useful early choices are:
