@@ -768,6 +768,12 @@ class ExpandService:
                         default=0,
                     )
                 )
+                # Same-performer scenes carry the full performer bonus even when
+                # they share no theme, so wrong-theme scenes crowd the top. Scale
+                # the credit by how much content the candidate actually shares:
+                # a 0.35 floor at zero overlap, full credit only when the theme
+                # overlaps too.
+                performer *= 0.35 + 0.65 * content
                 structure = 1 - abs(
                     target_structure - min(1.0, max(0, len(payload.get("performers", [])) - 1) / 3)
                 )
