@@ -89,7 +89,9 @@ Do not commit or push merely because implementation is complete.
    from an earlier turn.
 4. Before committing, verify the staged diff with `git diff --cached --check` and
    `git diff --cached`.
-5. Use a short imperative commit subject describing the outcome.
+5. Use a short Conventional Commits subject (`feat:`, `fix:`, `docs:`, `perf:`, ...)
+   describing the outcome; the `.githooks/commit-msg` hook enforces it because
+   release-please derives the changelog and version bumps from those subjects.
 6. Run `git push` without force. Never rewrite shared history.
 
 A push to `main` triggers both CI and GitHub Pages. Pages rebuilds the plugin archive
