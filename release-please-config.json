@@ -1,7 +1,13 @@
 {
   "packages": {
     ".": {
-      "release-type": "python"
+      "release-type": "python",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "curator/__init__.py"
+        }
+      ]
     }
   }
 }
