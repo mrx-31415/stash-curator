@@ -682,7 +682,7 @@
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls)),
       React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), React.createElement("p", null, item.similarity === undefined ? `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}` : `Similarity ${item.similarity.toFixed(2)} · rank ${item.score.toFixed(2)}`)))),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id }, React.createElement("strong", null, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, onChange: (value) => answerTag(tag, value) })))),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item.id) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
+      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   });
 
@@ -1104,12 +1104,12 @@
     );
   }
 
-  function FilterTokens({ kind, label, values, onChange }) {
+  function FilterTokens({ kind, label, values, onChange, disabled = false }) {
     const [query, setQuery] = React.useState("");
     const variables = { filter: { q: query, per_page: 8 } };
-    const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query });
-    const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query });
-    const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query });
+    const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query || disabled });
+    const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query || disabled });
+    const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query || disabled });
     const options = kind === "tag"
       ? tags.data?.findTags?.tags || []
       : kind === "studio"
@@ -1123,7 +1123,7 @@
       "label",
       { className: "curator-token-filter" },
       React.createElement("span", null, label),
-      React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
+      React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
       query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, item.name)))
     );
   }
@@ -1364,7 +1364,7 @@
       result && source === "stashdb" && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
-        items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (id) => location.assign(`/plugins/stash-curator?view=expand&performer=${id}`), onWhisparr: sendWhisparr, whisparrEnabled }))
+        items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled }))
       ),
       result && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
@@ -1454,7 +1454,7 @@
     );
   }
 
-  function ExpandPanel({ initialPerformerId = null, initialType = "scene", huntOnly = false }) {
+  function ExpandPanel({ initialPerformerId = null, initialPerformerLabel = null, initialType = "scene", huntOnly = false }) {
     const initialFilters = React.useMemo(() => defaultFilters(huntOnly ? "hunt" : "expand"), []);
     const [entityType, setEntityType] = React.useState(initialType);
     const [sort, setSort] = React.useState("match");
@@ -1477,7 +1477,7 @@
     const [version, setVersion] = React.useState(0);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const [pageSize, setPageSize] = React.useState(20);
-    const [huntPerformer, setHuntPerformer] = React.useState(null);
+    const [huntPerformer, setHuntPerformer] = React.useState(() => huntOnly && initialPerformerId ? { id: initialPerformerId, name: initialPerformerLabel || initialPerformerId, external: true } : null);
     const [huntView, setHuntView] = React.useState("unlinked");
     const [huntSort, setHuntSort] = React.useState("date");
     React.useEffect(() => {
@@ -1496,7 +1496,14 @@
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id) }
           : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
       operation(request, entityType === "hunt" ? 60000 : 30000).then(
-        (result) => active && (setData(result), setLoading(false)),
+        (result) => {
+          if (!active) return;
+          setData(result);
+          setLoading(false);
+          if (entityType === "hunt" && result?.performer_name) {
+            setHuntPerformer((current) => current && (current.name === current.id || !current.name) ? { ...current, name: result.performer_name } : current);
+          }
+        },
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
@@ -1534,9 +1541,9 @@
       setData(null);
       setHuntPerformer(values.at(-1) || null);
     }
-    function showPerformerScenes(id) {
+    function showPerformerScenes(item) {
       setEntityType("scene");
-      setPerformerId(id);
+      setPerformerId(item.id);
     }
     async function shortlist(item, kind) {
       try {
@@ -1599,7 +1606,7 @@
       entityType === "hunt" && React.createElement(
         "div",
         { className: "curator-hunt-controls" },
-        React.createElement(FilterTokens, { kind: "performer", label: "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer }),
+        React.createElement(FilterTokens, { kind: "performer", label: huntPerformer?.external ? "External performer on StashDB" : "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external) }),
         data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => (setPage(1), setHuntView(value)) }, label))),
         data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => (setPage(1), setHuntSort(event.target.value)), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
@@ -2068,6 +2075,7 @@
       if (view === lane) return;
       setFollowUps([]);
       route.set("view", view);
+      for (const param of ["performer", "label", "id", "type"]) route.delete(param);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
     async function toggleDiversity() {
@@ -2169,9 +2177,9 @@
       lane === "history" && React.createElement(RecommendationHistoryPanel),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),
-      lane === "expand" && React.createElement(ExpandPanel, { key: "expand", initialPerformerId: route.get("performer") }),
+      lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "backups" && React.createElement(BackupPanel),
-      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
+      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, initialPerformerId: route.get("performer"), initialPerformerLabel: route.get("label") }),
       lane === "diagnostics" && React.createElement(DiagnosticsPanel),
       lane === "profiling" && React.createElement(ProfilingPanel),
       (loading || loadingComponents || scenesQuery.loading) &&
