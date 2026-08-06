@@ -425,6 +425,13 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "const routeLocation = useLocation();" in source
     assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
     assert "onClick: () => openView(option.value)" in source
+    # Reference parameters belong to the lane that created them (hunt performer
+    # and label, similar id and type); switching lanes must drop them so they
+    # cannot leak into another panel, e.g. the expand performer filter.
+    assert (
+        'for (const param of ["performer", "label", "id", "type"]) route.delete(param);' in source
+    )
+    assert 'lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),' in source
 
 
 def test_recent_recommendations_reuse_qualified_impression_history() -> None:

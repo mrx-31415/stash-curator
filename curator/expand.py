@@ -322,14 +322,20 @@ class ExpandService:
         *,
         limit: int = PERFORMER_HUNT_LIMIT,
     ) -> dict[str, object]:
-        performer = self.connection.execute(
+        local = self.connection.execute(
             "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
         ).fetchone()
-        if performer is None:
-            raise ValueError(f"unknown performer: {performer_id}")
-        external_performer_id = links["performers"].get(performer_id)
-        if not external_performer_id:
-            raise ValueError("selected performer is not linked to StashDB")
+        if local is not None:
+            external_performer_id = links["performers"].get(performer_id)
+            if not external_performer_id:
+                raise ValueError("selected performer is not linked to StashDB")
+            performer_name = str(local["name"] or performer_id)
+        else:
+            # No local performer carries this id, so it is an external StashDB
+            # performer, e.g. a similar-performer card the user wants to browse.
+            # Hunt her scenes directly and take the name from the fetched cast.
+            external_performer_id = performer_id
+            performer_name = performer_id
         model_id = RecommendationModelStore(self.connection).current_model_id()
         feature_version = FeatureStore(self.connection).current_version()
         if model_id is None or feature_version is None:
@@ -345,6 +351,19 @@ class ExpandService:
             [external_performer_id],
             limit,
         )
+        if local is None:
+            for scene in rows.values():
+                name = next(
+                    (
+                        str(item["performer"].get("name") or "")
+                        for item in scene.get("performers", [])
+                        if str(item["performer"]["id"]) == external_performer_id
+                    ),
+                    "",
+                )
+                if name:
+                    performer_name = name
+                    break
         scenes, _ = self._score(
             [self._annotate_local_match(row, links) for row in rows.values()],
             sources,
@@ -386,7 +405,7 @@ class ExpandService:
         return {
             "ready": True,
             "performer_id": performer_id,
-            "performer_name": str(performer["name"] or performer_id),
+            "performer_name": performer_name,
             "stashdb_total": total_count,
             "fetched_count": len(items),
             "total": len(items),
