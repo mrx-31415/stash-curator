@@ -64,3 +64,27 @@ excluded from the public build.
 
 See the retained [backend runtime decision](https://github.com/mrx-31415/stash-curator/blob/main/docs/decisions/001-backend-runtime.md)
 for the deployment rationale.
+
+## Releases
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please)
+and Conventional Commits. The one thing to keep consistent is **PR titles**: prefix
+them with a conventional type (`feat:`, `fix:`, `docs:`, `perf:`, `chore:`, ...) and
+merge with squash so the title becomes the commit subject. A workflow checks every
+PR title and fails otherwise.
+
+On every push to `main`, release-please compares the merged commits against the last
+release, opens a `chore(main): release vX.Y.Z` pull request that bumps
+`pyproject.toml` and `curator/__init__.py`, and regenerates `CHANGELOG.md`. Merging
+that pull request creates the version tag and the GitHub Release; a follow-up job
+builds the plugin archive and attaches `dist/stash-curator.zip` and `dist/index.yml`
+to the release. GitHub Pages already rebuilds on every push to `main`, so the new
+version becomes the update available in Stash's plugin manager the moment the
+release pull request lands.
+
+The version is defined once in `pyproject.toml` (`[project] version`) and again in
+`curator/__init__.py`; release-please updates both together. Everything else derives
+from `pyproject.toml`: `scripts/build_plugin.py` reads it at build time and injects
+the value into the staged `plugin/stash-curator.yml` and the generated `index.yml`.
+Never edit those three outputs by hand. `feat:` bumps minor, `fix:`/`docs:` and the
+other types bump patch, and a `BREAKING CHANGE:` footer bumps major.
