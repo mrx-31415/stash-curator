@@ -660,6 +660,25 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "Wildcard items are selected outside preference-derived seeds" in source
 
 
+def test_similarity_source_switch_visible_before_reference_is_selected() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    tabs = 'className: "btn-group curator-similar-source-tabs"'
+    assert tabs in source
+    # The Library/StashDB switch must be usable with no reference selected yet.
+    assert f'selected && React.createElement("div", {{ {tabs}' not in source
+    # Switching the entity type must not silently reset the chosen source.
+    assert 'setSource("library")' not in source
+    assert 'React.useState("library")' in source
+
+
+def test_performer_source_reference_uses_portrait_image() -> None:
+    css = (Path(__file__).parents[2] / "plugin" / "stash-curator.css").read_text(encoding="utf-8")
+    block = css.split(".curator-source-reference-performer img", 1)[1].split("}", 1)[0]
+    assert "height: 6rem" in block
+    assert "width: 4rem" in block
+    assert "min-width: 4rem" in block
+
+
 def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
     spec = importlib.util.spec_from_file_location("curator_plugin_backend", backend)
