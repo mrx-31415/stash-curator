@@ -938,6 +938,20 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         )["whisparr_enabled"]
         is False
     )
+    code_version = module._api(
+        {"args": {"database_path": str(tmp_path / "curator.sqlite3")}},
+        "get_config",
+        {},
+    )["code_version"]
+    assert code_version and len(code_version) == 16
+    assert (
+        module._api(
+            {"args": {"database_path": str(tmp_path / "curator.sqlite3")}},
+            "get_config",
+            {},
+        )["code_version"]
+        == code_version
+    )
 
 
 def test_model_tasks_prepare_recommendation_pages() -> None:
