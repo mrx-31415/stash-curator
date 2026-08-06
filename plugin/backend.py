@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -16,6 +17,39 @@ from uuid import uuid4
 from venv import create as create_venv
 
 PLUGIN_DIR = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).parent.resolve()
+
+_code_version_cache: str | None = None
+
+
+def _installed_code_version() -> str:
+    """Hash of the installed backend sources, so frontend caches can bust on update.
+
+    The plugin frontend caches similarity results in the browser session; a
+    stale entry can outlive a plugin update because the page may stay open. The
+    runtime version is release-please managed and does not move between local
+    installs, so stamp the cache key with a content hash of the installed
+    python sources instead: any code change changes the hash deterministically.
+    """
+    global _code_version_cache
+    if _code_version_cache is not None:
+        return _code_version_cache
+    package_roots = {path.resolve() for path in (PLUGIN_DIR, PLUGIN_DIR.parent)}
+    files = sorted(
+        {
+            path.resolve()
+            for root in package_roots
+            for path in (root / "curator").rglob("*.py")
+            if path.is_file()
+        }
+        | {path.resolve() for path in PLUGIN_DIR.glob("*.py") if path.is_file()}
+    )
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.read_bytes())
+    _code_version_cache = digest.hexdigest()[:16]
+    return _code_version_cache
+
+
 # Optional dependencies (numpy) installed by the "Install optional dependencies"
 # task into a versioned venv kept beside the plugin. The venv lives on the plugin
 # volume, so it survives plugin updates and container recreations; the pure-Python
@@ -755,6 +789,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
                 favorite_only=bool(args.get("favorite_only", False)),
+                include_owned=bool(args.get("include_owned", False)),
                 hide_phash_matches=bool(args.get("hide_phash_matches", True)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])
@@ -902,6 +937,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.reverse_exclusion(str(args.get("scene_id") or ""))
         if operation == "get_config":
             result = api.config()
+            result["code_version"] = _installed_code_version()
             result["whisparr_enabled"] = bool(
                 str(settings.get("whisparrUrl") or "").strip()
                 and str(settings.get("whisparrApiKey") or "").strip()

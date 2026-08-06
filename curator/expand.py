@@ -897,6 +897,7 @@ class ExpandService:
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
         favorite_only: bool = False,
+        include_owned: bool = False,
         hide_phash_matches: bool = True,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
@@ -987,10 +988,24 @@ class ExpandService:
             )
             if target is not None:
                 target = self._with_age(target, target_row["birthdate"])
-            candidates = self._fetch_performer_pool(client, target, selected_gender, ethnicity)
-            owned = set(links["performers"].values())
+            candidates = self._fetch_performer_pool(
+                client,
+                target,
+                selected_gender,
+                ethnicity,
+                performed_with=links["performers"].get(entity_id),
+            )
+            if include_owned:
+                # Comparison mode: keep library performers in the results so the
+                # remote ranking can be checked against the local one. Only the
+                # searched performer herself is excluded (a trivial self-match).
+                excluded = (
+                    {links["performers"][entity_id]} if entity_id in links["performers"] else set()
+                )
+            else:
+                excluded = set(links["performers"].values())
             candidate_ids = {
-                str(payload["id"]) for payload in candidates if str(payload["id"]) not in owned
+                str(payload["id"]) for payload in candidates if str(payload["id"]) not in excluded
             }
             self._merge_external(
                 "performer",
@@ -1002,7 +1017,7 @@ class ExpandService:
                         "sources": ["similar"],
                     }
                     for payload in candidates
-                    if str(payload["id"]) not in owned
+                    if str(payload["id"]) not in excluded
                 ),
             )
             timings["retrieval"] = round((time.perf_counter() - started) * 1000)
@@ -1029,6 +1044,20 @@ class ExpandService:
             for item in raw_items
             if not gender or self._payload_matches_gender(item["payload"], entity_type, gender)
         ][:count]
+        if entity_type == "performer":
+            # Mark results that are already in the library so the cards can
+            # badge them and link to the local profile instead of StashDB.
+            local_by_external = {external: local for local, external in links["performers"].items()}
+            for item in filtered_items:
+                local_id = local_by_external.get(str(item["id"]))
+                if local_id is None:
+                    continue
+                favorite = bool(
+                    self.connection.execute(
+                        "SELECT favorite FROM source_performer WHERE performer_id=?", (local_id,)
+                    ).fetchone()[0]
+                )
+                item["payload"]["curator_local"] = {"id": local_id, "favorite": favorite}
         result["items"] = filtered_items
         result["total"] = len(filtered_items)
         result["ready"] = bool(filtered_items)
@@ -1095,14 +1124,18 @@ class ExpandService:
         target: PerformerProfile | None,
         gender: str,
         ethnicity: str,
+        *,
+        performed_with: str | None = None,
     ) -> list[dict[str, Any]]:
         """Union popularity-ranked StashDB performer pools biased toward the target.
 
-        StashDB's queryPerformers honors age, gender, and ethnicity filters but
-        silently ignores the schema's body-attribute criteria (height, cup size,
-        breast type, ...), so the target profile can only narrow retrieval with
-        an age floor. The unfiltered popularity query stays as a recall floor;
-        the re-ranker picks the closest profiles from the union.
+        StashDB's queryPerformers honors age, gender, ethnicity, and performed_with
+        filters but silently ignores the schema's body-attribute criteria (height,
+        cup size, breast type, ...), so the target profile can only narrow
+        retrieval with an age floor. The unfiltered popularity query stays as a
+        recall floor; the co-star query pulls performers who have actually worked
+        with the target, which reaches the mature ecosystem a popularity sweep
+        misses; the re-ranker picks the closest profiles from the union.
         """
         base: dict[str, object] = {
             "page": 1,
@@ -1115,6 +1148,8 @@ class ExpandService:
         if ethnicity:
             base["ethnicity"] = ethnicity
         queries = [dict(base)]
+        if performed_with:
+            queries.append({**base, "performed_with": performed_with})
         age = target.blocks.get("age", {}).get("age_recording") if target else None
         if age is not None:
             lower = int(age.value - 12)

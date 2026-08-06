@@ -978,15 +978,20 @@ def test_targeted_performer_similar_narrows_retrieval_to_target_age(
         gender="FEMALE",
     )
 
-    assert len(client.inputs) == 2
+    assert len(client.inputs) == 3
     assert all(value["sort"] == "POPULARITY" for value in client.inputs)
     assert all(value["gender"] == "FEMALE" for value in client.inputs)
-    fallback = next(value for value in client.inputs if "age" not in value)
+    fallback = next(
+        value for value in client.inputs if "age" not in value and "performed_with" not in value
+    )
     assert fallback["per_page"] == 500
     age_query = next(value for value in client.inputs if "age" in value)
     expected_lower = max(0, int(ExpandService._age("1969-01-01") - 12))
     assert expected_lower >= 25
     assert age_query["age"] == {"value": expected_lower, "modifier": "GREATER_THAN"}
+    co_star_query = next(value for value in client.inputs if "performed_with" in value)
+    assert co_star_query["performed_with"] == "known-external-performer"
+    assert "age" not in co_star_query
     identifiers = [item["id"] for item in result["items"]]
     assert identifiers == ["mature-lookalike"]
     assert "young-popular" not in identifiers
@@ -1024,6 +1029,161 @@ def test_targeted_performer_similar_prefers_established_performers(
     assert identifiers == ["popular-performer", "obscure-performer"]
     assert result["items"][0]["similarity"] < result["items"][1]["similarity"]
     assert result["items"][0]["score"] > result["items"][1]["score"]
+
+
+class CoStarPoolStashDB:
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        if input_data.get("performed_with"):
+            performers = [
+                {
+                    "id": "co-star-performer",
+                    "name": "Co-Star Performer",
+                    "gender": "FEMALE",
+                    "ethnicity": "Caucasian",
+                    "hair_color": "Black",
+                    "eye_color": "Brown",
+                    "height": 170,
+                    "cup_size": "DD",
+                    "band_size": 34,
+                    "waist_size": 24,
+                    "hip_size": 36,
+                    "breast_type": "AUGMENTED",
+                    "scene_count": 300,
+                    "tattoos": [],
+                    "piercings": [],
+                    "images": [],
+                }
+            ]
+        else:
+            performers = []
+        return {"queryPerformers": {"performers": performers}}
+
+
+def test_targeted_performer_similar_probes_performed_with_co_stars(
+    tmp_path: Path,
+) -> None:
+    """The co-star probe must pull performers who worked with the target.
+
+    Popularity-ranked sweeps and the age floor miss performers who shared scenes
+    with the target but are not globally popular. The performed_with query
+    reaches that ecosystem, and its results enter the scored pool. Without a
+    StashDB mapping for the target, no co-star probe is issued.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    links = {
+        "scenes": {},
+        "scene_phashes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+
+    client = CoStarPoolStashDB()
+    result = service.targeted_similar(client, links, "performer", "p1", gender="FEMALE")
+
+    assert any(value.get("performed_with") == "known-external-performer" for value in client.inputs)
+    assert "co-star-performer" in [item["id"] for item in result["items"]]
+
+    unlinked = CoStarPoolStashDB()
+    service.targeted_similar(
+        unlinked,
+        {**links, "performers": {}},
+        "performer",
+        "p1",
+        gender="FEMALE",
+    )
+    assert not any(value.get("performed_with") for value in unlinked.inputs)
+
+
+class OwnedTwinStashDB:
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        profile = {
+            "gender": "FEMALE",
+            "ethnicity": "Caucasian",
+            "hair_color": "Black",
+            "eye_color": "Brown",
+            "height": 170,
+            "cup_size": "DD",
+            "band_size": 34,
+            "waist_size": 24,
+            "hip_size": 36,
+            "breast_type": "AUGMENTED",
+            "scene_count": 500,
+            "tattoos": [],
+            "piercings": [],
+            "images": [],
+        }
+        return {
+            "queryPerformers": {
+                "performers": [
+                    {"id": "owned-p2-external", "name": "Owned Twin", **profile},
+                    {"id": "known-external-performer", "name": "Target Twin", **profile},
+                    {"id": "brand-new", "name": "Brand New", **profile},
+                ]
+            }
+        }
+
+
+def test_targeted_performer_similar_include_owned_keeps_library_performers(
+    tmp_path: Path,
+) -> None:
+    """include_owned keeps library performers in the remote ranking.
+
+    Owned (already-in-library) performers are fetched by the pool queries but
+    dropped before ranking so the tab surfaces only new finds. The comparison
+    mode keeps them, excluding only the searched performer herself, so the
+    remote ranking can be checked against the local one.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    links = {
+        "scenes": {},
+        "scene_phashes": {},
+        "performers": {
+            "p1": "known-external-performer",
+            "p2": "owned-p2-external",
+        },
+        "studios": {},
+    }
+
+    excluded = OwnedTwinStashDB()
+    result = service.targeted_similar(excluded, links, "performer", "p1", gender="FEMALE")
+    identifiers = [item["id"] for item in result["items"]]
+    assert "brand-new" in identifiers
+    assert "owned-p2-external" not in identifiers
+    assert "known-external-performer" not in identifiers
+
+    included = OwnedTwinStashDB()
+    result = service.targeted_similar(
+        included,
+        links,
+        "performer",
+        "p1",
+        gender="FEMALE",
+        include_owned=True,
+    )
+    identifiers = [item["id"] for item in result["items"]]
+    assert "owned-p2-external" in identifiers
+    assert "brand-new" in identifiers
+    assert "known-external-performer" not in identifiers
+    owned_twin = next(item for item in result["items"] if item["id"] == "owned-p2-external")
+    assert owned_twin["payload"]["curator_local"] == {"id": "p2", "favorite": False}
+    brand_new = next(item for item in result["items"] if item["id"] == "brand-new")
+    assert "curator_local" not in brand_new["payload"]
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:
