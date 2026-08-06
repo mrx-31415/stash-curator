@@ -491,6 +491,33 @@ def test_performer_hunt_requires_a_stashdb_link(tmp_path: Path) -> None:
         raise AssertionError("unlinked performers must be rejected")
 
 
+def test_performer_hunt_accepts_an_external_performer_id(tmp_path: Path) -> None:
+    """The film action on a similar performer card hunts the external id directly.
+
+    External performers have no source_performer row, so the id must be passed to
+    StashDB as-is and the name recovered from the fetched cast.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "scene_phashes": {}, "performers": {}, "studios": {}}
+    client = PerformerHuntStashDB()
+    service = ExpandService(connection)
+
+    result = service.performer_hunt(client, links, "known-external-performer", limit=10)
+
+    assert result["performer_id"] == "known-external-performer"
+    assert result["performer_name"] == "Known"
+    assert [item["id"] for item in result["items"]] == [
+        "hunt-new",
+        "hunt-linked",
+        "hunt-old",
+    ]
+    assert all(
+        request["performers"] == {"value": ["known-external-performer"], "modifier": "INCLUDES"}
+        for request in client.inputs
+    )
+
+
 def test_performer_hunt_results_stay_out_of_expand(tmp_path: Path) -> None:
     """A performer's whole catalog must not dilute the general Expand browse.
 

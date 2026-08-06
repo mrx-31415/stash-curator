@@ -73,6 +73,9 @@ All, In library, and Not linked locally results; unlinked does not mean definiti
 missing because local scenes without StashDB identities cannot be matched. Queries
 follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
 result. Include and exclude tag filters apply to the fetched result.
+The film action on a StashDB Similar performer card opens the same hunt for that
+*external* performer directly, so its full catalog is fetched from StashDB instead of
+being limited to the bounded Expand candidate cache.
 The **Hide exact PHash matches** filter is enabled by default. It also applies to
 Expand and StashDB Similar scenes. Disable it to inspect candidates marked
 **Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed
