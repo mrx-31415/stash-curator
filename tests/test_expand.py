@@ -167,6 +167,7 @@ class PerformerPoolStashDB:
                     "waist_size": 24,
                     "hip_size": 36,
                     "breast_type": "AUGMENTED",
+                    "scene_count": 600,
                     "tattoos": [],
                     "piercings": [],
                     "images": [],
@@ -187,12 +188,51 @@ class PerformerPoolStashDB:
                     "waist_size": 24,
                     "hip_size": 34,
                     "breast_type": "NATURAL",
+                    "scene_count": 5,
                     "tattoos": [],
                     "piercings": [],
                     "images": [],
                 }
             ]
         return {"queryPerformers": {"performers": performers}}
+
+
+class PopularityPoolStashDB:
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        popular = {
+            "id": "popular-performer",
+            "name": "Popular Performer",
+            "gender": "FEMALE",
+            "ethnicity": "Caucasian",
+            "hair_color": "Blonde",
+            "eye_color": "Blue",
+            "height": 170,
+            "cup_size": "D",
+            "band_size": 34,
+            "waist_size": 25,
+            "hip_size": 36,
+            "breast_type": "AUGMENTED",
+            "scene_count": 600,
+            "tattoos": [],
+            "piercings": [],
+            "images": [],
+        }
+        obscure = {
+            **popular,
+            "id": "obscure-performer",
+            "name": "Obscure Performer",
+            "hair_color": "Black",
+            "cup_size": "DD",
+            "waist_size": 24,
+            "scene_count": 8,
+        }
+        return {"queryPerformers": {"performers": [popular, obscure]}}
 
 
 def test_phash_normalization_accepts_only_exact_64_bit_hex() -> None:
@@ -890,6 +930,40 @@ def test_targeted_performer_similar_narrows_retrieval_to_target_age(
     identifiers = [item["id"] for item in result["items"]]
     assert identifiers == ["mature-lookalike"]
     assert "young-popular" not in identifiers
+
+
+def test_targeted_performer_similar_prefers_established_performers(
+    tmp_path: Path,
+) -> None:
+    """Career size must break similarity ties in the final ranking.
+
+    A perfectly matching obscure performer used to outrank an established one
+    with a slightly weaker profile match, because every retrieved candidate had
+    the same neutral appeal. Scene count re-orders them: the established
+    performer wins even though its raw similarity is lower.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    client = PopularityPoolStashDB()
+    service = ExpandService(connection)
+
+    result = service.targeted_similar(
+        client,
+        {
+            "scenes": {},
+            "scene_phashes": {},
+            "performers": {"p1": "known-external-performer"},
+            "studios": {},
+        },
+        "performer",
+        "p1",
+        gender="FEMALE",
+    )
+
+    identifiers = [item["id"] for item in result["items"]]
+    assert identifiers == ["popular-performer", "obscure-performer"]
+    assert result["items"][0]["similarity"] < result["items"][1]["similarity"]
+    assert result["items"][0]["score"] > result["items"][1]["score"]
 
 
 def test_sparse_external_performer_profile_has_low_confidence() -> None:

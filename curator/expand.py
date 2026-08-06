@@ -62,7 +62,7 @@ query CuratorSimilarPerformers($input: PerformerQueryInput!) {
   queryPerformers(input: $input) {
     performers {
       id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
-      waist_size hip_size breast_type tattoos { location } piercings { location }
+      waist_size hip_size breast_type scene_count tattoos { location } piercings { location }
       images { url width height }
     }
   }
@@ -839,7 +839,14 @@ class ExpandService:
                 similarity, match, coverage = self._profile_match(candidate, target, weights)
                 if similarity < 0.25 or coverage < 0.25:
                     continue
-                appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
+                scene_count = payload.get("scene_count")
+                if scene_count is not None:
+                    # Rank by career size as well as profile closeness, so the
+                    # perfectly-matching obscure performer does not crowd out the
+                    # established one the user is likely to know.
+                    appeal = min(1.0, math.log1p(int(scene_count)) / math.log1p(500))
+                else:
+                    appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
                 blocks = sorted(
                     match.block_similarities,
                     key=lambda block: -match.block_similarities[block] * match.block_weights[block],
