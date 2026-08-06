@@ -1092,7 +1092,11 @@
   width: 7.5rem;
 }
 
-.curator-source-reference-performer img {
+.curator-source-reference.curator-source-reference-performer img {
+  aspect-ratio: 2 / 3;
+  flex: 0 0 auto;
+  height: 6rem;
+  min-width: 4rem;
   width: 4rem;
 }
 
