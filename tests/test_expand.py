@@ -716,6 +716,66 @@ def test_external_content_similarity_normalizes_candidate_mapped_tags(tmp_path: 
     assert result["items"][0]["similarity"] > result["items"][1]["similarity"]
 
 
+def test_external_scene_similarity_gates_performer_credit_on_content(
+    tmp_path: Path,
+) -> None:
+    """Wrong-theme same-performer scenes lose credit in proportion to the gap.
+
+    A scene starring the target performer but sharing no theme used to score
+    the full 0.3 performer weight, letting it outrank thematic matches. The
+    gate scales the credit by content overlap: zero overlap leaves 0.35 of it
+    (0.3 * 0.35 + 0.1 structure = 0.205), full overlap keeps all of it
+    (0.5 content + 0.3 performer + 0.1 structure = 0.9).
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    connection.execute(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        ("good", "https://stashdb.org/graphql", "external-good"),
+    )
+    service = ExpandService(connection)
+    performer = {
+        "id": "external-p1",
+        "gender": "FEMALE",
+        "hair_color": "Black",
+        "height": 170,
+        "cup_size": "DD",
+        "band_size": 34,
+        "waist_size": 24,
+        "hip_size": 36,
+        "tattoos": [],
+        "piercings": [],
+        "curator_local": {"id": "p1", "favorite": True, "play_count": 0},
+    }
+    service._merge_external(
+        "scene",
+        (
+            {
+                "id": "wrong-theme",
+                "payload": {"tags": [], "performers": [{"performer": performer}]},
+                "score": 0,
+                "sources": ["performers"],
+            },
+            {
+                "id": "same-theme",
+                "payload": {
+                    "tags": [{"id": "external-good", "name": "Familiar Scenario"}],
+                    "performers": [{"performer": performer}],
+                },
+                "score": 0,
+                "sources": ["performers"],
+            },
+        ),
+    )
+
+    result = service.similar("scene", "old-good", minimum_similarity=0)
+    by_id = {item["id"]: item for item in result["items"]}
+
+    assert abs(by_id["wrong-theme"]["similarity"] - 0.205) < 1e-9
+    assert abs(by_id["same-theme"]["similarity"] - 0.9) < 1e-9
+    assert by_id["same-theme"]["similarity"] > by_id["wrong-theme"]["similarity"]
+
+
 def test_external_similarity_loads_only_positive_anchor_profiles(
     tmp_path: Path, monkeypatch
 ) -> None:
