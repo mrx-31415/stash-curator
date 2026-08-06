@@ -1269,8 +1269,14 @@
 }
 
 .curator-include-owned {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   padding: 0.15rem 0.5rem;
+}
+
+.curator-external-card.curator-external-local {
+  background: rgba(43, 138, 62, 0.07);
+  outline: 2px solid #2b8a3e;
+  outline-offset: 2px;
 }
 
 .curator-context-link {
