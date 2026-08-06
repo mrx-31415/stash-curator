@@ -6,6 +6,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tomllib
 import zipfile
 from hashlib import sha256
 from pathlib import Path
@@ -70,7 +71,11 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert f"sha256: {sha256(archive.read_bytes()).hexdigest()}" in index
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
     installed = tmp_path / "installed"
-    assert "Apply recent Curator feedback" in (installed / "stash-curator.yml").read_text()
+    plugin_manifest = (installed / "stash-curator.yml").read_text(encoding="utf-8")
+    with (root / "pyproject.toml").open("rb") as source:
+        project_version = tomllib.load(source)["project"]["version"]
+    assert f"version: {project_version}" in plugin_manifest
+    assert "Apply recent Curator feedback" in plugin_manifest
     assert "Prepare recommendation pages" in (installed / "stash-curator.yml").read_text()
     assert "Compact legacy Curator data" in (installed / "stash-curator.yml").read_text()
     assert "Vacuum compacted Curator data" in (installed / "stash-curator.yml").read_text()
