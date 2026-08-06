@@ -14,7 +14,9 @@ database you control.
 ## Install
 
 Preview requirements: **Stash v0.31** and **Python 3.12+** available to Stash's
-plugin runtime. Add this source under **Settings → Plugins → Available Plugins**:
+plugin runtime (no third-party packages required; an optional numpy acceleration
+is installed by one Stash task). Add this source under
+**Settings → Plugins → Available Plugins**:
 
 ```text
 https://mrx-31415.github.io/stash-curator/index.yml
