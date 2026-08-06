@@ -20,6 +20,7 @@ from curator.features.measurements import (
     presence_category,
 )
 from curator.features.tag_roles import TagRole, TagRoleResolver, TagRoleResult
+from curator.profiling import record_duration, span
 from curator.storage import transaction
 from curator.storage.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
@@ -156,11 +157,14 @@ class FeatureBuilder:
             )
         try:
             build_started = time.perf_counter()
-            roles = self._resolve_tag_roles()
+            with span("python", "feature.roles"):
+                roles = self._resolve_tag_roles()
             self._report(0.10)
-            scene_features = self._scene_features(roles)
+            with span("python", "feature.scene_features"):
+                scene_features = self._scene_features(roles)
             self._report(0.45)
-            performer_features = self._performer_features(scene_features)
+            with span("python", "feature.performer_features"):
+                performer_features = self._performer_features(scene_features)
             self._report(0.60)
             if self._source_fingerprint() != source_fingerprint:
                 raise FeatureBuildError("source cache changed during feature construction")
@@ -735,10 +739,12 @@ class FeatureBuilder:
                     ),
                 )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
+            record_duration("python", "feature.publish_write", timings["database_writing"])
             self._report(0.75)
             indexing_started = time.perf_counter()
             create_indexes(artifact, "feature")
             timings["indexing"] = round((time.perf_counter() - indexing_started) * 1000)
+            record_duration("python", "feature.publish_index", timings["indexing"])
             self._report(0.85)
             validation_started = time.perf_counter()
             stored = artifact.execute(
