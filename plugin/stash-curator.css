@@ -691,6 +691,21 @@
   gap: 0.35rem 0.8rem;
 }
 
+.curator-card-description {
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  display: -webkit-box;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin: 0 0 0.35rem;
+  opacity: 0.8;
+  overflow: hidden;
+}
+
+.curator-card-description-local {
+  padding: 0 0.65rem;
+}
+
 .curator-evidence,
 .curator-score {
   margin: 0;
