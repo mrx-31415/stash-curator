@@ -1513,7 +1513,7 @@
       const request = entityType === "shortlist"
         ? { operation: "get_shortlist", page }
         : entityType === "hunt"
-          ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id) }
+          ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
           : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
       operation(request, entityType === "hunt" ? 60000 : 30000).then(
         (result) => {
@@ -1576,21 +1576,16 @@
       } catch (failure) { setError(failure.message); }
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
-    const tagFilteredHuntItems = entityType === "hunt"
-      ? (data?.items || []).filter((item) => {
-        const tags = new Set((item.payload.tags || []).map((tag) => String(tag.name || "").toLocaleLowerCase()));
-        return (!hidePhashMatches || item.match_type !== "phash")
-          && includeTags.every((tag) => tags.has(tag.name.toLocaleLowerCase()))
-          && excludeTags.every((tag) => !tags.has(tag.name.toLocaleLowerCase()));
-      })
+    const huntItemsRaw = entityType === "hunt"
+      ? (data?.items || []).filter((item) => !hidePhashMatches || item.match_type !== "phash")
       : [];
     const huntCounts = {
-      all: tagFilteredHuntItems.length,
-      linked: tagFilteredHuntItems.filter((item) => item.linked_locally).length,
-      unlinked: tagFilteredHuntItems.filter((item) => !item.linked_locally).length,
+      all: huntItemsRaw.length,
+      linked: huntItemsRaw.filter((item) => item.linked_locally).length,
+      unlinked: huntItemsRaw.filter((item) => !item.linked_locally).length,
     };
     const huntItems = entityType === "hunt"
-      ? tagFilteredHuntItems
+      ? huntItemsRaw
         .filter((item) => huntView === "all" || item.linked_locally === (huntView === "linked"))
         .sort((left, right) => huntSort === "score"
           ? right.score - left.score || left.id.localeCompare(right.id)

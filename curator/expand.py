@@ -322,6 +322,8 @@ class ExpandService:
         performer_id: str,
         *,
         limit: int = PERFORMER_HUNT_LIMIT,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
     ) -> dict[str, object]:
         local = self.connection.execute(
             "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
@@ -374,6 +376,8 @@ class ExpandService:
             multi_hop_seed=performer_id,
         )
         self._merge_external("scene", scenes)
+        include_groups = equivalent_tag_names(self.connection, include_tags)
+        exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -391,6 +395,13 @@ class ExpandService:
                 "shortlisted": scene["id"] in shortlisted,
             }
             for scene in scenes
+            if self._scene_matches(
+                scene["payload"],
+                include_tags,
+                exclude_tags,
+                include_groups=include_groups,
+                exclude_groups=exclude_groups,
+            )
         ]
         items.sort(
             key=lambda item: (
