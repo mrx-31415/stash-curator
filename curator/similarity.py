@@ -27,6 +27,35 @@ class SimilarityResult:
 MULTI_HOP_BLEND_WEIGHT = 0.05
 
 
+def _multi_hop_via(mh: MultiHopAffinity, seed_scene: str, candidate_scene: str) -> str:
+    """A human-readable description of the strongest performer chain connecting
+    the seed to the candidate through the graph."""
+    candidate_performers = mh._scene_performers.get(candidate_scene, ())
+    if not candidate_performers:
+        return ""
+    seed_performers = mh._scene_performers.get(seed_scene, ())
+    # Walk from seed performers to candidate performers through edges.
+    for sp in seed_performers:
+        for cp in candidate_performers:
+            for similar, _ in mh._edges.get(sp, ()):
+                if similar == cp:
+                    sp_name = _performer_name(mh.connection, sp)
+                    cp_name = _performer_name(mh.connection, cp)
+                    if sp_name and cp_name and sp_name != cp_name:
+                        return f"{sp_name} \u2248 {cp_name}"
+                    if sp_name:
+                        return sp_name
+    # If no direct edge, the connection is through tags/studios.
+    return "shared tags"
+
+
+def _performer_name(connection: sqlite3.Connection, performer_id: str) -> str:
+    row = connection.execute(
+        "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
+    ).fetchone()
+    return str(row[0]) if row else ""
+
+
 class SimilarityService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         started = time.perf_counter()
@@ -217,7 +246,8 @@ class SimilarityService:
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
         self.total_count = len(ranked)
         started = time.perf_counter()
-        reach = MultiHopAffinity(self.connection, self.model_id).reach(scene_id)
+        mh = MultiHopAffinity(self.connection, self.model_id)
+        reach = mh.reach(scene_id)
         self.timings_ms["multi_hop"] = round((time.perf_counter() - started) * 1000)
         record_duration("python", "similarity.multi_hop", self.timings_ms["multi_hop"])
         if reach:
@@ -241,7 +271,10 @@ class SimilarityService:
                             ),
                         },
                         **(
-                            {"multi_hop_reach": reach[item.entity_id]}
+                            {
+                                "multi_hop_reach": reach[item.entity_id],
+                                "multi_hop_via": _multi_hop_via(mh, scene_id, item.entity_id),
+                            }
                             if item.entity_id in reach
                             else {}
                         ),
