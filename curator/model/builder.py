@@ -113,6 +113,14 @@ def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
+def _edge_matches(entry: dict[str, object]) -> list[Any]:
+    """The build's similar-performer matches, validated for persistence."""
+    matches = entry.get("matches")
+    if not isinstance(matches, list):
+        raise RuntimeError("performer similarity result is missing matches")
+    return matches
+
+
 _CLASSIFICATION_FAMILIES = (
     "content",
     "content_neighbor",
@@ -318,7 +326,7 @@ class PreferenceModelBuilder:
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "model.affinities", timings["affinities"])
             stage_started = time.perf_counter()
-            scores = self._scores(
+            scores, performer_similarity_scores = self._scores(
                 feature_version,
                 scene_features,
                 affinities,
@@ -332,7 +340,16 @@ class PreferenceModelBuilder:
             timings["scoring"] = max(0, score_total - timings["similarity"])
             record_duration("python", "model.scores", score_total)
             stage_started = time.perf_counter()
-            timings.update(self._publish(model_id, feature_version, affinities, labels, scores))
+            timings.update(
+                self._publish(
+                    model_id,
+                    feature_version,
+                    affinities,
+                    labels,
+                    scores,
+                    performer_similarity_scores,
+                )
+            )
             self._report(0.98)
             record_duration(
                 "python",
@@ -635,7 +652,7 @@ class PreferenceModelBuilder:
         label_mean: float,
         reference_at_ms: int,
         timings: dict[str, int],
-    ) -> tuple[_Score, ...]:
+    ) -> tuple[tuple[_Score, ...], dict[str, dict[str, object]]]:
         with span("python", "model.score_vectors"):
             vectors = FeatureStore(self.connection).scene_content_vectors(feature_version)
         all_scene_ids = [
@@ -941,7 +958,7 @@ class PreferenceModelBuilder:
             progress_index = len(preference_vectors) + scene_index
             if self.progress and (scene_index == total_scenes or scene_index % 250 == 0):
                 self._report(0.35 + 0.40 * progress_index / max(1, progress_total))
-        return tuple(scores)
+        return tuple(scores), performer_similarity_scores
 
     def _preference_content_vectors(
         self,
@@ -1651,6 +1668,7 @@ class PreferenceModelBuilder:
         affinities: dict[str, _Affinity],
         labels: dict[str, _SceneLabel],
         scores: tuple[_Score, ...],
+        performer_similarity_scores: dict[str, dict[str, object]],
     ) -> dict[str, int]:
         timings: dict[str, int] = {}
         writing_started = time.perf_counter()
@@ -1780,6 +1798,27 @@ class PreferenceModelBuilder:
                 ),
             )
             self._report(0.85)
+            insert_rows(
+                """
+                INSERT INTO model_performer_edge(
+                    model_id, performer_id, rank, similar_performer_id,
+                    similarity, affinity, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        model_id,
+                        performer_id,
+                        rank,
+                        str(match["performer_id"]),
+                        _number(match["similarity"]),
+                        _number(match["affinity"]),
+                        _number(match["confidence"]),
+                    )
+                    for performer_id, entry in sorted(performer_similarity_scores.items())
+                    for rank, match in enumerate(_edge_matches(entry))
+                ),
+            )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
             from curator.ranking import LanePolicy, SlateBuilder
 
