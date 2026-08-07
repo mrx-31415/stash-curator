@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, performer_similarity
 from curator.model import RecommendationModelStore
+from curator.model.multi_hop import MultiHopAffinity
 from curator.profiling import record_duration
 from curator.taxonomy import equivalent_tag_names
 
@@ -21,6 +22,9 @@ class SimilarityResult:
     rank_score: float
     relationships: tuple[str, ...]
     details: dict[str, object]
+
+
+MULTI_HOP_BLEND_WEIGHT = 0.05
 
 
 class SimilarityService:
@@ -204,6 +208,32 @@ class SimilarityService:
             )
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))
         self.total_count = len(ranked)
+        started = time.perf_counter()
+        reach = MultiHopAffinity(self.connection, self.model_id).reach(scene_id)
+        self.timings_ms["multi_hop"] = round((time.perf_counter() - started) * 1000)
+        record_duration("python", "similarity.multi_hop", self.timings_ms["multi_hop"])
+        if reach:
+            ranked = [
+                replace(
+                    item,
+                    relationships=(
+                        (*item.relationships, "multi_hop")
+                        if item.entity_id in reach
+                        else item.relationships
+                    ),
+                    rank_score=item.rank_score
+                    + MULTI_HOP_BLEND_WEIGHT * reach.get(item.entity_id, 0.0),
+                    details={
+                        **item.details,
+                        **(
+                            {"multi_hop_reach": reach[item.entity_id]}
+                            if item.entity_id in reach
+                            else {}
+                        ),
+                    },
+                )
+                for item in ranked
+            ]
         selected = self._diverse_scenes(ranked, performers, count)
         self.timings_ms["ranking"] = round((time.perf_counter() - started) * 1000)
         record_duration("python", "similarity.filter_and_rank", self.timings_ms["ranking"])

@@ -362,7 +362,12 @@ def test_similar_scenes_blend_similarity_with_appeal_and_explain_relationships(
     assert result["items"]
     assert result["items"][0]["entity_id"] != "old-good"
     assert all(
-        item["rank_score"] == pytest.approx(0.7 * item["similarity"] + 0.3 * item["appeal"])
+        item["rank_score"]
+        == pytest.approx(
+            0.7 * item["similarity"]
+            + 0.3 * item["appeal"]
+            + 0.05 * item.get("details", {}).get("multi_hop_reach", 0.0)
+        )
         for item in result["items"]
     )
     assert any("shared_content" in item["relationships"] for item in result["items"])

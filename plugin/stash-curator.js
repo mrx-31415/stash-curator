@@ -1308,6 +1308,7 @@
         shared_content: "Shared content",
         similar_structure: "Similar structure",
         same_studio: "Same studio",
+        multi_hop: "Multi-hop",
       };
       const parts = item.relationships.map((value) => labels[value] || value);
       if (item.details.shared_tags?.length) parts.push(item.details.shared_tags.join(", "));

@@ -27,6 +27,7 @@ from curator.features.profiles import (
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
+from curator.model.multi_hop import MultiHopAffinity
 from curator.profiling import record_duration
 from curator.storage import transaction
 from curator.taxonomy import (
@@ -370,6 +371,7 @@ class ExpandService:
             model_id,
             feature_version,
             links,
+            multi_hop_seed=performer_id,
         )
         self._merge_external("scene", scenes)
         shortlisted = {
@@ -392,6 +394,7 @@ class ExpandService:
         ]
         items.sort(
             key=lambda item: (
+                -int(bool(item.get("multi_hop_reach", 0))),
                 str(
                     item["payload"].get("release_date")
                     or item["payload"].get("production_date")
@@ -978,7 +981,9 @@ class ExpandService:
                 ):
                     candidates.append(candidate)
             candidate_ids = {str(value["id"]) for value in candidates}
-            scenes, _ = self._score(candidates, sources, model_id, feature_version, links)
+            scenes, _ = self._score(
+                candidates, sources, model_id, feature_version, links, multi_hop_seed=entity_id
+            )
             self._merge_external("scene", scenes)
             timings["scoring"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "external_similar.scoring", timings["scoring"])
@@ -1554,6 +1559,8 @@ class ExpandService:
         model_id: str,
         feature_version: str,
         links: dict[str, dict[str, str]],
+        *,
+        multi_hop_seed: str | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         tag_affinity: dict[str, float] = {}
         for row in self.connection.execute(
@@ -1702,6 +1709,36 @@ class ExpandService:
                     "sources": sorted(sources[str(scene["id"])]),
                 }
             )
+        if multi_hop_seed is not None:
+            REMOTE_MULTI_HOP_WEIGHT = 0.05
+            try:
+                mh = MultiHopAffinity(self.connection, model_id)
+            except Exception:
+                mh = None
+            if mh is not None:
+                for scene_row in scene_rows:
+                    performers = scene_row["payload"].get("performers", [])  # type: ignore[attr-defined]
+                    if not isinstance(performers, list):
+                        continue
+                    local_ids: set[str] = set()
+                    for p in performers:
+                        if not isinstance(p, dict):
+                            continue
+                        remote = p.get("performer")
+                        if not isinstance(remote, dict):
+                            continue
+                        pid = links["performers"].get(str(remote["id"]))
+                        if pid is not None:
+                            local_ids.add(pid)
+                    if not local_ids:
+                        continue
+                    reach = mh.performer_reach(multi_hop_seed, local_ids)
+                    mh_score = max(reach.values()) if reach else 0.0
+                    scene_row["multi_hop_reach"] = mh_score
+                    scene_row["score"] = (
+                        float(scene_row["score"])  # type: ignore[arg-type]
+                        + REMOTE_MULTI_HOP_WEIGHT * mh_score
+                    )
         owned_performers = set(links["performers"].values())
         performers = [
             {**item, "sources": sorted(item["sources"])}
