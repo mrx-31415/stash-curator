@@ -766,6 +766,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 _external_links(payload, connection),
                 str(args.get("performer_id") or ""),
                 limit=PERFORMER_HUNT_LIMIT,
+                include_tags=_string_list(args.get("include_tags")),
+                exclude_tags=_string_list(args.get("exclude_tags")),
             )
         if operation == "get_shortlist":
             config = api.config()["config"]
