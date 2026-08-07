@@ -207,6 +207,10 @@ class SimilarityService:
                         "studio": float(same_studio),
                         "shared_tags": [],
                         "shared_performer_ids": sorted(same),
+                        "score_breakdown": {
+                            "similarity": round(0.7 * similarity, 4),
+                            "appeal": round(0.3 * appeal, 4),
+                        },
                     },
                 )
             )
@@ -229,6 +233,13 @@ class SimilarityService:
                     + MULTI_HOP_BLEND_WEIGHT * reach.get(item.entity_id, 0.0),
                     details={
                         **item.details,
+                        "score_breakdown": {
+                            "similarity": round(0.7 * item.similarity, 4),
+                            "appeal": round(0.3 * item.appeal, 4),
+                            "multi_hop": round(
+                                MULTI_HOP_BLEND_WEIGHT * reach.get(item.entity_id, 0.0), 4
+                            ),
+                        },
                         **(
                             {"multi_hop_reach": reach[item.entity_id]}
                             if item.entity_id in reach
