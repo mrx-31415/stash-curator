@@ -1213,6 +1213,129 @@ def test_targeted_performer_similar_include_owned_keeps_library_performers(
     assert "curator_local" not in brand_new["payload"]
 
 
+class OwnedSceneTwinStashDB:
+    """StashDB stub returning both library-owned and new scenes for scene similar."""
+
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        performer = {
+            "id": "external-performer",
+            "name": "External Performer",
+            "gender": "FEMALE",
+            "ethnicity": "Caucasian",
+            "hair_color": "Black",
+            "eye_color": "Brown",
+            "height": 170,
+            "cup_size": "DD",
+            "band_size": 34,
+            "waist_size": 24,
+            "hip_size": 36,
+            "breast_type": "AUGMENTED",
+            "tattoos": [],
+            "piercings": [],
+            "images": [{"url": "https://example.test/performer.jpg"}],
+        }
+        scenes = [
+            {
+                "id": "owned-external-ref",
+                "title": "Reference scene (already owned)",
+                "release_date": date.today().isoformat(),
+                "studio": {"id": "external-studio", "name": "Studio"},
+                "tags": [{"id": "external-tag", "name": "Useful"}],
+                "images": [],
+                "performers": [{"performer": performer}],
+            },
+            {
+                "id": "owned-external-twin",
+                "title": "Another owned scene",
+                "release_date": date.today().isoformat(),
+                "studio": {"id": "external-studio", "name": "Studio"},
+                "tags": [{"id": "external-tag", "name": "Useful"}],
+                "images": [],
+                "performers": [{"performer": performer}],
+            },
+            {
+                "id": "brand-new-scene",
+                "title": "Brand new scene",
+                "release_date": date.today().isoformat(),
+                "studio": {"id": "external-studio", "name": "Studio"},
+                "tags": [{"id": "external-tag", "name": "Useful"}],
+                "images": [{"url": "https://example.test/scene.jpg"}],
+                "performers": [{"performer": performer}],
+            },
+        ]
+        return {"queryScenes": {"count": len(scenes), "scenes": scenes}}
+
+
+def test_targeted_scene_similar_include_owned_keeps_library_scenes(
+    tmp_path: Path,
+) -> None:
+    """include_owned keeps library scenes in the remote ranking.
+
+    Owned scenes are fetched by the probes but dropped before ranking so the
+    tab surfaces only new finds.  Comparison mode keeps them, excluding only
+    the reference scene itself, and annotates curator_local for the "In
+    library" badge and local-profile link.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+        (("sim-63", "Useful", "hash-sim-63"),),
+    )
+    connection.execute(
+        "INSERT INTO scene_marker(marker_id, scene_id, seconds, primary_tag_id, source_hash) "
+        "VALUES ('marker-sim-63', 'old-good', 0, 'sim-63', 'hash-marker-sim-63')"
+    )
+    connection.executemany(
+        "INSERT INTO source_tag_stash_id(tag_id, endpoint, stash_id) VALUES (?, ?, ?)",
+        (
+            ("good", "https://stashdb.org/graphql", "external-good"),
+            ("sim-63", "https://stashdb.org/graphql", "external-tag"),
+        ),
+    )
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    service = ExpandService(connection)
+    links = {
+        "scenes": {
+            "old-good": "owned-external-ref",
+            "recent-good": "owned-external-twin",
+        },
+        "scene_phashes": {},
+        "performers": {},
+        "studios": {},
+    }
+
+    excluded_db = OwnedSceneTwinStashDB()
+    result = service.targeted_similar(excluded_db, links, "scene", "old-good", gender="")
+    identifiers = [item["id"] for item in result["items"]]
+    assert "brand-new-scene" in identifiers
+    assert "owned-external-twin" not in identifiers
+    assert "owned-external-ref" not in identifiers
+
+    included_db = OwnedSceneTwinStashDB()
+    result = service.targeted_similar(
+        included_db,
+        links,
+        "scene",
+        "old-good",
+        gender="",
+        include_owned=True,
+    )
+    identifiers = [item["id"] for item in result["items"]]
+    assert "owned-external-twin" in identifiers
+    assert "brand-new-scene" in identifiers
+    assert "owned-external-ref" not in identifiers
+    owned_twin = next(item for item in result["items"] if item["id"] == "owned-external-twin")
+    assert owned_twin["payload"]["curator_local"] == {"id": "recent-good"}
+    brand_new = next(item for item in result["items"] if item["id"] == "brand-new-scene")
+    assert "curator_local" not in brand_new["payload"]
+
+
 def test_sparse_external_performer_profile_has_low_confidence() -> None:
     service = ExpandService
     sparse = service._profile({"id": "sparse", "ethnicity": "Caucasian"})
