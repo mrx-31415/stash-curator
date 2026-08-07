@@ -128,6 +128,6 @@ tasks:
     execArgs:
       - expand-refresh
   - name: Install optional dependencies
-    description: Install numpy acceleration into a plugin-local virtual environment. The model builder falls back to pure Python when this is not run.
+    description: Install numpy and networkx acceleration into a plugin-local virtual environment. The model builder falls back to pure Python when this is not run.
     execArgs:
       - install-deps

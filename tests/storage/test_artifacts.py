@@ -10,6 +10,7 @@ from curator.storage.artifacts import (
     artifact_path,
     cache_directory,
     create_artifact,
+    publish_file,
     validate_artifact,
 )
 
@@ -172,3 +173,50 @@ def test_failed_artifact_unlink_is_retried(tmp_path: Path, monkeypatch: pytest.M
         (models[0][0],),
     ).fetchone()
     assert tuple(row) == (None, "retired", None)
+
+
+def test_attach_skips_tables_missing_from_older_artifact(tmp_path: Path) -> None:
+    """Attaching an artifact built by older code must not shadow new table names.
+
+    SQLite validates CREATE TEMP VIEW lazily, so a model artifact that predates a
+    newly added MODEL_TABLES entry used to produce a temp view over the missing
+    name. That view shadowed the core-schema name, so a pending migration's CREATE
+    INDEX on it failed with "views may not be indexed". Attach must create views
+    only for tables the artifact actually has.
+    """
+    core = connect_database(tmp_path / "curator.sqlite3")
+    runner = MigrationRunner(core)
+    original = runner.migrations
+    runner.migrations = [migration for migration in original if migration.version < 25]
+    runner.migrate(applied_at_ms=1)
+    runner.migrations = original
+
+    model_id = "model-" + "a" * 20
+    artifact, temporary, final = create_artifact(core, "model", model_id)
+    try:
+        # Simulate an artifact built by code that predates model_performer_edge.
+        artifact.execute("DROP TABLE model_performer_edge")
+    finally:
+        publish_file(artifact, temporary, final)
+    core.execute(
+        """
+        INSERT INTO model_version(
+            model_id, status, feature_version, config_json, created_at_ms,
+            artifact_basename, validation_status
+        ) VALUES (?, 'published', 'fv', '{}', 1, ?, 'valid')
+        """,
+        (model_id, final.name),
+    )
+
+    attached = connect_database(tmp_path / "curator.sqlite3", attach_artifacts=True)
+    try:
+        views = {
+            str(row[0])
+            for row in attached.execute("SELECT name FROM sqlite_temp_master WHERE type='view'")
+        }
+        assert "model_performer_edge" not in views
+        # Migration 25 creates and indexes model_performer_edge; the shadowing view
+        # used to make its CREATE INDEX fail with "views may not be indexed".
+        assert MigrationRunner(attached).migrate(applied_at_ms=2).current_version == 25
+    finally:
+        attached.close()

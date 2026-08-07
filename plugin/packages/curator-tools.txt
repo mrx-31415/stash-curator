@@ -3,3 +3,4 @@
 # matches the runtime Python and platform at install time. The model builder falls
 # back to its pure-Python implementations when these are not importable.
 numpy==2.5.1
+networkx==3.6.1

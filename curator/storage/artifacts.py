@@ -21,6 +21,7 @@ MODEL_TABLES = (
     "direct_scene_state",
     "model_scene_score",
     "model_scene_neighbor",
+    "model_performer_edge",
     "model_scene_reason",
     "model_scene_lane",
     "model_lane_candidate_cache",
@@ -87,6 +88,13 @@ CREATE TABLE model_scene_neighbor (
     rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 4), neighbor_scene_id TEXT NOT NULL,
     similarity REAL NOT NULL, weight REAL NOT NULL, outcome REAL NOT NULL,
     PRIMARY KEY (model_id, scene_id, rank)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE model_performer_edge (
+    model_id TEXT NOT NULL, performer_id TEXT NOT NULL,
+    rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 2),
+    similar_performer_id TEXT NOT NULL,
+    similarity REAL NOT NULL, affinity REAL NOT NULL, confidence REAL NOT NULL,
+    PRIMARY KEY (model_id, performer_id, rank)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_reason (
     model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
@@ -280,6 +288,25 @@ def _registry_columns(connection: sqlite3.Connection, table: str) -> set[str]:
     return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({_quote(table)})")}
 
 
+def _artifact_tables(
+    connection: sqlite3.Connection, alias: str, tables: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Only the tables the attached artifact actually has.
+
+    SQLite validates ``CREATE TEMP VIEW ... AS SELECT * FROM alias.table`` lazily,
+    so an artifact built by older code would silently produce a view over a missing
+    table. That view shadows the core-schema name, so later DDL or queries on the
+    name break (a migration's CREATE INDEX fails with "views may not be indexed").
+    Filtering to existing tables keeps upgrades safe: names absent from the artifact
+    resolve to the core-schema copy instead.
+    """
+    present = {
+        str(row[0])
+        for row in connection.execute(f"SELECT name FROM {alias}.sqlite_master WHERE type='table'")
+    }
+    return tuple(table for table in tables if table in present)
+
+
 def attach_active_artifacts(connection: sqlite3.Connection) -> None:
     if "artifact_basename" not in _registry_columns(connection, "feature_build"):
         return
@@ -318,7 +345,7 @@ def attach_active_artifacts(connection: sqlite3.Connection) -> None:
             not in SUPPORTED_ARTIFACT_SCHEMA_VERSIONS
         ):
             raise StorageError(f"unsupported active artifact schema: {path.name}")
-        for table in tables:
+        for table in _artifact_tables(connection, alias, tables):
             quoted = _quote(table)
             connection.execute(f"CREATE TEMP VIEW {quoted} AS SELECT * FROM {alias}.{quoted}")
 
@@ -341,7 +368,7 @@ def activate_artifact(connection: sqlite3.Connection, kind: str, path: Path) -> 
     ):
         connection.execute(f"DETACH DATABASE {alias}")
         raise StorageError(f"unsupported active artifact schema: {path.name}")
-    for table in tables:
+    for table in _artifact_tables(connection, alias, tables):
         quoted = _quote(table)
         connection.execute(f"CREATE TEMP VIEW {quoted} AS SELECT * FROM {alias}.{quoted}")
 
