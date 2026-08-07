@@ -378,6 +378,7 @@ class ExpandService:
         self._merge_external("scene", scenes)
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
+        blocked_groups = self._blocked_tag_name_groups()
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -401,6 +402,7 @@ class ExpandService:
                 exclude_tags,
                 include_groups=include_groups,
                 exclude_groups=exclude_groups,
+                blocked_groups=blocked_groups,
             )
         ]
         items.sort(
@@ -475,6 +477,7 @@ class ExpandService:
         rows = []
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
+        blocked_groups = self._blocked_tag_name_groups()
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'",
             (entity_type,),
@@ -515,6 +518,7 @@ class ExpandService:
                 studio_query,
                 include_groups,
                 exclude_groups,
+                blocked_groups=blocked_groups,
             ):
                 continue
             rows.append(
@@ -559,6 +563,7 @@ class ExpandService:
         studio_query: str = "",
         include_groups: tuple[frozenset[str], ...] = (),
         exclude_groups: tuple[frozenset[str], ...] = (),
+        blocked_groups: tuple[frozenset[str], ...] = (),
     ) -> bool:
         tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
         cast = {
@@ -567,12 +572,35 @@ class ExpandService:
         }
         studio = str((payload.get("studio") or {}).get("name") or "").casefold()
         return (
-            (not include_tags or all(group & tags for group in include_groups))
+            not any(group & tags for group in blocked_groups)
+            and (not include_tags or all(group & tags for group in include_groups))
             and not any(group & tags for group in exclude_groups)
             and (not performer_names or all(value.casefold() in cast for value in performer_names))
             and (not studio_names or studio in {value.casefold() for value in studio_names})
             and (not performer_query or performer_query.casefold() in " ".join(cast))
             and (not studio_query or studio_query.casefold() in studio)
+        )
+
+    def _blocked_tag_name_groups(self) -> tuple[frozenset[str], ...]:
+        """Resolve every blocked local tag to its local name and taxonomy aliases."""
+        blocked_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT tag_id FROM direct_tag_preference WHERE blocked=1"
+            )
+        }
+        if not blocked_ids:
+            return ()
+        return equivalent_tag_names(
+            self.connection,
+            tuple(
+                str(row[0])
+                for row in self.connection.execute(
+                    f"""SELECT name FROM source_tag WHERE tag_id IN
+                    ({",".join("?" for _ in blocked_ids)})""",
+                    sorted(blocked_ids),
+                )
+            ),
         )
 
     @staticmethod
@@ -1082,11 +1110,19 @@ class ExpandService:
         )
         raw_items = result["items"]
         assert isinstance(raw_items, list)
+        blocked_groups = self._blocked_tag_name_groups()
         filtered_items = [
             item
             for item in raw_items
             if not gender or self._payload_matches_gender(item["payload"], entity_type, gender)
-        ][:count]
+        ]
+        if entity_type == "scene":
+            filtered_items = [
+                item
+                for item in filtered_items
+                if self._scene_matches(item["payload"], blocked_groups=blocked_groups)
+            ]
+        filtered_items = filtered_items[:count]
         if entity_type == "performer":
             # Mark results that are already in the library so the cards can
             # badge them and link to the local profile instead of StashDB.

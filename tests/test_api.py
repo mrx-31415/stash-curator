@@ -230,7 +230,7 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
     )
     assert api.external_tag_choices([{"id": "external-unused", "name": "External name"}])[
         "items"
-    ] == [{"tag_id": "unused", "name": "Unused", "direct_value": -1.0}]
+    ] == [{"tag_id": "unused", "name": "Unused", "direct_value": -1.0, "direct_blocked": False}]
     assert (
         api.submit_tag_preferences(
             [
@@ -245,7 +245,7 @@ def test_taste_profile_exposes_inference_and_direct_answer(tmp_path: Path) -> No
         == 1
     )
     assert api.external_tag_choices([{"name": "Black Man"}])["items"] == [
-        {"tag_id": "attribute", "name": "Black Man", "direct_value": -1.0}
+        {"tag_id": "attribute", "name": "Black Man", "direct_value": -1.0, "direct_blocked": False}
     ]
 
 

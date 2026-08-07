@@ -173,10 +173,26 @@ class SimilarityService:
             if favorite_only
             else set()
         )
+        blocked_tag_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT tag_id FROM direct_tag_preference WHERE blocked=1"
+            )
+        }
+        blocked_scenes: set[str] = set()
+        if blocked_tag_ids:
+            for row in self.connection.execute(
+                f"""SELECT scene_id FROM scene_tag WHERE tag_id IN
+                ({",".join("?" for _ in blocked_tag_ids)})""",
+                sorted(blocked_tag_ids),
+            ):
+                blocked_scenes.add(str(row["scene_id"]))
         results: list[SimilarityResult] = []
         for candidate_id in candidate_ids:
             candidate_appeal = self.appeals[candidate_id]
             if candidate_id == scene_id:
+                continue
+            if candidate_id in blocked_scenes:
                 continue
             candidate_performers = performers.get(candidate_id, set())
             if gender and not any(genders.get(value) == gender for value in candidate_performers):

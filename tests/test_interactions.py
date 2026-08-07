@@ -83,6 +83,21 @@ def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_pat
     with pytest.raises(ValueError, match="unsupported"):
         store.submit_tag_preferences([{**positive, "preference_id": "unknown", "tag_id": "x"}])
 
+    blocked = {
+        "preference_id": "blocked",
+        "tag_id": "good",
+        "value": -1,
+        "blocked": True,
+        "occurred_at_ms": 40,
+    }
+    assert store.submit_tag_preferences([blocked]) == 1
+    row = connection.execute(
+        "SELECT value, blocked FROM direct_tag_preference WHERE tag_id='good'"
+    ).fetchone()
+    assert row is not None
+    assert float(row[0]) == -1.0
+    assert bool(row[1]) is True
+
 
 def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")

@@ -497,7 +497,7 @@ def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
     assert '"Metadata is wrong"' in source
     assert '"Skip"' in source
     assert "onClick: onDismiss" in source
-    assert "submitTagPreference(tag.tag_id, value);" in source
+    assert "submitTagPreference(tag.tag_id, {value, blocked});" in source
 
 
 def test_feedback_history_can_undo_or_replace_append_only_actions() -> None:
@@ -532,7 +532,7 @@ def test_external_scene_cards_can_rate_matching_local_tags() -> None:
     assert 'operation: "get_external_tag_choices"' in source
     assert '"Rate matching local tags"' in source
     assert '"No matching local tags."' in source
-    assert "submitTagPreference(tag.tag_id, value);" in source
+    assert "submitTagPreference(tag.tag_id, {value, blocked});" in source
 
 
 def test_curator_external_components_are_public_and_patchable() -> None:
