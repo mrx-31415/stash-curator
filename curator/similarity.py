@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, replace
 
 from curator.config import DEFAULT_CONFIG
-from curator.features import FeatureStore, performer_similarity
+from curator.features import FeatureStore
 from curator.model import RecommendationModelStore
 from curator.model.multi_hop import MultiHopAffinity
 from curator.profiling import record_duration
@@ -99,20 +99,24 @@ class SimilarityService:
         performers = self._scene_performers()
         genders = self._performer_genders()
         target_performers = performers.get(scene_id, set())
-        profiles = features.performer_profiles(self.feature_version)
-        self.timings_ms["profiles"] = round((time.perf_counter() - started) * 1000)
-        record_duration("python", "similarity.profiles", self.timings_ms["profiles"])
+        self.timings_ms["profiles"] = 0
         started = time.perf_counter()
-        weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
         performer_scores: dict[str, float] = {}
+        # Use the precomputed performer edges from the model build instead of
+        # running pairwise performer_similarity at query time. The build already
+        # compares every profile against the known-affinity set; persisting the
+        # top-3 matches lets us rank candidates without an O(n²) Python loop.
         for target_id in target_performers:
-            target = profiles.get(target_id)
-            if target is None:
-                continue
-            for other_id, profile in profiles.items():
-                performer_scores[other_id] = max(
-                    performer_scores.get(other_id, 0),
-                    performer_similarity(target, profile, weights).similarity,
+            for row in self.connection.execute(
+                """
+                SELECT similar_performer_id, similarity FROM model_performer_edge
+                WHERE model_id=? AND performer_id=? ORDER BY rank
+                """,
+                (self.model_id, target_id),
+            ):
+                performer_scores[str(row["similar_performer_id"])] = max(
+                    performer_scores.get(str(row["similar_performer_id"]), 0),
+                    float(row["similarity"]),
                 )
         self.timings_ms["performer_similarity"] = round((time.perf_counter() - started) * 1000)
         record_duration(
