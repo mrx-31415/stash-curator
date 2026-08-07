@@ -207,6 +207,10 @@ _DESCRIPTION_TOKEN_RE = re.compile(r"[a-zA-Z]{3,}")
 _DESCRIPTION_MIN_DF = 5
 _DESCRIPTION_MAX_DF_FRACTION = 0.70
 _DESCRIPTION_MAX_TERMS_PER_SCENE = 15
+# Description terms are sparse (5-15 per scene vs 10-30 tags) so they get a
+# multiplier before l2 normalization in the combined content vector. Without
+# this they would be drowned out by denser tag features.
+_DESCRIPTION_BOOST = 3.0
 
 
 class FeatureBuildError(RuntimeError):
@@ -561,7 +565,9 @@ class FeatureBuilder:
                     if idf <= 0:
                         continue
                     freq = desc_document_frequency.get(term, 1)
-                    weighted[f"desc:{term}"] = idf / (freq + self.config.feature.one_off_prior)
+                    weighted[f"desc:{term}"] = (
+                        _DESCRIPTION_BOOST * idf / (freq + self.config.feature.one_off_prior)
+                    )
             norm = math.sqrt(sum(value * value for value in weighted.values())) or 1.0
             for tag_id in sorted(t for t in weighted if not t.startswith("desc:")):
                 features.append(
