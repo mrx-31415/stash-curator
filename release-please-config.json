@@ -6,6 +6,11 @@
         {
           "type": "generic",
           "path": "curator/__init__.py"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='stash-curator')].version"
         }
       ]
     }
