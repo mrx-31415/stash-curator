@@ -17,3 +17,12 @@ except ImportError:  # pragma: no cover - exercised only in numpy-less environme
 NUMPY_AVAILABLE: bool = _np is not None
 # Module alias stays untyped so accelerated code can call np.array(...) freely.
 np: Any = _np if NUMPY_AVAILABLE else cast(Any, None)
+
+try:
+    import networkx as _nx  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - exercised only in networkx-less environments
+    _nx = None
+
+NETWORKX_AVAILABLE: bool = _nx is not None
+# Module alias stays untyped so graph code can call nx.pagerank(...) freely.
+nx: Any = _nx if NETWORKX_AVAILABLE else cast(Any, None)

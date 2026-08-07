@@ -49,7 +49,10 @@ source cache ──► normalized events                  StashDB
   venv's site-packages to `sys.path` when present. The content-neighbor and
   performer-similarity stages use numpy (BLAS matmuls) when importable and fall back
   to their pure-Python implementations otherwise, so builds are deterministic and
-  correct in either mode.
+  correct in either mode. The same venv carries networkx (and, when installed,
+  scipy) for the multi-hop affinity stage: `curator/model/multi_hop.py` walks the
+  persisted performer-collaboration graph with personalized PageRank and falls back
+  to an equivalent pure-Python power iteration.
 - `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
 
 ## Data flow and failure boundaries
