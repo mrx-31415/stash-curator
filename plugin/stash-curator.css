@@ -1415,3 +1415,42 @@
     flex-basis: 100%;
   }
 }
+
+/* ---- Score bar ---- */
+.curator-score-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0 4px;
+  background: var(--bs-secondary-bg, #333);
+}
+.curator-score-bar-seg {
+  display: block;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.curator-score-sim { background: #4a90d9; }
+.curator-score-app { background: #50b86c; }
+.curator-score-mh { background: #9b59b6; }
+
+/* ---- Relationship chips ---- */
+.curator-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.curator-chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.curator-chip-same_performer      { background: #4a90d9; color: #fff; }
+.curator-chip-similar_performer   { background: #4a90d9aa; color: #fff; }
+.curator-chip-shared_content      { background: #50b86c; color: #fff; }
+.curator-chip-similar_structure   { background: #50b86caa; color: #fff; }
+.curator-chip-same_studio         { background: #e67e22; color: #fff; }
+.curator-chip-multi_hop           { background: #9b59b6; color: #fff; }
+.curator-chip-tags                { background: #555; color: #ddd; }
