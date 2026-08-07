@@ -70,6 +70,10 @@ def scene_eligibility(
             else set()
         )
     not_now_ms = int(config.model.not_now_days * 86_400_000)
+    blocked_tag_ids = {
+        str(row[0])
+        for row in connection.execute("SELECT tag_id FROM direct_tag_preference WHERE blocked=1")
+    }
     result: dict[str, dict[str, object]] = {}
     for scene_id in scenes:
         reasons: list[str] = []
@@ -83,5 +87,14 @@ def scene_eligibility(
             reasons.append("current_thumb_down")
         if include_temporary and reference_at_ms - not_now.get(scene_id, -not_now_ms) < not_now_ms:
             reasons.append("not_now")
+        if blocked_tag_ids and not reasons:
+            scene_blocked = connection.execute(
+                f"""SELECT 1 FROM scene_tag WHERE scene_id=?
+                AND tag_id IN ({",".join("?" for _ in blocked_tag_ids)})
+                LIMIT 1""",
+                (scene_id, *sorted(blocked_tag_ids)),
+            ).fetchone()
+            if scene_blocked:
+                reasons.append("blocked_tag")
         result[scene_id] = {"eligible": not reasons, "reasons": reasons}
     return result

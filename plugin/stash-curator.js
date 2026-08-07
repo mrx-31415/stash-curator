@@ -422,14 +422,15 @@
     [1, "Strong like"],
   ];
 
-  function TagSentimentControl({ tag, value, onChange }) {
+  function TagSentimentControl({ tag, value, blocked, onChange }) {
     return React.createElement(
       "div",
       { className: "curator-sentiment", role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      React.createElement(Button, { size: "sm", variant: blocked ? "danger" : "secondary", "aria-pressed": blocked, title: "Block: never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Block"),
       SENTIMENTS.map(([score, label]) =>
-        React.createElement(Button, { key: score, size: "sm", variant: value === score ? "primary" : "secondary", "aria-pressed": value === score, title: label, onClick: () => onChange(score) }, label)
+        React.createElement(Button, { key: score, size: "sm", variant: !blocked && value === score ? "primary" : "secondary", "aria-pressed": !blocked && value === score, title: label, onClick: () => onChange({ value: score, blocked: false }) }, label)
       ),
-      value !== null && value !== undefined && React.createElement(Button, { size: "sm", variant: "link", onClick: () => onChange(null) }, "Clear answer")
+      (value !== null && value !== undefined || blocked) && React.createElement(Button, { size: "sm", variant: "link", onClick: () => onChange({ value: null, blocked: false }) }, "Clear answer")
     );
   }
 
@@ -461,9 +462,9 @@
     }
   }
 
-  function submitTagPreference(tagId, value) {
+  function submitTagPreference(tagId, {value, blocked}) {
     const queue = readTagPreferenceQueue();
-    queue.push({ preference_id: uuid(), tag_id: tagId, value, occurred_at_ms: Date.now() });
+    queue.push({ preference_id: uuid(), tag_id: tagId, value, blocked: !!blocked, occurred_at_ms: Date.now() });
     localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(queue));
     flushTagPreferenceQueue();
   }
@@ -482,9 +483,9 @@
       );
       return () => { active = false; };
     }, []);
-    function answer(tagId, value) {
-      submitTagPreference(tagId, value);
-      setData((current) => ({ ...current, items: current.items.map((item) => item.tag_id === tagId ? { ...item, direct_value: value, prompt: null } : item) }));
+    function answer(tagId, {value, blocked}) {
+      submitTagPreference(tagId, {value, blocked});
+      setData((current) => ({ ...current, items: current.items.map((item) => item.tag_id === tagId ? { ...item, direct_value: value, direct_blocked: !!blocked, prompt: null } : item) }));
     }
     const visibleItems = data
       ? data.items
@@ -537,7 +538,7 @@
               item.prompt && React.createElement("span", { className: "badge badge-info" }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
-            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, onChange: (value) => answer(item.tag_id, value) })
+            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
           )
         )
       )
@@ -549,9 +550,9 @@
     const [answers, setAnswers] = React.useState({});
     const [status, setStatus] = React.useState("");
     const [busy, setBusy] = React.useState(false);
-    function answer(tag, value) {
-      submitTagPreference(tag.tag_id, value);
-      setAnswers((current) => ({ ...current, [tag.tag_id]: value }));
+    function answer(tag, {value, blocked}) {
+      submitTagPreference(tag.tag_id, {value, blocked});
+      setAnswers((current) => ({ ...current, [tag.tag_id]: {value, blocked} }));
       setSelected(null);
       setStatus(`${tag.name} answer queued`);
     }
@@ -589,8 +590,8 @@
           "div",
           { key: tag.tag_id, className: "curator-tag-follow-up-item" },
           React.createElement(Button, { size: "sm", variant: selected === tag.tag_id ? "primary" : "secondary", onClick: () => setSelected(selected === tag.tag_id ? null : tag.tag_id) }, tag.name),
-          Object.hasOwn(answers, tag.tag_id) && React.createElement("small", null, `Answered: ${SENTIMENTS.find(([value]) => value === answers[tag.tag_id])?.[1]}`),
-          selected === tag.tag_id && React.createElement(TagSentimentControl, { tag, value: answers[tag.tag_id], onChange: (value) => answer(tag, value) })
+          Object.hasOwn(answers, tag.tag_id) && React.createElement("small", null, `Answered: ${answers[tag.tag_id]?.blocked ? "Blocked" : SENTIMENTS.find(([value]) => value === answers[tag.tag_id]?.value)?.[1]}`),
+          selected === tag.tag_id && React.createElement(TagSentimentControl, { tag, value: answers[tag.tag_id]?.value, blocked: answers[tag.tag_id]?.blocked, onChange: (value) => answer(tag, value) })
         )
       ),
       React.createElement(
@@ -668,9 +669,9 @@
         setTagLoading(false);
       }
     }
-    function answerTag(tag, value) {
-      submitTagPreference(tag.tag_id, value);
-      setTagChoices((current) => current.map((item) => item.tag_id === tag.tag_id ? { ...item, direct_value: value } : item));
+    function answerTag(tag, {value, blocked}) {
+      submitTagPreference(tag.tag_id, {value, blocked});
+      setTagChoices((current) => current.map((item) => item.tag_id === tag.tag_id ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
     }
     return React.createElement(
       "article",
@@ -681,7 +682,7 @@
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.description && React.createElement("p", { className: "curator-card-description" }, payload.description)),
       React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)} · appeal ${item.appeal.toFixed(2)}`; const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, scoreDetail))); })()),
-      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id }, React.createElement("strong", null, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, onChange: (value) => answerTag(tag, value) })))),
+      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id }, React.createElement("strong", null, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, blocked: tag.direct_blocked, onChange: (value) => answerTag(tag, value) })))),
       React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   });

@@ -30,6 +30,7 @@ FEEDBACK_TYPES = {
     "metadata_wrong",
 }
 TAG_SENTIMENT_VALUES = {-1.0, -0.5, 0.0, 0.5, 1.0}
+BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
 
 
 class InteractionStore:
@@ -270,13 +271,14 @@ class InteractionStore:
                 cursor = self.connection.execute(
                     """
                     INSERT OR IGNORE INTO direct_tag_preference_history(
-                        preference_id, tag_id, value, occurred_at_ms
-                    ) VALUES (?, ?, ?, ?)
+                        preference_id, tag_id, value, blocked, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
                     (
                         entry["preference_id"],
                         entry["tag_id"],
                         entry["value"],
+                        int(entry["blocked"]),
                         entry["occurred_at_ms"],
                     ),
                 )
@@ -311,17 +313,19 @@ class InteractionStore:
                     self.connection.execute(
                         """
                         INSERT INTO direct_tag_preference(
-                            tag_id, preference_id, value, occurred_at_ms
-                        ) VALUES (?, ?, ?, ?)
+                            tag_id, preference_id, value, blocked, occurred_at_ms
+                        ) VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(tag_id) DO UPDATE SET
                             preference_id=excluded.preference_id,
                             value=excluded.value,
+                            blocked=excluded.blocked,
                             occurred_at_ms=excluded.occurred_at_ms
                         """,
                         (
                             entry["tag_id"],
                             entry["preference_id"],
                             entry["value"],
+                            int(entry["blocked"]),
                             entry["occurred_at_ms"],
                         ),
                     )
@@ -522,12 +526,15 @@ class InteractionStore:
         tag_id = str(entry.get("tag_id") or "")
         occurred_at_ms = int(entry.get("occurred_at_ms", -1))
         value = entry.get("value")
+        blocked = bool(entry.get("blocked", False))
         if value is not None:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("tag sentiment must be numeric or null")
             value = float(value)
             if value not in TAG_SENTIMENT_VALUES:
                 raise ValueError("tag sentiment must use the fixed five-point scale")
+        if blocked:
+            value = BLOCKED_TAG_VALUE
         if not preference_id or not tag_id or occurred_at_ms < 0:
             raise ValueError("preference_id, tag_id, and occurred_at_ms are required")
         config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
@@ -546,6 +553,7 @@ class InteractionStore:
             "preference_id": preference_id,
             "tag_id": tag_id,
             "value": value,
+            "blocked": blocked,
             "occurred_at_ms": occurred_at_ms,
         }
 

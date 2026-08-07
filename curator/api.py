@@ -471,10 +471,11 @@ class CuratorAPI:
                 "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
             ).fetchone()[0]
         )
-        direct = {
-            str(row["tag_id"]): float(row["value"])
-            for row in self.connection.execute("SELECT tag_id, value FROM direct_tag_preference")
-        }
+        direct: dict[str, tuple[float | None, bool]] = {}
+        for row in self.connection.execute(
+            "SELECT tag_id, value, blocked FROM direct_tag_preference"
+        ):
+            direct[str(row["tag_id"])] = (float(row["value"]), bool(row["blocked"]))
         items: list[dict[str, object]] = []
         config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
         for row in self.connection.execute(
@@ -500,7 +501,7 @@ class CuratorAPI:
             scene_count = int(row["scene_count"])
             affinity = float(row["affinity"] or 0)
             confidence = float(row["confidence"] or 0)
-            direct_value = direct.get(tag_id)
+            direct_value, direct_blocked = direct.get(tag_id, (None, False))
             prompt = None
             if direct_value is None and row["role"] == "content" and scene_count >= 2:
                 prompt = "belief" if confidence >= 0.35 and abs(affinity) >= 0.15 else "uncertain"
@@ -513,6 +514,7 @@ class CuratorAPI:
                     "support": float(row["effective_support"] or 0),
                     "scene_count": scene_count,
                     "direct_value": direct_value,
+                    "direct_blocked": direct_blocked,
                     "prompt": prompt,
                 }
             )
@@ -544,7 +546,8 @@ class CuratorAPI:
             dict(row)
             for row in self.connection.execute(
                 """
-                SELECT t.tag_id, t.name, p.value AS direct_value, ids.stash_id
+                SELECT t.tag_id, t.name, p.value AS direct_value,
+                       p.blocked AS direct_blocked, ids.stash_id
                 FROM source_tag t
                 JOIN tag_role r
                   ON r.tag_id=t.tag_id AND r.config_version=?
@@ -579,6 +582,7 @@ class CuratorAPI:
                         if matched["direct_value"] is not None
                         else None
                     ),
+                    "direct_blocked": bool(matched["direct_blocked"]),
                 }
             )
         return {"schema_version": API_SCHEMA_VERSION, "items": choices}
