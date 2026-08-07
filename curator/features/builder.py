@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -35,6 +36,177 @@ from curator.storage.artifacts import (
 )
 from curator.taxonomy import TaxonomyIndex
 from curator.taxonomy.store import CATEGORY_ROLE_FINGERPRINT
+
+# Terms excluded from description TF-IDF because they appear in most scenes
+# and do not discriminate taste, setting, or scenario.
+_DESCRIPTION_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "could",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "not",
+        "so",
+        "if",
+        "then",
+        "else",
+        "when",
+        "up",
+        "down",
+        "in",
+        "out",
+        "on",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "once",
+        "here",
+        "there",
+        "all",
+        "both",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "only",
+        "own",
+        "same",
+        "just",
+        "about",
+        "after",
+        "also",
+        "as",
+        "at",
+        "before",
+        "between",
+        "by",
+        "during",
+        "for",
+        "from",
+        "into",
+        "of",
+        "than",
+        "to",
+        "very",
+        "with",
+        "well",
+        "get",
+        "got",
+        "go",
+        "goes",
+        "back",
+        "still",
+        "too",
+        "way",
+        "even",
+        "now",
+        "new",
+        "see",
+        "take",
+        "make",
+        "like",
+        "come",
+        "know",
+        "want",
+        "think",
+        "really",
+        "much",
+        "one",
+        "two",
+        "who",
+        "how",
+        "which",
+        "what",
+        "where",
+        "why",
+        "herself",
+        "himself",
+        "itself",
+        "themselves",
+        "any",
+        "anything",
+        "everyone",
+        "everything",
+        "let",
+        "scene",
+        "watch",
+        "enjoy",
+        "don",
+        "doesn",
+        "isn",
+        "wasn",
+        "weren",
+        "aren",
+        "couldn",
+        "wouldn",
+        "shouldn",
+        "haven",
+        "hasn",
+        "hadn",
+        "https",
+        "http",
+        "www",
+        "com",
+        "org",
+        "net",
+    }
+)
+_DESCRIPTION_TOKEN_RE = re.compile(r"[a-zA-Z]{3,}")
+_DESCRIPTION_MIN_DF = 5
+_DESCRIPTION_MAX_DF_FRACTION = 0.70
+_DESCRIPTION_MAX_TERMS_PER_SCENE = 15
 
 
 class FeatureBuildError(RuntimeError):
@@ -346,6 +518,31 @@ class FeatureBuilder:
         }
         features: list[_Feature] = []
         total = max(1, len(scene_ids))
+        # Description term features: tokenize scene descriptions, compute TF-IDF
+        # weights, and emit discriminating terms as content features alongside tags.
+        desc_document_frequency: dict[str, int] = Counter()
+        desc_by_scene: dict[str, list[str]] = {}
+        for row in self.connection.execute(
+            "SELECT scene_id, details FROM source_scene WHERE details IS NOT NULL AND details != ''"
+        ):
+            terms: list[str] = []
+            seen: set[str] = set()
+            for token in _DESCRIPTION_TOKEN_RE.findall(row["details"] or ""):
+                token = token.lower()
+                if token not in _DESCRIPTION_STOPWORDS and token not in seen:
+                    seen.add(token)
+                    terms.append(token)
+                    desc_document_frequency[token] += 1
+            if terms:
+                desc_by_scene[str(row["scene_id"])] = terms
+        desc_idf: dict[str, float] = {}
+        for term, freq in desc_document_frequency.items():
+            if freq < _DESCRIPTION_MIN_DF or freq > total * _DESCRIPTION_MAX_DF_FRACTION:
+                continue
+            desc_idf[term] = min(
+                self.config.feature.idf_cap,
+                1 + self.config.feature.idf_strength * math.log((total + 1) / (freq + 1)),
+            )
         for position, scene_id in enumerate(scene_ids, 1):
             weighted: dict[str, float] = {}
             for tag_id, base in base_vectors[scene_id].items():
@@ -356,8 +553,17 @@ class FeatureBuilder:
                 )
                 shrinkage = frequency / (frequency + self.config.feature.one_off_prior)
                 weighted[tag_id] = base * rarity * shrinkage
+            # Description terms compete with tags in the same content family so
+            # the l2 norm reflects the combined feature weight.
+            if scene_id in desc_by_scene:
+                for term in desc_by_scene[scene_id][:_DESCRIPTION_MAX_TERMS_PER_SCENE]:
+                    idf = desc_idf.get(term, 0.0)
+                    if idf <= 0:
+                        continue
+                    freq = desc_document_frequency.get(term, 1)
+                    weighted[f"desc:{term}"] = idf / (freq + self.config.feature.one_off_prior)
             norm = math.sqrt(sum(value * value for value in weighted.values())) or 1.0
-            for tag_id in sorted(weighted):
+            for tag_id in sorted(t for t in weighted if not t.startswith("desc:")):
                 features.append(
                     _Feature(
                         "scene",
@@ -372,6 +578,19 @@ class FeatureBuilder:
                             "document_frequency": document_frequency[tag_id],
                             "role_reason": roles[tag_id].reason,
                         },
+                    )
+                )
+            for term in sorted(k for k in weighted if k.startswith("desc:")):
+                frequency = desc_document_frequency.get(term.removeprefix("desc:"), 1)
+                features.append(
+                    _Feature(
+                        "scene",
+                        scene_id,
+                        "content",
+                        term,
+                        weighted[term] / norm,
+                        min(1.0, frequency / 3),
+                        {"document_frequency": frequency},
                     )
                 )
             if position == len(scene_ids) or position % 250 == 0:
