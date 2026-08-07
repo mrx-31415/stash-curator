@@ -92,3 +92,40 @@ def test_snapshot_is_immutable_reusable_and_resolves_by_id_then_unique_alias(
 def test_physical_category_allowlist_is_stable() -> None:
     assert BODY_TYPE_ID in PERFORMER_ATTRIBUTE_CATEGORY_IDS
     assert CLOTHING_ID not in PERFORMER_ATTRIBUTE_CATEGORY_IDS
+
+
+def test_equivalent_tag_names_includes_descendants(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    try:
+        connection.execute(
+            "INSERT INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)",
+            ("local-clothing", "local-id"),
+        )
+        connection.execute(
+            "INSERT INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)",
+            ("local-trimmed", "local-id"),
+        )
+        # Grandchild
+        connection.execute(
+            "INSERT INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)",
+            ("local-ambiguous", "local-clothing"),
+        )
+        from curator.taxonomy.store import equivalent_tag_names
+
+        groups = equivalent_tag_names(connection, ("Wrong Local Name",))
+        assert len(groups) == 1
+        names = groups[0]
+        # Original name + descendants (no taxonomy snapshot, so names are local)
+        assert "wrong local name" in names
+        assert "stockings" in names  # local-clothing, child
+        assert "trimmed" in names  # local-trimmed, child
+        assert "ambiguous" in names  # local-ambiguous, grandchild via local-clothing
+        # Unrelated tag should not be included
+        assert "athletic body" not in names  # local-alias, not a descendant
+
+        # Tag with no hierarchy returns only itself
+        groups = equivalent_tag_names(connection, ("Bubble Butt",))
+        assert len(groups) == 1
+        assert groups[0] == {"bubble butt"}
+    finally:
+        connection.close()

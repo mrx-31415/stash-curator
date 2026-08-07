@@ -206,39 +206,120 @@ def _normalize(value: str) -> str:
 def equivalent_tag_names(
     connection: sqlite3.Connection, values: tuple[str, ...]
 ) -> tuple[frozenset[str], ...]:
-    """Expand selected tag names through the active StashDB alias taxonomy."""
+    """Expand selected tag names through taxonomy aliases and the local tag hierarchy.
+
+    Each input name resolves to the matching local tag ids, any taxonomy
+    (StashDB) ids that map back to local tags, and — transitively — every
+    descendant in the local ``tag_parent`` hierarchy.  The returned groups
+    include local names and taxonomy names/aliases for all of those tags so
+    both local and external filtering surfaces see the full subtree.
+    """
     snapshot = connection.execute(
         "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
     ).fetchone()
-    groups = []
+    groups: list[frozenset[str]] = []
     for value in values:
         normalized = _normalize(value)
-        names = {normalized}
+        local_ids: set[str] = set()
+        # 1 ─ direct local name match
+        local_ids.update(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT tag_id FROM source_tag WHERE lower(name)=?", (normalized,)
+            )
+        )
+        taxonomy_names: set[str] = set()
         if snapshot:
-            tag_ids = {
+            # 2 ─ taxonomy (StashDB) resolution + map back to local ids
+            taxonomy_ids = {
                 str(row[0])
                 for row in connection.execute(
                     """
                     SELECT tag_id FROM taxonomy_tag WHERE snapshot_id=? AND lower(name)=?
                     UNION
-                    SELECT tag_id FROM taxonomy_tag_alias WHERE snapshot_id=? AND lower(alias)=?
+                    SELECT tag_id FROM taxonomy_tag_alias
+                    WHERE snapshot_id=? AND lower(alias)=?
                     """,
                     (snapshot[0], normalized, snapshot[0], normalized),
                 )
             }
-            for tag_id in tag_ids:
-                names.update(
+            if taxonomy_ids:
+                local_from_taxonomy = {
+                    str(row[0])
+                    for row in connection.execute(
+                        f"""SELECT local_tag_id FROM tag_taxonomy_match
+                        WHERE snapshot_id=? AND external_tag_id IN
+                        ({",".join("?" for _ in taxonomy_ids)})""",
+                        (snapshot[0], *sorted(taxonomy_ids)),
+                    )
+                    if row[0]
+                }
+                local_ids.update(local_from_taxonomy)
+            # Taxonomy names / aliases (covers external-only tags and aliases
+            # that differ from the local name).
+            for tag_id in taxonomy_ids:
+                taxonomy_names.update(
                     _normalize(str(row[0]))
                     for row in connection.execute(
                         """
                         SELECT name FROM taxonomy_tag WHERE snapshot_id=? AND tag_id=?
                         UNION ALL
-                        SELECT alias FROM taxonomy_tag_alias WHERE snapshot_id=? AND tag_id=?
+                        SELECT alias FROM taxonomy_tag_alias
+                        WHERE snapshot_id=? AND tag_id=?
                         """,
                         (snapshot[0], tag_id, snapshot[0], tag_id),
                     )
                 )
-        groups.append(frozenset(names))
+        # 3 ─ walk tag_parent for all descendants
+        if local_ids:
+            queue = list(local_ids)
+            while queue:
+                parent = queue.pop()
+                for (child,) in connection.execute(
+                    "SELECT tag_id FROM tag_parent WHERE parent_tag_id=?", (parent,)
+                ):
+                    child = str(child)
+                    if child not in local_ids:
+                        local_ids.add(child)
+                        queue.append(child)
+        # 4 ─ collect local names for every resolved id
+        if local_ids:
+            local_names = {
+                _normalize(str(row[0]))
+                for row in connection.execute(
+                    f"""SELECT name FROM source_tag WHERE tag_id IN
+                    ({",".join("?" for _ in local_ids)})""",
+                    sorted(local_ids),
+                )
+            }
+            taxonomy_names.update(local_names)
+        # 5 ─ taxonomy names/aliases for every local id
+        if snapshot and local_ids:
+            external_ids = {
+                str(row[0])
+                for row in connection.execute(
+                    f"""SELECT external_tag_id FROM tag_taxonomy_match
+                    WHERE snapshot_id=? AND local_tag_id IN
+                    ({",".join("?" for _ in local_ids)})""",
+                    (snapshot[0], *sorted(local_ids)),
+                )
+                if row[0]
+            }
+            for ext_id in external_ids:
+                taxonomy_names.update(
+                    _normalize(str(row[0]))
+                    for row in connection.execute(
+                        """
+                        SELECT name FROM taxonomy_tag WHERE snapshot_id=? AND tag_id=?
+                        UNION ALL
+                        SELECT alias FROM taxonomy_tag_alias
+                        WHERE snapshot_id=? AND tag_id=?
+                        """,
+                        (snapshot[0], ext_id, snapshot[0], ext_id),
+                    )
+                )
+        taxonomy_names.add(normalized)
+        groups.append(frozenset(taxonomy_names))
     return tuple(groups)
 
 
