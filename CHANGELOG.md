@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/mrx-31415/stash-curator/compare/v0.5.0...v0.5.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* clarify task progress display ([a41954c](https://github.com/mrx-31415/stash-curator/commit/a41954c9781086981d2ba15c6fb8e6f94a84cbcd))
+
 ## [0.5.0](https://github.com/mrx-31415/stash-curator/compare/v0.4.2...v0.5.0) (2026-08-08)
 
 
