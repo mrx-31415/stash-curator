@@ -52,6 +52,13 @@ case "${1:-}" in
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
+    # The sidecar database is created inside the container (as root) in WAL mode. Host
+    # tests read it read-only, and a WAL read needs to create the -shm file, so the data
+    # directory must be owned/writable by the test user. Reset it every run so the
+    # integration environment starts from a clean sidecar instead of leftover state.
+    rm -rf "$plugin_dir/data"
+    mkdir -p "$plugin_dir/data"
+    chmod 777 "$plugin_dir/data"
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
     # ── start stash ──
