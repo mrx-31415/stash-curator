@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/mrx-31415/stash-curator/compare/v0.4.2...v0.5.0) (2026-08-08)
+
+
+### Features
+
+* consolidate task progress and tag rating controls ([ea68a86](https://github.com/mrx-31415/stash-curator/commit/ea68a86c087cd02dd28a485d97896a50df4b0a08))
+
+
+### Bug Fixes
+
+* broader expected phrases for taste/feedback/backups tabs ([812b9ce](https://github.com/mrx-31415/stash-curator/commit/812b9ce516e5f5891d7a1264f2d76b0072b5723a))
+* hoist scoreBar to module scope for ExternalCard and ExpandPanel ([#78](https://github.com/mrx-31415/stash-curator/issues/78)) ([64f1679](https://github.com/mrx-31415/stash-curator/commit/64f1679daa3e2e5802527459c0c6e56d776cc131))
+* use contextlib.suppress instead of bare try/except/pass ([ba9bb14](https://github.com/mrx-31415/stash-curator/commit/ba9bb14b76a219faf397e4c3a0f41b3ef6440cb4))
+* use taxonomy aliases when matching external tags to local tags ([#80](https://github.com/mrx-31415/stash-curator/issues/80)) ([28d2897](https://github.com/mrx-31415/stash-curator/commit/28d289700a9f348bb97ced72c94ac2c5c249ed1b))
+
 ## [0.4.2](https://github.com/mrx-31415/stash-curator/compare/v0.4.1...v0.4.2) (2026-08-08)
 
 
