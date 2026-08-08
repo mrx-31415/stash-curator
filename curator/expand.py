@@ -44,7 +44,7 @@ query CuratorExpandScenes($input: SceneQueryInput!) {
   queryScenes(input: $input) {
     count
     scenes {
-      id title release_date production_date duration description
+      id title release_date production_date duration details
       studio { id name }
       tags { id name }
       images { url width height }

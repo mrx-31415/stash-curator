@@ -270,6 +270,34 @@
   padding: 0.15rem 0.4rem;
 }
 
+.curator-sentiment-never,
+.curator-sentiment-danger,
+.curator-sentiment-warning,
+.curator-sentiment-neutral,
+.curator-sentiment-like,
+.curator-sentiment-love {
+  background: transparent;
+  color: #fff;
+}
+
+.curator-sentiment-never            { --sc: #212529; border-color: var(--sc); }
+.curator-sentiment-danger           { --sc: #dc3545; border-color: var(--sc); }
+.curator-sentiment-warning          { --sc: #fd7e14; border-color: var(--sc); }
+.curator-sentiment-neutral          { --sc: #6c757d; border-color: var(--sc); }
+.curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
+.curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
+
+.curator-sentiment-never.curator-sentiment-active,
+.curator-sentiment-danger.curator-sentiment-active,
+.curator-sentiment-warning.curator-sentiment-active,
+.curator-sentiment-neutral.curator-sentiment-active,
+.curator-sentiment-like.curator-sentiment-active,
+.curator-sentiment-love.curator-sentiment-active {
+  background: var(--sc);
+  border-color: var(--sc);
+  color: #fff;
+}
+
 @media (max-width: 480px) {
   .curator-sentiment .btn-sm {
     font-size: 0.7rem;
