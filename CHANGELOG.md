@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/mrx-31415/stash-curator/compare/v0.4.0...v0.4.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* shorten Block button label and sort taste profile by sign then magnitude ([#74](https://github.com/mrx-31415/stash-curator/issues/74)) ([2db1394](https://github.com/mrx-31415/stash-curator/commit/2db13941523688f514a7423f1ae8403a6b2f9c71))
+
 ## [0.4.0](https://github.com/mrx-31415/stash-curator/compare/v0.3.0...v0.4.0) (2026-08-08)
 
 
