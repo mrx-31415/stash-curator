@@ -71,10 +71,31 @@ TABS: list[tuple[str, list[str]]] = [
     ("", ["no published model", "Sync and build now", "Preparing For You"]),
     ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
     ("?view=expand", ["External metadata candidates", "Loading Expand cache"]),
-    ("?view=taste", ["Loading taste profile", "No supported tags"]),
+    (
+        "?view=taste",
+        [
+            "Loading taste profile",
+            "No supported tags",
+            "Declared answers are strong evidence",
+        ],
+    ),
     ("?view=hunt", ["Select a local performer linked to StashDB"]),
-    ("?view=feedback", ["Loading feedback history", "No feedback has been recorded yet"]),
-    ("?view=backups", ["Create backup", "No Curator backups found"]),
+    (
+        "?view=feedback",
+        [
+            "Loading feedback history",
+            "No feedback has been recorded yet",
+            "Review recent feedback",
+        ],
+    ),
+    (
+        "?view=backups",
+        [
+            "Create backup",
+            "No Curator backups found",
+            "Create, inspect",
+        ],
+    ),
 ]
 
 
