@@ -66,7 +66,8 @@ indexes and return stable IDs; the browser fetches current display metadata from
 Stash.
 
 Feedback and playback increment a durable generation counter and trigger a smaller
-preference rebuild after a short debounce. They do not rerun library sync. Full
+preference rebuild after a short debounce. They do not rerun library sync; after playback a
+lightweight play-only sync keeps cooldown and recovery context current between full syncs. Full
 sync/build and Expand refresh remain one-shot tasks because Stash provides no plugin
 background scheduler/startup hook.
 
