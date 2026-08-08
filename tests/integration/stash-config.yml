@@ -1,4 +1,11 @@
 # Minimal Stash configuration for integration tests
+generated: /root/.stash/generated
+cache: /root/.stash/cache
+blobs:
+  path: /root/.stash/blobs
+  storage: FILESYSTEM
+database: /root/.stash/stash-go.sqlite
+dangerous_allow_public_without_auth: true
 plugins:
   stash-curator:
     enabled: true
