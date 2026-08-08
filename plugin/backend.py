@@ -568,6 +568,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Rebuild recommendation model",
         "Apply recent Curator feedback",
         "Prepare recommendation pages",
+        "Sync recent plays",
         "Backup Curator data",
         "Compact legacy Curator data",
         "Vacuum compacted Curator data",
@@ -1027,6 +1028,7 @@ def _job_status(connection: Any) -> dict[str, object]:
 DIAGNOSTIC_JOB_TYPES = {
     "sync-build",
     "full-sync-build",
+    "sync-plays",
     "build",
     "update-model",
     "prepare",
@@ -1338,6 +1340,27 @@ def _run_task_body(
                     "lane_candidate_caches": lane_caches,
                     "stage_timings_ms": model.stage_timings_ms,
                 }
+        elif mode == "sync-plays":
+            _progress(0.05)
+            sidecar_config = CuratorAPI(connection).config()["config"]
+            assert isinstance(sidecar_config, dict)
+            _log("i", "Synchronizing recent plays")
+            with span("python", "task.sync_plays"):
+                synced = SyncService(
+                    _client(payload),
+                    SyncRepository(connection),
+                    page_size=int(sidecar_config["sync_page_size"]),
+                ).sync(plays_only=True)
+            _progress(0.95)
+            changed_plays = int(synced.changed_entity_counts.get("scene_play", 0))
+            if changed_plays:
+                _log("i", f"Imported {changed_plays} recently played scenes")
+            _progress(0.99)
+            summary = {
+                "sync_run_id": synced.run_id,
+                "changed_play_scenes": changed_plays,
+                "scene_ids": synced.scene_ids,
+            }
         elif mode == "prepare":
             _progress(0.05)
             prepared_model_id = RecommendationModelStore(connection).current_model_id()

@@ -105,14 +105,28 @@ class SyncService:
         self.id_factory = id_factory or (lambda: str(uuid.uuid4()))
         self.progress = progress
 
-    def sync(self, *, full: bool = False) -> SyncResult:
-        mode = "full" if full else "incremental"
+    def sync(self, *, full: bool = False, plays_only: bool = False) -> SyncResult:
+        if full and plays_only:
+            raise ValueError("full and plays_only are mutually exclusive")
+        if plays_only:
+            # The play pass is a cheap, targeted follow-up after playback: plays never bump
+            # scenes.updated_at, so the scene pass cannot observe them. It shares the
+            # incremental run ledger (the mode column only allows 'incremental' and 'full'),
+            # which is safe because the cursor machinery keys resumption by run_id and the
+            # backend never runs two sidecar jobs at once.
+            run_mode = "incremental"
+            mode = "plays"
+        else:
+            run_mode = "full" if full else "incremental"
+            mode = run_mode
         capabilities = probe_capabilities(self.client)
-        existing = self.repository.resumable_run(mode)
+        existing = self.repository.resumable_run(run_mode)
         resumed = existing is not None
         if existing is None:
             run_id = self.id_factory()
-            self.repository.start_run(run_id, mode, capabilities.server_version, self.clock_ms())
+            self.repository.start_run(
+                run_id, run_mode, capabilities.server_version, self.clock_ms()
+            )
         else:
             run_id = str(existing["run_id"])
             self.repository.resume_run(run_id)
@@ -128,6 +142,8 @@ class SyncService:
             for operation in ENTITY_OPERATIONS
             if not (full and operation.incremental_only)
         )
+        if plays_only:
+            operations = tuple(operation for operation in operations if operation.incremental_only)
         try:
             for position, operation in enumerate(operations):
                 current_entity = operation.entity_type
@@ -145,7 +161,9 @@ class SyncService:
             current_entity = None
             if full:
                 self.repository.reconcile(run_id)
-            else:
+            elif not plays_only:
+                # The play pass has no id sweep (its ids_document is None), so pruning would
+                # be a no-op; skip it explicitly so a later play-only pass can never grow one.
                 for operation in operations:
                     current_entity = operation.entity_type
                     deleted = self._prune_deleted(operation)

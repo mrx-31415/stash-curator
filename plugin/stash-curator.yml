@@ -107,6 +107,10 @@ tasks:
     description: Publish pending feedback and playback signals without blocking the Curator page.
     execArgs:
       - update-model
+  - name: Sync recent plays
+    description: Import plays Stash recorded since the last sync so cooldown and recovery reflect your latest viewing. Runs automatically after Curator playback.
+    execArgs:
+      - sync-plays
   - name: Prepare recommendation pages
     description: Warm the fast page cache for the current model without rebuilding it.
     execArgs:
