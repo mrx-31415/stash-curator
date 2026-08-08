@@ -134,6 +134,7 @@
   let cachedConfigUpdatedAtMs = restoredCache.configUpdatedAtMs;
   let cacheGeneration = 0;
   let modelUpdateTimer = null;
+  let playSyncTimer = null;
   const localActivities = new Map();
   const activityListeners = new Set();
 
@@ -393,6 +394,18 @@
         .catch(() => {}),
       delay
     );
+  }
+
+  // Stash records plays without bumping scenes.updated_at, so only the play pass can bring
+  // cooldown and recovery context up to date. It is cheap (a watermark query since the last
+  // sync) and runs as an async Stash job, so coalesce bursts before firing it.
+  function schedulePlaySync() {
+    clearTimeout(playSyncTimer);
+    playSyncTimer = setTimeout(() => {
+      runTask("Sync recent plays").catch(() => {
+        // Retry on the next play, route change, or online event.
+      });
+    }, 8000);
   }
 
   function idFilter(ids) {
@@ -2377,6 +2390,7 @@
       if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
         clearSlateCache();
         scheduleModelUpdate();
+        schedulePlaySync();
       }
       const sent = new Set(entries.map(queueId));
       localStorage.setItem(EVENT_QUEUE_KEY, JSON.stringify(readQueue().filter((entry) => !sent.has(queueId(entry)))));
