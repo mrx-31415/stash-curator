@@ -1,0 +1,19 @@
+services:
+  stash:
+    image: stashapp/stash:latest
+    ports:
+      - "${STASH_PORT:-9999}:9999"
+    environment:
+      STASH_CONFIG_FILE: /root/.stash/config.yml
+    volumes:
+      - "${STASH_CONFIG:-/tmp/stash-curator-integration}:/root/.stash"
+      - stash-media:/media
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  stash-media:
