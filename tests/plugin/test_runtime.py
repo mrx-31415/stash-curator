@@ -903,6 +903,76 @@ def test_first_run_checklist_starts_setup_and_shows_actionable_errors() -> None:
     assert 'to: "/settings?tab=plugins"' in source
 
 
+def test_health_reports_all_running_curator_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_active_jobs", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    runtime = {
+        "version": {"version": "0.31.0"},
+        "jobQueue": [
+            {
+                "id": "sync-job",
+                "status": "RUNNING",
+                "description": "Sync and build recommendations",
+                "progress": 0.42,
+                "startTime": "2026-08-08T00:00:00Z",
+            },
+            {
+                "id": "expand-job",
+                "status": "WAITING",
+                "description": "Refresh Expand cache",
+                "progress": 0,
+                "startTime": "2026-08-08T00:01:00Z",
+            },
+            {
+                "id": "finished-job",
+                "status": "FINISHED",
+                "description": "Backup Curator data",
+                "progress": 1,
+                "startTime": "2026-08-07T00:00:00Z",
+            },
+        ],
+        "configuration": {"general": {"stashBoxes": []}},
+    }
+    monkeypatch.setattr(module, "_settings", lambda _payload: {})
+    monkeypatch.setattr(
+        module,
+        "_client",
+        lambda _payload: SimpleNamespace(execute=lambda *_args: runtime),
+    )
+
+    health = module._health({"args": {"database_path": str(tmp_path / "curator.sqlite3")}})
+
+    assert [job["id"] for job in health["active_jobs"]] == ["sync-job", "expand-job"]
+    assert health["active_job"]["id"] == "sync-job"
+
+
+def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts() -> None:
+    root = Path(__file__).parents[2]
+    source = (root / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    css = (root / "plugin" / "stash-curator.css").read_text(encoding="utf-8")
+
+    assert "function CuratorTaskIndicator({ activeJobs, activities, failure })" in source
+    assert "health?.active_jobs" in source
+    assert 'to: "/settings?tab=tasks"' in source
+    assert "curator-task-ring-indeterminate" in source
+    assert 'className: "curator-loading", role: "status"' in source
+    assert 'className: "curator-progress"' not in source
+    assert "Matching local tags (${tagChoices.length})" in source
+    assert "Collapse matching local tag ratings" in source
+    assert "compact: true" in source
+    assert 'const shortLabel = score === -1 ? "--"' in source
+    assert "curator-sentiment-compact" in css
+    assert ".curator-external-tag-rating-header" in css
+    assert ".curator-external-tag-row" in css
+    assert ".curator-active-job" not in css
+    assert ".curator-progress" not in css
+
+
 def test_reused_model_keeps_existing_lane_classifications(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

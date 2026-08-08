@@ -134,6 +134,35 @@
   let cachedConfigUpdatedAtMs = restoredCache.configUpdatedAtMs;
   let cacheGeneration = 0;
   let modelUpdateTimer = null;
+  const localActivities = new Map();
+  const activityListeners = new Set();
+
+  function notifyActivities() {
+    const snapshot = [...localActivities.values()];
+    activityListeners.forEach((listener) => listener(snapshot));
+  }
+
+  function setLocalActivity(key, active, label) {
+    if (active) localActivities.set(key, { key, label });
+    else localActivities.delete(key);
+    notifyActivities();
+  }
+
+  function useCuratorActivity(key, active, label) {
+    React.useEffect(() => {
+      setLocalActivity(key, active, label);
+      return () => setLocalActivity(key, false, label);
+    }, [key, active, label]);
+  }
+
+  function useLocalActivities() {
+    const [activities, setActivities] = React.useState(() => [...localActivities.values()]);
+    React.useEffect(() => {
+      activityListeners.add(setActivities);
+      return () => activityListeners.delete(setActivities);
+    }, []);
+    return activities;
+  }
 
   function uuid() {
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -422,16 +451,17 @@
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
-  function TagSentimentControl({ tag, value, blocked, onChange }) {
+  function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
     return React.createElement(
       "div",
-      { className: "curator-sentiment", role: "group", "aria-label": `Sentiment for ${tag.name}` },
-      React.createElement(Button, { size: "sm", className: `curator-sentiment-never${blocked ? " curator-sentiment-active" : ""}`, "aria-pressed": blocked, title: "Never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
+      { className: `curator-sentiment${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      React.createElement(Button, { size: "sm", className: `curator-sentiment-never${blocked ? " curator-sentiment-active" : ""}`, "aria-pressed": blocked, "aria-label": "Never show scenes with this tag", title: "Never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
       SENTIMENTS.map(([score, label, cls]) => {
         const selected = !blocked && value === score;
-        return React.createElement(Button, { key: score, size: "sm", className: `${cls}${selected ? " curator-sentiment-active" : ""}`, "aria-pressed": selected, title: label, onClick: () => onChange({ value: score, blocked: false }) }, label);
+        const shortLabel = score === -1 ? "--" : score === -0.5 ? "-" : score === 0 ? "0" : score === 0.5 ? "+" : "++";
+        return React.createElement(Button, { key: score, size: "sm", className: `${cls}${selected ? " curator-sentiment-active" : ""}`, "aria-pressed": selected, "aria-label": label, title: label, onClick: () => onChange({ value: score, blocked: false }) }, compact ? shortLabel : label);
       }),
-      (value !== null && value !== undefined || blocked) && React.createElement(Button, { size: "sm", variant: "link", onClick: () => onChange({ value: null, blocked: false }) }, "Clear answer")
+      (value !== null && value !== undefined || blocked) && React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
   }
 
@@ -476,6 +506,7 @@
     const [query, setQuery] = React.useState("");
     const [sort, setSort] = React.useState("suggested");
     const [status, setStatus] = React.useState("all");
+    useCuratorActivity("taste", !data && !error, "Loading taste profile…");
     React.useEffect(() => {
       let active = true;
       operation({ operation: "get_taste_profile" }).then(
@@ -629,6 +660,7 @@
     const [tagChoices, setTagChoices] = React.useState(null);
     const [tagLoading, setTagLoading] = React.useState(false);
     const [tagError, setTagError] = React.useState("");
+    useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
     const payload = item.payload;
     if (!payload) return null;
     const image = payload.images?.find((value) => value.url)?.url;
@@ -697,7 +729,7 @@
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
       React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)} · appeal ${item.appeal.toFixed(2)}`; const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, scoreDetail))); })()),
-      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id }, React.createElement("strong", null, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, blocked: tag.direct_blocked, onChange: (value) => answerTag(tag, value) })))),
+      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, `Matching local tags (${tagChoices.length})`), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id, className: "curator-external-tag-row" }, React.createElement("strong", { className: "curator-external-tag-name" }, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, blocked: tag.direct_blocked, compact: true, onChange: (value) => answerTag(tag, value) })))),
       React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
     );
   });
@@ -849,6 +881,7 @@
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [version, setVersion] = React.useState(0);
+    useCuratorActivity("feedback-history", loading, "Loading feedback history…");
     React.useEffect(() => {
       let active = true;
       setLoading(true);
@@ -1058,6 +1091,7 @@
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
+    useCuratorActivity("recommendation-history", loading, "Loading recommendation history…");
     React.useEffect(() => {
       let active = true;
       setLoading(true);
@@ -1196,6 +1230,7 @@
     const [followUps, setFollowUps] = React.useState([]);
     const codeVersionRef = React.useRef("");
     const [includeOwned, setIncludeOwned] = React.useState(true);
+    useCuratorActivity("similar", loading, "Finding close matches…");
     const sceneSearch = GQL.useFindScenesQuery({
       variables: { filter: { q: search, per_page: 8 } },
       skip: entityType !== "scene" || !search,
@@ -1366,7 +1401,7 @@
         !sceneSearch.loading && !performerSearch.loading && candidates.length === 0 && React.createElement("p", null, "No matches found.")
       ),
       selected && React.createElement("div", { className: "curator-similar-reference" }, React.createElement("strong", null, "Comparing from"), React.createElement(SourceReference, { entity: sourceEntity, type: entityType, fallback: selected })),
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       result && source === "library" && React.createElement(
@@ -1403,6 +1438,7 @@
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [version, setVersion] = React.useState(0);
+    useCuratorActivity("prune", loading, "Reviewing prune evidence…");
     React.useEffect(() => {
       let active = true;
       setLoading(true);
@@ -1455,7 +1491,7 @@
         view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => (setAggressiveness(Number(event.target.value)), setPage(1)), "aria-label": "Prune prediction aggressiveness" })),
         view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
       ),
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, view === "suspects" ? "No scenes cross this prediction threshold. Direct dislikes appear under Explicit dislikes; suspects need a rebuilt model with enough repeated negative evidence." : "Nothing in this view."),
       data && React.createElement(
@@ -1504,6 +1540,7 @@
     const [huntPerformer, setHuntPerformer] = React.useState(() => huntOnly && initialPerformerId ? { id: initialPerformerId, name: initialPerformerLabel || initialPerformerId, external: true } : null);
     const [huntView, setHuntView] = React.useState("unlinked");
     const [huntSort, setHuntSort] = React.useState("date");
+    useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, huntOnly ? "Querying StashDB…" : "Loading Expand cache…");
     React.useEffect(() => {
       let active = true;
       if (entityType === "hunt" && !huntPerformer) {
@@ -1632,7 +1669,7 @@
       entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
       entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => (setPage(1), setHidePhashMatches(value.hidePhashMatches !== false), setIncludeTags(value.includeTags || []), setExcludeTags(value.excludeTags || [])) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFiltersOpen(false)) }, "Apply"))),
       entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => (setPage(1), setHidePhashMatches((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, entityType === "hunt" ? "Querying StashDB…" : "Loading Expand cache…"), React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, entityType === "hunt" ? "Querying StashDB…" : "Loading Expand cache…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
@@ -1652,14 +1689,19 @@
 
   function BackupPanel() {
     const [data, setData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
     const [busy, setBusy] = React.useState(false);
     const [message, setMessage] = React.useState("");
     const [error, setError] = React.useState("");
+    useCuratorActivity("backups", loading || busy, loading ? "Loading backups…" : "Updating backups…");
     async function load() {
+      setLoading(true);
       try {
         setData(await operation({ operation: "list_backups" }));
       } catch (failure) {
         setError(failure.message);
+      } finally {
+        setLoading(false);
       }
     }
     React.useEffect(() => { load(); }, []);
@@ -1717,6 +1759,7 @@
       "section",
       { className: "curator-backup-page" },
       React.createElement(Button, { size: "sm", disabled: busy, onClick: create }, busy ? "Working…" : "Create backup"),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading backups…"),
       data && React.createElement("p", null, `Backup directory: ${data.backup_directory}`),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
@@ -1746,6 +1789,7 @@
     const [selected, setSelected] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
+    useCuratorActivity("profiling", loading, "Loading profiles…");
 
     async function load() {
       setLoading(true);
@@ -1829,14 +1873,19 @@
 
   function DiagnosticsPanel() {
     const [report, setReport] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
     const [message, setMessage] = React.useState("");
     const [error, setError] = React.useState("");
+    useCuratorActivity("diagnostics", loading, "Loading diagnostics…");
     async function load() {
+      setLoading(true);
       setError("");
       try {
         setReport(await operation({ operation: "get_diagnostics" }));
       } catch (failure) {
         setError(failure.message);
+      } finally {
+        setLoading(false);
       }
     }
     React.useEffect(() => { load(); }, []);
@@ -1868,9 +1917,36 @@
         React.createElement(Button, { size: "sm", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
         React.createElement(Button, { size: "sm", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
       ),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading diagnostics…"),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       report && React.createElement("pre", { className: "curator-diagnostics-preview" }, preview)
+    );
+  }
+
+  function CuratorTaskIndicator({ activeJobs, activities, failure }) {
+    const tasks = [
+      ...activeJobs.map((job) => ({
+        key: `job-${job.id}`,
+        label: job.description || "Curator task",
+        progress: typeof job.progress === "number" ? job.progress : null,
+      })),
+      ...activities,
+    ];
+    const running = tasks.length > 0;
+    const primary = tasks[0];
+    const state = running ? "running" : failure ? "failed" : "idle";
+    const progress = primary?.progress ?? null;
+    const detail = tasks.map((task) => task.label).join("; ");
+    const label = running
+      ? `${tasks.length} Curator task${tasks.length === 1 ? "" : "s"} running: ${detail}`
+      : failure
+        ? `Last Curator task failed: ${failure.error || "Open Tasks for details"}`
+        : "Curator is idle";
+    return React.createElement(
+      NavLink,
+      { className: `curator-task-indicator curator-task-indicator-${state}`, to: "/settings?tab=tasks", title: `${label}. Open Tasks`, "aria-label": `${label}. Open Tasks` },
+      React.createElement("span", { className: `curator-task-ring${running && progress === null ? " curator-task-ring-indeterminate" : ""}`, style: progress === null ? undefined : { "--curator-progress": `${Math.round(progress * 360)}deg` }, "aria-hidden": "true" }, running && progress !== null ? `${Math.round(progress * 100)}%` : state === "failed" ? "!" : state === "idle" ? "✓" : "")
     );
   }
 
@@ -1878,6 +1954,7 @@
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
+    const activities = useLocalActivities();
 
     async function refreshStatus() {
       try {
@@ -1899,10 +1976,10 @@
       refreshStatus();
     }, []);
     React.useEffect(() => {
-      if (!health?.active_job) return undefined;
+      if (!health?.active_jobs?.length && !health?.active_job) return undefined;
       const timer = setInterval(refreshStatus, 5000);
       return () => clearInterval(timer);
-    }, [Boolean(health?.active_job)]);
+    }, [Boolean(health?.active_jobs?.length || health?.active_job)]);
 
     async function start(taskName) {
       try {
@@ -1933,8 +2010,9 @@
         : health?.ready
           ? "Ready"
           : "Not built";
-    const activeJob = health?.active_job;
-    const progress = typeof activeJob?.progress === "number" ? activeJob.progress : null;
+    const activeJobs = health?.active_jobs || (health?.active_job ? [health.active_job] : []);
+    const activeJob = activeJobs[0];
+    const latestFailure = !activeJobs.length && jobs[0]?.state === "failed" ? jobs[0] : null;
     const setupChecklist = health && !health.ready && React.createElement(
       "section",
       { className: "curator-setup-checklist", "aria-labelledby": "curator-setup-heading" },
@@ -1966,6 +2044,7 @@
           "div",
           { className: "curator-status", role: "status" },
           React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
+          React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure }),
           React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
           React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
           health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
@@ -1980,7 +2059,6 @@
         )
       ),
       setupChecklist,
-      activeJob && React.createElement("div", { className: "curator-active-job" }, React.createElement("span", null, activeJob.description), progress !== null && React.createElement("strong", null, `${Math.round(progress * 100)}%`), React.createElement("div", { className: "curator-job-progress" }, React.createElement("span", { style: { width: `${Math.round((progress || 0) * 100)}%` } })), React.createElement(NavLink, { to: "/settings?tab=tasks" }, "View tasks")),
       lastError && React.createElement("small", { className: "curator-header-message text-danger" }, lastError.error),
       message && React.createElement("p", { className: "curator-header-message", role: "status" }, message)
     );
@@ -2072,6 +2150,7 @@
     const visibleItems = resolved
       ? (slate?.items || []).filter((item) => scenes.has(String(item.scene_id)))
       : slate?.items || [];
+    useCuratorActivity("recommendations", loading || loadingComponents || scenesQuery.loading, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…");
     function remove(sceneId) {
       clearSlateCache();
       const excluded = laneExclusions.get(lane) || new Set();
@@ -2205,8 +2284,7 @@
         React.createElement(
           "div",
           { className: "curator-loading", role: "status" },
-          React.createElement("span", null, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…"),
-          React.createElement("div", { className: "curator-progress", "aria-hidden": "true" })
+          React.createElement("span", null, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…")
         ),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
