@@ -573,14 +573,13 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Vacuum compacted Curator data",
         "Refresh Expand cache",
     }
-    active_job = next(
-        (
-            job
-            for job in (stash.get("jobQueue") or [])
-            if any(name in str(job.get("description") or "") for name in task_names)
-        ),
-        None,
-    )
+    active_jobs = [
+        job
+        for job in (stash.get("jobQueue") or [])
+        if any(name in str(job.get("description") or "") for name in task_names)
+        and str(job.get("status") or "").casefold() in {"waiting", "running"}
+    ]
+    active_job = active_jobs[0] if active_jobs else None
     connection = _open(payload, settings)
     try:
         now_ms = time.time_ns() // 1_000_000
@@ -668,6 +667,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "model_update_ready": model_update_ready,
         "model_rebuilding": model_rebuilding is not None and active_job is not None,
         "active_job": active_job,
+        "active_jobs": active_jobs,
         "last_sync_at_ms": int(last_sync[0]) if last_sync else None,
     }
 
