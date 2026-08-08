@@ -59,6 +59,15 @@ query FindPerformer($name: String!) {
 }
 """
 
+QUERY_FIND_SCENE = """
+query FindScene($title: String!) {
+  findScenes(
+    scene_filter: {title: {value: $title, modifier: EQUALS}}
+    filter: {page: 1, per_page: 1}
+  ) { scenes { id } }
+}
+"""
+
 SEED_TAGS = [
     {"name": "Blowjob"},
     {"name": "Anal"},
@@ -135,33 +144,63 @@ def stash_request(
 
 
 def create_tags(stash_url: str) -> dict[str, str]:
-    """Create seed tags and return a {name: id} mapping."""
+    """Find-or-create seed tags and return a {name: id} mapping.
+
+    The integration harness reuses the Stash config directory between runs, so the
+    database outlives a container teardown; re-seeding must not collide.
+    """
     tag_ids: dict[str, str] = {}
     for tag_def in SEED_TAGS:
-        data = stash_request(stash_url, MUTATION_TAG_CREATE, {"input": tag_def})
-        tag_id = data["tagCreate"]["id"]
+        existing = stash_request(stash_url, QUERY_FIND_TAG, {"name": tag_def["name"]})["findTags"][
+            "tags"
+        ]
+        match = next((item for item in existing if str(item.get("name")) == tag_def["name"]), None)
+        if match is not None:
+            tag_id = str(match["id"])
+            print(f"  tag: {tag_def['name']} ({tag_id}) [exists]")
+        else:
+            data = stash_request(stash_url, MUTATION_TAG_CREATE, {"input": tag_def})
+            tag_id = data["tagCreate"]["id"]
+            print(f"  tag: {tag_def['name']} ({tag_id})")
         tag_ids[tag_def["name"]] = tag_id
-        print(f"  tag: {tag_def['name']} ({tag_id})")
     return tag_ids
 
 
 def create_performers(stash_url: str) -> dict[str, str]:
-    """Create seed performers and return a {name: id} mapping."""
+    """Find-or-create seed performers and return a {name: id} mapping."""
     performer_ids: dict[str, str] = {}
     for perf in SEED_PERFORMERS:
-        data = stash_request(stash_url, MUTATION_PERFORMER_CREATE, {"input": perf})
-        perf_id = data["performerCreate"]["id"]
+        existing = stash_request(stash_url, QUERY_FIND_PERFORMER, {"name": perf["name"]})[
+            "findPerformers"
+        ]["performers"]
+        match = next((item for item in existing if str(item.get("name")) == perf["name"]), None)
+        if match is not None:
+            perf_id = str(match["id"])
+            print(f"  performer: {perf['name']} ({perf_id}) [exists]")
+        else:
+            data = stash_request(stash_url, MUTATION_PERFORMER_CREATE, {"input": perf})
+            perf_id = data["performerCreate"]["id"]
+            print(f"  performer: {perf['name']} ({perf_id})")
         performer_ids[perf["name"]] = perf_id
-        print(f"  performer: {perf['name']} ({perf_id})")
     return performer_ids
 
 
 def create_scenes(
     stash_url: str, tag_ids: dict[str, str], performer_ids: dict[str, str]
 ) -> list[str]:
-    """Create seed scenes with tag and performer links."""
+    """Find-or-create seed scenes with tag and performer links."""
     scene_ids: list[str] = []
     for scene in SEED_SCENES:
+        existing = stash_request(
+            stash_url,
+            QUERY_FIND_SCENE,
+            {"title": scene["title"]},
+        )["findScenes"]["scenes"]
+        if existing:
+            scene_id = str(existing[0]["id"])
+            scene_ids.append(scene_id)
+            print(f"  scene: {scene['title']} ({scene_id}) [exists]")
+            continue
         tag_list = [tag_ids[n] for n in scene["tag_names"]]
         perf_list = [performer_ids[n] for n in scene["performer_names"]]
         data = stash_request(
