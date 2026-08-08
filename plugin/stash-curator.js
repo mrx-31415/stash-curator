@@ -426,7 +426,7 @@
     return React.createElement(
       "div",
       { className: "curator-sentiment", role: "group", "aria-label": `Sentiment for ${tag.name}` },
-      React.createElement(Button, { size: "sm", variant: blocked ? "danger" : "secondary", "aria-pressed": blocked, title: "Block: never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "✕"),
+      React.createElement(Button, { size: "sm", variant: blocked ? "danger" : "secondary", "aria-pressed": blocked, title: "Block: never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
       SENTIMENTS.map(([score, label]) =>
         React.createElement(Button, { key: score, size: "sm", variant: !blocked && value === score ? "primary" : "secondary", "aria-pressed": !blocked && value === score, title: label, onClick: () => onChange({ value: score, blocked: false }) }, label)
       ),
