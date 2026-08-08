@@ -6,6 +6,7 @@ Start with: docker compose -f tests/integration/docker-compose.yml up -d
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -29,10 +30,8 @@ def _dismiss_modals(page: Page) -> None:
         ):
             btn = page.locator(sel)
             if btn.count() > 0:
-                try:
+                with contextlib.suppress(Exception):
                     btn.first.click(force=True, timeout=2000)
-                except Exception:
-                    pass
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
         if page.locator("div.modal.show").count() == 0:
