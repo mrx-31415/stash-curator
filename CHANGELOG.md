@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/mrx-31415/stash-curator/compare/v0.5.1...v0.5.2) (2026-08-08)
+
+
+### Documentation
+
+* clarify product behavior and onboarding ([10ead56](https://github.com/mrx-31415/stash-curator/commit/10ead56fb8f14e5461c7a26d042d49f605f646f1))
+
 ## [0.5.1](https://github.com/mrx-31415/stash-curator/compare/v0.5.0...v0.5.1) (2026-08-08)
 
 
