@@ -1218,3 +1218,89 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '"Configure Whisparr in plugin settings"' in source
     assert '"Retry sending to Whisparr"' in source
     assert '"Send to Whisparr"' in source
+
+
+def test_entity_hook_upserts_destroys_and_requests_model_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stash entity hooks import or remove one entity and mark the model dirty."""
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_entity_hook", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "curator.sqlite3"
+
+    def scene() -> dict[str, object]:
+        return {
+            "id": "1",
+            "title": "Hooked Scene",
+            "details": None,
+            "date": "2025-01-01",
+            "rating100": None,
+            "updated_at": "2026-01-01T00:00:00Z",
+            "play_count": 0,
+            "play_duration": 0.0,
+            "play_history": [],
+            "o_history": [],
+            "studio": None,
+            "tags": [],
+            "performers": [],
+            "files": [],
+            "scene_markers": [],
+        }
+
+    class FakeClient:
+        def execute(self, document: str, variables: object = None) -> dict[str, object]:
+            assert "CuratorFindScene" in document
+            return {"findScene": scene()}
+
+    monkeypatch.setattr(module, "_settings", lambda _payload: {})
+    monkeypatch.setattr(module, "_client", lambda _payload: FakeClient())
+
+    def hook_payload(hook_type: str) -> dict[str, object]:
+        return {
+            "args": {
+                "database_path": str(database),
+                "hookContext": {"id": 1, "type": hook_type, "input": {}, "inputFields": []},
+            }
+        }
+
+    updated = module._run_entity_hook(hook_payload("Scene.Update.Post"))
+    assert updated == {
+        "handled": True,
+        "hook_type": "Scene.Update.Post",
+        "entity_type": "scene",
+        "entity_id": "1",
+        "changed": True,
+    }
+
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        assert (
+            connection.execute("SELECT title FROM source_scene WHERE scene_id='1'").fetchone()[0]
+            == "Hooked Scene"
+        )
+        state = connection.execute(
+            "SELECT requested_generation, published_generation FROM model_update_state"
+            " WHERE singleton=1"
+        ).fetchone()
+        assert state["requested_generation"] > state["published_generation"]
+    finally:
+        connection.close()
+
+    destroyed = module._run_entity_hook(hook_payload("Scene.Destroy.Post"))
+    assert destroyed["handled"] is True
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+    # A recognized-but-unhandled hook type (tag merges are deferred) is a no-op.
+    unknown = module._run_entity_hook(hook_payload("Tag.Merge.Post"))
+    assert unknown == {"handled": False, "hook_type": "Tag.Merge.Post"}
+
+    # A malformed payload never raises (hooks run inline inside Stash mutations).
+    malformed = module._run_entity_hook({"args": {"hookContext": {"type": "Scene.Update.Post"}}})
+    assert malformed["handled"] is False

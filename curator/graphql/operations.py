@@ -184,6 +184,43 @@ query CuratorScenePlays(
 )
 
 ENTITY_OPERATIONS = (TAGS, STUDIOS, PERFORMERS, SCENES, SCENE_PLAYS)
+
+# Single-entity lookups for hook-triggered targeted syncs. They mirror the field lists
+# of the list operations above so the same adapters apply unchanged.
+FIND_SCENE = f"""
+query CuratorFindScene($id: ID!) {{
+  findScene(id: $id) {{{SCENE_FIELDS}}}
+}}
+"""
+
+FIND_PERFORMER = """
+query CuratorFindPerformer($id: ID!) {
+  findPerformer(id: $id) {
+    id name gender favorite rating100 birthdate ethnicity country eye_color hair_color
+    height_cm weight measurements fake_tits tattoos piercings updated_at
+    tags { id name updated_at }
+  }
+}
+"""
+
+FIND_TAG = """
+query CuratorFindTag($id: ID!) {
+  findTag(id: $id) {
+    id name updated_at stash_ids { endpoint stash_id }
+    parents { id name updated_at }
+  }
+}
+"""
+
+FIND_STUDIO = """
+query CuratorFindStudio($id: ID!) {
+  findStudio(id: $id) {
+    id name favorite rating100 updated_at
+    parent_studio { id name updated_at }
+  }
+}
+"""
+
 ALL_DOCUMENTS = (
     CAPABILITIES,
     *(operation.document for operation in ENTITY_OPERATIONS),
@@ -192,4 +229,8 @@ ALL_DOCUMENTS = (
         for operation in ENTITY_OPERATIONS
         if operation.ids_document is not None
     ),
+    FIND_SCENE,
+    FIND_PERFORMER,
+    FIND_TAG,
+    FIND_STUDIO,
 )
