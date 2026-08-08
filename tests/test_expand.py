@@ -6,7 +6,7 @@ from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService, normalize_phash
 from curator.features import FeatureStore
 from curator.interactions import InteractionStore
-from curator.model import PreferenceModelBuilder
+from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from tests.model.test_builder import REFERENCE_MS, _database
 
 
@@ -76,6 +76,22 @@ class PagedStashDB(FakeStashDB):
 class OfflineStashDB:
     def execute(self, _document: str, _variables: dict[str, object]):
         raise RuntimeError("offline")
+
+
+class NoChangeStashDB(FakeStashDB):
+    """Serve one refresh, then report nothing changed since the watermark."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.changed = True
+
+    def execute(self, document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        if not self.changed and "updated_at" in input_data:
+            self.inputs.append(input_data)
+            return {"queryScenes": {"count": 0, "scenes": []}}
+        return super().execute(document, variables)
 
 
 class PerformerHuntStashDB(FakeStashDB):
@@ -264,6 +280,7 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         "scene_count": 1,
         "performer_count": 1,
         "taxonomy_refreshed": False,
+        "incremental": False,
     }
     assert 1 <= len(client.inputs) <= 3
     assert [processed for processed, _ in progress] == sorted(
@@ -372,6 +389,130 @@ def test_expand_wildcard_is_opt_in_and_bad_queries_are_rejected(tmp_path: Path) 
     assert all(
         "wildcard" in item["sources"]
         for item in ExpandService(connection).results("scene")["items"]
+    )
+
+
+def test_refresh_is_incremental_and_preserves_the_candidate_pool(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    client = NoChangeStashDB()
+
+    first = service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=10)
+    assert first["incremental"] is False
+    assert not any("updated_at" in item for item in client.inputs)
+
+    # Nothing changed on StashDB: the second refresh fetches only entries updated since
+    # the previous fetched_at and keeps every existing row.
+    client.changed = False
+    client.inputs.clear()
+    second = service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+    assert second["incremental"] is True
+    assert client.inputs
+    assert all("updated_at" in item for item in client.inputs)
+    assert all(item["sort"] == "UPDATED_AT" for item in client.inputs)
+    assert [item["id"] for item in service.results("scene")["items"]] == ["new-external-scene"]
+    cache = connection.execute(
+        "SELECT fetched_at_ms, scene_count FROM expand_cache WHERE singleton=1"
+    ).fetchone()
+    assert cache["fetched_at_ms"] == REFERENCE_MS + 86_400_000
+    assert cache["scene_count"] == 1
+
+
+def test_refresh_preserves_explore_rows_from_hunts_and_similar(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    service._merge_external(
+        "scene",
+        [{"id": "explored-scene", "payload": {}, "score": 0.5, "sources": ["similar"]}],
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM external_entity WHERE pool='explore'").fetchone()[
+            0
+        ]
+        == 1
+    )
+
+    client = NoChangeStashDB()
+    client.changed = False
+    service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+
+    assert (
+        connection.execute("SELECT count(*) FROM external_entity WHERE pool='explore'").fetchone()[
+            0
+        ]
+        == 1
+    )
+
+
+def test_rescore_candidates_refreshes_stored_scores_after_a_model_change(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    connection.execute(
+        "UPDATE external_entity SET score=0.99 WHERE entity_type='scene' AND external_id=?",
+        ("new-external-scene",),
+    )
+    connection.commit()
+    model_id = str(RecommendationModelStore(connection).current_model_id())
+    feature_version = str(FeatureStore(connection).current_version())
+
+    service._rescore_candidates(model_id, feature_version, links)
+
+    score = connection.execute(
+        "SELECT score FROM external_entity WHERE entity_type='scene' AND external_id=?",
+        ("new-external-scene",),
+    ).fetchone()
+    assert float(score[0]) != 0.99
+
+
+def test_refresh_purges_candidates_older_than_the_horizon(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    connection.execute(
+        "UPDATE external_entity SET payload_json=json_set(payload_json, '$.release_date', ?)"
+        " WHERE entity_type='scene' AND external_id=?",
+        ("2000-01-01", "new-external-scene"),
+    )
+    connection.commit()
+
+    client = NoChangeStashDB()
+    client.changed = False
+    service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM external_entity WHERE entity_type='scene'"
+            " AND pool='candidate' AND external_id='new-external-scene'"
+        ).fetchone()[0]
+        == 0
     )
 
 
