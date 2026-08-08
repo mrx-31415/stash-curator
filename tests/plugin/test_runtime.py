@@ -454,8 +454,8 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
-    assert '[-1, "Strong dislike"]' in source
-    assert '[1, "Strong like"]' in source
+    assert '[-1, "Strong dislike", "curator-sentiment-danger"]' in source
+    assert '[1, "Strong like", "curator-sentiment-love"]' in source
     assert '"Clear answer"' in source
     assert '"Search taste profile tags"' in source
     assert '"Filter taste profile tags"' in source
