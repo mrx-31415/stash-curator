@@ -24,6 +24,9 @@ dev = [
   "ruff>=0.9",
   "scipy>=1.14",
 ]
+integration = [
+  "pytest-playwright>=0.7",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["curator"]
@@ -47,3 +50,6 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
+markers = [
+  "integration: browser integration tests (requires Stash + Docker)",
+]

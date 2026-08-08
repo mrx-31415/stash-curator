@@ -1,0 +1,4 @@
+# Minimal Stash configuration for integration tests
+plugins:
+  stash-curator:
+    enabled: true
