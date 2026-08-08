@@ -1,13 +1,10 @@
 """Fixtures for Curator browser integration tests.
 
 Lifecycle:
-  1. docker compose -f tests/integration/docker-compose.yml up -d
-  2. python tests/integration/seed.py --stash-url http://localhost:9999
-  3. pytest tests/integration/ --stash-url http://localhost:9999
+  1. scripts/verify integration     (handles build, start, seed, test, teardown)
+  2. pytest --base-url http://localhost:9999 tests/integration/
 
-The plugin must be pre-installed into the Stash config volume before start:
-  scripts/build_plugin.py
-  unzip -oq dist/stash-curator.zip -d <stash-config>/plugins/stash-curator/
+The `base_url` fixture is provided by pytest-playwright.
 """
 
 from __future__ import annotations
@@ -26,14 +23,6 @@ import pytest
 
 INTEGRATION_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = INTEGRATION_DIR.parents[1]
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        "--stash-url",
-        default=os.environ.get("STASH_URL", "http://localhost:9999"),
-        help="Stash base URL for integration tests",
-    )
 
 
 def _gql(stash_url: str, query: str, variables: dict[str, object] | None = None) -> dict[str, Any]:
@@ -71,19 +60,12 @@ def _wait_for_stash(url: str, timeout: float = 120) -> None:
     raise RuntimeError(f"Stash not ready at {url} after {timeout}s: {last}")
 
 
-# ── session-scoped fixtures ──────────────────────────────────────────────────
-
-
 @pytest.fixture(scope="session")
-def stash_url(request: pytest.FixtureRequest) -> str:
-    url: str = request.config.getoption("--stash-url").rstrip("/")
-    _wait_for_stash(url)
-    return url
+def seeded() -> None:
+    """Seed Stash with test data. Uses STASH_URL or defaults to localhost:9999."""
+    stash_url = os.environ.get("STASH_URL", "http://localhost:9999").rstrip("/")
+    _wait_for_stash(stash_url)
 
-
-@pytest.fixture(scope="session")
-def seeded(stash_url: str) -> str:
-    """Ensure Stash has seed data. Idempotent — skips if already present."""
     try:
         data = _gql(
             stash_url,
@@ -95,15 +77,12 @@ def seeded(stash_url: str) -> str:
             {"n": "Blowjob"},
         )
         if data["findTags"]["count"] > 0 and os.environ.get("FORCE_SEED") != "1":
-            print("[conftest] seed data already present, skipping")
-            return stash_url
+            return
     except Exception:
         pass
 
-    print("[conftest] seeding Stash …")
     subprocess.run(
         [sys.executable, str(INTEGRATION_DIR / "seed.py"), "--stash-url", stash_url],
         check=True,
         cwd=PROJECT_ROOT,
     )
-    return stash_url

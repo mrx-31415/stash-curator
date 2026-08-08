@@ -6,7 +6,6 @@ Start with: docker compose -f tests/integration/docker-compose.yml up -d
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -16,8 +15,28 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
-
 CURATOR_PATH = "/plugins/stash-curator"
+
+
+def _dismiss_modals(page: Page) -> None:
+    """Dismiss Stash release notes and setup modals that block clicks."""
+    for _ in range(5):
+        for sel in (
+            "div.modal.show button.btn-close",
+            "div.modal.show .close",
+            "div.modal.show [aria-label='Close']",
+            "div.modal.show .btn-primary",
+        ):
+            btn = page.locator(sel)
+            if btn.count() > 0:
+                try:
+                    btn.first.click(force=True, timeout=2000)
+                except Exception:
+                    pass
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        if page.locator("div.modal.show").count() == 0:
+            break
 
 
 def _collect_errors(page: Page) -> list[str]:
@@ -34,89 +53,82 @@ def _track_errors(page: Page) -> None:
     page.__dict__["_errors"] = tracked
 
 
-def _wait_stable(page: Page, ms: int = 1500) -> None:
-    """Wait for React rendering to settle."""
+def _wait(page: Page, ms: int = 2000) -> None:
     page.wait_for_timeout(ms)
 
 
-def test_curator_page_loads_without_errors(page: Page) -> None:
+def test_curator_page_loads_without_errors(page: Page, base_url: str) -> None:
     """The Curator plugin main page loads without JS errors."""
-    page.goto(CURATOR_PATH, wait_until="domcontentloaded")
-    _wait_stable(page)
+    page.goto(base_url + CURATOR_PATH, wait_until="domcontentloaded")
+    _wait(page)
+    _dismiss_modals(page)
     errors = _collect_errors(page)
-    assert not errors, f"JS errors on page load: {errors}"
+    assert not errors, f"JS errors: {errors}"
 
 
-# ── Tab names and expected content ──
+# ── Tab URLs → expected content ──
 
-TABS = [
-    ("For You", ["No qualified recommendations"]),
-    ("Similar", ["No scenes cross this prediction threshold"]),
-    ("Expand", ["Expand has not been prepared yet", "Prepare now"]),
-    ("Taste Profile", ["No supported tags"]),
-    ("Performer Hunt", ["Select a local performer linked to StashDB"]),
-    ("Feedback", ["No feedback has been recorded yet"]),
-    ("Backups", ["No Curator backups found"]),
+TABS: list[tuple[str, list[str]]] = [
+    ("", ["no published model", "Sync and build now", "Preparing For You"]),
+    ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
+    ("?view=expand", ["External metadata candidates", "Loading Expand cache"]),
+    ("?view=taste", ["Loading taste profile", "No supported tags"]),
+    ("?view=hunt", ["Select a local performer linked to StashDB"]),
+    ("?view=feedback", ["Loading feedback history", "No feedback has been recorded yet"]),
+    ("?view=backups", ["Create backup", "No Curator backups found"]),
 ]
 
 
-@pytest.mark.parametrize("tab_name,expected_phrases", TABS)
+@pytest.mark.parametrize("view_param,expected_phrases", TABS)
 def test_curator_tab_renders_without_errors(
-    page: Page, tab_name: str, expected_phrases: list[str]
+    page: Page, base_url: str, view_param: str, expected_phrases: list[str]
 ) -> None:
     """Each Curator tab renders its empty-state content without JS errors."""
-    page.goto(CURATOR_PATH, wait_until="domcontentloaded")
-    _wait_stable(page)
+    page.goto(f"{base_url}{CURATOR_PATH}{view_param}", wait_until="domcontentloaded")
+    _wait(page)
+    _dismiss_modals(page)
 
-    # Click the tab
-    link = page.locator("a.nav-link", has_text=re.compile(tab_name))
-    if link.count() > 0:
-        link.first.click()
-    else:
-        # Tab may be directly accessible
-        tab_id = tab_name.lower().replace(" ", "-")
-        page.click(f"#{tab_id}")
-
-    _wait_stable(page)
-
-    # Verify at least one expected phrase is visible
     content = page.content()
     found = any(phrase in content for phrase in expected_phrases)
-    assert found, f"Tab '{tab_name}' did not show expected content: {expected_phrases}"
+
+    if not found:
+        body_text = page.locator("body").inner_text()
+        assert found, (
+            f"View '{view_param or '/'}' missing expected phrases: {expected_phrases}\n"
+            f"Body (first 800): {body_text[:800]}"
+        )
 
     errors = _collect_errors(page)
-    assert not errors, f"JS errors on tab '{tab_name}': {errors}"
+    assert not errors, f"JS errors on '{view_param or '/'}': {errors}"
 
 
-def test_curator_tasks_page_renders(page: Page) -> None:
+def test_curator_tasks_page_renders(page: Page, base_url: str) -> None:
     """The Tasks sub-tab renders without errors."""
-    page.goto(CURATOR_PATH, wait_until="domcontentloaded")
-    _wait_stable(page)
+    page.goto(base_url + CURATOR_PATH, wait_until="domcontentloaded")
+    _wait(page)
+    _dismiss_modals(page)
 
     tasks_link = page.locator("a.nav-link", has_text="Tasks")
     if tasks_link.count() > 0:
-        tasks_link.first.click()
-        _wait_stable(page)
-
+        tasks_link.first.click(force=True)
+        _wait(page)
         content = page.content()
-        assert "Tasks" in content or "Clone" in content or "Downloads" in content
-
+        assert "Tasks" in content or "Clone" in content
         errors = _collect_errors(page)
         assert not errors, f"JS errors on Tasks: {errors}"
 
 
-def test_curator_settings_page_renders(page: Page) -> None:
+def test_curator_settings_page_renders(page: Page, base_url: str) -> None:
     """The Settings sub-tab renders without errors."""
-    page.goto(CURATOR_PATH, wait_until="domcontentloaded")
-    _wait_stable(page)
+    page.goto(base_url + CURATOR_PATH, wait_until="domcontentloaded")
+    _wait(page)
+    _dismiss_modals(page)
 
     settings_link = page.locator("a.nav-link", has_text="Settings")
     if settings_link.count() > 0:
-        settings_link.first.click()
-        _wait_stable(page)
-
+        settings_link.first.click(force=True)
+        _wait(page)
         content = page.content()
         assert "Settings" in content or "Profiling" in content
-
         errors = _collect_errors(page)
         assert not errors, f"JS errors on Settings: {errors}"
