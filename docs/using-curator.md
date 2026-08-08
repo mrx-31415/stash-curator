@@ -9,11 +9,11 @@ permalink: /using-curator/
 
 | Lane | Best used for |
 | --- | --- |
-| **For You** | A varied everyday slate drawn from the other recommendation policies |
-| **Best Bets** | Reliable unseen matches with enough supporting evidence |
-| **Revisit** | Previously enjoyed scenes whose cooldown has recovered |
-| **Discover** | Familiar appeal plus one explained unknown or stretch |
-| **Adventure** | Deliberate model-gap probes where more misses are expected |
+| **For You** | A varied everyday mix of dependable matches, revisits, and a little discovery |
+| **Best Bets** | Strong unseen matches with enough independent supporting evidence |
+| **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
+| **Discover** | Mostly familiar recommendations plus one explained test of your taste |
+| **Adventure** | Deliberate probes into uncertain or under-covered parts of the model |
 
 Cards are arranged as a slate. Curator avoids adjacent performer repetition and
 softly varies studios and content, so the page is not merely the top 20 scores.
@@ -31,8 +31,9 @@ The structured evidence—not generated prose—is authoritative.
 
 Use thumbs up or down for direct feedback. The detail menu also supports **Not now**,
 **Never show**, **Review for pruning**, and **Metadata is wrong**. New feedback is
-queued durably in the browser during transient failures and applied in a small model
-update. A later explicit action can reverse earlier feedback.
+queued durably in the browser during transient failures and applied in a batched
+model update. A later explicit action can reverse earlier feedback; one action may
+not change the next recommendation immediately.
 
 Open **Taste Profile** to review tag beliefs and answer with a fixed sentiment
 from strong dislike to strong like. A direct answer is strong evidence rather than a
@@ -54,6 +55,12 @@ Open Similar from Curator or the compass action on a Stash scene or performer.
 Library results use content overlap and preference-aware performer profiles. Switch
 to StashDB only when you want external candidates; local and remote results remain
 separate and the reference entity stays visible.
+
+| Source | What you get | Requirement |
+| --- | --- | --- |
+| **Library** | Related scenes or performers already in Stash | A synced Curator model |
+| **StashDB** | External metadata candidates, ranked with local preferences | A configured StashDB stash-box |
+
 Local matches use the configured page size. StashDB Similar keeps up to 100 matches
 from one remote search and pages that stable result locally.
 
@@ -62,8 +69,9 @@ from one remote search and pages that stable result locally.
 Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 **Refresh Expand cache** task, then browse scenes and performers, save filters, or
 shortlist candidates. External results are metadata leads, not proof that a scene is
-available locally. Filters and ordering are applied before paging. Optional Whisparr
-actions require separate settings.
+available locally. Filters and ordering are applied before paging. If Whisparr is
+configured, **Send to Whisparr** appears on external scene cards; it sends only the
+scene you explicitly select.
 Use the tag action on an external scene to rate its tags that map exactly to local
 tags; this does not create scene-level feedback for media outside the library.
 
@@ -84,12 +92,14 @@ identity.
 ## Prune
 
 Prune groups explicit dislikes, suspected poor fits, and candidates surfaced during
-exploration. Review each item before applying the configured tag. Curator never
-deletes media, and the tag can be removed from the same view or in Stash.
+exploration. Review each item before applying the configured tag. Applying or removing
+the tag changes Stash metadata only; it does not delete a file or rewrite your feedback.
+Curator never deletes media, and the tag can be removed from the same view or in Stash.
 
 ## Routine maintenance
 
 - Sync after meaningful library or metadata changes.
+- Run the first sync/build before expecting recommendation lanes to contain results.
 - Back up before plugin updates and before uninstalling.
 - Treat Adventure and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
