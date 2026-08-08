@@ -265,6 +265,18 @@
   gap: 0.25rem;
 }
 
+.curator-sentiment .btn-sm {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+}
+
+@media (max-width: 480px) {
+  .curator-sentiment .btn-sm {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.3rem;
+  }
+}
+
 .curator-tag-follow-up {
   margin: 0.5rem 0;
 }
