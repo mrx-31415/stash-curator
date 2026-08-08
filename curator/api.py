@@ -522,6 +522,7 @@ class CuratorAPI:
             key=lambda item: (
                 item["prompt"] is None,
                 item["prompt"] == "uncertain",
+                not (float(str(item["inferred_value"])) > 0),
                 -abs(float(str(item["inferred_value"]))),
                 str(item["name"]).casefold(),
                 str(item["tag_id"]),
