@@ -571,6 +571,32 @@ class CuratorAPI:
             if matched is None:
                 matches = by_name.get(name.casefold(), [])
                 matched = matches[0] if len(matches) == 1 else None
+            if matched is None:
+                # Try taxonomy alias → local tag mapping
+                snapshot = self.connection.execute(
+                    "SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'"
+                ).fetchone()
+                if snapshot:
+                    tax_row = self.connection.execute(
+                        """
+                        SELECT ttm.local_tag_id
+                        FROM taxonomy_tag tt
+                        JOIN tag_taxonomy_match ttm
+                          ON ttm.snapshot_id=tt.snapshot_id AND ttm.external_tag_id=tt.tag_id
+                        WHERE tt.snapshot_id=? AND lower(tt.name)=?
+                        UNION
+                        SELECT ttm.local_tag_id
+                        FROM taxonomy_tag_alias tta
+                        JOIN taxonomy_tag tt USING(snapshot_id, tag_id)
+                        JOIN tag_taxonomy_match ttm
+                          ON ttm.snapshot_id=tt.snapshot_id AND ttm.external_tag_id=tt.tag_id
+                        WHERE tta.snapshot_id=? AND lower(tta.alias)=?
+                        """,
+                        (snapshot[0], name.casefold(), snapshot[0], name.casefold()),
+                    ).fetchone()
+                    if tax_row:
+                        local_id = str(tax_row["local_tag_id"])
+                        matched = next((r for r in rows if str(r["tag_id"]) == local_id), None)
             if matched is None or str(matched["tag_id"]) in seen:
                 continue
             seen.add(str(matched["tag_id"]))
