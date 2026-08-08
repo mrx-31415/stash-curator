@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/mrx-31415/stash-curator/compare/v0.4.1...v0.4.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* sentiment button colors, expand setup button, and StashDB details field ([#76](https://github.com/mrx-31415/stash-curator/issues/76)) ([4ffe45b](https://github.com/mrx-31415/stash-curator/commit/4ffe45b0e588bd1058f37b8d889d69d7371d9f91))
+
 ## [0.4.1](https://github.com/mrx-31415/stash-curator/compare/v0.4.0...v0.4.1) (2026-08-08)
 
 
