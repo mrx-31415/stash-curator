@@ -998,8 +998,12 @@ def test_reused_model_keeps_existing_lane_classifications(
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    from curator.ranking import LanePolicy
+
+    # Existing lanes are reported as-is; classification is never re-run on the core
+    # connection, whose model tables are shadowed by the attached artifact's views.
     monkeypatch.setattr(
-        module.LanePolicy,
+        LanePolicy,
         "classify",
         lambda *_args: (_ for _ in ()).throw(AssertionError("reclassified")),
     )
@@ -1333,3 +1337,51 @@ def test_entity_hook_enqueues_and_drain_imports_or_removes(
     # A malformed payload never raises (hooks run inline inside Stash mutations).
     malformed = module._run_entity_hook({"args": {"hookContext": {"type": "Scene.Update.Post"}}})
     assert malformed["handled"] is False
+
+
+def test_classify_lanes_reports_zero_without_writing_the_shadowed_core_table(
+    tmp_path: Path,
+) -> None:
+    """A sparse library (no qualifying lanes) must not make the rebuild fail.
+
+    The model build classifies into the artifact and then attaches it to the task
+    connection as read-only views. Re-classifying on the core connection would try to
+    write through those views and fail; the count is authoritative instead.
+    """
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_classify_lanes", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    from curator.events import HistoricalEventStore
+    from curator.model import PreferenceModelBuilder
+    from curator.storage import MigrationRunner, connect_database
+    from curator.sync import SyncService
+    from curator.sync.repository import SyncRepository
+    from tests.integration.test_sync import SyntheticClient, _entities
+
+    database = tmp_path / "curator.sqlite3"
+    connection = connect_database(database)
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    entities = _entities()
+    # A fileless scene is ineligible for every lane, so the build publishes zero lanes
+    # (the same state a sparse fresh library reaches).
+    scene = entities["scene"][0]
+    scene["files"] = []
+    entities["scene"] = [scene]
+    SyncService(
+        SyntheticClient(entities),
+        SyncRepository(connection),
+        page_size=1,
+        clock_ms=lambda: 1_800_000_000_000,
+    ).sync(full=True)
+    HistoricalEventStore(connection).rebuild()
+    model = PreferenceModelBuilder(connection, clock_ms=lambda: 1_800_000_000_000).build()
+
+    # Regression: before the fix this raised "cannot modify model_scene_lane because
+    # it is a view" on the same connection the build just attached the artifact to.
+    assert model.scene_count == 1
+    assert connection.execute("SELECT count(*) FROM main.model_scene_lane").fetchone()[0] == 0
+    assert module._classify_lanes(connection, model.model_id) == 0
+    connection.close()

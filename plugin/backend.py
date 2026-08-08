@@ -87,7 +87,7 @@ from curator.profiling import (  # noqa: E402
     save_trace,
     span,
 )
-from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
+from curator.ranking import SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
@@ -1247,16 +1247,21 @@ def _classify_lanes(
     model_id: str,
     progress: Callable[[int, int], None] | None = None,
 ) -> int:
+    """Report the published lane count without re-classifying on the core connection.
+
+    The model build classifies straight into the artifact, which this connection reads
+    through attached views; the core-schema copy is shadowed by those views, so writing
+    it would fail (and the runtime never reads it). A zero count is a legitimate outcome
+    for a sparse library, not a signal to rebuild here.
+    """
     count = int(
         connection.execute(
             "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model_id,)
         ).fetchone()[0]
     )
-    if count:
-        if progress:
-            progress(1, 1)
-        return count
-    return len(LanePolicy(connection).classify(model_id, progress=progress))
+    if progress:
+        progress(1, 1)
+    return count
 
 
 def _prepare_lanes(
