@@ -607,6 +607,20 @@
     );
   }
 
+  function scoreBar(item) {
+    const bd = item.details?.score_breakdown || {};
+    const sim = bd.similarity || 0;
+    const app = bd.appeal || 0;
+    const mh = bd.multi_hop || 0;
+    const total = sim + app + mh || 1;
+    const pct = (v) => Math.round(v / total * 100);
+    return React.createElement("div", { className: "curator-score-bar" },
+      React.createElement("span", { className: "curator-score-bar-seg curator-score-sim", style: { width: pct(sim) + "%" }, title: `Similarity ${sim.toFixed(3)}` }),
+      React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct(app) + "%" }, title: `Appeal ${app.toFixed(3)}` }),
+      mh > 0 && React.createElement("span", { className: "curator-score-bar-seg curator-score-mh", style: { width: pct(mh) + "%" }, title: `Multi-hop ${mh.toFixed(4)}` })
+    );
+  }
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -1322,19 +1336,6 @@
         );
       }
       return React.createElement("span", { className: "curator-chips" }, ...chips);
-    }
-    function scoreBar(item) {
-      const bd = item.details?.score_breakdown || {};
-      const sim = bd.similarity || 0;
-      const app = bd.appeal || 0;
-      const mh = bd.multi_hop || 0;
-      const total = sim + app + mh || 1;
-      const pct = (v) => Math.round(v / total * 100);
-      return React.createElement("div", { className: "curator-score-bar" },
-        React.createElement("span", { className: "curator-score-bar-seg curator-score-sim", style: { width: pct(sim) + "%" }, title: `Similarity ${sim.toFixed(3)}` }),
-        React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct(app) + "%" }, title: `Appeal ${app.toFixed(3)}` }),
-        mh > 0 && React.createElement("span", { className: "curator-score-bar-seg curator-score-mh", style: { width: pct(mh) + "%" }, title: `Multi-hop ${mh.toFixed(4)}` })
-      );
     }
     return React.createElement(
       "section",
