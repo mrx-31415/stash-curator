@@ -324,6 +324,86 @@ def test_play_pass_resumes_from_its_own_watermark(connection: sqlite3.Connection
     )
 
 
+def test_plays_only_sync_imports_plays_and_nothing_else(
+    connection: sqlite3.Connection,
+) -> None:
+    client = SyntheticClient(_entities())
+    result = SyncService(client, SyncRepository(connection), page_size=10).sync(plays_only=True)
+
+    # Only the capability probe and the play pass ran: no metadata passes, no id sweeps.
+    assert [entity for entity, _ in client.calls] == ["capabilities", "scene_play"]
+    assert result.mode == "plays"
+    assert result.entity_counts == {"scene_play": 2}
+    assert result.changed_entity_counts == {"scene_play": 2}
+    assert result.scene_ids == ("1", "2")
+    assert [
+        row[0] for row in connection.execute("SELECT scene_id FROM source_play ORDER BY scene_id")
+    ] == ["1", "2"]
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 2
+    # The play pass shares the incremental run ledger and never records a full-snapshot seen set.
+    assert connection.execute("SELECT mode FROM sync_run").fetchone()[0] == "incremental"
+    assert connection.execute("SELECT count(*) FROM sync_seen").fetchone()[0] == 0
+
+
+def test_plays_only_sync_advances_its_own_watermark(
+    connection: sqlite3.Connection,
+) -> None:
+    entities = _entities()
+    client = SyntheticClient(entities)
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+    service.sync(plays_only=True)
+
+    # Stash records a new play without touching scenes.updated_at.
+    scene = entities["scene"][1]
+    history = scene["play_history"]
+    assert isinstance(history, list)
+    history.append("2026-03-01T08:00:00Z")
+    scene["play_count"] = 2
+    client.calls.clear()
+    client.variables.clear()
+
+    result = service.sync(plays_only=True)
+
+    assert result.mode == "plays"
+    assert [entity for entity, _ in client.calls if entity == "scene_play"] == ["scene_play"]
+    assert result.changed_entity_counts == {"scene_play": 1}
+    assert result.scene_ids == ("2",)
+    assert (
+        connection.execute("SELECT count(*) FROM source_play WHERE scene_id='2'").fetchone()[0] == 2
+    )
+    assert (
+        connection.execute(
+            "SELECT watermark FROM sync_cursor WHERE entity_type='scene_play'"
+        ).fetchone()[0]
+        == "2026-03-01T08:00:00Z"
+    )
+
+
+def test_plays_only_sync_after_incremental_sync_keeps_entity_cursors(
+    connection: sqlite3.Connection,
+) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+    service.sync()
+    client.calls.clear()
+    client.variables.clear()
+
+    result = service.sync(plays_only=True)
+
+    assert result.mode == "plays"
+    assert result.changed_entity_counts == {"scene_play": 0}
+    assert [entity for entity, _ in client.calls] == ["capabilities", "scene_play"]
+    # A fresh play run joins the incremental ledger; metadata cursors keep their state.
+    assert (
+        connection.execute("SELECT count(*) FROM sync_run WHERE mode='incremental'").fetchone()[0]
+        == 2
+    )
+    assert (
+        connection.execute("SELECT state FROM sync_cursor WHERE entity_type='tag'").fetchone()[0]
+        == "complete"
+    )
+
+
 def test_full_sync_skips_the_play_pass(connection: sqlite3.Connection) -> None:
     client = SyntheticClient(_entities())
     SyncService(client, SyncRepository(connection), page_size=10).sync(full=True)
