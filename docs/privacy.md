@@ -5,10 +5,11 @@ permalink: /privacy/
 
 # Privacy and data safety
 
-Curator is local-first: its sidecar SQLite database stores synchronized Stash facts,
-normalized viewing and feedback events, feature/model versions, impressions,
-shortlists, and explanation evidence. The browser temporarily keeps an idempotent
-feedback/playback queue so navigation or a short failure does not lose an action.
+Curator is local-first. A separate plugin-owned SQLite database stores the Stash
+metadata needed for recommendations, viewing and feedback events, tag preferences,
+recommendation history, shortlists, model versions, and explanation evidence. The
+browser temporarily keeps an idempotent feedback/playback queue so navigation or a
+short failure does not lose an action.
 
 ## Stash and StashDB boundaries
 
@@ -20,7 +21,7 @@ StashDB discovery is opt-in. Curator sends bounded, read-only metadata searches 
 public tags, performers, and scenes. Scoring happens locally. Viewing history,
 feedback, learned weights, local URLs, and the preference model are not uploaded to
 StashDB. Whisparr is a separate optional integration and receives only an item you
-explicitly send.
+explicitly send with **Send to Whisparr**; it is never sent automatically.
 
 ## Retention and diagnostics
 
@@ -40,6 +41,10 @@ The default sidecar is `{pluginDir}/data/curator.sqlite3`. Configure another pat
 before first use if plugin lifecycle operations may replace that directory. The
 **Backup Curator data** task creates a timestamped SQLite backup. Copy it somewhere
 safe before updates or uninstalling.
+
+The Curator **Backups** view can restore a recognized backup. It first creates a
+safety copy of the current sidecar, then invalidates the current recommendation
+model; run **Rebuild recommendation model** after restoring.
 
 Removing Curator leaves Stash-owned entities and history intact. Applied Prune tags
 remain in Stash until you remove them. Deleting the sidecar discards Curator's learned
