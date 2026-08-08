@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from curator.config import DEFAULT_CONFIG
@@ -235,6 +235,16 @@ class ExpandService:
         seeds = self._seeds(model_id, feature_version, links)
         if progress:
             progress(200, 1_000)
+        cache = self.connection.execute(
+            "SELECT model_id, fetched_at_ms FROM expand_cache WHERE singleton=1"
+        ).fetchone()
+        since = None
+        cached_model_id = None
+        if cache is not None:
+            cached_model_id = str(cache["model_id"])
+            since = datetime.fromtimestamp(int(cache["fetched_at_ms"]) / 1000, UTC).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
         rows: dict[str, dict[str, Any]] = {}
         sources: dict[str, set[str]] = defaultdict(set)
         filters = (
@@ -248,7 +258,7 @@ class ExpandService:
         if wildcard:
             queries.append(("wildcard", [], min(100, per_source)))
         for position, (source, values, limit) in enumerate(queries, 1):
-            self._fetch(client, rows, sources, source, values, limit)
+            self._fetch(client, rows, sources, source, values, limit, since=since)
             if progress:
                 progress(200 + round(450 * position / max(1, len(queries))), 1_000)
         if progress and not queries:
@@ -270,12 +280,18 @@ class ExpandService:
         if progress:
             progress(900, 1_000)
         with transaction(self.connection):
-            self.connection.execute("DELETE FROM external_entity")
+            # Merge the newly fetched candidates instead of wiping the pool, so unchanged
+            # entries and the explore rows from hunts and similar probes survive a refresh.
             self.connection.executemany(
                 """
                 INSERT INTO external_entity(
                   entity_type, external_id, payload_json, score, sources_json, fetched_at_ms, pool
                 ) VALUES (?, ?, ?, ?, ?, ?, 'candidate')
+                ON CONFLICT(entity_type, external_id) DO UPDATE SET
+                  payload_json=excluded.payload_json, score=excluded.score,
+                  sources_json=excluded.sources_json, fetched_at_ms=excluded.fetched_at_ms,
+                  pool=CASE WHEN external_entity.pool='candidate'
+                    THEN 'candidate' ELSE excluded.pool END
                 """,
                 (
                     (
@@ -290,6 +306,29 @@ class ExpandService:
                     for item in items
                 ),
             )
+            # Candidates fetched while recent age out of the discovery window; drop them so
+            # an incremental refresh cannot grow the pool without bound.
+            cutoff_iso = cutoff.isoformat()
+            self.connection.execute(
+                """
+                DELETE FROM external_entity
+                WHERE entity_type='scene' AND pool='candidate' AND (
+                    (json_extract(payload_json, '$.release_date') IS NOT NULL
+                     AND json_extract(payload_json, '$.release_date') < ?)
+                    OR (json_extract(payload_json, '$.release_date') IS NULL
+                        AND json_extract(payload_json, '$.production_date') IS NOT NULL
+                        AND json_extract(payload_json, '$.production_date') < ?)
+                )
+                """,
+                (cutoff_iso, cutoff_iso),
+            )
+            pool_counts = {
+                str(row["entity_type"]): int(row["count"])
+                for row in self.connection.execute(
+                    "SELECT entity_type, count(*) AS count FROM external_entity"
+                    " WHERE pool='candidate' GROUP BY entity_type"
+                )
+            }
             self.connection.execute(
                 """
                 INSERT INTO expand_cache(
@@ -303,17 +342,59 @@ class ExpandService:
                     model_id,
                     fetched_at_ms,
                     fetched_at_ms + 12 * 3_600_000,
-                    len(scenes),
-                    len(performers),
+                    pool_counts.get("scene", 0),
+                    pool_counts.get("performer", 0),
                 ),
             )
+        if cached_model_id is not None and cached_model_id != model_id:
+            # The affinities and seeds changed with the model, so every surviving candidate's
+            # score is stale; rescore the whole candidate pool in place.
+            self._rescore_candidates(model_id, feature_version, links)
         if progress:
             progress(1_000, 1_000)
         return {
             "scene_count": len(scenes),
             "performer_count": len(performers),
             "taxonomy_refreshed": taxonomy_refreshed,
+            "incremental": since is not None,
         }
+
+    def _rescore_candidates(
+        self, model_id: str, feature_version: str, links: dict[str, dict[str, str]]
+    ) -> None:
+        """Re-score the surviving candidate pool after the model changed.
+
+        The candidate pool is model-driven: seeds and affinities come from the published
+        model, so scores computed against an older model are stale once a new one lands.
+        """
+        rows = list(
+            self.connection.execute(
+                "SELECT external_id, payload_json, sources_json FROM external_entity"
+                " WHERE entity_type='scene' AND pool='candidate'"
+            )
+        )
+        if not rows:
+            return
+        scenes = [json.loads(str(row["payload_json"])) for row in rows]
+        sources = {
+            str(row["external_id"]): set(json.loads(str(row["sources_json"]))) for row in rows
+        }
+        rescored, performers = self._score(scenes, sources, model_id, feature_version, links)
+        scene_scores = {str(item["id"]): float(item["score"]) for item in rescored}
+        with transaction(self.connection):
+            self.connection.executemany(
+                "UPDATE external_entity SET score=? WHERE entity_type='scene' AND external_id=?",
+                (
+                    (scene_scores[str(row["external_id"])], str(row["external_id"]))
+                    for row in rows
+                    if str(row["external_id"]) in scene_scores
+                ),
+            )
+            self.connection.executemany(
+                "UPDATE external_entity SET score=? WHERE entity_type='performer'"
+                " AND external_id=?",
+                ((float(item["score"]), str(item["id"])) for item in performers),
+            )
 
     def performer_hunt(
         self,
@@ -1565,6 +1646,7 @@ class ExpandService:
         limit: int,
         modifier: str = "INCLUDES",
         sort: str = "DATE",
+        since: str | None = None,
     ) -> tuple[int, bool]:
         fetched = 0
         page = 1
@@ -1579,6 +1661,12 @@ class ExpandService:
             }
             if source != "wildcard":
                 query[source] = {"value": values, "modifier": modifier}
+            if since is not None and source != "wildcard":
+                # Incremental refresh: only entries changed since the last refresh. Sorting
+                # by updated_at keeps pagination stable under the filter; the wildcard
+                # sample stays unfiltered because it is a small popularity probe.
+                query["updated_at"] = {"value": since, "modifier": "GREATER_THAN"}
+                query["sort"] = "UPDATED_AT"
             data = client.execute(SCENES, {"input": query})["queryScenes"]
             total = int(data["count"])
             batch = data["scenes"]
