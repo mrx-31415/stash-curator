@@ -90,6 +90,8 @@ deletes media, and the tag can be removed from the same view or in Stash.
 ## Routine maintenance
 
 - Sync after meaningful library or metadata changes.
+- Plays recorded by Stash are imported automatically after Curator playback so cooldown and
+  recovery stay current; the **Sync recent plays** task can also be run manually.
 - Back up before plugin updates and before uninstalling.
 - Treat Adventure and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
