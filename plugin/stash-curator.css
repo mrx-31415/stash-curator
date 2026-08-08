@@ -527,66 +527,107 @@
   gap: 0.25rem 0.65rem;
 }
 
-.curator-status span {
+.curator-status > span:not(.curator-task-indicator) {
   align-items: center;
   display: inline-flex;
   gap: 0.25rem;
 }
 
 .curator-task-indicator {
-  align-items: center;
+  align-items: stretch;
   display: inline-flex;
   flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.18rem;
+  max-width: 15rem;
+  min-width: 8rem;
   text-decoration: none;
 }
 
-.curator-task-ring {
-  --curator-progress: 0deg;
-  align-items: center;
-  background: conic-gradient(var(--primary, #7952b3) var(--curator-progress), rgba(255, 255, 255, 0.14) 0);
-  border-radius: 50%;
-  display: inline-flex;
-  height: 1.35rem;
-  justify-content: center;
-  position: relative;
-  width: 1.35rem;
+.curator-task-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
 }
 
-.curator-task-ring::before {
-  background: var(--body-bg, #17191c);
-  border-radius: 50%;
-  content: "";
-  height: 0.9rem;
-  position: absolute;
-  width: 0.9rem;
-}
-
-.curator-task-ring > span {
-  color: var(--text-muted, #adb5bd);
-  font-size: 0.52rem;
+.curator-task-progress-meta {
+  align-items: baseline;
+  display: flex;
+  gap: 0.4rem;
+  justify-content: space-between;
   line-height: 1;
-  position: relative;
-  z-index: 1;
 }
 
-.curator-task-ring-indeterminate {
-  animation: curator-task-ring 1s linear infinite;
+.curator-task-progress-meta strong {
+  color: var(--text-muted, #adb5bd);
+  font-size: 0.72rem;
 }
 
-.curator-task-indicator-failed .curator-task-ring {
+.curator-task-progress-meta span,
+.curator-task-progress-detail {
+  color: var(--text-muted, #adb5bd);
+  font-size: 0.65rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curator-task-progress-track {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  display: block;
+  height: 0.32rem;
+  overflow: hidden;
+  width: 100%;
+}
+
+.curator-task-progress-fill {
+  background: var(--primary, #7952b3);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  min-width: 0;
+  transition: width 0.25s ease;
+}
+
+.curator-task-progress-indeterminate .curator-task-progress-fill {
+  animation: curator-task-progress 1.2s ease-in-out infinite;
+  min-width: 30%;
+  width: 30%;
+}
+
+.curator-task-indicator-failed .curator-task-progress-fill {
   background: #dc3545;
+  width: 100%;
 }
 
-.curator-task-indicator-failed .curator-task-ring::before {
-  background: #17191c;
-}
-
-.curator-task-indicator-idle .curator-task-ring {
+.curator-task-indicator-idle .curator-task-progress-fill {
   background: var(--success, #198754);
+  width: 100%;
 }
 
-@keyframes curator-task-ring {
-  to { transform: rotate(360deg); }
+.curator-task-indicator-idle {
+  max-width: 2.5rem;
+  min-width: 2.5rem;
+}
+
+.curator-task-indicator-failed .curator-task-progress-meta strong {
+  color: #dc3545;
+}
+
+.curator-task-indicator-idle .curator-task-progress-meta strong {
+  color: var(--success, #198754);
+}
+
+@keyframes curator-task-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(333%); }
+}
+
+/* Keep the current stage readable without letting a long task name widen the header. */
+.curator-task-progress-detail {
+  line-height: 1;
 }
 
 .curator-header-message {

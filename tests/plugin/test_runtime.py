@@ -929,6 +929,13 @@ def test_health_reports_all_running_curator_tasks(
                 "startTime": "2026-08-08T00:01:00Z",
             },
             {
+                "id": "deps-job",
+                "status": "RUNNING",
+                "description": "Install optional dependencies",
+                "progress": 0.3,
+                "startTime": "2026-08-08T00:02:00Z",
+            },
+            {
                 "id": "finished-job",
                 "status": "FINISHED",
                 "description": "Backup Curator data",
@@ -947,7 +954,7 @@ def test_health_reports_all_running_curator_tasks(
 
     health = module._health({"args": {"database_path": str(tmp_path / "curator.sqlite3")}})
 
-    assert [job["id"] for job in health["active_jobs"]] == ["sync-job", "expand-job"]
+    assert [job["id"] for job in health["active_jobs"]] == ["sync-job", "expand-job", "deps-job"]
     assert health["active_job"]["id"] == "sync-job"
 
 
@@ -959,7 +966,15 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "function CuratorTaskIndicator({ activeJobs, activities, failure })" in source
     assert "health?.active_jobs" in source
     assert 'to: "/settings?tab=tasks"' in source
-    assert "curator-task-ring-indeterminate" in source
+    assert "curatorTaskStage(job)" in source
+    assert '"Synchronizing library metadata"' in source
+    assert '"Building the recommendation model"' in source
+    assert '"Installing optional dependencies"' in source
+    assert "curator-task-progress-indeterminate" in source
+    assert "showTaskDetails" in source
+    assert 'activeJobs.length > 0 || state === "failed"' in source
+    assert '"No active tasks"' not in source
+    assert "Querying StashDB" not in source
     assert 'className: "curator-loading", role: "status"' in source
     assert 'className: "curator-progress"' not in source
     assert "Matching local tags (${tagChoices.length})" in source
@@ -969,7 +984,9 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "curator-sentiment-compact" in css
     assert ".curator-external-tag-rating-header" in css
     assert ".curator-external-tag-row" in css
+    assert ".curator-task-progress-track" in css
     assert ".curator-active-job" not in css
+    assert ".curator-task-ring" not in css
     assert ".curator-progress" not in css
 
 
