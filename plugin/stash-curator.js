@@ -1540,7 +1540,7 @@
     const [huntPerformer, setHuntPerformer] = React.useState(() => huntOnly && initialPerformerId ? { id: initialPerformerId, name: initialPerformerLabel || initialPerformerId, external: true } : null);
     const [huntView, setHuntView] = React.useState("unlinked");
     const [huntSort, setHuntSort] = React.useState("date");
-    useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, huntOnly ? "Querying StashDB…" : "Loading Expand cache…");
+    useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, "Working");
     React.useEffect(() => {
       let active = true;
       if (entityType === "hunt" && !huntPerformer) {
@@ -1669,7 +1669,6 @@
       entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
       entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => (setPage(1), setHidePhashMatches(value.hidePhashMatches !== false), setIncludeTags(value.includeTags || []), setExcludeTags(value.excludeTags || [])) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFiltersOpen(false)) }, "Apply"))),
       entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => (setPage(1), setHidePhashMatches((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, entityType === "hunt" ? "Querying StashDB…" : "Loading Expand cache…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
@@ -1924,20 +1923,62 @@
     );
   }
 
+  function curatorTaskStage(job) {
+    const description = String(job.description || "").toLowerCase();
+    const progress = typeof job.progress === "number" ? job.progress : null;
+    const stages = description.includes("sync")
+      ? [
+          [0.03, "Synchronizing library metadata"],
+          [0.58, "Rebuilding preference history"],
+          [0.68, "Building the recommendation model"],
+          [0.95, "Organizing recommendation lanes"],
+          [0.97, "Preparing recommendation pages"],
+          [0.99, "Finishing"],
+        ]
+      : description.includes("rebuild") || description.includes("feedback")
+        ? [
+            [0.1, "Building the recommendation model"],
+            [0.95, "Organizing recommendation lanes"],
+            [0.97, "Preparing recommendation pages"],
+            [0.99, "Finishing"],
+          ]
+        : description.includes("prepare")
+          ? [[0.05, "Preparing recommendation pages"], [0.99, "Finishing"]]
+          : description.includes("backup")
+            ? [[0.05, "Creating Curator backup"], [0.98, "Finishing"]]
+            : description.includes("compact")
+              ? [[0.1, "Compacting legacy data"], [0.98, "Finishing"]]
+              : description.includes("vacuum")
+                ? [[0.1, "Vacuuming the database"], [0.98, "Finishing"]]
+                : description.includes("expand")
+                  ? [[0.05, "Collecting StashDB candidates"], [0.98, "Finishing"]]
+                  : description.includes("optional") || description.includes("dependenc")
+                    ? [[0.05, "Creating the optional dependency environment"], [0.3, "Installing optional dependencies"], [0.95, "Finishing"]]
+                    : [[0, "Working"]];
+    if (progress === null) return "Working";
+    let stage = "Starting task";
+    stages.forEach(([threshold, label]) => {
+      if (progress >= threshold) stage = label;
+    });
+    return stage;
+  }
+
   function CuratorTaskIndicator({ activeJobs, activities, failure }) {
     const tasks = [
       ...activeJobs.map((job) => ({
         key: `job-${job.id}`,
         label: job.description || "Curator task",
-        progress: typeof job.progress === "number" ? job.progress : null,
+        progress: typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null,
+        stage: curatorTaskStage(job),
       })),
-      ...activities,
+      ...activities.map((activity) => ({ ...activity, stage: activity.label })),
     ];
     const running = tasks.length > 0;
     const primary = tasks[0];
     const state = running ? "running" : failure ? "failed" : "idle";
     const progress = primary?.progress ?? null;
-    const detail = tasks.map((task) => task.label).join("; ");
+    const showTaskDetails = activeJobs.length > 0 || state === "failed";
+    const detail = tasks.map((task) => `${task.label}: ${task.stage}`).join("; ");
     const label = running
       ? `${tasks.length} Curator task${tasks.length === 1 ? "" : "s"} running: ${detail}`
       : failure
@@ -1946,7 +1987,22 @@
     return React.createElement(
       NavLink,
       { className: `curator-task-indicator curator-task-indicator-${state}`, to: "/settings?tab=tasks", title: `${label}. Open Tasks`, "aria-label": `${label}. Open Tasks` },
-      React.createElement("span", { className: `curator-task-ring${running && progress === null ? " curator-task-ring-indeterminate" : ""}`, style: progress === null ? undefined : { "--curator-progress": `${Math.round(progress * 360)}deg` }, "aria-hidden": "true" }, running && progress !== null ? `${Math.round(progress * 100)}%` : state === "failed" ? "!" : state === "idle" ? "✓" : "")
+      React.createElement(
+        "span",
+        { className: "curator-task-progress", "aria-hidden": "true" },
+        showTaskDetails && React.createElement(
+          "span",
+          { className: "curator-task-progress-meta" },
+          React.createElement("strong", null, running ? progress === null ? "Working" : `${Math.round(progress * 100)}%` : "Failed"),
+          running && tasks.length > 1 && React.createElement("span", null, `${tasks.length} tasks`)
+        ),
+        React.createElement(
+          "span",
+          { className: `curator-task-progress-track${running && progress === null ? " curator-task-progress-indeterminate" : ""}` },
+          React.createElement("span", { className: "curator-task-progress-fill", style: running && progress !== null ? { width: `${Math.round(progress * 100)}%` } : undefined })
+        ),
+        showTaskDetails && React.createElement("span", { className: "curator-task-progress-detail" }, running ? primary?.stage : failure.error || "Open Tasks for details")
+      )
     );
   }
 
@@ -2280,12 +2336,6 @@
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, initialPerformerId: route.get("performer"), initialPerformerLabel: route.get("label") }),
       lane === "diagnostics" && React.createElement(DiagnosticsPanel),
       lane === "profiling" && React.createElement(ProfilingPanel),
-      (loading || loadingComponents || scenesQuery.loading) &&
-        React.createElement(
-          "div",
-          { className: "curator-loading", role: "status" },
-          React.createElement("span", null, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…")
-        ),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       laneByValue.has(lane) && slate && !loading &&
