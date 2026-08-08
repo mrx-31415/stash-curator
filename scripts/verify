@@ -72,7 +72,7 @@ case "${1:-}" in
     # ── run playwright tests ──
     echo "[verify] running integration tests …"
     uv run --group integration --frozen pytest tests/integration/ -m integration -v \
-      --stash-url "$STASH_URL" \
+      --base-url "$STASH_URL" \
       --video=retain-on-failure \
       --screenshot=only-on-failure \
       --output=/tmp/stash-curator-integration-test-output
