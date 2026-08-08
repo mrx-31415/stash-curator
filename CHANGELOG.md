@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0](https://github.com/mrx-31415/stash-curator/compare/v0.3.0...v0.4.0) (2026-08-08)
+
+
+### Features
+
+* add hard Block / Never level for tag sentiment preferences ([#64](https://github.com/mrx-31415/stash-curator/issues/64)) ([a365806](https://github.com/mrx-31415/stash-curator/commit/a36580619ed9f25e978027fe16c68e5d08c20030))
+* add Local toggle for StashDB similar scenes ([#63](https://github.com/mrx-31415/stash-curator/issues/63)) ([6388956](https://github.com/mrx-31415/stash-curator/commit/6388956227f351823d73e6780f742307b783ac20))
+* add Local toggle for StashDB similar scenes ([#63](https://github.com/mrx-31415/stash-curator/issues/63)) ([11599df](https://github.com/mrx-31415/stash-curator/commit/11599df513bbc4b78dd3e0221b1c2be3c6c20827))
+* add score_breakdown to Similar result details ([7012b76](https://github.com/mrx-31415/stash-curator/commit/7012b7687dcde76c9d618299f73a2d60a6e771ea))
+* add score_breakdown to Similar result details ([88ad0b3](https://github.com/mrx-31415/stash-curator/commit/88ad0b31b80a2c834ec1e77a4885492dd207aacf))
+* expand tag filters to include child tags (descendants) in Expand, Similar, and Performer Hunt ([#65](https://github.com/mrx-31415/stash-curator/issues/65)) ([474cdc0](https://github.com/mrx-31415/stash-curator/commit/474cdc0834a8f7329382427c4263673acfc491a1))
+* multi-hop affinity with performer-collaboration graph ([dda4368](https://github.com/mrx-31415/stash-curator/commit/dda4368c7dce401b59c9145d69c8282434ee77fc))
+* show scene descriptions on scene cards ([#66](https://github.com/mrx-31415/stash-curator/issues/66)) ([4149d05](https://github.com/mrx-31415/stash-curator/commit/4149d051da454556bab73f54933e057fe991e1ce))
+* show score breakdown in Similar card ([7493137](https://github.com/mrx-31415/stash-curator/commit/7493137cffda553a9fb59c33d82ade10f878e789))
+* show score breakdown in Similar card ([c6b6d1e](https://github.com/mrx-31415/stash-curator/commit/c6b6d1e63dec9c53879f16ea8e02d4b98678d6f4))
+* TF-IDF description terms as content features ([087ea82](https://github.com/mrx-31415/stash-curator/commit/087ea82d3632386c67236fcfa52bef238c7fc2ad))
+* visual score bar, influence chips, and multi-hop path labels ([7ca6809](https://github.com/mrx-31415/stash-curator/commit/7ca6809a0111056e5335b8b2cbe4466512b7c473))
+* visual score bar, influence chips, and multi-hop path labels ([c214fb8](https://github.com/mrx-31415/stash-curator/commit/c214fb8b25a3a81d20ad280ad1ab9e5570e1f78e))
+
+
+### Bug Fixes
+
+* boost description term weight in content vectors ([a3885b1](https://github.com/mrx-31415/stash-curator/commit/a3885b1b822025688cea7b28facd5657db0a1205))
+
+
+### Performance Improvements
+
+* read precomputed performer edges instead of O(n^2) loop ([e0b1d41](https://github.com/mrx-31415/stash-curator/commit/e0b1d41593bfda297a7d22fc0c5e5f1b1a1a097b))
+
 ## [0.3.0](https://github.com/mrx-31415/stash-curator/compare/v0.2.0...v0.3.0) (2026-08-07)
 
 
