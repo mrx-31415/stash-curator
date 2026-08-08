@@ -1156,3 +1156,48 @@ def test_external_links_reuse_the_last_scan_until_stash_reports_a_change(
     state["count"] = 2
     module._external_links({}, connection)
     assert scanned == 4, "an added or deleted link must invalidate the cache"
+
+
+def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
+    """Every empty-state, error, and guidance message must remain in the source.
+
+    These are the strings users see when something is missing, broken, or
+    needs action.  Removing or rewording one silently breaks the UX.
+    """
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    # ── empty / not-ready states ──
+    assert '"No supported tags are available yet."' in source
+    assert '"No tags match that search."' in source
+    assert '"No matching local tags."' in source
+    assert '"No matches found."' in source
+    assert '"No feedback has been recorded yet."' in source
+    assert '"No qualified recommendations have been recorded yet."' in source
+    assert '"Nothing in this view."' in source
+    assert '"No Curator backups found."' in source
+    assert '"No scenes match this view."' in source
+    assert '"No external candidates match these filters."' in source
+    assert '"No profiles have been recorded yet."' in source
+
+    # ── guidance prompts ──
+    assert '"Select a local performer linked to StashDB."' in source
+    assert "Expand has not been prepared yet" in source
+    assert '" Prepare now"' in source
+    assert '" Sync and build now"' in source
+    assert '" Rebuild model"' in source
+    assert '"Nothing qualifies for this lane right now."' in source
+    assert "no model exists yet" in source
+
+    # ── warnings ──
+    assert "Showing the first" in source
+    assert "StashDB scenes; the safety cap is" in source
+    assert "Profiling is disabled." in source
+    assert '"Initial sync failed: "' in source
+    assert "Open Tasks for the full log" in source
+
+    # ── external card tag rating states ──
+    assert '"Matching local tags…"' in source
+    assert '"Rate matching local tags"' in source
+    assert '"Configure Whisparr in plugin settings"' in source
+    assert '"Retry sending to Whisparr"' in source
+    assert '"Send to Whisparr"' in source
