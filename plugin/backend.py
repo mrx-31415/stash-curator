@@ -1038,6 +1038,67 @@ DIAGNOSTIC_JOB_TYPES = {
     "expand-refresh",
 }
 
+# Stash entity hooks that trigger a targeted one-entity sync. Tag merges are left to the
+# next regular sync: a merge re-links many scenes that a single tag upsert cannot refresh.
+_HOOK_ENTITY_TYPES = {
+    "Scene.Create.Post": "scene",
+    "Scene.Update.Post": "scene",
+    "Scene.Destroy.Post": "scene",
+    "Performer.Create.Post": "performer",
+    "Performer.Update.Post": "performer",
+    "Performer.Destroy.Post": "performer",
+    "Studio.Create.Post": "studio",
+    "Studio.Update.Post": "studio",
+    "Studio.Destroy.Post": "studio",
+    "Tag.Create.Post": "tag",
+    "Tag.Update.Post": "tag",
+    "Tag.Destroy.Post": "tag",
+}
+
+
+def _run_entity_hook(payload: dict[str, Any]) -> dict[str, object]:
+    """Import or remove one entity after a Stash create/update/destroy hook.
+
+    Hooks run inline inside Stash's mutation path, so this stays small: one lookup, one
+    bounded write, no curator_job row, no model build. Stash logs hook failures without
+    failing the mutation; this logs and returns a neutral result instead of raising.
+    """
+    try:
+        settings = _settings(payload)
+        args = payload.get("args") or {}
+        hook_context = args.get("hookContext")
+        if not isinstance(hook_context, dict):
+            return {"handled": False, "reason": "missing hookContext"}
+        hook_type = str(hook_context.get("type") or "")
+        entity_type = _HOOK_ENTITY_TYPES.get(hook_type)
+        if entity_type is None:
+            return {"handled": False, "hook_type": hook_type}
+        entity_id = str(hook_context.get("id") or "")
+        if not entity_id:
+            return {"handled": False, "hook_type": hook_type, "reason": "missing entity id"}
+        connection = _open(payload, settings)
+        try:
+            service = SyncService(_client(payload), SyncRepository(connection))
+            if hook_type.endswith(".Destroy.Post"):
+                service.delete_entity(entity_type, entity_id)
+                changed = True
+            else:
+                changed = service.upsert_entity(entity_type, entity_id)
+            if changed:
+                ModelUpdateCoordinator(connection).request("entity_hook")
+            return {
+                "handled": True,
+                "hook_type": hook_type,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "changed": changed,
+            }
+        finally:
+            connection.close()
+    except Exception as error:
+        _log("w", f"Curator entity hook failed: {error}")
+        return {"handled": False, "reason": str(error)[:500]}
+
 
 def _diagnostics(connection: Any) -> dict[str, object]:
     migration = MigrationRunner(connection).status()
@@ -1583,7 +1644,12 @@ def main() -> None:
         if not isinstance(payload, dict):
             raise ValueError("plugin input must be an object")
         mode = sys.argv[2] if len(sys.argv) > 2 else None
-        output = _run_task(payload, mode) if mode else dispatch(payload)
+        if mode == "entity-sync":
+            # Stash entity hooks run inline in the mutation path and must never take the
+            # task path: no curator_job row, no single-running-job guard, no model build.
+            output = _run_entity_hook(payload)
+        else:
+            output = _run_task(payload, mode) if mode else dispatch(payload)
         print(json.dumps({"output": output}, separators=(",", ":")))
     except Exception as error:
         print(json.dumps({"error": str(error)}, separators=(",", ":")))

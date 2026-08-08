@@ -68,8 +68,11 @@ from one remote search and pages that stable result locally.
 
 Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 **Refresh Expand cache** task, then browse scenes and performers, save filters, or
-shortlist candidates. External results are metadata leads, not proof that a scene is
-available locally. Filters and ordering are applied before paging. If Whisparr is
+shortlist candidates. Refresh is incremental: it fetches only entries StashDB changed
+since the last refresh, keeps the existing candidates and rows discovered by hunts or
+StashDB Similar, re-scores everything when the model has changed, and drops candidates
+older than the recent-release horizon. External results are metadata leads, not proof
+that a scene is available locally. Filters and ordering are applied before paging. If Whisparr is
 configured, **Send to Whisparr** appears on external scene cards; it sends only the
 scene you explicitly select.
 Use the tag action on an external scene to rate its tags that map exactly to local
@@ -98,10 +101,13 @@ Curator never deletes media, and the tag can be removed from the same view or in
 
 ## Routine maintenance
 
-- Sync after meaningful library or metadata changes.
+- Sync after meaningful library or metadata changes; a full sync reconciles deletions and
+  tag merges that targeted entity hooks do not cover.
 - Run the first sync/build before expecting recommendation lanes to contain results.
 - Plays recorded by Stash are imported automatically after Curator playback so cooldown and
   recovery stay current; the **Sync recent plays** task can also be run manually.
+- Scenes, performers, studios, and tags you create, edit, or delete in Stash are imported
+  immediately through entity hooks, so recommendations pick them up without a manual sync.
 - Back up before plugin updates and before uninstalling.
 - Treat Adventure and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
