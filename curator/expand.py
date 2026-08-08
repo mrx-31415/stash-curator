@@ -975,10 +975,18 @@ class ExpandService:
                 candidate = self._annotate_local_match(value, links)
                 match_type = (candidate.get("curator_local_match") or {}).get("type")
                 if (
-                    match_type != "stashdb_id"
+                    (include_owned or match_type != "stashdb_id")
                     and (not hide_phash_matches or match_type != "phash")
                     and self._matches_gender(candidate, gender)
                 ):
+                    # In comparison mode keep library scenes except the
+                    # reference scene itself (a trivial self-match).
+                    if (
+                        include_owned
+                        and (candidate.get("curator_local_match") or {}).get("local_scene_id")
+                        == entity_id
+                    ):
+                        continue
                     candidates.append(candidate)
             candidate_ids = {str(value["id"]) for value in candidates}
             scenes, _ = self._score(
@@ -1082,6 +1090,17 @@ class ExpandService:
                     ).fetchone()[0]
                 )
                 item["payload"]["curator_local"] = {"id": local_id, "favorite": favorite}
+        elif entity_type == "scene":
+            local_by_external = links.get("scene_ids", {})
+            if not local_by_external:
+                local_by_external = {
+                    external: local for local, external in links.get("scenes", {}).items()
+                }
+            for item in filtered_items:
+                local_id = local_by_external.get(str(item["id"]))
+                if local_id is None:
+                    continue
+                item["payload"]["curator_local"] = {"id": local_id}
         result["items"] = filtered_items
         result["total"] = len(filtered_items)
         result["ready"] = bool(filtered_items)
