@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stash-curator"
-version = "0.4.2"
+version = "0.5.0"
 description = "Navigate your Stash library, guided by your taste."
 readme = "README.md"
 requires-python = ">=3.12"
