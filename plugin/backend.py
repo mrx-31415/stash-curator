@@ -572,6 +572,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "Compact legacy Curator data",
         "Vacuum compacted Curator data",
         "Refresh Expand cache",
+        "Install optional dependencies",
     }
     active_jobs = [
         job
