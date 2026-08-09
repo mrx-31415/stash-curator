@@ -175,6 +175,7 @@ def test_publish_writes_performer_edges_matching_the_build(
     connection = _database(tmp_path / "curator.sqlite3")
     # Force the pure-Python path so the recomputed expectation matches exactly.
     monkeypatch.setattr(optional_deps, "NUMPY_AVAILABLE", False)
+    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
     builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
     built = builder.build()
 
