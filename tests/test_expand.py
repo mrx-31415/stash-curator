@@ -2,6 +2,8 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService, normalize_phash
 from curator.features import FeatureStore
@@ -333,6 +335,13 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
     assert ExpandService(connection).results("scene", exclude_tags=("Handy",))["items"] == []
     assert ExpandService(connection).similar("performer", "p1")["items"][0]["id"] == (
         "external-performer"
+    )
+    performer_items = ExpandService(connection).similar("performer", "p1")["items"]
+    assert performer_items
+    assert all(
+        0 <= item["appeal"] <= 1
+        and item["score"] == pytest.approx(0.7 * item["similarity"] + 0.3 * item["appeal"])
+        for item in performer_items
     )
     assert (
         ExpandService(connection).similar("performer", "p1", candidate_ids={"not-in-this-search"})[
@@ -805,6 +814,13 @@ def test_external_scene_similarity_rejects_compilation_tag_bags(tmp_path: Path) 
     assert [item["id"] for item in service.similar("scene", "old-good")["items"]] == [
         "new-external-scene"
     ]
+    scene_items = service.similar("scene", "old-good")["items"]
+    assert scene_items
+    assert all(
+        0 <= item["appeal"] <= 1
+        and item["score"] == pytest.approx(0.7 * item["similarity"] + 0.3 * item["appeal"])
+        for item in scene_items
+    )
     assert service.similar("scene", "old-good", exclude_tags=("Useful",))["items"] == []
     assert service.similar("scene", "old-good", minimum_similarity=1)["items"] == []
     payload = connection.execute(
