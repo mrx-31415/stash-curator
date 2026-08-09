@@ -68,8 +68,12 @@ from one remote search and pages that stable result locally.
 
 Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 **Refresh Expand cache** task, then browse scenes and performers, save filters, or
-shortlist candidates. External results are metadata leads, not proof that a scene is
-available locally. Filters and ordering are applied before paging. If Whisparr is
+shortlist candidates. Refresh is incremental where the StashDB instance supports the
+`updated_at` watermark (fetching only changed entries) and falls back to a full fetch
+otherwise; either way it keeps the existing candidates and rows discovered by hunts or
+StashDB Similar, re-scores the pool when the model has changed, and drops candidates
+older than the recent-release horizon. External results are metadata leads, not proof
+that a scene is available locally. Filters and ordering are applied before paging. If Whisparr is
 configured, **Send to Whisparr** appears on external scene cards; it sends only the
 scene you explicitly select.
 Use the tag action on an external scene to rate its tags that map exactly to local
