@@ -84,12 +84,55 @@ command output.
    config-controlled choice if a fallback is wanted.
 3. Rework the harness: integration tests currently drive `backend.py` via argv/stdin
    subprocesses; they must instead run the resident server and talk JSON-RPC (or keep
-   one raw-mode test for the fallback path).
+   one raw-mode test for the fallback path). The Phase 0 benchmark
+   (`scripts/benchmark.py`) already drives the plugin through Stash's
+   `runPluginOperation`/`runPluginTask` mutations and reads profiling traces from the
+   sidecar, so it works unchanged over either interface — use it as the before/after
+   measurement tool.
 4. Measure again with the same methodology as the baseline table; target per-edit
    hook cost below ~300 ms on the integration box and confirm a synthetic bulk edit
-   completes in seconds.
+   completes in seconds. The Phase 0 measured interactive medians (~1.1 s wall, of
+   which ~55-250 ms work, 4 reps) are the "before" numbers to beat.
 5. Verify hooks, operations, tasks, and progress reporting all work through RPC on the
    live install; confirm Stash restarts the process after a forced kill.
+
+## Prepared state (2026-08-09, Phase 0 complete)
+
+This work package is decided and prepped; it is the next session's task. What exists:
+
+- `docs/handover-rpc-plugin.md` — this design (goal, baseline, wire protocol,
+  risks, acceptance criteria above).
+- `docs/decisions/002-runtime-swap-planning.md` — the full planning record:
+  language comparison, Go-vs-numpy POC evidence, equality-coverage plan, release/
+  dev workflow, and the Phase 0 measurements.
+- `poc/golang-similarity-benchmark/` — the banked Go kernel benchmark (tracked).
+- `scripts/benchmark.py` — the automated Phase 0 harness: starts Docker Stash with
+  the plugin installed, enables profiling via `configurePlugin`, runs the ops
+  battery + tasks, pulls traces from a copied sidecar, writes a scrubbed report to
+  `.tmp/benchmark-report/`. Run with `uv run python scripts/benchmark.py --db PATH
+  [--cold-build]`. Requires `STASH_CURATOR_DB`/`--db` (the live testing sidecar), a
+  Docker daemon, and the Stash image.
+
+Phase 0 findings that shape this work:
+
+- Interactive operations are spawn-dominated: ~1.1 s median wall per call, of which
+  ~55-250 ms is work (numpy import is ~400-700 ms of the spawn). Removing the spawn
+  is the measured win; a resident process also pays the numpy import once instead of
+  per call.
+- Gotchas learned while building the harness (relevant to step 3 and to validating
+  the RPC conversion): `health` and `round_trip` are intentionally not profiled;
+  profiling enables via `configurePlugin(plugin_id, input: {profilingEnabled: true})`
+  (config.yml alone does not reach the plugin); Stash's `jobQueue` query returns
+  null in v0.31.1 while plugin tasks run, so task completion must be read from the
+  sidecar's `curator_job` rows (filtered by `started_at_ms > submission`); plugin
+  task submission is async (`runPluginTask` returns the job id).
+- Defect to file (independent of this work): one `get_config` rep crashed the plugin
+  process with `signal: bus error` after numpy import in the container
+  (`docker logs integration-stash-1`).
+
+Uncommitted worktree state at handoff (not yet committed): `.gitignore` (+`.tmp/`),
+`docs/decisions/002-runtime-swap-planning.md`, `poc/`, `scripts/benchmark.py`. The
+RPC conversion itself has not started.
 
 ## Risks
 
