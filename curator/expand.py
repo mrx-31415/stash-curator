@@ -25,7 +25,7 @@ from curator.features.profiles import (
     similarity_penalty,
 )
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
-from curator.graphql import GraphQLClient
+from curator.graphql import GraphQLClient, GraphQLError
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
 from curator.model.multi_hop import MultiHopAffinity
 from curator.profiling import record_duration
@@ -177,6 +177,21 @@ class ExpandService:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
+    def _supports_incremental_fetch(self, client: GraphQLClient) -> bool:
+        """Whether StashDB accepts the updated_at criterion used for incremental refresh."""
+        probe: dict[str, object] = {
+            "page": 1,
+            "per_page": 1,
+            "sort": "UPDATED_AT",
+            "direction": "DESC",
+            "updated_at": {"value": "1970-01-01T00:00:00Z", "modifier": "GREATER_THAN"},
+        }
+        try:
+            client.execute(SCENES, {"input": probe})
+            return True
+        except GraphQLError:
+            return False
+
     def _refresh_taxonomy(self, client: GraphQLClient, now_ms: int) -> bool:
         checked = self.connection.execute(
             "SELECT value FROM application_meta WHERE key='taxonomy_checked_at_ms'"
@@ -245,6 +260,11 @@ class ExpandService:
             since = datetime.fromtimestamp(int(cache["fetched_at_ms"]) / 1000, UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
+        if since is not None and not self._supports_incremental_fetch(client):
+            # The live stashdb instance predates the updated_at SceneQueryInput field, so
+            # the watermark queries would fail validation; fall back to a full fetch there
+            # while newer instances keep the incremental behavior.
+            since = None
         rows: dict[str, dict[str, Any]] = {}
         sources: dict[str, set[str]] = defaultdict(set)
         filters = (
