@@ -787,3 +787,86 @@ def test_available_count_batched_blocked_tag_probe_excludes_scenes(tmp_path: Pat
     )
     connection.commit()
     assert builder.available_count("model", "best_bets") == first - 1
+
+
+def test_available_count_probes_are_batched_not_per_scene(tmp_path: Path) -> None:
+    """A large lane must not run one blocked-tag probe per scene.
+
+    The N+1 this guards against made For You take 20-58s per load on a 24k-scene
+    library (measured via profiling traces). The assertion is on query shape, not
+    wall-clock time, so it cannot flake on a loaded machine.
+    """
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    scene_count = 5_000
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, title, source_hash) VALUES (?, ?, ?)",
+        ((f"s{i}", f"Scene {i}", f"s{i}") for i in range(scene_count)),
+    )
+    connection.executemany(
+        "INSERT INTO source_file(file_id, scene_id, available, source_hash) VALUES (?, ?, 1, ?)",
+        ((f"f{i}", f"s{i}", f"s{i}") for i in range(scene_count)),
+    )
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES ('blocked-tag', 'Blocked', 'b')"
+    )
+    connection.execute(
+        """
+        INSERT INTO model_version(
+            model_id, status, feature_version, config_json, created_at_ms, published_at_ms
+        ) VALUES ('model', 'published', 'features', '{}', 1, 1)
+        """
+    )
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES (?, 'blocked-tag', 'scene')",
+        ((f"s{i}",) for i in range(0, scene_count, 4)),
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_tag_preference_history(preference_id, tag_id, value, occurred_at_ms)
+        VALUES ('pref-1', 'blocked-tag', 0, 3)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_tag_preference(tag_id, preference_id, value, occurred_at_ms, blocked)
+        VALUES ('blocked-tag', 'pref-1', 0, 3, 1)
+        """
+    )
+    connection.execute(
+        "INSERT INTO model_lane_order_state(model_id, created_at_ms) VALUES ('model', 1)"
+    )
+    connection.executemany(
+        """
+        INSERT INTO model_lane_order(
+            model_id, lane, ordering, position, scene_id, source_lane, utility, ranking_json
+        ) VALUES ('model', 'best_bets', 'varied', ?, ?, 'best_bets', 0.5, '{}')
+        """,
+        ((i, f"s{i}") for i in range(scene_count)),
+    )
+    connection.commit()
+
+    statements: list[str] = []
+    connection.set_trace_callback(statements.append)
+    builder = SlateBuilder(connection)
+    total = builder.available_count("model", "best_bets")
+
+    assert total == scene_count * 3 // 4
+    probes = [
+        statement
+        for statement in statements
+        if statement.lstrip().startswith("SELECT DISTINCT scene_id FROM scene_tag")
+    ]
+    assert len(probes) <= scene_count // 500 + 5, (
+        "blocked-tag eligibility must be a batched probe, not one query per scene"
+    )
+    assert not [
+        statement
+        for statement in statements
+        if statement.lstrip().startswith("SELECT 1 FROM scene_tag")
+    ], "per-scene blocked-tag probes are a regression"
+
+    # The fingerprint cache makes repeat calls skip the eligibility probes entirely.
+    statements.clear()
+    assert builder.available_count("model", "best_bets") == total
+    assert not [statement for statement in statements if "FROM scene_tag" in statement]
