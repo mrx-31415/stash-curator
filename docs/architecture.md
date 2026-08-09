@@ -67,7 +67,11 @@ Stash.
 
 Feedback and playback increment a durable generation counter and trigger a smaller
 preference rebuild after a short debounce. They do not rerun library sync; after playback a
-lightweight play-only sync keeps cooldown and recovery context current between full syncs. Full
+lightweight play-only sync keeps cooldown and recovery context current between full syncs.
+Stash entity hooks (scene, performer, studio, and tag create/update/destroy) record each
+changed entity in a pending queue, and the preference-rebuild task drains that queue
+(fetching the entity by id or removing it on destroy) before rebuilding, so the model
+always sees fresh source data while bulk edits pay no inline fetch cost. Full
 sync/build and Expand refresh remain one-shot tasks because Stash provides no plugin
 background scheduler/startup hook.
 

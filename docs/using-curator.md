@@ -102,10 +102,13 @@ Curator never deletes media, and the tag can be removed from the same view or in
 
 ## Routine maintenance
 
-- Sync after meaningful library or metadata changes.
+- Sync after meaningful library or metadata changes; a full sync reconciles deletions and
+  tag merges that targeted entity hooks do not cover.
 - Run the first sync/build before expecting recommendation lanes to contain results.
 - Plays recorded by Stash are imported automatically after Curator playback so cooldown and
   recovery stay current; the **Sync recent plays** task can also be run manually.
+- Scenes, performers, studios, and tags you create, edit, or delete in Stash are imported
+  immediately through entity hooks, so recommendations pick them up without a manual sync.
 - Back up before plugin updates and before uninstalling.
 - Treat Adventure and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.

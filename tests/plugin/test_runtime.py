@@ -998,8 +998,12 @@ def test_reused_model_keeps_existing_lane_classifications(
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    from curator.ranking import LanePolicy
+
+    # Existing lanes are reported as-is; classification is never re-run on the core
+    # connection, whose model tables are shadowed by the attached artifact's views.
     monkeypatch.setattr(
-        module.LanePolicy,
+        LanePolicy,
         "classify",
         lambda *_args: (_ for _ in ()).throw(AssertionError("reclassified")),
     )
@@ -1218,3 +1222,166 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '"Configure Whisparr in plugin settings"' in source
     assert '"Retry sending to Whisparr"' in source
     assert '"Send to Whisparr"' in source
+
+
+def test_entity_hook_enqueues_and_drain_imports_or_removes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stash entity hooks enqueue the change; the rebuild drain applies it."""
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_entity_hook", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    database = tmp_path / "curator.sqlite3"
+
+    def scene() -> dict[str, object]:
+        return {
+            "id": "1",
+            "title": "Hooked Scene",
+            "details": None,
+            "date": "2025-01-01",
+            "rating100": None,
+            "updated_at": "2026-01-01T00:00:00Z",
+            "play_count": 0,
+            "play_duration": 0.0,
+            "play_history": [],
+            "o_history": [],
+            "studio": None,
+            "tags": [],
+            "performers": [],
+            "files": [],
+            "scene_markers": [],
+        }
+
+    class FakeClient:
+        def execute(self, document: str, variables: object = None) -> dict[str, object]:
+            assert "CuratorFindScene" in document
+            return {"findScene": scene()}
+
+    monkeypatch.setattr(module, "_settings", lambda _payload: {})
+    monkeypatch.setattr(module, "_client", lambda _payload: FakeClient())
+
+    def hook_payload(hook_type: str) -> dict[str, object]:
+        return {
+            "args": {
+                "database_path": str(database),
+                "hookContext": {"id": 1, "type": hook_type, "input": {}, "inputFields": []},
+            }
+        }
+
+    updated = module._run_entity_hook(hook_payload("Scene.Update.Post"))
+    assert updated == {
+        "handled": True,
+        "hook_type": "Scene.Update.Post",
+        "entity_type": "scene",
+        "entity_id": "1",
+        "enqueued": True,
+    }
+
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        # The hook only records the change; the entity is not imported yet.
+        assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
+        pending = connection.execute(
+            "SELECT entity_type, entity_id, operation FROM pending_entity_change"
+        ).fetchall()
+        assert [tuple(row) for row in pending] == [("scene", "1", "upsert")]
+        state = connection.execute(
+            "SELECT requested_generation, published_generation FROM model_update_state"
+            " WHERE singleton=1"
+        ).fetchone()
+        assert state["requested_generation"] > state["published_generation"]
+    finally:
+        connection.close()
+
+    # The preference-rebuild drain applies the queued change.
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        drained = module._drain_pending_entity_changes(
+            hook_payload("Scene.Update.Post"), connection
+        )
+        assert drained == 1
+        assert connection.execute("SELECT count(*) FROM pending_entity_change").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT title FROM source_scene WHERE scene_id='1'").fetchone()[0]
+            == "Hooked Scene"
+        )
+    finally:
+        connection.close()
+
+    # A destroy after an update flips the queued operation to delete.
+    destroyed = module._run_entity_hook(hook_payload("Scene.Destroy.Post"))
+    assert destroyed["handled"] is True
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        assert (
+            connection.execute(
+                "SELECT operation FROM pending_entity_change WHERE entity_type='scene'"
+                " AND entity_id='1'"
+            ).fetchone()[0]
+            == "delete"
+        )
+        drained = module._drain_pending_entity_changes(
+            hook_payload("Scene.Update.Post"), connection
+        )
+        assert drained == 1
+        assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+    # A recognized-but-unhandled hook type (tag merges are deferred) is a no-op.
+    unknown = module._run_entity_hook(hook_payload("Tag.Merge.Post"))
+    assert unknown == {"handled": False, "hook_type": "Tag.Merge.Post"}
+
+    # A malformed payload never raises (hooks run inline inside Stash mutations).
+    malformed = module._run_entity_hook({"args": {"hookContext": {"type": "Scene.Update.Post"}}})
+    assert malformed["handled"] is False
+
+
+def test_classify_lanes_reports_zero_without_writing_the_shadowed_core_table(
+    tmp_path: Path,
+) -> None:
+    """A sparse library (no qualifying lanes) must not make the rebuild fail.
+
+    The model build classifies into the artifact and then attaches it to the task
+    connection as read-only views. Re-classifying on the core connection would try to
+    write through those views and fail; the count is authoritative instead.
+    """
+    backend = Path(__file__).parents[2] / "plugin" / "backend.py"
+    spec = importlib.util.spec_from_file_location("curator_plugin_classify_lanes", backend)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    from curator.events import HistoricalEventStore
+    from curator.model import PreferenceModelBuilder
+    from curator.storage import MigrationRunner, connect_database
+    from curator.sync import SyncService
+    from curator.sync.repository import SyncRepository
+    from tests.integration.test_sync import SyntheticClient, _entities
+
+    database = tmp_path / "curator.sqlite3"
+    connection = connect_database(database)
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    entities = _entities()
+    # A fileless scene is ineligible for every lane, so the build publishes zero lanes
+    # (the same state a sparse fresh library reaches).
+    scene = entities["scene"][0]
+    scene["files"] = []
+    entities["scene"] = [scene]
+    SyncService(
+        SyntheticClient(entities),
+        SyncRepository(connection),
+        page_size=1,
+        clock_ms=lambda: 1_800_000_000_000,
+    ).sync(full=True)
+    HistoricalEventStore(connection).rebuild()
+    model = PreferenceModelBuilder(connection, clock_ms=lambda: 1_800_000_000_000).build()
+
+    # Regression: before the fix this raised "cannot modify model_scene_lane because
+    # it is a view" on the same connection the build just attached the artifact to.
+    assert model.scene_count == 1
+    assert connection.execute("SELECT count(*) FROM main.model_scene_lane").fetchone()[0] == 0
+    assert module._classify_lanes(connection, model.model_id) == 0
+    connection.close()

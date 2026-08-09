@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 import urllib.request
 from typing import Any, cast
@@ -223,34 +222,37 @@ def create_scenes(
 
 
 def trigger_curator_sync(stash_url: str) -> None:
-    """Trigger a Curator sync and wait for it to finish."""
-    print("  triggering curator sync …")
-    try:
-        stash_request(
-            stash_url,
-            """
-            mutation CuratorSync($args: Map!) {
-              runPluginTask(
-                plugin_id: "stash-curator"
-                task_name: "Sync and build recommendations"
-                args: $args
-              )
-            }
-            """,
-            {"args": {}},
-        )
-    except Exception as exc:
-        print(f"  sync trigger failed (may need manual setup): {exc}", file=sys.stderr)
-        return
+    """Trigger a Curator sync-and-build and wait until a model is published.
 
-    # Wait for sync to complete by polling health endpoint
+    The sync runs as a Stash job; health reports `ready` only after the build
+    has published a model, so polling it gives a deterministic "seeded and
+    built" environment for the integration suite. Failure is loud: a broken
+    env is easier to diagnose at seed time than as a page-render assertion.
+    """
+    print("  triggering curator sync …")
+    stash_request(
+        stash_url,
+        """
+        mutation CuratorSync($args: Map!) {
+          runPluginTask(
+            plugin_id: "stash-curator"
+            task_name: "Sync and build recommendations"
+            args_map: $args
+          )
+        }
+        """,
+        {"args": {}},
+    )
+
+    # Wait for the model to be published by polling the health operation.
     print("  waiting for sync to finish …")
-    for _attempt in range(60):
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
         try:
             data = stash_request(
                 stash_url,
                 """
-                query Health($args: Map!) {
+                mutation Health($args: Map!) {
                   runPluginOperation(
                     plugin_id: "stash-curator"
                     args: $args
@@ -259,14 +261,17 @@ def trigger_curator_sync(stash_url: str) -> None:
                 """,
                 {"args": {"operation": "health"}},
             )
-            if not data.get("runPluginOperation", {}).get("error"):
+            if data.get("runPluginOperation", {}).get("ready"):
                 print("  sync complete")
                 return
         except Exception:
             pass
         time.sleep(2)
 
-    print("  warning: sync may not have completed within timeout", file=sys.stderr)
+    raise RuntimeError(
+        "Curator sync-and-build did not publish a model within 180s; "
+        "check the plugin logs and the Stash task queue"
+    )
 
 
 def main() -> None:

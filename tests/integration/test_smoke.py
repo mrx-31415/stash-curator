@@ -7,6 +7,7 @@ Start with: docker compose -f tests/integration/docker-compose.yml up -d
 from __future__ import annotations
 
 import contextlib
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -68,7 +69,9 @@ def test_curator_page_loads_without_errors(page: Page, base_url: str) -> None:
 # ── Tab URLs → expected content ──
 
 TABS: list[tuple[str, list[str]]] = [
-    ("", ["no published model", "Sync and build now", "Preparing For You"]),
+    # The seed runs a sync-and-build and waits for the published model, so the
+    # main route shows the ready recommendation UI, not the fresh-install state.
+    ("", ["For You", "Best Bets", "Ready"]),
     ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
     ("?view=expand", ["External metadata candidates", "Loading Expand cache"]),
     (
@@ -108,8 +111,16 @@ def test_curator_tab_renders_without_errors(
     _wait(page)
     _dismiss_modals(page)
 
-    content = page.content()
-    found = any(phrase in content for phrase in expected_phrases)
+    # Poll for the expected phrases: some depend on an async health round trip
+    # (the ready status), so a fixed wait would be flaky on slow runners.
+    found = False
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        content = page.content()
+        if any(phrase in content for phrase in expected_phrases):
+            found = True
+            break
+        page.wait_for_timeout(500)
 
     if not found:
         body_text = page.locator("body").inner_text()
