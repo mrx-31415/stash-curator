@@ -16,6 +16,28 @@ pytest_not_integration() (
   pytest -m "not integration" "$@"
 )
 
+# ── compiled core (Go) ─────────────────────────────────────────────────
+# Go is a dev/build dependency only; the shipped plugin never needs it (the
+# binary is optional acceleration, the pure-Python fallback stays intact).
+# A missing Go toolchain skips the core checks; a failing build fails the run.
+core_build_and_check() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "[verify] go toolchain not found; skipping compiled-core checks (numpy/pure-Python paths still run)" >&2
+    return 0
+  fi
+  scripts/build_core.sh
+  ( cd core && go vet ./... && go test ./... )
+}
+
+# Differential gate: the binary must reproduce the numpy stage outputs within
+# tolerance on seeded synthetic corpora. CURATOR_CORE pins the built binary.
+core_gate() {
+  if [[ ! -x "core/bin/curator-core" ]]; then
+    core_build_and_check
+  fi
+  CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest tests/core tests/model/test_core.py
+}
+
 case "${1:-}" in
   changed)
     shift
@@ -25,18 +47,30 @@ case "${1:-}" in
     )
     python=()
     javascript=false
+    core_changed=false
     for file in "${files[@]}"; do
       [[ -f "$file" ]] || continue
       [[ "$file" == *.py ]] && python+=("$file")
       [[ "$file" == plugin/stash-curator.js ]] && javascript=true
+      [[ "$file" == core/* ]] && core_changed=true
     done
+    if [[ "$core_changed" == true ]]; then
+      core_build_and_check
+      core_gate
+    fi
     ((${#python[@]} == 0)) || uv run --frozen ruff format "${python[@]}"
     ((${#python[@]} == 0)) || uv run --frozen ruff check "${python[@]}"
     [[ "$javascript" == false ]] || node --check plugin/stash-curator.js
     (($# == 0)) || pytest_not_integration "$@"
     git diff --check
     ;;
+  core)
+    core_build_and_check
+    core_gate
+    ;;
   full)
+    core_build_and_check
+    core_gate
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
     uv run --frozen mypy curator plugin/backend.py
@@ -86,7 +120,7 @@ case "${1:-}" in
       --output=/tmp/stash-curator-integration-test-output
     ;;
   *)
-    echo "usage: scripts/verify {changed [pytest-target ...]|full|integration}" >&2
+    echo "usage: scripts/verify {changed [pytest-target ...]|core|full|integration}" >&2
     exit 2
     ;;
 esac

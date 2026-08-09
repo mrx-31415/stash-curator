@@ -196,11 +196,26 @@ def _sidecar_state(path: Path) -> dict[str, object]:
     """Counts only - never values. Used for the report header."""
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        model = con.execute(
-            "SELECT count(*) FROM model_version WHERE status='published'"
-        ).fetchone()[0]
-        traces = con.execute("SELECT count(*) FROM profile_trace").fetchone()[0]
-        jobs = con.execute("SELECT count(*) FROM curator_job").fetchone()[0]
+        tables = {
+            str(row[0]) for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        # A pre-profiling sidecar copy legitimately lacks these tables until the
+        # plugin migrates it inside the container; report zero instead of failing.
+        traces = (
+            con.execute("SELECT count(*) FROM profile_trace").fetchone()[0]
+            if "profile_trace" in tables
+            else 0
+        )
+        jobs = (
+            con.execute("SELECT count(*) FROM curator_job").fetchone()[0]
+            if "curator_job" in tables
+            else 0
+        )
+        model = (
+            con.execute("SELECT count(*) FROM model_version WHERE status='published'").fetchone()[0]
+            if "model_version" in tables
+            else 0
+        )
     finally:
         con.close()
     return {"published_models": model, "profile_traces": traces, "curator_jobs": jobs}
@@ -670,7 +685,7 @@ def main() -> None:
             raise SystemExit("no sidecar found; pass --db PATH or set STASH_CURATOR_DB")
     print(f"[benchmark] sidecar source: {source}")
 
-    workspace = Path(args.workspace)
+    workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     if not args.no_stash:
         _ensure_plugin_built()
