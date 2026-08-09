@@ -17,6 +17,19 @@ do not introduce a dependency or abstraction without a measured need. SQLite sch
 changes always get a new ordered migration. Never edit an applied migration or reset
 the sidecar to work around one.
 
+The compiled core (`core/`, Go) optionally accelerates the two similarity stages
+in numpy's role; the binary is never a runtime dependency (compiled core > numpy
+> pure-Python dispatch, `curator/core.py`). Go is a dev/build dependency only:
+changes under `core/` need the Go toolchain, `scripts/build_core.sh`, and the
+differential gate (`scripts/verify core` — the binary must reproduce numpy's
+stage outputs on seeded synthetic corpora; `tests/core/` + `tests/model/test_core.py`).
+The kernels mirror the production numpy semantics exactly, including the
+documented masked-NaN performer behavior (see `docs/decisions/002-runtime-swap-planning.md`
+section 8) — do not "fix" that divergence without a reviewed product decision.
+`scripts/verify full` builds the core and runs the unit suite with the binary
+active when Go is available; without it the suite runs the numpy/pure-Python
+paths (both must stay green).
+
 Custom scene and performer cards must preserve Stash's native SFW Switch class
 contract: `scene-card`/`performer-card`, the matching `*-card-image`, `card-section`,
 and `card-section-title`. Keep usable controls outside `card-section`; the SFW Switch

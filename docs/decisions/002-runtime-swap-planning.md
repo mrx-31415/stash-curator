@@ -1,9 +1,13 @@
 # Planning: compiled runtime swap (Go/Rust core)
 
-Status: **planning** — no decision made. Record of evidence, the equality-coverage
-strategy, the RPC plan pointer, and the release/dev workflow for the compiled-core
-direction. Complements ADR 001 (backend runtime, accepted) and
-`docs/handover-rpc-plugin.md` (resident RPC conversion, planned).
+Status: **Phase 1 decided (Go); Phase 2 delivered (2026-08-09)**. Record of
+evidence, the equality-coverage strategy, the RPC correction, and the
+release/dev workflow for the compiled-core direction. Complements ADR 001
+(backend runtime, accepted) and `docs/handover-rpc-plugin.md` (resident RPC
+conversion, blocked/superseded).
+
+The Phase 2 outcome (compiled core wired into the model build as optional
+acceleration, differential harness, dev/CI tooling) is recorded in section 8.
 
 Updated: 2026-08-09.
 
@@ -148,7 +152,7 @@ The fix depends on which pain dominates; the options are nearly disjoint:
 
 | Observed pain | Cheapest fix | Notes |
 | --- | --- | --- |
-| Interactive latency (pages/hooks feel slow) | RPC conversion (Python stays) | Kills ~0.7s spawn + per-call migrate/settings overhead. Designed in `docs/handover-rpc-plugin.md`. |
+| Interactive latency (pages/hooks feel slow) | ~~RPC conversion~~ **disproven**: the `rpc` interface spawns per call, same as `raw` (verified v0.31.1 + develop). Real options: compiled core (ms spawn), lazy-import slimming (~0.3-0.4s spawn), or a self-managed resident daemon. See 6. |
 | Optional-deps install task friction | Vendor wheels into the zip | Offline, pinned, deterministic; still a task, no network. ~0.5 day. |
 | Build wall-time / scaling | Compiled core (Go) in numpy's role | Validated 4-12x on the similarity stage on this box; ~2-3x on the whole build. ~2-4 days for a sidecar-wired slice. |
 | Full rewrite of everything | Not justified | 31k LOC + 10.5k LOC tests for a ~2-3x win on a background task with progress bars. |
@@ -256,22 +260,36 @@ Three options, with the recommended one first:
 
 ## 6. RPC plan
 
-Already designed in detail in `docs/handover-rpc-plugin.md` (transport, resident
-server, concurrency, lifecycle, steps, risks, acceptance criteria). Additions from
-this planning round:
+> **Corrected (2026-08-09):** the premise is disproven, and RPC is now **off the
+> table entirely**. Verified against Stash `v0.31.1` and `develop` source
+> (`pkg/plugin/rpc.go`): the `rpc` interface spawns the plugin executable **per
+> call** (`pie.StartProviderCodec` in each `rpcPluginTask.Start()`; the client —
+> and child process — is closed when the single `Run` completes). There is no
+> resident process and no crash-restart. Converting `interface: raw -> rpc`
+> therefore cannot remove the ~1.1 s spawn.
 
-- The RPC conversion is **language-independent and independent of the core swap**:
-  the handover's Python resident server works unchanged as the shell for a
-  compiled core (each call stays a short JSON-RPC dispatch; the core is invoked
-  per call or per task).
-- If the backend itself ever becomes Go, Stash's `gorpc` example and
-  `pkg/plugin/common` are the reference implementation for the same wire contract.
-- Sequencing: do the RPC conversion first if interactive latency is the pain; it
-  also removes the per-call `_open()` cost (migrations + settings application run
-  on every call today).
-- Open items: verify hook behavior under RPC on the target Stash version;
-  concurrent `Run` calls (bulk-edit hooks); crash-reconnect semantics via `pie`
-  (queue in the sidecar is the safety net).
+**Conclusion:** with residency absent, RPC offers no benefit over `raw` for this
+plugin — same lifecycle, more wire machinery (jsonrpc `RPCRunner` framing). The
+chosen compiled-core direction (Go) keeps the **`raw` interface**: the exec line
+becomes the binary (`exec: [./curator-core, "{pluginDir}"]`) with the same
+stdin/stdout JSON contract, and the ~3-8 ms binary spawn makes residency
+irrelevant. `docs/handover-rpc-plugin.md` is retained as blocked/superseded
+reference (wire-format details only).
+
+The spawn tax is removed by the compiled core; if pure Python were ever
+required again, the fallback options are:
+
+1. **Self-managed resident daemon** (Python stays) — the plugin starts a detached
+   daemon on first call (sidecar + socket); later calls connect in ~20-50 ms.
+   Costs: lifecycle management (daemon lifetime, plugin updates, stale sockets),
+   concurrency with Stash's own spawn-per-call processes (WAL handles DB
+   contention; the single-running-job guard needs care).
+2. **Lazy/slim imports in Python** — numpy import is ~400-700 ms of the ~1.1 s
+   spawn (measured); making it lazy or dropping it from the hot path cuts spawn
+   to ~0.2-0.4 s. Cheap, low-risk, a partial mitigation that also helps the
+   compiled hybrid's fallback path (recommended regardless).
+3. **Accept the status quo** — hooks already enqueue (PR 90); interactive ops are
+   ~0.6-1.4 s. Judge against the measured Phase 0 numbers.
 
 ## 7. Open questions (must resolve before committing)
 
@@ -295,13 +313,82 @@ Phase 0 answered the first two:
 - **Phase 0 (done):** POC banked (`poc/golang-similarity-benchmark/`); automated
   benchmark harness (`scripts/benchmark.py`); interactive latency, cold-build
   stage breakdown, install-deps cost, and real d/sparsity measured (2.4).
-- **Phase 1:** pick the fix from the table in 3 based on the Phase 0 evidence:
-  the strongest measured case is the RPC conversion for interactive latency
-  (~1.1 s per call), with the compiled core as the build-time lever (278 s
-  build, similarity 132 s of it).
-- **Phase 2 (compiled core, if chosen):** port the content-neighbor and
-  performer-similarity kernels (math already validated), wire to the sidecar via
-  the differential harness (4.2), ship as optional acceleration replacing numpy,
-  pure-Python fallback retained; measure end-to-end on the installed sidecar.
-- **Phase 3 (optional):** full backend in Go behind the RPC shell, if the hybrid
+- **Phase 1:** **decided (2026-08-09): compiled core (Go)**. The RPC conversion
+  is off the table (disproven — no residency in the `rpc` interface; RPC offers
+  no benefit over `raw` for a binary). The compiled core is the lever for **both**
+  goals: ms-level spawn removes the per-call cost AND the d-immunity addresses
+  the build (278 s build, similarity 132 s of it). Lazy-import slimming
+  (section 6) is a cheap partial mitigation worth doing regardless.
+- **Phase 2 (compiled core — next work package):** port the content-neighbor and
+  performer-similarity kernels (math already validated in the POC), wire to the
+  sidecar via the differential harness (4.2), ship as optional acceleration
+  replacing numpy on the **existing `raw` interface** (the exec line becomes the
+  binary; same stdin/stdout JSON contract; ~3-8 ms spawn), pure-Python fallback
+  retained; measure end-to-end on the installed sidecar.
+
+### Phase 2 delivered (2026-08-09)
+
+**Done.** The kernels are promoted from the POC to a real Go module (`core/`,
+`github.com/mrx-31415/stash-curator/core`), wired into the model build, and
+covered by a differential gate. The binary does **not ship in the plugin zip
+yet** — distribution (5.2/5.3) is the next work package.
+
+- `core/` — `curator-core` CLI (`version`, `content-neighbors`,
+  `performer-similarity`): NDJSON progress + result over stdout, JSON payload
+  over stdin. Reads feature rows directly from the SQLite feature artifact
+  (pure-Go `modernc.org/sqlite`, `CGO_ENABLED=0`; the mattn/modernc decision is
+  deferred to distribution). Version injected from `pyproject.toml` at build
+  time (`scripts/build_core.sh`).
+- Content-neighbor stage mirrors `_content_neighbors_numpy` exactly, including
+  the `_preference_content_vectors` derivation (strengths from learned
+  affinities, generic-weight multiplier, L2 normalization). Performer-similarity
+  stage mirrors `_performer_similarity_scores_numpy`, including the masked-NaN
+  semantics: numpy's dense `block_value * block_used` keeps `NaN * False = NaN`
+  in the numerator whenever a weight>0 cosine block has a zero norm on either
+  side, so pairs where either profile lacks any global cosine block are excluded
+  from candidates — the Go kernel reproduces that exactly (documented in
+  `core/performer.go`). This is an existing numpy-path behavior the pure-Python
+  fallback does not share; fixing it is a separate product decision that would
+  change model output vs today's numpy builds.
+- Python wiring (`curator/core.py` + `curator/model/builder.py`): resolver
+  (`CURATOR_CORE` env > installed `plugin/curator-core` > repo
+  `core/bin/curator-core`), protocol probe (version mismatch degrades to
+  numpy), subprocess runner with streamed progress; dispatch order is
+  compiled core > numpy > pure Python; a resolved-but-broken binary fails the
+  stage loudly instead of silently falling back. Post-selection evidence math
+  and the identity-affinity derivation are shared helpers between the numpy and
+  compiled paths, so the remaining math is identical by construction.
+- Differential gate (`tests/core/test_core.py`, `tests/model/test_core.py`):
+  seeded synthetic corpora varying N, d, nnz, sparsity (never a real sidecar);
+  exact ids/counts, 1e-9 floats, identical selection/ordering; cross-thread
+  determinism (1t vs 4t byte-identical); broken-binary and fallback contract.
+  `scripts/verify core` builds the binary, runs `go vet`/`go test`, and runs
+  the gate; `scripts/verify full` gates first, then runs the unit suite with
+  the binary active (329 tests). CI gained setup-go and a `core` job.
+- Measured (2026-08-09, this dev host, 4-core):
+  - Production-shape synthetic (N=24 000, d=10 245, nnz=33, ~55% labeled —
+    the Phase 0-measured feature shape), real builder stages: content
+    neighbors numpy 126.4s -> core 8.1s (**15.6x**); performer similarity
+    (10 000 profiles, 200 known) 10.8s -> 9.1s (1.2x — the performer stage is
+    pair-bound, not a d-immunity win); spawn `curator-core version` vs
+    `python3 -c "import curator"` ~7x on this box.
+  - Docker cold build on a copy of the live sidecar (23 860 scenes, 895
+    labeled) with the core in the plugin zip: similarity stage 119.3s
+    (content 75.7 + performer 43.6) vs the Phase 0 numpy baseline 132s
+    (74.5 + 57.3) — ~10% at this library's low-label shape; total build
+    330s (includes old-schema migrations and numpy-less fallbacks in other
+    stages). The container's content-stage span is ~10x the host core time
+    at the presumed shape; the container's feature-build shape was not
+    captured before teardown — follow-up: confirm the container's feature
+    density and that the core subprocess ran (correctness gates are green
+    regardless).
+- Acceptance deltas: artifact hashes differ from numpy builds in the last
+  float bits (documented delta — accumulation order differs at ~1e-15);
+  stage-level outputs match within the 1e-9 tolerance.
+- **Phase 3 (distribution):** one zip with per-arch binaries (native CI
+  runners; `modernc` allows one-machine cross-compile if preferred), runtime
+  select + pure-Python fallback, archive test extended to assert binary
+  presence per shipped platform. The `raw` interface stays; the exec line
+  becomes the binary in a later phase.
+- **Phase 4 (optional):** full backend in Go on `raw` (no RPC), if the hybrid
   proves out and the port budget is available.

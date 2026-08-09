@@ -1,5 +1,21 @@
 # Resident RPC plugin handover
 
+> **CORRECTION (2026-08-09): the premise is disproven.** Verified against the
+> Stash `v0.31.1` and `develop` sources (`pkg/plugin/rpc.go`,
+> `pkg/plugin/common/rpc.go`): the `rpc` interface does **not** run a resident
+> process. Every task/operation/hook builds an `rpcPluginTask` whose `Start()`
+> calls `pie.StartProviderCodec(...)` — spawning the plugin executable per call,
+> exactly like `raw` — and `waitToFinish` closes the client (and the child
+> process) when the single `Run` completes. The plugin side serves one stdio
+> connection via `ServeCodec` and exits. Nothing restarts a crashed child. So
+> converting `interface: raw -> rpc` cannot remove the ~1.1 s per-call spawn and
+> cannot meet the acceptance criteria below; this work package is **blocked**
+> and effectively **superseded** — the chosen direction (compiled core, Go)
+> keeps the `raw` interface, since a ~3-8 ms binary spawn makes residency
+> unnecessary and RPC offers no remaining benefit (see
+> `docs/decisions/002-runtime-swap-planning.md`). The wire-format details below
+> are retained as reference only.
+
 Updated: 2026-08-09.
 
 ## Goal
@@ -32,25 +48,28 @@ INSERT in a resident process.
 Keep private scene, performer, and library identifiers out of tracked files and
 command output.
 
-## What Stash provides (verified against v0.31 source)
+## What Stash provides (verified against v0.31 and develop source)
 
-- `interface: rpc` (`InterfaceEnumRPC` in `pkg/plugin/config.go`): Stash starts the
-  plugin's exec command once and keeps it alive; every operation, task, and hook is a
-  call into the resident process.
+- `interface: rpc` (`InterfaceEnumRPC` in `pkg/plugin/config.go`) selects a
+  different wire protocol, **not** a different process lifecycle. Stash spawns the
+  plugin's exec command **per call** (per operation, task, and hook), matching the
+  `raw` interface; there is no resident process and no crash-restart. This is the
+  key correction from the original plan (see the banner above).
 - The wire protocol is Go `net/rpc` with the JSON codec over the process's stdin/stdout
-  (`pkg/plugin/rpc.go`, `net/rpc/jsonrpc`, lifecycle via the `pie` library, which
-  reconnects on crash). Requests are newline-delimited JSON objects
+  (`pkg/plugin/rpc.go`, `net/rpc/jsonrpc`, per-call provider via `pie.StartProviderCodec`).
+  Requests are newline-delimited JSON objects
   `{"method": "RPCRunner.Run", "params": [<PluginInput>], "id": <n>}` with
   `{"result": <PluginOutput>, "error": ..., "id": <n>}` responses; `RPCRunner.Stop` is
   the shutdown call.
 - Hooks execute through the same task path: `executePostHooks` builds a `pluginTask`
   and `createTask()` dispatches to the interface's task builder, so an RPC plugin
   receives hook invocations as `RPCRunner.Run` calls with the same
-  `hookContext` payload.
+  `hookContext` payload — each in its own spawned process.
 - Reference implementation: `pkg/plugin/examples/gorpc` (Go). There is no packaged
   Python RPC example; the Python plugin examples are raw (`pkg/plugin/examples/python`).
-- The yml `exec` stays the same (Stash runs it once, inside its container); only
-  `interface: rpc` changes. Stash restarts the process on crash via `pie`.
+- The yml `exec` stays the same; only `interface: rpc` changes. There is no
+  supervisor: if the plugin process crashes, the call fails and Stash retries
+  nothing.
 
 ## Design
 
@@ -98,7 +117,9 @@ command output.
 
 ## Prepared state (2026-08-09, Phase 0 complete)
 
-This work package is decided and prepped; it is the next session's task. What exists:
+This work package is **blocked** pending a direction re-decision (see the
+correction banner at the top); the tooling and measurements below remain valid
+and reusable. What exists:
 
 - `docs/handover-rpc-plugin.md` — this design (goal, baseline, wire protocol,
   risks, acceptance criteria above).
