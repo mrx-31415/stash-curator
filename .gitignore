@@ -43,3 +43,6 @@ _site/
 coverage.xml
 htmlcov/
 .coverage
+
+# Compiled core build output (Go module lives in core/, binaries are generated)
+core/bin/
