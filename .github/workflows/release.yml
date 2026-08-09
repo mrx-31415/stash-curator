@@ -33,6 +33,11 @@ jobs:
         with:
           version: "0.11.21"
           python-version: "3.12"
+      - name: Install Go (plugin packaging builds the compiled core)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: core/go.sum
       - run: uv run --frozen python scripts/build_plugin.py
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
