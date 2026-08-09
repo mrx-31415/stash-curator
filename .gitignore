@@ -26,6 +26,7 @@ AGENTS.override.md
 
 # Curator private and generated state
 *.private.*
+.tmp/
 data/
 private/
 reports/

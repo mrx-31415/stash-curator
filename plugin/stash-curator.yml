@@ -135,3 +135,21 @@ tasks:
     description: Install numpy and networkx acceleration into a plugin-local virtual environment. The model builder falls back to pure Python when this is not run.
     execArgs:
       - install-deps
+hooks:
+  - name: Sync changed entity
+    description: Import or remove a single entity after a Stash create, update, or delete, so the sidecar stays current without a full sync.
+    triggeredBy:
+      - Scene.Create.Post
+      - Scene.Update.Post
+      - Scene.Destroy.Post
+      - Performer.Create.Post
+      - Performer.Update.Post
+      - Performer.Destroy.Post
+      - Studio.Create.Post
+      - Studio.Update.Post
+      - Studio.Destroy.Post
+      - Tag.Create.Post
+      - Tag.Update.Post
+      - Tag.Destroy.Post
+    execArgs:
+      - entity-sync

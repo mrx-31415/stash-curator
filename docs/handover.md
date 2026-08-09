@@ -1,6 +1,9 @@
 # Stash Curator handover
 
-Updated: 2026-07-30 after Stage 4 live storage cutover.
+Updated: 2026-08-09. Next work package is the resident RPC plugin conversion
+(see below); Phase 0 planning and measurements are banked in
+`docs/decisions/002-runtime-swap-planning.md` and the RPC design in
+`docs/handover-rpc-plugin.md`.
 
 ## Current state
 
@@ -22,7 +25,16 @@ durable state, all pre-existing backups, and the protected pre-repair copy remai
 
 ## Next work package
 
-Retain these installed UI follow-ups as a separate coherent package:
+**Convert the plugin to Stash's resident RPC interface** (decision from the Phase 0
+planning round). The design, measured baseline, implementation steps, risks, and
+acceptance criteria live in [`handover-rpc-plugin.md`](handover-rpc-plugin.md); the
+full planning record and Phase 0 measurements are in
+`docs/decisions/002-runtime-swap-planning.md`. Validation tooling:
+`scripts/benchmark.py` (automated ops/task battery + trace pull; run before and
+after the conversion). Uncommitted at handoff: `scripts/benchmark.py`, `poc/`,
+`docs/decisions/002-runtime-swap-planning.md`, `.gitignore`.
+
+Deferred UI follow-ups (retain as a separate coherent package):
 
 - Rename the feedback-facing history label to clearer product language, likely
   **Feedback history** or **Review feedback**.

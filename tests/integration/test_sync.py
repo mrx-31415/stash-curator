@@ -147,6 +147,21 @@ class SyntheticClient:
         sweep = next((value for name, value in id_names.items() if name in document), None)
         if sweep is not None:
             return self._id_page(sweep, variables)
+        find_documents = {
+            "CuratorFindScene": ("findScene", "scene"),
+            "CuratorFindTag": ("findTag", "tag"),
+            "CuratorFindPerformer": ("findPerformer", "performer"),
+            "CuratorFindStudio": ("findStudio", "studio"),
+        }
+        find = next((value for name, value in find_documents.items() if name in document), None)
+        if find is not None:
+            root, entity_type = find
+            assert variables is not None
+            identifier = str(variables["id"])
+            item = next(
+                item for item in self.entities[entity_type] if str(item["id"]) == identifier
+            )
+            return {root: item}
         names = {
             "CuratorTags": ("tag", "findTags", "tags"),
             "CuratorStudios": ("studio", "findStudios", "studios"),
@@ -402,6 +417,79 @@ def test_plays_only_sync_after_incremental_sync_keeps_entity_cursors(
         connection.execute("SELECT state FROM sync_cursor WHERE entity_type='tag'").fetchone()[0]
         == "complete"
     )
+
+
+def test_targeted_upsert_fetches_and_persists_one_scene(connection: sqlite3.Connection) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+
+    changed = service.upsert_entity("scene", "1")
+
+    assert changed is True
+    assert (
+        connection.execute("SELECT title FROM source_scene WHERE scene_id='1'").fetchone()[0]
+        == "Scene 1"
+    )
+    # Dependencies ride along: the scene's cast, tags, studio, and play history.
+    assert connection.execute("SELECT count(*) FROM source_tag").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM source_performer").fetchone()[0] == 1
+    assert connection.execute("SELECT count(*) FROM source_studio").fetchone()[0] == 1
+    assert (
+        connection.execute("SELECT count(*) FROM source_play WHERE scene_id='1'").fetchone()[0] == 1
+    )
+    # The targeted upsert never starts a run or touches cursors.
+    assert connection.execute("SELECT count(*) FROM sync_run").fetchone()[0] == 0
+
+
+def test_targeted_upsert_is_idempotent_and_reports_change(
+    connection: sqlite3.Connection,
+) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+
+    assert service.upsert_entity("performer", "p1") is True
+    assert service.upsert_entity("performer", "p1") is False
+
+    # An edited performer is a change again; the same value is not.
+    entities = _entities()
+    entities["performer"][0]["name"] = "Renamed"
+    client = SyntheticClient(entities)
+    renamed = SyncService(client, SyncRepository(connection), page_size=10)
+    assert renamed.upsert_entity("performer", "p1") is True
+    assert (
+        connection.execute("SELECT name FROM source_performer WHERE performer_id='p1'").fetchone()[
+            0
+        ]
+        == "Renamed"
+    )
+
+
+def test_targeted_delete_cascades_like_the_reconcile_pass(
+    connection: sqlite3.Connection,
+) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+    service.upsert_entity("scene", "1")
+
+    service.delete_entity("scene", "1")
+
+    assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT count(*) FROM source_play WHERE scene_id='1'").fetchone()[0] == 0
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM scene_tag WHERE scene_id='1'").fetchone()[0] == 0
+    )
+
+
+def test_targeted_ops_reject_unknown_entity_types(connection: sqlite3.Connection) -> None:
+    client = SyntheticClient(_entities())
+    service = SyncService(client, SyncRepository(connection), page_size=10)
+
+    with pytest.raises(ValueError, match="unsupported entity type"):
+        service.upsert_entity("marker", "m1")
+    with pytest.raises(ValueError, match="unsupported entity type"):
+        service.delete_entity("marker", "m1")
 
 
 def test_full_sync_skips_the_play_pass(connection: sqlite3.Connection) -> None:

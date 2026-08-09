@@ -9,3 +9,8 @@ dangerous_allow_public_without_auth: true
 plugins:
   stash-curator:
     enabled: true
+    # Entity hooks mark the model dirty on every create/update/delete; keep the test
+    # environment deterministic by never letting those requests auto-trigger a build.
+    modelUpdateEventThreshold: 100
+    modelUpdateMaxWaitMinutes: 1440
+    modelUpdateMinIntervalMinutes: 1440

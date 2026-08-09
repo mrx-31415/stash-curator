@@ -87,7 +87,7 @@ from curator.profiling import (  # noqa: E402
     save_trace,
     span,
 )
-from curator.ranking import LanePolicy, SlateBuilder  # noqa: E402
+from curator.ranking import SlateBuilder  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
@@ -1038,6 +1038,119 @@ DIAGNOSTIC_JOB_TYPES = {
     "expand-refresh",
 }
 
+# Stash entity hooks that trigger a targeted one-entity sync. Tag merges are left to the
+# next regular sync: a merge re-links many scenes that a single tag upsert cannot refresh.
+_HOOK_ENTITY_TYPES = {
+    "Scene.Create.Post": "scene",
+    "Scene.Update.Post": "scene",
+    "Scene.Destroy.Post": "scene",
+    "Performer.Create.Post": "performer",
+    "Performer.Update.Post": "performer",
+    "Performer.Destroy.Post": "performer",
+    "Studio.Create.Post": "studio",
+    "Studio.Update.Post": "studio",
+    "Studio.Destroy.Post": "studio",
+    "Tag.Create.Post": "tag",
+    "Tag.Update.Post": "tag",
+    "Tag.Destroy.Post": "tag",
+}
+
+
+def _run_entity_hook(payload: dict[str, Any]) -> dict[str, object]:
+    """Enqueue a changed entity after a Stash create/update/destroy hook.
+
+    Hooks run inline inside Stash's mutation path, so this stays tiny: one bounded write,
+    no GraphQL fetch, no curator_job row, no model build. The fetch and upsert happen in
+    the drain that precedes a preference rebuild, so the model always sees fresh source
+    data while bulk edits pay only the process-spawn cost per entity. Stash logs hook
+    failures without failing the mutation; this logs and returns a neutral result instead
+    of raising.
+    """
+    try:
+        settings = _settings(payload)
+        args = payload.get("args") or {}
+        hook_context = args.get("hookContext")
+        if not isinstance(hook_context, dict):
+            return {"handled": False, "reason": "missing hookContext"}
+        hook_type = str(hook_context.get("type") or "")
+        entity_type = _HOOK_ENTITY_TYPES.get(hook_type)
+        if entity_type is None:
+            return {"handled": False, "hook_type": hook_type}
+        entity_id = str(hook_context.get("id") or "")
+        if not entity_id:
+            return {"handled": False, "hook_type": hook_type, "reason": "missing entity id"}
+        operation = "delete" if hook_type.endswith(".Destroy.Post") else "upsert"
+        connection = _open(payload, settings, attach_artifacts=False)
+        try:
+            with transaction(connection):
+                connection.execute(
+                    """
+                    INSERT INTO pending_entity_change(
+                        entity_type, entity_id, operation, created_at_ms
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+                        operation=excluded.operation, created_at_ms=excluded.created_at_ms
+                    """,
+                    (entity_type, entity_id, operation, time.time_ns() // 1_000_000),
+                )
+            ModelUpdateCoordinator(connection).request("entity_hook")
+            return {
+                "handled": True,
+                "hook_type": hook_type,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "enqueued": True,
+            }
+        finally:
+            connection.close()
+    except Exception as error:
+        _log("w", f"Curator entity hook failed: {error}")
+        return {"handled": False, "reason": str(error)[:500]}
+
+
+def _drain_pending_entity_changes(payload: dict[str, Any], connection: Any) -> int:
+    """Fetch and persist every enqueued entity change before a preference rebuild.
+
+    Rows that process cleanly are removed; a row whose entity no longer exists on Stash
+    (deleted after the hook) is dropped as handled, and a transient failure is kept for
+    the next drain. Any full sync supersedes the queue entirely.
+    """
+    rows = list(
+        connection.execute(
+            "SELECT entity_type, entity_id, operation FROM pending_entity_change"
+            " ORDER BY created_at_ms"
+        )
+    )
+    if not rows:
+        return 0
+    service = SyncService(_client(payload), SyncRepository(connection))
+    drained = 0
+    dropped: list[tuple[str, str]] = []
+    for row in rows:
+        entity_type = str(row["entity_type"])
+        entity_id = str(row["entity_id"])
+        try:
+            if row["operation"] == "delete":
+                service.delete_entity(entity_type, entity_id)
+                dropped.append((entity_type, entity_id))
+            else:
+                service.upsert_entity(entity_type, entity_id)
+                dropped.append((entity_type, entity_id))
+            drained += 1
+        except Exception as error:
+            # A missing entity is a destroy that never reached us; a transient failure
+            # stays queued for the next drain.
+            if "did not return" in str(error):
+                dropped.append((entity_type, entity_id))
+            _log("w", f"pending entity change failed for {entity_type} {entity_id}: {error}")
+    if dropped:
+        with transaction(connection):
+            connection.executemany(
+                "DELETE FROM pending_entity_change WHERE entity_type=? AND entity_id=?",
+                dropped,
+            )
+    return drained
+
 
 def _diagnostics(connection: Any) -> dict[str, object]:
     migration = MigrationRunner(connection).status()
@@ -1134,16 +1247,21 @@ def _classify_lanes(
     model_id: str,
     progress: Callable[[int, int], None] | None = None,
 ) -> int:
+    """Report the published lane count without re-classifying on the core connection.
+
+    The model build classifies straight into the artifact, which this connection reads
+    through attached views; the core-schema copy is shadowed by those views, so writing
+    it would fail (and the runtime never reads it). A zero count is a legitimate outcome
+    for a sparse library, not a signal to rebuild here.
+    """
     count = int(
         connection.execute(
             "SELECT count(*) FROM model_scene_lane WHERE model_id=?", (model_id,)
         ).fetchone()[0]
     )
-    if count:
-        if progress:
-            progress(1, 1)
-        return count
-    return len(LanePolicy(connection).classify(model_id, progress=progress))
+    if progress:
+        progress(1, 1)
+    return count
 
 
 def _prepare_lanes(
@@ -1242,6 +1360,9 @@ def _run_task_body(
                 )
             _progress(0.68)
             coordinator = ModelUpdateCoordinator(connection)
+            # A full sync supersedes the hook queue: everything is refetched anyway.
+            with transaction(connection):
+                connection.execute("DELETE FROM pending_entity_change")
             for entity, removed in sorted(synced.deleted_entity_counts.items()):
                 _log("i", f"Removed {removed} {entity}s deleted from Stash")
             source_changed = (
@@ -1312,6 +1433,11 @@ def _run_task_body(
             coordinator = ModelUpdateCoordinator(connection)
             if mode == "build":
                 coordinator.request("manual_build")
+            _log("i", "Importing entity changes recorded by hooks")
+            with span("python", "task.drain_entity_changes"):
+                drained = _drain_pending_entity_changes(payload, connection)
+            if drained:
+                _log("i", f"Imported {drained} entity changes")
             with span("python", "task.model_build"):
                 models = coordinator.drain(force=True, max_builds=1, progress=report_model)
             if not models:
@@ -1583,7 +1709,12 @@ def main() -> None:
         if not isinstance(payload, dict):
             raise ValueError("plugin input must be an object")
         mode = sys.argv[2] if len(sys.argv) > 2 else None
-        output = _run_task(payload, mode) if mode else dispatch(payload)
+        if mode == "entity-sync":
+            # Stash entity hooks run inline in the mutation path and must never take the
+            # task path: no curator_job row, no single-running-job guard, no model build.
+            output = _run_entity_hook(payload)
+        else:
+            output = _run_task(payload, mode) if mode else dispatch(payload)
         print(json.dumps({"output": output}, separators=(",", ":")))
     except Exception as error:
         print(json.dumps({"error": str(error)}, separators=(",", ":")))

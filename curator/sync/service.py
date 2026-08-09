@@ -8,12 +8,48 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from curator.graphql.adapters import adapt_id_page, adapt_page
-from curator.graphql.operations import CAPABILITIES, ENTITY_OPERATIONS, EntityOperation
+from curator.graphql.adapters import (
+    SourceEntity,
+    adapt_id_page,
+    adapt_page,
+    adapt_performer,
+    adapt_scene,
+    adapt_studio,
+    adapt_tag,
+)
+from curator.graphql.operations import (
+    CAPABILITIES,
+    ENTITY_OPERATIONS,
+    FIND_PERFORMER,
+    FIND_SCENE,
+    FIND_STUDIO,
+    FIND_TAG,
+    EntityOperation,
+)
 from curator.sync.repository import SyncRepository
 
 # Id-only rows are small, and the sweep cost is dominated by per-request overhead.
 SWEEP_PAGE_SIZE = 5_000
+
+# Single-entity lookup documents and their response keys for hook-triggered targeted syncs.
+_FIND_DOCUMENTS = {
+    "tag": FIND_TAG,
+    "studio": FIND_STUDIO,
+    "performer": FIND_PERFORMER,
+    "scene": FIND_SCENE,
+}
+_FIND_ROOTS = {
+    "tag": "findTag",
+    "studio": "findStudio",
+    "performer": "findPerformer",
+    "scene": "findScene",
+}
+_FIND_ADAPTERS: dict[str, Callable[[object], SourceEntity]] = {
+    "tag": adapt_tag,
+    "studio": adapt_studio,
+    "performer": adapt_performer,
+    "scene": adapt_scene,
+}
 
 
 class QueryClient(Protocol):
@@ -221,6 +257,28 @@ class SyncService:
             # An empty library is indistinguishable from a broken response; never act on it.
             return ()
         return self.repository.delete_absent(operation.entity_type, present)
+
+    def upsert_entity(self, entity_type: str, entity_id: str) -> bool:
+        """Fetch one entity from Stash by id and upsert it into the sidecar.
+
+        Hook-triggered targeted sync: a create or update hook carries just the entity id,
+        and the full row (including dependencies such as tag parents or a scene's cast) is
+        fetched and persisted with the same write path the page sync uses.
+        """
+        document = _FIND_DOCUMENTS.get(entity_type)
+        if document is None:
+            raise ValueError(f"unsupported entity type: {entity_type}")
+        data = self.client.execute(document, {"id": entity_id})
+        root = data.get(_FIND_ROOTS[entity_type])
+        if not isinstance(root, Mapping):
+            raise RuntimeError(f"Stash did not return {_FIND_ROOTS[entity_type]}")
+        return self.repository.upsert_entity(_FIND_ADAPTERS[entity_type](root))
+
+    def delete_entity(self, entity_type: str, entity_id: str) -> None:
+        """Remove one entity from the sidecar, cascading like the reconcile pass."""
+        if entity_type not in _FIND_DOCUMENTS:
+            raise ValueError(f"unsupported entity type: {entity_type}")
+        self.repository.delete_entity(entity_type, entity_id)
 
     def _sync_entity(
         self,

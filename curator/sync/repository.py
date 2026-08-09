@@ -173,6 +173,20 @@ class SyncRepository:
         row = self.connection.execute(f"SELECT count(*) FROM {table}").fetchone()
         return int(row[0])
 
+    def upsert_entity(self, entity: SourceEntity) -> bool:
+        """Upsert one already-fetched entity, e.g. a hook-triggered targeted sync.
+
+        Dependencies (tag parents, studio parents, a scene's tags and performers) are
+        upserted by the same write path the page sync uses, so the row is never a stub.
+        """
+        with transaction(self.connection):
+            return self._upsert(entity)
+
+    def delete_entity(self, entity_type: str, entity_id: str) -> None:
+        """Remove one entity, releasing the references SQLite will not cascade."""
+        with transaction(self.connection):
+            self._delete_entities(entity_type, (entity_id,))
+
     def delete_absent(self, entity_type: str, present_ids: set[str]) -> tuple[str, ...]:
         """Remove entities Stash no longer has, given a complete id sweep."""
         table, column = ENTITY_TABLES[entity_type]

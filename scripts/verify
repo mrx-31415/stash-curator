@@ -52,13 +52,6 @@ case "${1:-}" in
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
-    # The sidecar database is created inside the container (as root) in WAL mode. Host
-    # tests read it read-only, and a WAL read needs to create the -shm file, so the data
-    # directory must be owned/writable by the test user. Reset it every run so the
-    # integration environment starts from a clean sidecar instead of leftover state.
-    rm -rf "$plugin_dir/data"
-    mkdir -p "$plugin_dir/data"
-    chmod 777 "$plugin_dir/data"
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
     # ── start stash ──
@@ -72,6 +65,14 @@ case "${1:-}" in
     echo "[verify] starting Stash …"
     STASH_CONFIG=/tmp/stash-curator-integration \
       docker compose -f "$compose_file" up -d --wait
+    # The sidecar database and its artifact directory are created inside the container as
+    # root in WAL mode. Host tests read it read-only, and a WAL read needs to create the
+    # -shm file, so the data directory must be writable by the test user. Reset it with a
+    # root container every run so the integration environment starts from a clean sidecar
+    # instead of leftover state, including root-owned artifact subdirectories.
+    echo "[verify] resetting Curator sidecar …"
+    docker run --rm -v "$plugin_dir":/plugin stashapp/stash:latest \
+      sh -c 'rm -rf /plugin/data && mkdir -p /plugin/data && chmod 777 /plugin/data'
     # ── seed ──
     echo "[verify] seeding data …"
     STASH_URL="${STASH_URL:-http://localhost:9999}"
