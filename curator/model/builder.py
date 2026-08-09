@@ -12,9 +12,10 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from heapq import nsmallest
 from itertools import batched
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
-from curator import optional_deps
+from curator import core, optional_deps
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
@@ -667,9 +668,14 @@ class PreferenceModelBuilder:
                 vectors, scene_features, affinities
             )
             progress_total = len(preference_vectors) + len(all_scene_ids)
-            neighbors = self._content_neighbors(
-                preference_vectors, training_labels, label_mean, progress_total
-            )
+            if core.core_binary() is not None:
+                neighbors = self._content_neighbors_core(
+                    feature_version, affinities, training_labels, label_mean, progress_total
+                )
+            else:
+                neighbors = self._content_neighbors(
+                    preference_vectors, training_labels, label_mean, progress_total
+                )
         with span("python", "model.score_performer_similarity"):
             performer_similarity_scores = self._performer_similarity_scores(
                 feature_version, scene_features, affinities
@@ -1162,53 +1168,135 @@ class PreferenceModelBuilder:
                 ]
                 evidence.sort(key=lambda item: (-item[2], item[0]))
                 selected = evidence[:neighbor_count]
-                denominator = sum(item[2] for item in selected)
-                outcome_mean = (
-                    sum(item[2] * item[3] for item in selected) / denominator
-                    if denominator
-                    else 0.0
-                )
-                lift = outcome_mean - label_mean if denominator else 0.0
-                confidence = 1 - math.exp(-denominator / confidence_scale) if denominator else 0.0
-                result[scene_id] = _NeighborEvidence(
-                    lift * confidence,
-                    outcome_mean,
-                    lift,
-                    confidence,
-                    denominator,
-                    tuple(
-                        {
-                            "scene_id": item[0],
-                            "similarity": item[1],
-                            "weight": item[2],
-                            "outcome": item[3],
-                        }
-                        for item in selected[:5]
-                    ),
+                result[scene_id] = self._neighbor_evidence(
+                    scene_id, selected, label_mean, confidence_scale
                 )
                 index = start + local_row + 1
                 if self.progress and (index == vector_count or index % 250 == 0):
                     self._report(0.35 + 0.40 * index / max(1, progress_total))
         return result
 
-    def _performer_similarity_scores(
-        self,
-        feature_version: str,
-        scene_features: dict[str, tuple[StoredFeature, ...]],
-        affinities: dict[str, _Affinity],
-    ) -> dict[str, dict[str, object]]:
-        if optional_deps.NUMPY_AVAILABLE:
-            return self._performer_similarity_scores_numpy(
-                feature_version, scene_features, affinities
-            )
-        return self._performer_similarity_scores_python(feature_version, scene_features, affinities)
+    @staticmethod
+    def _neighbor_evidence(
+        scene_id: str,
+        selected: list[tuple[str, float, float, float]],
+        label_mean: float,
+        confidence_scale: float,
+    ) -> _NeighborEvidence:
+        """Derive evidence fields from the selected neighbor tuples.
 
-    def _performer_similarity_scores_python(
+        Shared by the numpy and compiled-core paths so the post-selection math
+        stays identical by construction.
+        """
+        denominator = sum(item[2] for item in selected)
+        outcome_mean = (
+            sum(item[2] * item[3] for item in selected) / denominator if denominator else 0.0
+        )
+        lift = outcome_mean - label_mean if denominator else 0.0
+        confidence = 1 - math.exp(-denominator / confidence_scale) if denominator else 0.0
+        return _NeighborEvidence(
+            lift * confidence,
+            outcome_mean,
+            lift,
+            confidence,
+            denominator,
+            tuple(
+                {
+                    "scene_id": item[0],
+                    "similarity": item[1],
+                    "weight": item[2],
+                    "outcome": item[3],
+                }
+                for item in selected[:5]
+            ),
+        )
+
+    def _feature_artifact_path(self, feature_version: str) -> Path:
+        row = self.connection.execute(
+            """
+            SELECT artifact_basename FROM feature_build
+            WHERE feature_version=? AND validation_status='valid'
+            """,
+            (feature_version,),
+        ).fetchone()
+        if row is None or not row[0]:
+            raise RuntimeError(f"feature artifact missing for {feature_version}")
+        return artifact_path(database_path(self.connection), str(row[0]))
+
+    def _content_neighbors_core(
         self,
         feature_version: str,
+        affinities: dict[str, _Affinity],
+        labels: dict[str, _SceneLabel],
+        label_mean: float,
+        progress_total: int,
+    ) -> dict[str, _NeighborEvidence]:
+        """Content-neighbor evidence via the compiled core (numpy's role).
+
+        The binary reads the content feature rows from the feature artifact and
+        derives the preference vectors itself, so this path takes the same
+        inputs the numpy path derives from (affinities, labels, config) instead
+        of the already-weighted vectors.
+        """
+        affinity_payload: dict[str, object] = {}
+        for feature_id, affinity in affinities.items():
+            entry: dict[str, object] = {
+                "affinity": affinity.affinity,
+                "confidence": affinity.confidence,
+            }
+            for key in ("learned_affinity", "learned_confidence"):
+                if key in affinity.contexts:
+                    entry[key] = _number(affinity.contexts[key])
+            affinity_payload[feature_id] = entry
+        payload: dict[str, object] = {
+            "db": str(self._feature_artifact_path(feature_version)),
+            "feature_version": feature_version,
+            "labels": {
+                scene_id: [label.outcome, label.confidence] for scene_id, label in labels.items()
+            },
+            "label_mean": label_mean,
+            "affinities": affinity_payload,
+            "config": {
+                "min_similarity": self.config.model.minimum_neighbor_similarity,
+                "neighbor_count": self.config.model.neighbor_count,
+                "confidence_scale": self.config.model.neighbor_confidence_scale,
+                "generic_weight": self.config.model.neighbor_generic_weight,
+            },
+            "progress_total": progress_total,
+        }
+        response = core.run_core(
+            "content-neighbors",
+            payload,
+            progress=(
+                (lambda fraction: self._report(0.35 + 0.40 * fraction)) if self.progress else None
+            ),
+        )
+        entries = cast(dict[str, dict[str, object]], response)
+        default = _NeighborEvidence(0.0, 0.0, 0.0, 0.0, 0.0, ())
+        result: dict[str, _NeighborEvidence] = {}
+        for scene_id, entry in entries.items():
+            neighbors = entry.get("neighbors")
+            if not isinstance(neighbors, list) or not neighbors:
+                result[scene_id] = default
+                continue
+            selected: list[tuple[str, float, float, float]] = []
+            for raw in neighbors:
+                item = cast(list[Any], raw)
+                selected.append((str(item[0]), float(item[1]), float(item[2]), float(item[3])))
+            result[scene_id] = self._neighbor_evidence(
+                scene_id,
+                selected,
+                label_mean,
+                self.config.model.neighbor_confidence_scale,
+            )
+        return result
+
+    @staticmethod
+    def _identity_affinity(
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
-    ) -> dict[str, dict[str, object]]:
+    ) -> dict[str, tuple[float, float]]:
+        """Known-performer signals shared by every similarity implementation."""
         identity_affinity: dict[str, tuple[float, float]] = {}
         for features in scene_features.values():
             for feature in features:
@@ -1219,6 +1307,58 @@ class PreferenceModelBuilder:
                     affinity.affinity * affinity.confidence,
                     affinity.confidence,
                 )
+        return identity_affinity
+
+    def _performer_similarity_scores(
+        self,
+        feature_version: str,
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> dict[str, dict[str, object]]:
+        if core.core_binary() is not None:
+            return self._performer_similarity_scores_core(
+                feature_version, scene_features, affinities
+            )
+        if optional_deps.NUMPY_AVAILABLE:
+            return self._performer_similarity_scores_numpy(
+                feature_version, scene_features, affinities
+            )
+        return self._performer_similarity_scores_python(feature_version, scene_features, affinities)
+
+    def _performer_similarity_scores_core(
+        self,
+        feature_version: str,
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> dict[str, dict[str, object]]:
+        """Performer-similarity scores via the compiled core (numpy's role).
+
+        The binary reads the performer profiles from the feature artifact; the
+        result dict is already the production format.
+        """
+        identity_affinity = self._identity_affinity(scene_features, affinities)
+        payload: dict[str, object] = {
+            "db": str(self._feature_artifact_path(feature_version)),
+            "feature_version": feature_version,
+            "identity_affinity": {
+                performer_id: [value, confidence]
+                for performer_id, (value, confidence) in identity_affinity.items()
+            },
+            "block_weights": dict(self.config.feature.performer_block_weights),
+            "cutoff": PERFORMER_SIMILARITY_AFFINITY_CUTOFF,
+            "numeric_blocks": sorted(NUMERIC_BLOCKS),
+            "numeric_scales": dict(NUMERIC_SCALES),
+        }
+        response = core.run_core("performer-similarity", payload)
+        return cast(dict[str, dict[str, object]], response)
+
+    def _performer_similarity_scores_python(
+        self,
+        feature_version: str,
+        scene_features: dict[str, tuple[StoredFeature, ...]],
+        affinities: dict[str, _Affinity],
+    ) -> dict[str, dict[str, object]]:
+        identity_affinity = self._identity_affinity(scene_features, affinities)
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         weights = dict(self.config.feature.performer_block_weights)
         known = {
@@ -1296,16 +1436,7 @@ class PreferenceModelBuilder:
     ) -> dict[str, dict[str, object]]:
         np = optional_deps.np
         assert np is not None
-        identity_affinity: dict[str, tuple[float, float]] = {}
-        for features in scene_features.values():
-            for feature in features:
-                if feature.family != "performer_identity" or feature.feature_id not in affinities:
-                    continue
-                affinity = affinities[feature.feature_id]
-                identity_affinity[feature.name.removeprefix("performer:")] = (
-                    affinity.affinity * affinity.confidence,
-                    affinity.confidence,
-                )
+        identity_affinity = self._identity_affinity(scene_features, affinities)
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         weights = dict(self.config.feature.performer_block_weights)
         known = {
@@ -1673,16 +1804,7 @@ class PreferenceModelBuilder:
         timings: dict[str, int] = {}
         writing_started = time.perf_counter()
         scores_by_scene = {score.scene_id: score for score in scores}
-        feature_row = self.connection.execute(
-            """
-            SELECT artifact_basename FROM feature_build
-            WHERE feature_version=? AND validation_status='valid'
-            """,
-            (feature_version,),
-        ).fetchone()
-        if feature_row is None or not feature_row[0]:
-            raise RuntimeError(f"feature artifact missing for {feature_version}")
-        feature_path = artifact_path(database_path(self.connection), str(feature_row[0]))
+        feature_path = self._feature_artifact_path(feature_version)
         artifact, temporary, final = create_artifact(self.connection, "model", model_id)
         attach_build_sources(artifact, self.connection, feature_path)
         published = False
