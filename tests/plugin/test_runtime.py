@@ -1220,10 +1220,10 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '"Send to Whisparr"' in source
 
 
-def test_entity_hook_upserts_destroys_and_requests_model_update(
+def test_entity_hook_enqueues_and_drain_imports_or_removes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stash entity hooks import or remove one entity and mark the model dirty."""
+    """Stash entity hooks enqueue the change; the rebuild drain applies it."""
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
     spec = importlib.util.spec_from_file_location("curator_plugin_entity_hook", backend)
     assert spec and spec.loader
@@ -1272,15 +1272,17 @@ def test_entity_hook_upserts_destroys_and_requests_model_update(
         "hook_type": "Scene.Update.Post",
         "entity_type": "scene",
         "entity_id": "1",
-        "changed": True,
+        "enqueued": True,
     }
 
     connection = module._open(hook_payload("Scene.Update.Post"), {})
     try:
-        assert (
-            connection.execute("SELECT title FROM source_scene WHERE scene_id='1'").fetchone()[0]
-            == "Hooked Scene"
-        )
+        # The hook only records the change; the entity is not imported yet.
+        assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
+        pending = connection.execute(
+            "SELECT entity_type, entity_id, operation FROM pending_entity_change"
+        ).fetchall()
+        assert [tuple(row) for row in pending] == [("scene", "1", "upsert")]
         state = connection.execute(
             "SELECT requested_generation, published_generation FROM model_update_state"
             " WHERE singleton=1"
@@ -1289,10 +1291,37 @@ def test_entity_hook_upserts_destroys_and_requests_model_update(
     finally:
         connection.close()
 
+    # The preference-rebuild drain applies the queued change.
+    connection = module._open(hook_payload("Scene.Update.Post"), {})
+    try:
+        drained = module._drain_pending_entity_changes(
+            hook_payload("Scene.Update.Post"), connection
+        )
+        assert drained == 1
+        assert connection.execute("SELECT count(*) FROM pending_entity_change").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT title FROM source_scene WHERE scene_id='1'").fetchone()[0]
+            == "Hooked Scene"
+        )
+    finally:
+        connection.close()
+
+    # A destroy after an update flips the queued operation to delete.
     destroyed = module._run_entity_hook(hook_payload("Scene.Destroy.Post"))
     assert destroyed["handled"] is True
     connection = module._open(hook_payload("Scene.Update.Post"), {})
     try:
+        assert (
+            connection.execute(
+                "SELECT operation FROM pending_entity_change WHERE entity_type='scene'"
+                " AND entity_id='1'"
+            ).fetchone()[0]
+            == "delete"
+        )
+        drained = module._drain_pending_entity_changes(
+            hook_payload("Scene.Update.Post"), connection
+        )
+        assert drained == 1
         assert connection.execute("SELECT count(*) FROM source_scene").fetchone()[0] == 0
     finally:
         connection.close()

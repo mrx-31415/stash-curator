@@ -1,9 +1,10 @@
-"""End-to-end tests for Stash entity hooks: targeted one-entity syncs.
+"""End-to-end tests for Stash entity hooks: enqueue-then-drain syncs.
 
 Stash runs plugin hooks inline after every scene/performer/studio/tag
-create, update, and destroy. The Curator hook handler fetches the single
-changed entity (or removes it on destroy) and persists it into the sidecar,
-so metadata changes are reflected immediately without a full sync.
+create, update, and destroy. The Curator hook handler only records the change
+in the sidecar; the preference-rebuild task drains the queue (fetching each
+changed entity by id, or removing it on destroy) before rebuilding, so the
+model always sees fresh source data and bulk edits pay no inline fetch cost.
 
 The sidecar lives in the bind-mounted plugin directory, so the host can read it.
 
@@ -24,6 +25,8 @@ from curator.storage import connect_database
 from tests.integration.conftest import _gql
 
 pytestmark = pytest.mark.integration
+
+REBUILD_TASK = "Apply recent Curator feedback"
 
 
 def _stash_url() -> str:
@@ -47,6 +50,19 @@ def _plugin_operation(operation: str, **args: object) -> dict[str, Any]:
     )["runPluginOperation"]
 
 
+def _run_task(name: str) -> str:
+    return str(
+        _gql(
+            _stash_url(),
+            (
+                "mutation Task($task: String!, $args: Map!) { "
+                'runPluginTask(plugin_id: "stash-curator", task_name: $task, args_map: $args) }'
+            ),
+            {"task": name, "args": {}},
+        )["runPluginTask"]
+    )
+
+
 def _wait_curator_idle(timeout: float = 180) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -57,12 +73,32 @@ def _wait_curator_idle(timeout: float = 180) -> None:
     raise RuntimeError("Curator jobs did not finish within the timeout")
 
 
-def test_scene_create_update_destroy_reach_the_sidecar_without_a_sync() -> None:
-    """Each Scene.* hook imports or removes exactly that scene, immediately."""
+def _wait_job(job_type: str, after_ms: int, timeout: float = 180) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for job in _plugin_operation("get_job_status")["jobs"]:
+            if (
+                job["job_type"] == job_type
+                and int(job["started_at_ms"]) >= after_ms
+                and job["state"] == "complete"
+            ):
+                return job
+        time.sleep(2)
+    raise AssertionError(f"{job_type} job did not complete")
+
+
+def _run_rebuild() -> None:
+    """Run the preference rebuild, which drains the entity-change queue first."""
+    started_ms = time.time_ns() // 1_000_000
+    _run_task(REBUILD_TASK)
+    _wait_job("update-model", started_ms)
+
+
+def test_scene_changes_reach_the_sidecar_through_the_rebuild_drain() -> None:
+    """Create, update, and destroy each enqueue a change that the rebuild applies."""
     _wait_curator_idle()
     stash = _stash_url()
 
-    # Create: Scene.Create.Post fetches the new scene and upserts it.
     created = _gql(
         stash,
         ("mutation Create($input: SceneCreateInput!) { sceneCreate(input: $input) { id title } }"),
@@ -70,6 +106,7 @@ def test_scene_create_update_destroy_reach_the_sidecar_without_a_sync() -> None:
     )
     scene_id = str(created["sceneCreate"]["id"])
     try:
+        _run_rebuild()
         connection = _open_sidecar()
         try:
             title = connection.execute(
@@ -79,13 +116,12 @@ def test_scene_create_update_destroy_reach_the_sidecar_without_a_sync() -> None:
         finally:
             connection.close()
 
-        # Update: Scene.Update.Post refetches and replaces the row.
         _gql(
             stash,
             ("mutation Update($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }"),
             {"input": {"id": scene_id, "title": "Hook Test Scene Renamed"}},
         )
-
+        _run_rebuild()
         connection = _open_sidecar()
         try:
             title = connection.execute(
@@ -95,13 +131,12 @@ def test_scene_create_update_destroy_reach_the_sidecar_without_a_sync() -> None:
         finally:
             connection.close()
 
-        # Destroy: Scene.Destroy.Post removes the row and its dependents.
         _gql(
             stash,
             "mutation Destroy($input: SceneDestroyInput!) { sceneDestroy(input: $input) }",
             {"input": {"id": scene_id}},
         )
-
+        _run_rebuild()
         connection = _open_sidecar()
         try:
             assert (
@@ -122,8 +157,8 @@ def test_scene_create_update_destroy_reach_the_sidecar_without_a_sync() -> None:
             )
 
 
-def test_tag_hook_imports_a_new_tag_and_links_it() -> None:
-    """A tag created and attached to a scene reaches the sidecar without a sync."""
+def test_tag_hook_enqueues_and_links_through_the_rebuild_drain() -> None:
+    """A tag created and attached to a scene reaches the sidecar via the drain."""
     _wait_curator_idle()
     stash = _stash_url()
 
@@ -156,6 +191,7 @@ def test_tag_hook_imports_a_new_tag_and_links_it() -> None:
         ("mutation Tag($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }"),
         {"input": {"id": scene_id, "tag_ids": [tag_id]}},
     )
+    _run_rebuild()
 
     connection = _open_sidecar()
     try:

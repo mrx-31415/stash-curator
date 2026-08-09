@@ -1057,11 +1057,14 @@ _HOOK_ENTITY_TYPES = {
 
 
 def _run_entity_hook(payload: dict[str, Any]) -> dict[str, object]:
-    """Import or remove one entity after a Stash create/update/destroy hook.
+    """Enqueue a changed entity after a Stash create/update/destroy hook.
 
-    Hooks run inline inside Stash's mutation path, so this stays small: one lookup, one
-    bounded write, no curator_job row, no model build. Stash logs hook failures without
-    failing the mutation; this logs and returns a neutral result instead of raising.
+    Hooks run inline inside Stash's mutation path, so this stays tiny: one bounded write,
+    no GraphQL fetch, no curator_job row, no model build. The fetch and upsert happen in
+    the drain that precedes a preference rebuild, so the model always sees fresh source
+    data while bulk edits pay only the process-spawn cost per entity. Stash logs hook
+    failures without failing the mutation; this logs and returns a neutral result instead
+    of raising.
     """
     try:
         settings = _settings(payload)
@@ -1076,28 +1079,77 @@ def _run_entity_hook(payload: dict[str, Any]) -> dict[str, object]:
         entity_id = str(hook_context.get("id") or "")
         if not entity_id:
             return {"handled": False, "hook_type": hook_type, "reason": "missing entity id"}
-        connection = _open(payload, settings)
+        operation = "delete" if hook_type.endswith(".Destroy.Post") else "upsert"
+        connection = _open(payload, settings, attach_artifacts=False)
         try:
-            service = SyncService(_client(payload), SyncRepository(connection))
-            if hook_type.endswith(".Destroy.Post"):
-                service.delete_entity(entity_type, entity_id)
-                changed = True
-            else:
-                changed = service.upsert_entity(entity_type, entity_id)
-            if changed:
-                ModelUpdateCoordinator(connection).request("entity_hook")
+            with transaction(connection):
+                connection.execute(
+                    """
+                    INSERT INTO pending_entity_change(
+                        entity_type, entity_id, operation, created_at_ms
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+                        operation=excluded.operation, created_at_ms=excluded.created_at_ms
+                    """,
+                    (entity_type, entity_id, operation, time.time_ns() // 1_000_000),
+                )
+            ModelUpdateCoordinator(connection).request("entity_hook")
             return {
                 "handled": True,
                 "hook_type": hook_type,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
-                "changed": changed,
+                "enqueued": True,
             }
         finally:
             connection.close()
     except Exception as error:
         _log("w", f"Curator entity hook failed: {error}")
         return {"handled": False, "reason": str(error)[:500]}
+
+
+def _drain_pending_entity_changes(payload: dict[str, Any], connection: Any) -> int:
+    """Fetch and persist every enqueued entity change before a preference rebuild.
+
+    Rows that process cleanly are removed; a row whose entity no longer exists on Stash
+    (deleted after the hook) is dropped as handled, and a transient failure is kept for
+    the next drain. Any full sync supersedes the queue entirely.
+    """
+    rows = list(
+        connection.execute(
+            "SELECT entity_type, entity_id, operation FROM pending_entity_change"
+            " ORDER BY created_at_ms"
+        )
+    )
+    if not rows:
+        return 0
+    service = SyncService(_client(payload), SyncRepository(connection))
+    drained = 0
+    dropped: list[tuple[str, str]] = []
+    for row in rows:
+        entity_type = str(row["entity_type"])
+        entity_id = str(row["entity_id"])
+        try:
+            if row["operation"] == "delete":
+                service.delete_entity(entity_type, entity_id)
+                dropped.append((entity_type, entity_id))
+            else:
+                service.upsert_entity(entity_type, entity_id)
+                dropped.append((entity_type, entity_id))
+            drained += 1
+        except Exception as error:
+            # A missing entity is a destroy that never reached us; a transient failure
+            # stays queued for the next drain.
+            if "did not return" in str(error):
+                dropped.append((entity_type, entity_id))
+            _log("w", f"pending entity change failed for {entity_type} {entity_id}: {error}")
+    if dropped:
+        with transaction(connection):
+            connection.executemany(
+                "DELETE FROM pending_entity_change WHERE entity_type=? AND entity_id=?",
+                dropped,
+            )
+    return drained
 
 
 def _diagnostics(connection: Any) -> dict[str, object]:
@@ -1303,6 +1355,9 @@ def _run_task_body(
                 )
             _progress(0.68)
             coordinator = ModelUpdateCoordinator(connection)
+            # A full sync supersedes the hook queue: everything is refetched anyway.
+            with transaction(connection):
+                connection.execute("DELETE FROM pending_entity_change")
             for entity, removed in sorted(synced.deleted_entity_counts.items()):
                 _log("i", f"Removed {removed} {entity}s deleted from Stash")
             source_changed = (
@@ -1373,6 +1428,11 @@ def _run_task_body(
             coordinator = ModelUpdateCoordinator(connection)
             if mode == "build":
                 coordinator.request("manual_build")
+            _log("i", "Importing entity changes recorded by hooks")
+            with span("python", "task.drain_entity_changes"):
+                drained = _drain_pending_entity_changes(payload, connection)
+            if drained:
+                _log("i", f"Imported {drained} entity changes")
             with span("python", "task.model_build"):
                 models = coordinator.drain(force=True, max_builds=1, progress=report_model)
             if not models:
