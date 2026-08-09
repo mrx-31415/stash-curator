@@ -73,6 +73,11 @@ background scheduler/startup hook.
 Direct tag sentiments keep append-only replacement history plus one current value per
 tag. Model publication blends that value into the shared content affinity, so local
 recommendations, Similar, Expand, and factual explanations consume the same result.
+Expand refresh is incremental where the StashDB instance supports the updated_at
+watermark (fetching only changed entries), falling back to a full fetch otherwise; it
+keeps the existing candidate pool and explore rows from hunts and StashDB Similar,
+re-scores the pool when the model has changed, and drops candidates older than the
+recent-release horizon.
 
 The only mutation path into Stash is isolated Prune tag application/removal.
 StashDB failures affect external discovery only; cached Expand results and local
