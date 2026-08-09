@@ -78,6 +78,11 @@ jobs:
           version: "0.11.21"
           python-version: "3.12"
           enable-cache: true
+      - name: Install Go (plugin packaging builds the compiled core)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: core/go.sum
       - name: Install dependencies
         run: uv sync --locked --group integration
       - name: Install Playwright browsers

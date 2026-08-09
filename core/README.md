@@ -20,8 +20,11 @@ go vet ./...
 ```
 
 The binary is built with `CGO_ENABLED=0`; SQLite reads use the pure-Go
-`modernc.org/sqlite` driver (the mattn vs modernc distribution decision is
-deferred to the distribution phase).
+`modernc.org/sqlite` driver. `scripts/build_plugin.py` cross-compiles the
+shipped per-arch binaries (linux amd64/arm64, windows amd64, darwin
+amd64/arm64) into the plugin zip; the runtime selects the matching
+`curator-core-<goos>-<goarch>` and falls back to numpy / pure Python when none
+exists.
 
 ## Protocol
 

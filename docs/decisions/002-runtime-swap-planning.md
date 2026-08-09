@@ -220,6 +220,18 @@ remains the timing oracle.
 
 ## 5. Release and dev workflow (compiled direction)
 
+> **Implemented (2026-08-09, Phase 3):** the binary now ships inside the
+> plugin zip as per-arch binaries (linux amd64/arm64, windows amd64, darwin
+> amd64/arm64 — mirroring Stash's own release matrix). `scripts/build_plugin.py`
+> cross-compiles them with `CGO_ENABLED=0` + modernc (one machine, no native
+> runners needed) into `core/bin/`, caches by freshness, and adds them to the
+> zip; the runtime selects the matching `curator-core-<goos>-<goarch>` via the
+> `curator/core.py` resolver (env pin > shipped binary > plain name > repo dev
+> build), with the pure-Python fallback unchanged. The archive test asserts
+> binary presence per shipped platform. Go is now required at plugin-build
+> time (pages/release/integration workflows install it); it stays a
+> build-time-only dependency.
+
 ### 5.1 Dev loop
 
 - Python harness + pytest unchanged; the core is built and driven via IPC.
@@ -302,7 +314,10 @@ Phase 0 answered the first two:
 2. ~~Real `d` and sparsity?~~ **Measured**: d = 10,245 content features, ~33 per
    scene (0.3% sparsity), N = 23,917 — validates the d-immunity argument.
 3. Target Stash version's RPC stability for hooks (v0.31 declared today).
-4. Required platform matrix (windows? arm64? — decides 5.3).
+4. ~~Required platform matrix (windows? arm64? — decides 5.3).~~ **Answered
+   (2026-08-09): linux amd64/arm64, windows amd64, darwin amd64/arm64** —
+   Stash's own release matrix; unsupported platforms simply fall back to
+   numpy/pure Python (the resolver probe rejects wrong-arch binaries).
 5. BLAS quality on the actual server (the Go-vs-numpy ratio at the real d ~ 10k
    is expected to exceed the d=600 measurement of 12.4x).
 6. Root cause of the observed `bus error` crash on numpy import in the
@@ -385,10 +400,12 @@ yet** — distribution (5.2/5.3) is the next work package.
 - Acceptance deltas: artifact hashes differ from numpy builds in the last
   float bits (documented delta — accumulation order differs at ~1e-15);
   stage-level outputs match within the 1e-9 tolerance.
-- **Phase 3 (distribution):** one zip with per-arch binaries (native CI
-  runners; `modernc` allows one-machine cross-compile if preferred), runtime
-  select + pure-Python fallback, archive test extended to assert binary
-  presence per shipped platform. The `raw` interface stays; the exec line
-  becomes the binary in a later phase.
+- **Phase 3 (distribution): delivered (2026-08-09).** One zip with per-arch
+  binaries (linux amd64/arm64, windows amd64, darwin amd64/arm64), runtime
+  select + pure-Python fallback, archive test asserts binary presence per
+  shipped platform; the pages/release/integration workflows install Go.
+  `modernc.org/sqlite` (pure Go) means one machine cross-compiles every
+  target — native per-arch runners were not needed. The `raw` interface
+  stays; switching the exec line to the binary is a later, separate step.
 - **Phase 4 (optional):** full backend in Go on `raw` (no RPC), if the hybrid
   proves out and the port budget is available.

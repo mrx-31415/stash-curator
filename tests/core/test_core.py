@@ -428,6 +428,24 @@ def test_core_binary_probe_accepts_matching_protocol(
         core_module._clear_cache()
 
 
+def test_platform_binary_name_maps_go_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = [
+        (("Linux", "x86_64"), "curator-core-linux-amd64"),
+        (("Linux", "aarch64"), "curator-core-linux-arm64"),
+        (("Darwin", "arm64"), "curator-core-darwin-arm64"),
+        (("Windows", "AMD64"), "curator-core-windows-amd64.exe"),
+    ]
+    for (system, machine), expected in cases:
+        monkeypatch.setattr(core_module.platform, "system", lambda s=system: s)
+        monkeypatch.setattr(core_module.platform, "machine", lambda m=machine: m)
+        assert core_module._platform_binary_name() == expected
+    monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(core_module.platform, "machine", lambda: "mips64")
+    assert core_module._platform_binary_name() == "curator-core-linux-mips64"
+
+
 def test_core_binary_probe_rejects_mismatched_protocol(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

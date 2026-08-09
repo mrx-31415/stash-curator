@@ -64,8 +64,34 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
                         if directory == "curator"
                         else relative.as_posix()
                     )
+    # The compiled core ships as per-arch binaries; every shipped platform must
+    # be present (the runtime selects one and falls back to numpy / pure Python).
+    from scripts.build_plugin import SHIPPED_PLATFORMS, core_binary_name
+
+    for goos, goarch in SHIPPED_PLATFORMS:
+        expected.add(core_binary_name(goos, goarch))
     assert names == expected
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
+    extracted = tmp_path / "installed"
+    from curator.core import _platform_binary_name
+
+    current_platform = _platform_binary_name()
+    for goos, goarch in SHIPPED_PLATFORMS:
+        name = core_binary_name(goos, goarch)
+        binary = extracted / name
+        assert binary.is_file() and binary.stat().st_size > 1_000_000
+        if goos != "windows":
+            # The archive must carry the exec bit (Stash's Go extraction honors
+            # it). Python 3.14's zipfile masks extracted permissions, so restore
+            # them here; run the probe for this host's binary to prove the
+            # shipped artifact works (other arches cannot execute here).
+            assert (package.getinfo(name).external_attr >> 16) & 0o111
+            binary.chmod(binary.stat().st_mode | 0o111)
+            if name == current_platform:
+                probe = subprocess.run(
+                    [str(binary), "version"], capture_output=True, text=True, check=True
+                )
+                assert '"protocol":1' in probe.stdout
     index = (tmp_path / "index.yml").read_text(encoding="utf-8")
     assert "id: stash-curator" in index
     assert f"sha256: {sha256(archive.read_bytes()).hexdigest()}" in index
