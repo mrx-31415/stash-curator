@@ -22,7 +22,7 @@ pytest_not_integration() (
 # A missing Go toolchain skips the core checks; a failing build fails the run.
 core_build_and_check() {
   if ! command -v go >/dev/null 2>&1; then
-    echo "[verify] go toolchain not found; skipping compiled-core checks (numpy/pure-Python paths still run)" >&2
+    echo "[verify] go toolchain not found; skipping compiled-core checks (the full gate and plugin packaging require Go)" >&2
     return 0
   fi
   scripts/build_core.sh

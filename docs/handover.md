@@ -36,16 +36,19 @@ distribution (per-arch binaries, runtime select) is the next work package.
 
 ## Next work package
 
-**Distribute the compiled core** (planning doc section 5.2/5.3, Phase 3): ship
-the `curator-core` binary inside the plugin zip — one zip with per-arch
-binaries (native CI runners; `CGO_ENABLED=0` + `modernc.org/sqlite` already
-keeps the binary portable), runtime select via the `curator/core.py` resolver
-(env override already exists for pinned installs), pure-Python fallback
-unchanged. Extend the archive test to assert binary presence per shipped
-platform; add the Go build to the pages/release workflows; keep the version in
-`pyproject.toml` (already injected at build time by `scripts/build_core.sh`).
-The `raw` interface stays; switching the exec line to the binary is a later,
-separate step.
+**Phase 2 + 3 are delivered** — the compiled core ships in the plugin zip as
+per-arch binaries (linux amd64/arm64, windows amd64, darwin amd64/arm64);
+runtime select + pure-Python fallback; archive test asserts presence. The
+remaining items:
+
+- **Installed verification (live):** update Curator from Stash's plugin
+  manager once the release lands, then run the cold build on the installed
+  sidecar and compare stage timings against the numpy baseline (the compiled
+  core should show the similarity-stage win; at this library's low label
+  count expect ~10% on that stage, more on denser libraries).
+- **Benchmark follow-up:** re-run the Docker benchmark with `--keep-stash` to
+  capture the container's feature-build density and close the 75.7s-vs-7.5s
+  content-span question (planning doc §8).
 
 Deferred UI follow-ups (retain as a separate coherent package):
 

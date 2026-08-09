@@ -6,7 +6,8 @@ content-neighbor and performer-similarity stages; otherwise the numpy or
 pure-Python implementations run unchanged. Discovery order:
 
 1. ``CURATOR_CORE`` environment variable (CI, dev, benchmarks);
-2. the installed plugin layout: ``<plugin>/curator-core`` next to backend.py;
+2. the installed plugin layout: ``<plugin>/curator-core-<goos>-<goarch>`` (the
+   shipped per-arch binary for this platform) or a plain ``<plugin>/curator-core``;
 3. the repository dev layout: ``<repo>/core/bin/curator-core``.
 
 A candidate is accepted only when it answers the ``version`` probe with the
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -41,6 +43,18 @@ def _binary_name() -> str:
     return "curator-core.exe" if os.name == "nt" else "curator-core"
 
 
+def _platform_binary_name() -> str:
+    """The shipped per-arch binary name for this platform, e.g.
+    curator-core-linux-amd64 (matching Go's GOOS/GOARCH naming)."""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
+        machine, machine
+    )
+    suffix = ".exe" if system == "windows" else ""
+    return f"curator-core-{system}-{arch}{suffix}"
+
+
 def _candidate_paths() -> tuple[Path, ...]:
     override = os.environ.get("CURATOR_CORE")
     if override:
@@ -53,6 +67,7 @@ def _candidate_paths() -> tuple[Path, ...]:
     # parent.parent is the plugin dir; in the repository layout it is the repo
     # root, where the core module's build output lives.
     plugin_dir = Path(__file__).resolve().parent.parent
+    candidates.append(plugin_dir / _platform_binary_name())
     candidates.append(plugin_dir / _binary_name())
     candidates.append(plugin_dir / "core" / "bin" / _binary_name())
     return tuple(candidates)
