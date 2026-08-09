@@ -567,6 +567,7 @@ def test_model_compares_known_performer_pairs_once(
     # The pair-count contract belongs to the pure-Python implementation; the numpy
     # path never calls performer_similarity and is covered by its own parity tests.
     monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
+    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
 
     assert counted.call_count == 3
@@ -596,6 +597,7 @@ def test_model_ignores_negligible_performer_similarity_seeds(
     counted = Mock(wraps=builder_module.performer_similarity)
     monkeypatch.setattr(builder_module, "performer_similarity", counted)
     monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
+    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
 
     builder._performer_similarity_scores(built.feature_version, scene_features, affinities)
 
