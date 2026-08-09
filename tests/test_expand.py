@@ -5,6 +5,7 @@ from pathlib import Path
 from curator.config import DEFAULT_CONFIG
 from curator.expand import ExpandService, normalize_phash
 from curator.features import FeatureStore
+from curator.graphql import GraphQLError
 from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from tests.model.test_builder import REFERENCE_MS, _database
@@ -91,6 +92,17 @@ class NoChangeStashDB(FakeStashDB):
         if not self.changed and "updated_at" in input_data:
             self.inputs.append(input_data)
             return {"queryScenes": {"count": 0, "scenes": []}}
+        return super().execute(document, variables)
+
+
+class NoSinceStashDB(FakeStashDB):
+    """A StashDB instance without the updated_at criterion: watermark queries fail."""
+
+    def execute(self, document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        if "updated_at" in input_data:
+            raise GraphQLError('Stash GraphQL error: Cannot query field "updated_at"')
         return super().execute(document, variables)
 
 
@@ -514,6 +526,28 @@ def test_refresh_purges_candidates_older_than_the_horizon(tmp_path: Path) -> Non
         ).fetchone()[0]
         == 0
     )
+
+
+def test_refresh_falls_back_to_full_fetch_when_stashdb_rejects_the_watermark(
+    tmp_path: Path,
+) -> None:
+    """An instance without the updated_at criterion keeps refresh working (full fetch)."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+
+    client = NoSinceStashDB()
+    result = service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+
+    assert result["incremental"] is False
+    assert not any("updated_at" in item for item in client.inputs)
+    assert [item["id"] for item in service.results("scene")["items"]] == ["new-external-scene"]
 
 
 def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
