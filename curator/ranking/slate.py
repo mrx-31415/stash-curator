@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sqlite3
@@ -785,7 +786,15 @@ class SlateBuilder:
         *,
         exclude_scene_ids: set[str] | None = None,
     ) -> int | None:
-        """Count a materialized lane without hydrating recommendation items."""
+        """Count a materialized lane without hydrating recommendation items.
+
+        The lane spans the whole library, but the eligibility inputs (feedback, exclusions,
+        pruning, blocked tags, file availability) change rarely, so the per-lane count is
+        cached under a fingerprint of those inputs and only recomputed when they change.
+        Slate items are still eligibility-checked per request; only the pagination total is
+        reused. Plays are deliberately not part of the fingerprint: they change constantly
+        and only shift best-bets/revisit totals by a few.
+        """
         started = time.perf_counter()
         if model_id is None:
             return None
@@ -795,6 +804,19 @@ class SlateBuilder:
             return None
         ordering = "varied" if self.diversity_enabled else "score_first"
         query_score_first = not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES
+        excluded = exclude_scene_ids or set()
+        fingerprint = self._eligibility_fingerprint()
+        cache_key = f"eligibility_count:{model_id}:{lane}:{ordering}"
+        row = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key=?", (cache_key,)
+        ).fetchone()
+        if row is not None:
+            payload = json.loads(str(row[0]))
+            if payload.get("fingerprint") == fingerprint:
+                total = int(payload["count"]) - self._excluded_eligible_count(excluded)
+                elapsed = round((time.perf_counter() - started) * 1_000)
+                record_duration("python", "ranking.available_count", elapsed)
+                return max(0, total)
         if query_score_first:
             rows = self.connection.execute(
                 """
@@ -813,8 +835,6 @@ class SlateBuilder:
                 """,
                 (model_id, lane, ordering),
             ).fetchall()
-        excluded = exclude_scene_ids or set()
-        rows = [row for row in rows if str(row["scene_id"]) not in excluded]
         scene_ids = {str(row["scene_id"]) for row in rows}
         now_ms = time.time_ns() // 1_000_000
         eligibility = scene_eligibility(self.connection, now_ms, self.config, scene_ids=scene_ids)
@@ -825,9 +845,59 @@ class SlateBuilder:
             )
             for row in rows
         )
+        with transaction(self.connection):
+            self.connection.execute(
+                """
+                INSERT INTO application_meta(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (
+                    cache_key,
+                    json.dumps({"fingerprint": fingerprint, "count": total}, separators=(",", ":")),
+                ),
+            )
+        total -= self._excluded_eligible_count(excluded)
         elapsed = round((time.perf_counter() - started) * 1_000)
         record_duration("python", "ranking.available_count", elapsed)
-        return total
+        return max(0, total)
+
+    def _eligibility_fingerprint(self) -> str:
+        """Cheap digest of the eligibility inputs that change between model rebuilds."""
+        digest = hashlib.sha256()
+        for label, sql in (
+            (
+                "feedback",
+                "SELECT count(*), coalesce(max(occurred_at_ms), 0) FROM feedback"
+                " WHERE reversed_by_id IS NULL",
+            ),
+            (
+                "exclusion",
+                "SELECT count(*), coalesce(max(created_at_ms), 0) FROM exclusion"
+                " WHERE reversed_at_ms IS NULL",
+            ),
+            (
+                "pruning",
+                "SELECT count(*), coalesce(max(updated_at_ms), 0) FROM pruning_candidate",
+            ),
+            (
+                "blocked_tags",
+                "SELECT count(*), coalesce(max(occurred_at_ms), 0) FROM direct_tag_preference"
+                " WHERE blocked=1",
+            ),
+            ("files", "SELECT count(*), 0 FROM source_file WHERE available=1"),
+        ):
+            row = self.connection.execute(sql).fetchone()
+            digest.update(f"{label}:{row[0]}:{row[1]}".encode())
+        return digest.hexdigest()
+
+    def _excluded_eligible_count(self, excluded: set[str]) -> int:
+        """Eligible scenes among this request's per-lane exclusions."""
+        if not excluded:
+            return 0
+        eligibility = scene_eligibility(
+            self.connection, time.time_ns() // 1_000_000, self.config, scene_ids=excluded
+        )
+        return sum(1 for scene_id in excluded if eligibility.get(scene_id, {}).get("eligible"))
 
     def _direct_play_filters(self, now_ms: int) -> tuple[dict[str, int], set[str]]:
         direct_plays = {
