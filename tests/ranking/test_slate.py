@@ -731,3 +731,59 @@ def test_recommend_cli_returns_full_score_decomposition(
         "reason_ids",
     } <= set(payload["items"][0])
     assert "content" in payload["items"][0]["components"]
+
+
+def test_available_count_cache_is_keyed_by_eligibility_inputs(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection)
+    builder.materialize("model", force=True)
+
+    first = builder.available_count("model", "best_bets")
+    assert first is not None and first > 0
+    # Repeat calls reuse the cached count.
+    assert builder.available_count("model", "best_bets") == first
+
+    # New feedback changes the eligibility fingerprint and invalidates the cache: the
+    # just-disliked best-bets scene stops counting.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value, occurred_at_ms)
+        VALUES ('fb-1', 'a-best', 'thumb_down', '-1', 2)
+        """
+    )
+    connection.commit()
+    assert builder.available_count("model", "best_bets") == first - 1
+
+
+def test_available_count_batched_blocked_tag_probe_excludes_scenes(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection)
+    builder.materialize("model", force=True)
+
+    first = builder.available_count("model", "best_bets")
+    assert first is not None and first > 0
+
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES ('blocked-tag', 'Blocked', 'b')"
+    )
+    connection.execute(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES ("
+        "'a-best', 'blocked-tag', 'scene')"
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_tag_preference_history(
+            preference_id, tag_id, value, occurred_at_ms
+        ) VALUES ('pref-1', 'blocked-tag', 0, 3)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_tag_preference(tag_id, preference_id, value, occurred_at_ms, blocked)
+        VALUES ('blocked-tag', 'pref-1', 0, 3, 1)
+        """
+    )
+    connection.commit()
+    assert builder.available_count("model", "best_bets") == first - 1
