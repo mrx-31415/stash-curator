@@ -181,9 +181,7 @@ def _attach_readonly(connection: sqlite3.Connection, alias: str, path: Path) -> 
     except sqlite3.OperationalError as error:
         if "unable to open database" not in str(error):
             raise
-        connection.execute(
-            f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),)
-        )
+        connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),))
 
 
 def _quote(identifier: str) -> str:
