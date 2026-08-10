@@ -424,6 +424,13 @@ yet** — distribution (5.2/5.3) is the next work package.
     sidecar-parity surface — the riskiest part). Ships with the trivial ops
     (round_trip, health, get_config, get_job_status) and a Python fallback
     dispatch for everything else.
+
+    > Delivered (2026-08-10): transport, settings, migration chain with
+    > byte-identical checksums (parity proven both directions), artifact
+    > attach/views, byte-identical trivial ops, `profile_trace` parity for
+    > `get_config`, and the Python fallback. Differential gate:
+    > `tests/core/test_backend.py`. Handover for the next slice:
+    > `docs/handover-go-backend-slice1.md`.
   - **Slice 1 — read-path interactive ops (highest ROI).** get_slate,
     get_similar (the math is already Go), get_explanation, get_shortlist,
     feedback/recommendation history, taste profile, diagnostics. Pure sidecar
