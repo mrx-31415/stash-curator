@@ -68,7 +68,7 @@ ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1`); err != nil {
 
 // execImmediate runs one statement in an explicit BEGIN IMMEDIATE transaction,
 // mirroring curator.storage.transaction (no nested transactions).
-func execImmediate(db *sql.DB, statement string, args ...any) error {
+func execImmediate(db dbx, statement string, args ...any) error {
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		return err
@@ -224,8 +224,29 @@ func dbSummary(v any) jVal {
 	return parsed
 }
 
+// opGetConfig mirrors backend.py's _profiled-wrapped get_config: a trace is
+// opened first (so the settings fetch records a stash span), and when
+// profilingEnabled is on the trace is saved as a profile_trace row — even
+// when the operation fails. Save failures only log a warning.
 func opGetConfig(pluginDir string, payload jVal) (jVal, error) {
-	settings := pluginSettings(payload)
+	t := beginTrace("get_config", "operation")
+	settings := pluginSettings(payload) // swallows failures, like _settings
+	if !settings.get("profilingEnabled").truthy() {
+		endTrace(t)
+		return getConfigBody(pluginDir, payload, settings)
+	}
+	output, err := getConfigBody(pluginDir, payload, settings)
+	if err != nil {
+		t.fail(err)
+	}
+	endTrace(t)
+	if saveErr := saveTrace(databasePath(pluginDir, payload, settings), t); saveErr != nil {
+		warnLog("Could not save Curator profile: " + saveErr.Error())
+	}
+	return output, err
+}
+
+func getConfigBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
 		return jvNull(), err
@@ -475,7 +496,7 @@ func stashdbConfigured(boxes jVal) bool {
 	return false
 }
 
-func scanCount(db *sql.DB, query string) int64 {
+func scanCount(db dbx, query string) int64 {
 	var count int64
 	if err := db.QueryRow(query).Scan(&count); err != nil {
 		return 0
@@ -483,7 +504,7 @@ func scanCount(db *sql.DB, query string) int64 {
 	return count
 }
 
-func scanMaxMs(db *sql.DB, query string) jVal {
+func scanMaxMs(db dbx, query string) jVal {
 	var value sql.NullInt64
 	if err := db.QueryRow(query).Scan(&value); err != nil || !value.Valid {
 		return jvNull()
@@ -508,7 +529,7 @@ func (s modelUpdateState) pendingCount() int64 {
 
 // modelUpdateStatus mirrors ModelUpdateCoordinator.status() on the fields
 // health needs.
-func modelUpdateStatus(db *sql.DB) (modelUpdateState, error) {
+func modelUpdateStatus(db dbx) (modelUpdateState, error) {
 	var state modelUpdateState
 	err := db.QueryRow(`SELECT requested_generation, published_generation, requested_at_ms, last_finished_at_ms
 FROM model_update_state WHERE singleton=1`).

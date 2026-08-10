@@ -40,7 +40,7 @@ var modelTables = []string{
 var finalArtifactName = regexp.MustCompile(`^(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.sqlite3$`)
 
 // coreDatabasePath mirrors artifacts.database_path: the main database file.
-func coreDatabasePath(db *sql.DB) (string, error) {
+func coreDatabasePath(db dbx) (string, error) {
 	rows, err := db.Query(`PRAGMA database_list`)
 	if err != nil {
 		return "", err
@@ -103,7 +103,7 @@ func readonlyArtifactURI(path string, immutable bool) string {
 
 // attachActiveArtifacts mirrors artifacts.attach_active_artifacts: attach the
 // published feature/model generations and create the shadowing temp views.
-func attachActiveArtifacts(db *sql.DB) error {
+func attachActiveArtifacts(db dbx) error {
 	present, err := tableColumns(db, "feature_build")
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func attachActiveArtifacts(db *sql.DB) error {
 // attachBuildSources mirrors artifacts.attach_build_sources: attach the core
 // database (read-only, mutable) plus the feature generation, shadowing every
 // non-owned core table and the feature tables with temp views.
-func attachBuildSources(db *sql.DB, corePath, featurePath string) error {
+func attachBuildSources(db dbx, corePath, featurePath string) error {
 	owned := make(map[string]bool, len(modelTables)+len(featureTables))
 	for _, table := range modelTables {
 		owned[table] = true
@@ -219,7 +219,7 @@ func attachBuildSources(db *sql.DB, corePath, featurePath string) error {
 
 // artifactTables mirrors artifacts._artifact_tables: only the tables the
 // attached artifact actually has.
-func artifactTables(db *sql.DB, alias string, tables []string) ([]string, error) {
+func artifactTables(db dbx, alias string, tables []string) ([]string, error) {
 	rows, err := db.Query(`SELECT name FROM ` + alias + `.sqlite_master WHERE type='table'`)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func artifactTables(db *sql.DB, alias string, tables []string) ([]string, error)
 }
 
 // tableColumns returns the column names of a table via PRAGMA table_info.
-func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+func tableColumns(db dbx, table string) (map[string]bool, error) {
 	rows, err := db.Query(`PRAGMA table_info(` + quoteIdent(table) + `)`)
 	if err != nil {
 		return nil, err

@@ -197,7 +197,7 @@ func splitStatements(sql string) ([]string, error) {
 	return statements, nil
 }
 
-func queryMigrationStatus(db *sql.DB) (migrationStatus, error) {
+func queryMigrationStatus(db dbx) (migrationStatus, error) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		return migrationStatus{}, err
@@ -272,7 +272,7 @@ CREATE TABLE IF NOT EXISTS schema_migration (
 // MigrationRunner.migrate: re-check inside the transaction because another
 // plugin operation may have applied a version while this one waited for the
 // writer lock.
-func migrate(db *sql.DB, appliedAtMs int64) error {
+func migrate(db dbx, appliedAtMs int64) error {
 	migrations, err := loadMigrations()
 	if err != nil {
 		return err
@@ -297,7 +297,7 @@ func migrate(db *sql.DB, appliedAtMs int64) error {
 	return nil
 }
 
-func migrateOne(db *sql.DB, m migration, appliedAtMs int64) error {
+func migrateOne(db dbx, m migration, appliedAtMs int64) error {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +10,7 @@ import (
 
 // seedArtifactSidecar builds a fully migrated sidecar whose registry rows
 // point at synthetic published artifacts, and writes those artifacts.
-func seedArtifactSidecar(t *testing.T, kind string) (*sql.DB, string) {
+func seedArtifactSidecar(t *testing.T, kind string) (dbx, string) {
 	t.Helper()
 	db, corePath := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
@@ -33,7 +32,7 @@ func seedArtifactSidecar(t *testing.T, kind string) (*sql.DB, string) {
 	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := openDatabase(artifactPath, false)
+	artifact, err := openDatabase(artifactPath, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +159,7 @@ func TestAttachBuildSources(t *testing.T) {
 	}
 }
 
-func mustDatabasePath(t *testing.T, db *sql.DB) string {
+func mustDatabasePath(t *testing.T, db dbx) string {
 	t.Helper()
 	path, err := coreDatabasePath(db)
 	if err != nil {

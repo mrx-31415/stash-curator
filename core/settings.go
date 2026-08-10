@@ -6,7 +6,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -128,7 +127,7 @@ func pythonFloat(v jVal) (float64, error) {
 }
 
 // applyPluginSettings mirrors backend.py's _apply_plugin_settings.
-func applyPluginSettings(db *sql.DB, settings jVal, nowMs int64) error {
+func applyPluginSettings(db dbx, settings jVal, nowMs int64) error {
 	if settings.kind != jObj {
 		return nil
 	}
@@ -176,7 +175,7 @@ func applyPluginSettings(db *sql.DB, settings jVal, nowMs int64) error {
 }
 
 // sidecarConfig mirrors CuratorAPI.config(): {**DEFAULT_PLUGIN_CONFIG, **stored}.
-func sidecarConfig(db *sql.DB) (jVal, error) {
+func sidecarConfig(db dbx) (jVal, error) {
 	var configJSON string
 	var updatedAtMs int64
 	err := db.QueryRow(`SELECT config_json, updated_at_ms FROM curator_config WHERE singleton=1`).
