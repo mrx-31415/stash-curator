@@ -75,6 +75,12 @@ func openDatabase(path string, readonly bool, trace *trace) (dbx, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Python uses one sqlite3.Connection per op; pin the pool to a single
+	// connection so the binary never contends with itself (a read on one
+	// pooled connection blocking this process's own write on another — a
+	// failure mode the Python backend cannot hit and that NFS-backed
+	// sidecars make more likely).
+	db.SetMaxOpenConns(1)
 	var out dbx = db
 	if trace != nil {
 		out = &tracedDB{db: db, t: trace}
