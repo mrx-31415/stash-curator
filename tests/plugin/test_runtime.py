@@ -105,6 +105,16 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "Prepare recommendation pages" in (installed / "stash-curator.yml").read_text()
     assert "Compact legacy Curator data" in (installed / "stash-curator.yml").read_text()
     assert "Vacuum compacted Curator data" in (installed / "stash-curator.yml").read_text()
+    # The exec line resolves the per-arch binary through the launcher shim, so
+    # the shipped manifest must point at launcher.py and the shim must exec
+    # the same binary the resolver probes.
+    exec_lines = [
+        line.strip() for line in plugin_manifest.splitlines() if line.strip().startswith("- ")
+    ]
+    assert '"{pluginDir}/launcher.py"' in "\n".join(exec_lines)
+    launcher = (installed / "launcher.py").read_text(encoding="utf-8")
+    assert "curator-core-" in launcher
+    assert "backend.py" in launcher
     javascript = (installed / "stash-curator.js").read_text()
     assert "data:image/png;base64" in javascript
     assert "curator-whisparr-fallback" in javascript
@@ -113,6 +123,7 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "Added to Whisparr." in javascript
     assert "Retry sending to Whisparr" in javascript
     assert _run(installed / "backend.py", installed)["round_trips"] == 1
+    assert _run(installed / "launcher.py", installed)["round_trips"] == 2
     with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
         connection.execute(
             "UPDATE model_update_state SET last_started_at_ms=2, "
