@@ -17,19 +17,19 @@ do not introduce a dependency or abstraction without a measured need. SQLite sch
 changes always get a new ordered migration. Never edit an applied migration or reset
 the sidecar to work around one.
 
-The compiled core (`core/`, Go) optionally accelerates the two similarity stages
-in numpy's role; the binary is never a runtime dependency (compiled core > numpy
-> pure-Python dispatch, `curator/core.py`). Go is a build-time dependency:
+The compiled core (`core/`, Go) is the single runtime implementation of the
+similarity and pagerank kernels; a missing or incompatible binary fails build
+stages with a clear error (`curator/core.py`). Go is a build-time dependency:
 changes under `core/` need the Go toolchain, `scripts/build_core.sh`, and the
-differential gate (`scripts/verify core` — the binary must reproduce numpy's
-stage outputs on seeded synthetic corpora; `tests/core/` + `tests/model/test_core.py`).
-Packaging (`scripts/build_plugin.py`) cross-compiles the shipped per-arch
-binaries and requires Go. The kernels mirror the production numpy semantics
-exactly, including the documented masked-NaN performer behavior (see
+differential gate (`scripts/verify core` — the binary must reproduce the numpy
+oracle's stage outputs on seeded synthetic corpora; `tests/core/`,
+`tests/model/test_core.py`, `tests/oracle.py`). Packaging
+(`scripts/build_plugin.py`) cross-compiles the shipped per-arch binaries and
+requires Go. The kernels mirror the production numpy semantics exactly,
+including the documented masked-NaN performer behavior (see
 `docs/decisions/002-runtime-swap-planning.md` section 8) — do not "fix" that
 divergence without a reviewed product decision. `scripts/verify full` builds
-the core and runs the unit suite with the binary active when Go is available;
-without it the suite runs the numpy/pure-Python paths (both must stay green).
+the core and runs the unit suite with the binary active.
 
 Custom scene and performer cards must preserve Stash's native SFW Switch class
 contract: `scene-card`/`performer-card`, the matching `*-card-image`, `card-section`,

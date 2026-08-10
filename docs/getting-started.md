@@ -50,21 +50,17 @@ from the Curator status indicator and Stash's Tasks page.
 
 ## Optional acceleration
 
-Curator runs entirely on the Python standard library, and everything works without
-any extra packages. Model builds get measurably faster when **numpy** is available,
-so a one-shot task installs it for you:
+Curator runs entirely on Python's standard library plus a compiled Go core
+(`curator-core`) that ships inside the plugin zip — no installation step, no
+network access. The compiled core accelerates the two similarity stages
+(content neighbors and performer similarity) and the multi-hop reach walk,
+which are the largest part of a first build. There is nothing to install: just
+run **Sync and build recommendations** as usual.
 
-1. In Stash, open **Tasks** and run **Install optional dependencies** once.
-2. The task creates a plugin-local virtual environment and pip-installs the pinned
-   requirements from `packages/curator-tools.txt` into it.
-3. Then run **Sync and build recommendations** as usual.
-
-The numpy paths accelerate the two similarity stages (content neighbors and
-performer similarity), which are the largest part of a first build. Without it, the
-model builder falls back to its pure-Python implementations, so skipping the task is
-always safe. The venv lives in the plugin directory and survives plugin updates;
-re-run the task only if the Python interpreter Stash uses for plugins changes
-version.
+The Go binary is optional in the sense that every path degrades gracefully if
+it is missing or incompatible — the plugin reports a clear error for build
+stages instead of silently running slower. Updating the plugin replaces both
+the Python code and the per-platform binaries.
 
 ## Configure
 

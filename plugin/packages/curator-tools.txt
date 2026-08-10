@@ -1,6 +1,0 @@
-# Optional Curator dependencies installed by the "Install optional dependencies"
-# task into a plugin-local venv. Pin exact versions: pip resolves the wheel that
-# matches the runtime Python and platform at install time. The model builder falls
-# back to its pure-Python implementations when these are not importable.
-numpy==2.5.1
-networkx==3.6.1
