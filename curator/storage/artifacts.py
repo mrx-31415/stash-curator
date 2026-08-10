@@ -166,6 +166,26 @@ def _readonly_uri(path: Path, *, immutable: bool = True) -> str:
     return f"{path.as_uri()}?mode=ro{suffix}"
 
 
+def _attach_readonly(connection: sqlite3.Connection, alias: str, path: Path) -> None:
+    """Attach a published artifact read-only, retrying without the lock-free
+    immutable flag when the filesystem rejects it.
+
+    The immutable=1 open skips locking entirely, which is normally fine for
+    published artifacts, but some filesystems (network mounts, freshly renamed
+    files) reject it with SQLITE_CANTOPEN. A plain mode=ro attach is
+    equivalent for our purposes (published artifacts are never modified while
+    attached) and only takes a shared lock instead.
+    """
+    try:
+        connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path),))
+    except sqlite3.OperationalError as error:
+        if "unable to open database" not in str(error):
+            raise
+        connection.execute(
+            f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),)
+        )
+
+
 def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
@@ -339,7 +359,7 @@ def attach_active_artifacts(connection: sqlite3.Connection) -> None:
         path = artifact_path(core, str(row[0]))
         if not path.is_file():
             raise StorageError(f"active artifact is missing: {path.name}")
-        connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path),))
+        _attach_readonly(connection, alias, path)
         if (
             int(connection.execute(f"PRAGMA {alias}.user_version").fetchone()[0])
             not in SUPPORTED_ARTIFACT_SCHEMA_VERSIONS
@@ -361,7 +381,7 @@ def activate_artifact(connection: sqlite3.Connection, kind: str, path: Path) -> 
     attached = {str(row["name"]) for row in connection.execute("PRAGMA database_list")}
     if alias in attached:
         connection.execute(f"DETACH DATABASE {alias}")
-    connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path),))
+    _attach_readonly(connection, alias, path)
     if (
         int(connection.execute(f"PRAGMA {alias}.user_version").fetchone()[0])
         not in SUPPORTED_ARTIFACT_SCHEMA_VERSIONS
