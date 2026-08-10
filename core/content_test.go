@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 )
 
 func genSparseRows(t *testing.T, n, nnz, d int, seed int64) ([]sparseRow, []string) {
@@ -224,7 +225,7 @@ func TestPerformerKernelDeterministicAcrossThreads(t *testing.T) {
 	}
 	profiles := make(map[string]*performerProfile)
 	for i := 0; i < 200; i++ {
-		id := string(rune('p' + i%26)) + string(rune('a'+i/26))
+		id := string(rune('p'+i%26)) + string(rune('a'+i/26))
 		blocks := map[string]map[string]profileValue{
 			"content":      {"tag:a": {value: 0.8, confidence: 0.9}, "tag:b": {value: 0.4, confidence: 0.7}},
 			"hair":         {"brown": {value: 1.0, confidence: 0.8}},
@@ -278,5 +279,26 @@ func TestPerformerPairHandComputed(t *testing.T) {
 	}
 	if !reflect.DeepEqual(blocks, map[string]float64{"content": 0.5}) {
 		t.Fatalf("unexpected blocks: %v", blocks)
+	}
+}
+
+func TestProfileRecorderSpans(t *testing.T) {
+	disabled := newProfileRecorder(false)
+	end := disabled.begin("core.nothing")
+	end()
+	disabled.emit()
+	if len(disabled.spans) != 0 {
+		t.Fatalf("disabled recorder must not collect spans")
+	}
+	enabled := newProfileRecorder(true)
+	end = enabled.begin("core.work")
+	time.Sleep(2 * time.Millisecond)
+	end()
+	if len(enabled.spans) != 1 {
+		t.Fatalf("expected one span, got %d", len(enabled.spans))
+	}
+	span := enabled.spans[0]
+	if span.name != "core.work" || span.durUs < 1000 || span.offsetUs < 0 {
+		t.Fatalf("unexpected span: %+v", span)
 	}
 }

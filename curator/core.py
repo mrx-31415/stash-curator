@@ -23,6 +23,7 @@ import json
 import os
 import platform
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -128,15 +129,21 @@ def run_core(
     payload: dict[str, object],
     *,
     progress: Callable[[float], None] | None = None,
+    profile: bool = False,
 ) -> dict[str, object]:
     """Run one core stage: JSON payload on stdin, NDJSON on stdout.
 
     ``progress`` receives raw stage fractions (0..1) as the binary streams
-    them; the caller maps them onto the build's own progress scale.
+    them; the caller maps them onto the build's own progress scale. When
+    ``profile`` is set the binary emits ``core.*`` spans, which are folded
+    into the active profiling trace (``curator.profiling``), if any.
     """
     binary = core_binary()
     if binary is None:
         raise CoreError("compiled core is not available")
+    if profile:
+        payload = {**payload, "profile": True}
+    spawn_started_ns = time.perf_counter_ns()
     proc = subprocess.Popen(
         [str(binary), mode],
         stdin=subprocess.PIPE,
@@ -148,6 +155,7 @@ def run_core(
     proc.stdin.write(json.dumps(payload, separators=(",", ":")))
     proc.stdin.close()
     result: dict[str, object] | None = None
+    spans: list[tuple[str, int, int]] = []
     assert proc.stdout is not None
     for line in proc.stdout:
         if not line.strip():
@@ -163,6 +171,16 @@ def run_core(
             if not isinstance(candidate, dict):
                 raise CoreError("compiled core result is not an object")
             result = candidate
+        elif "span" in message:
+            span = message["span"]
+            if isinstance(span, dict) and isinstance(span.get("name"), str):
+                spans.append(
+                    (
+                        span["name"],
+                        int(span.get("offset_us", 0)),
+                        int(span.get("dur_us", 0)),
+                    )
+                )
         elif "progress" in message and progress is not None:
             progress(float(message["progress"]))
     stderr = proc.stderr.read() if proc.stderr is not None else ""
@@ -171,6 +189,21 @@ def run_core(
         raise CoreError(
             f"compiled core failed ({mode}, exit {returncode}): {stderr.strip()[-500:]}"
         )
+    if spans:
+        from curator.profiling import current_trace
+
+        trace = current_trace()
+        if trace is not None:
+            # The binary's offsets are from its process start, which is
+            # (spawn + a few ms of Go runtime init); record expects absolute
+            # perf-counter readings, so convert back from the spawn point.
+            for name, offset_us, duration_us in spans:
+                trace.record(
+                    "core",
+                    name,
+                    spawn_started_ns + offset_us * 1_000,
+                    duration_us * 1_000,
+                )
     return result
 
 
