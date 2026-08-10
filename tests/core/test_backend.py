@@ -15,6 +15,7 @@ Synthetic sidecars only — never a live sidecar.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -443,6 +444,81 @@ def test_artifact_views_resolve_same_tables(tmp_path: Path, binary: Path, stub_s
         assert not set(MODEL_TABLES) & views
     finally:
         connection.close()
+
+
+# ── profiling parity ────────────────────────────────────────────────────────
+
+
+def test_profiling_trace_parity(tmp_path: Path, binary: Path, stub_stash: str) -> None:
+    """get_config with profilingEnabled records an equivalent profile_trace row
+    on both implementations (same kind/operation/status, structurally identical
+    trace_json: root plugin event + stash + sqlite spans), while the op output
+    stays byte-identical."""
+    _StubStash.plugin_settings = {"profilingEnabled": True}
+    try:
+        sidecar = tmp_path / "sidecar.sqlite3"
+        make_sidecar(sidecar)
+        raw = payload("get_config", sidecar, stub_stash)
+        rows: dict[str, tuple] = {}
+        outputs: dict[str, bytes] = {}
+        for runner in (None, binary):
+            run_dir = tmp_path / f"run-{runner is None}"
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / sidecar.name
+            shutil.copy2(sidecar, run_db)
+            result = run_backend(runner, PLUGIN_DIR, _with_db_path(raw, run_db))
+            assert result.returncode == 0, result.stdout
+            outputs["python" if runner is None else "go"] = result.stdout
+            connection = sqlite3.connect(run_db)
+            try:
+                row = connection.execute(
+                    """
+                    SELECT trace_id, kind, operation, started_at_ms, duration_us,
+                           status, span_count, truncated, trace_json
+                    FROM profile_trace
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+            rows["python" if runner is None else "go"] = row
+    finally:
+        _StubStash.plugin_settings = {}
+    # The op output is unaffected by profiling (profilingEnabled is not a
+    # sidecar config key, so no config write happens).
+    assert outputs["go"] == outputs["python"]
+    python_row, go_row = rows["python"], rows["go"]
+    assert python_row is not None and go_row is not None
+    for row in (python_row, go_row):
+        trace_id, kind, operation, _, duration_us, status, span_count, truncated, _ = row
+        assert re.match(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", trace_id
+        )
+        assert kind == "operation" and operation == "get_config"
+        assert status == "ok" and truncated == 0
+        assert duration_us >= 0 and span_count > 0
+    python_json = json.loads(python_row[8])
+    go_json = json.loads(go_row[8])
+    assert python_json["displayTimeUnit"] == go_json["displayTimeUnit"] == "ms"
+    python_events, go_events = python_json["traceEvents"], go_json["traceEvents"]
+    # Span counts are implementation-specific (Python wraps fetches and extra
+    # PRAGMAs separately); span_count counts recorded spans while traceEvents
+    # adds the root event. Both must carry the root event, the settings stash
+    # span, and sqlite spans, and the row's span_count must agree with the
+    # stored JSON.
+    assert python_row[6] == len(python_events) - 1
+    assert go_row[6] == len(go_events) - 1
+    assert len(go_events) >= 4 and len(python_events) >= 4
+    for events in (python_events, go_events):
+        root = events[0]
+        assert root["name"] == "get_config" and root["cat"] == "plugin"
+        assert root["ph"] == "X" and root["pid"] == 1 and root["tid"] == 0
+        assert root["args"] == {"status": "ok", "kind": "operation"}
+        assert {"name", "cat", "ph", "ts", "dur", "pid", "tid", "args"} <= set(root)
+        assert any(e["cat"] == "stash" and e["name"] == "CuratorPluginSettings" for e in events)
+        assert any(e["cat"] == "sqlite" for e in events)
+        for event in events:
+            assert {"name", "cat", "ph", "ts", "dur", "pid", "tid"} <= set(event)
 
 
 # ── Python fallback dispatch ────────────────────────────────────────────────
