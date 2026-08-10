@@ -181,7 +181,28 @@ def _attach_readonly(connection: sqlite3.Connection, alias: str, path: Path) -> 
     except sqlite3.OperationalError as error:
         if "unable to open database" not in str(error):
             raise
-        connection.execute(f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),))
+        try:
+            connection.execute(
+                f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),)
+            )
+        except sqlite3.OperationalError as fallback_error:
+            # Diagnostics for the CI-only failure where an existing artifact
+            # file cannot be opened at all on the runner.
+            try:
+                stat = path.stat()
+                detail = f"size={stat.st_size} mode={oct(stat.st_mode)}"
+                with path.open("rb") as handle:
+                    header = handle.read(16).hex()
+                plain = sqlite3.connect(str(path), timeout=1)
+                plain.execute("SELECT 1")
+                plain.close()
+                detail += f" plain_open=ok header={header}"
+            except Exception as inspect_error:
+                detail = f"inspect failed: {inspect_error}"
+            raise RuntimeError(
+                f"cannot attach {path.name}: immutable={error!r} plain={fallback_error!r} "
+                f"({detail})"
+            ) from fallback_error
 
 
 def _quote(identifier: str) -> str:
