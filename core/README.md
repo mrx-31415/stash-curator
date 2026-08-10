@@ -49,6 +49,26 @@ curator-core performer-similarity
 side (`curator/core.py`, `CORE_PROTOCOL`) probes this before enabling the
 compiled path.
 
+### Raw-plugin backend mode
+
+Slice 0 of the full Go backend (see `docs/handover-go-backend.md`): any argv
+that is not a kernel command runs the raw-plugin interface instead —
+
+```
+curator-core "{pluginDir}" [task-mode]
+```
+
+matching `backend.py`'s argv contract. One JSON payload on stdin, one
+`{"output": ...}` / `{"error": ...}` object on stdout, stderr progress markers
+(`\x01p\x02...`). The binary implements `round_trip`, `health`, `get_config`,
+and `get_job_status` byte-identically to the Python backend (same payloads and
+sidecar state), including settings application, the ordered checksummed
+migration chain (`core/migrations/` — byte-identical copies of
+`curator/storage/sql/`), and artifact attach/views. Every other operation,
+task mode, and the entity-sync hook mode spawns the bundled `backend.py` with
+the same argv/stdin contract. Differential coverage:
+`tests/core/test_backend.py`.
+
 ### content-neighbors
 
 Input: `db` (feature artifact path), `feature_version`, `labels`
