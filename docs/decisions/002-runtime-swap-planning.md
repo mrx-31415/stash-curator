@@ -407,13 +407,44 @@ yet** — distribution (5.2/5.3) is the next work package.
   `modernc.org/sqlite` (pure Go) means one machine cross-compiles every
   target — native per-arch runners were not needed. The `raw` interface
   stays; switching the exec line to the binary is a later, separate step.
-- **Phase 4 (optional):** full backend in Go on `raw` (no RPC), if the hybrid
-  proves out and the port budget is available. **Progress:** the multi-hop
-  pagerank kernel is ported (`core/multi-hop`). **Done (2026-08-10):** the
-  numpy/networkx venv is removed — no "Install optional dependencies" task,
-  no runtime dependency installs. The compiled core is now the single runtime
-  implementation for the similarity and pagerank kernels (a missing binary
-  fails build stages with a clear error); the pure-Python kernel paths were
-  deleted; numpy/networkx remain dev-only oracles for the differential gate
-  (`tests/oracle.py`), and percentiles run on stdlib Python. Rollback = install
-  the previous plugin version.
+- **Phase 4 (full Go backend on `raw`): decided shape (2026-08-10).** The
+  kernel port is done (similarity + pagerank), the venv is gone (numpy/
+  networkx are dev-only oracles in `tests/oracle.py`), and the installed
+  cold build measures 3.2x on the similarity stage with zero runtime
+  installs. The remaining question is whether the *whole backend* becomes Go
+  (the exec line becomes `curator-core`). Full handover + first agent prompt:
+  `docs/handover-go-backend.md`.
+
+  Decomposition (each slice keeps the previous state shippable — unported ops
+  fall back to the Python backend until the binary covers them):
+
+  - **Slice 0 — transport + skeleton.** The binary implements the raw
+    protocol (stdin JSON → dispatch → stdout JSON), settings application, and
+    the ordered, checksummed migration chain + artifact attach/views (the
+    sidecar-parity surface — the riskiest part). Ships with the trivial ops
+    (round_trip, health, get_config, get_job_status) and a Python fallback
+    dispatch for everything else.
+  - **Slice 1 — read-path interactive ops (highest ROI).** get_slate,
+    get_similar (the math is already Go), get_explanation, get_shortlist,
+    feedback/recommendation history, taste profile, diagnostics. Pure sidecar
+    reads + byte-exact JSON; this is what kills the ~300-700ms per-call
+    interactive spawn (5ms binary spawn).
+  - **Slice 2 — network layer (the goroutine slice).** Two GraphQL clients
+    with one pattern: Stash sync (incremental reconciliation) and StashDB
+    expand/hunt (performer hunt measured ~47s wall — the most fetch-bound
+    interactive op; errgroup fan-out over performers is the real concurrency
+    win). Local Similar is sidecar-only; the sync side is mostly write-bound
+    (51s measured, most of it reconciliation + DB), so the expand/hunt side
+    benefits most.
+  - **Slice 3 — write-path tasks.** backup/compact/vacuum/prepare
+    (mechanical SQLite), then the build's remaining Python stages
+    (affinities, scoring, lanes, publication — the largest port chunk, each a
+    bounded algorithm with the published model artifact as the oracle).
+  - **Slice 4 — frontend parity pass + delete Python.** Every op's JSON
+    contract verified byte-for-byte against the current backend's outputs
+    (the existing suite is the oracle), then the Python backend ships out.
+
+  Sequential order: Slice 0 must land first (parity foundation); Slice 1 is
+  the recommended first vertical slice after it. The exec-line swap happens
+  when Slice 0 + 1 are covered; unported ops keep the Python fallback until
+  then.
