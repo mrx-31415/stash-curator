@@ -140,7 +140,10 @@ def run_core(
     """
     binary = core_binary()
     if binary is None:
-        raise CoreError("compiled core is not available")
+        raise CoreError(
+            "curator-core is required but missing or incompatible (wrong platform, "
+            "version mismatch, or not executable); reinstall the plugin"
+        )
     if profile:
         payload = {**payload, "profile": True}
     spawn_started_ns = time.perf_counter_ns()

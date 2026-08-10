@@ -409,8 +409,11 @@ yet** — distribution (5.2/5.3) is the next work package.
   stays; switching the exec line to the binary is a later, separate step.
 - **Phase 4 (optional):** full backend in Go on `raw` (no RPC), if the hybrid
   proves out and the port budget is available. **Progress:** the multi-hop
-  pagerank kernel is ported (`core/multi-hop`), keeping networkx/scipy as a
-  dev-only oracle; percentiles stay Python (pure-Python fallback is
-  negligible). The remaining runtime dependencies (the numpy/networkx venv)
-  are the next removal target — the plan is binary-required-at-runtime with
-  numpy as the differential oracle and the pure-Python kernels deleted.
+  pagerank kernel is ported (`core/multi-hop`). **Done (2026-08-10):** the
+  numpy/networkx venv is removed — no "Install optional dependencies" task,
+  no runtime dependency installs. The compiled core is now the single runtime
+  implementation for the similarity and pagerank kernels (a missing binary
+  fails build stages with a clear error); the pure-Python kernel paths were
+  deleted; numpy/networkx remain dev-only oracles for the differential gate
+  (`tests/oracle.py`), and percentiles run on stdlib Python. Rollback = install
+  the previous plugin version.

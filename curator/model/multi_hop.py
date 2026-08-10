@@ -26,7 +26,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, cast
 
-from curator import core, optional_deps
+from curator import core
 from curator.profiling import current_trace
 
 DAMPING = 0.85
@@ -234,12 +234,7 @@ class MultiHopAffinity:
         graph = self._graph_for(seed_id)
         if len(graph.adjacency) < 2:
             return {}
-        if core.core_binary() is not None:
-            return self._walk_core(graph)
-        nx = optional_deps.nx
-        if nx is not None and _scipy_available():
-            return _pagerank_networkx(graph)
-        return _pagerank_python(graph)
+        return self._walk_core(graph)
 
     def _walk_core(self, graph: _Graph) -> dict[str, float]:
         """PageRank via the compiled core (networkx's role).
@@ -319,64 +314,3 @@ class MultiHopAffinity:
                 continue
             adjacency[node] = _normalize(sorted(edges.items()))
         return _Graph(dict(adjacency), seed_id, frozenset(self._scene_performers))
-
-
-def _scipy_available() -> bool:
-    """networkx.pagerank dispatches to its scipy backend; without scipy we use the
-    pure-Python power iteration instead."""
-    try:
-        import scipy  # type: ignore[import-untyped]  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def _pagerank_networkx(graph: _Graph) -> dict[str, float]:
-    """networkx.pagerank (scipy backend) over the pre-normalized adjacency.
-
-    Weights are already row-stochastic, so the sparse transition matrix matches the
-    pure-Python recurrence and both engines converge to the same fixed point.
-    """
-    import networkx as nx  # type: ignore[import-untyped]
-
-    directed = nx.DiGraph()
-    directed.add_nodes_from(sorted(graph.adjacency))
-    for node, edges in graph.adjacency.items():
-        for target, weight in edges.items():
-            directed.add_edge(node, target, weight=weight)
-    scores: dict[str, float] = nx.pagerank(
-        directed,
-        alpha=DAMPING,
-        personalization={graph.seed: 1.0},
-        max_iter=MAX_ITERATIONS,
-        tol=TOLERANCE,
-    )
-    return scores
-
-
-def _pagerank_python(graph: _Graph) -> dict[str, float]:
-    """Power iteration over the same recurrence as the networkx path.
-
-    v' = alpha * row-stochastic(A) @ v + (1 - alpha) * personalization, with
-    dangling mass returned to the seed (personalization), matching networkx's
-    dangling handling so both engines converge to the same fixed point.
-    """
-    adjacency = graph.adjacency
-    seed = graph.seed
-    nodes = sorted(adjacency)
-    dangling = [node for node in nodes if not adjacency[node]]
-    x = {node: 1.0 / len(nodes) for node in nodes}
-    for _ in range(MAX_ITERATIONS):
-        xlast = x
-        x = {node: 0.0 for node in nodes}
-        danglesum = DAMPING * sum(xlast[node] for node in dangling)
-        for node in nodes:
-            for target, weight in adjacency[node].items():
-                x[target] += DAMPING * xlast[node] * weight
-            x[node] += danglesum * (1.0 if node == seed else 0.0)
-            if node == seed:
-                x[node] += 1.0 - DAMPING
-        error = sum(abs(x[node] - xlast[node]) for node in nodes)
-        if error < len(nodes) * TOLERANCE:
-            break
-    return x

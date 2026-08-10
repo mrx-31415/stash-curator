@@ -1,15 +1,15 @@
 # Compiled core (curator-core)
 
-Optional acceleration for Stash Curator's model build. The binary replaces
-numpy's role in the similarity stage: the content-neighbor and
-performer-similarity kernels are implemented with identical semantics to the
-production Python paths in `curator/model/builder.py`, reading feature rows
-directly from the SQLite feature artifact. The plugin never depends on it — the
-pure-Python fallback (and numpy, when installed) stays fully intact.
+Optional acceleration for Stash Curator's model build. The binary is the
+single runtime implementation of the content-neighbor, performer-similarity,
+and multi-hop PageRank kernels, reading feature rows directly from the SQLite
+feature artifact. numpy/networkx remain dev-only oracles for the differential
+test gate (`tests/oracle.py`); a missing or incompatible binary fails build
+stages with a clear error instead of silently falling back.
 
 Go is a **dev/build dependency only**; the shipped plugin runs the binary as a
 subprocess when present (see `docs/decisions/002-runtime-swap-planning.md`,
-Phase 2, and `curator/core.py` for resolution and fallback).
+Phase 3, and `curator/core.py` for resolution).
 
 ## Build
 
@@ -23,8 +23,7 @@ The binary is built with `CGO_ENABLED=0`; SQLite reads use the pure-Go
 `modernc.org/sqlite` driver. `scripts/build_plugin.py` cross-compiles the
 shipped per-arch binaries (linux amd64/arm64, windows amd64, darwin
 amd64/arm64) into the plugin zip; the runtime selects the matching
-`curator-core-<goos>-<goarch>` and falls back to numpy / pure Python when none
-exists.
+`curator-core-<goos>-<goarch>` and the plugin fails build stages loudly when none exists.
 
 ## Protocol
 
@@ -107,5 +106,5 @@ The pytest files `tests/core/test_core.py` and `tests/model/test_core.py` are
 the oracle: Python owns the data (seeded synthetic corpora — never a real
 sidecar), the binary must reproduce the numpy outputs within tolerance (exact
 ids/counts, 1e-9 floats). The CI core job builds the binary and runs the gate
-with `CURATOR_CORE` set; the pure-Python fallback is exercised by the main
+with `CURATOR_CORE` set.
 suite without a binary.

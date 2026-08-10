@@ -5,11 +5,11 @@ permalink: /architecture/
 
 # Architecture
 
-Curator is a self-contained external raw plugin with no runtime dependencies beyond
-Python 3.12+. Optional numpy acceleration is provisioned on demand into a
-plugin-local venv (see Runtime components); without it, the same code paths run in
-pure Python. Stash loads `plugin/backend.py`; the browser UI is one JavaScript file
-and one CSS file, and model code lives in the packaged `curator` module.
+Curator is a self-contained external raw plugin with no runtime dependencies
+beyond Python 3.12+ and the compiled Go core (`curator-core`) that ships in the
+plugin zip; there is no runtime install task or virtual environment. Stash loads
+`plugin/backend.py`; the browser UI is one JavaScript file and one CSS file, and
+model code lives in the packaged `curator` module.
 
 ```text
 Stash GraphQL
@@ -43,16 +43,13 @@ source cache ──► normalized events                  StashDB
   orders.
 - `curator/similarity.py`, `curator/expand.py`, and `curator/explanations/` serve
   Similar, StashDB discovery, and factual reasons.
-- `curator/optional_deps.py` and the **Install optional dependencies** task provide
-  the optional numpy acceleration: the task creates a versioned venv beside the
-  plugin and pip-installs `plugin/packages/curator-tools.txt`; `backend.py` adds the
-  venv's site-packages to `sys.path` when present. The content-neighbor and
-  performer-similarity stages use numpy (BLAS matmuls) when importable and fall back
-  to their pure-Python implementations otherwise, so builds are deterministic and
-  correct in either mode. The same venv carries networkx (and, when installed,
-  scipy) for the multi-hop affinity stage: `curator/model/multi_hop.py` walks the
-  persisted performer-collaboration graph with personalized PageRank and falls back
-  to an equivalent pure-Python power iteration.
+- `curator/core.py` and the compiled Go core (`core/`, shipped as per-arch
+  `curator-core-<goos>-<goarch>` binaries in the plugin zip) implement the
+  content-neighbor, performer-similarity, and multi-hop PageRank kernels; the
+  builder and `curator/model/multi_hop.py` invoke them as subprocesses. The
+  binary is the single runtime implementation — a missing or incompatible
+  binary fails build stages with a clear error. numpy/networkx remain
+  dev-only oracles for the differential test gate (`tests/oracle.py`).
 - `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
 
 ## Data flow and failure boundaries

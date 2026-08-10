@@ -2,8 +2,6 @@
 _component_value()'s defensive fallbacks.
 """
 
-import pytest
-
 from curator.model import ModelSceneScore
 from curator.ranking.policy import _component_value, _percentiles
 
@@ -60,29 +58,6 @@ def test_tie_break_by_scene_id_does_not_affect_percentile() -> None:
     # value itself must be identical for every member of the tie regardless of scene_id.
     result = _percentiles({"z": 1.0, "a": 1.0, "m": 1.0})
     assert result["z"] == result["a"] == result["m"]
-
-
-def test_numpy_and_python_percentiles_agree(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from curator import optional_deps
-
-    values = {
-        "a": 1.0,
-        "b": 1.0,
-        "c": 2.0,
-        "d": 3.0,
-        "e": 3.0,
-        "f": -0.5,
-        "g": 0.0,
-        "h": 0.0,
-    }
-    if optional_deps.NUMPY_AVAILABLE:
-        accelerated = _percentiles(values)
-        monkeypatch.setattr(optional_deps, "NUMPY_AVAILABLE", False)
-        monkeypatch.setattr(optional_deps, "np", None)
-        fallback = _percentiles(values)
-        assert accelerated == fallback
 
 
 def test_component_value_missing_family_is_zero() -> None:

@@ -7,14 +7,12 @@ import hashlib
 import json
 import re
 import sqlite3
-import subprocess
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-from venv import create as create_venv
 
 PLUGIN_DIR = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).parent.resolve()
 
@@ -50,19 +48,6 @@ def _installed_code_version() -> str:
     return _code_version_cache
 
 
-# Optional dependencies (numpy) installed by the "Install optional dependencies"
-# task into a versioned venv kept beside the plugin. The venv lives on the plugin
-# volume, so it survives plugin updates and container recreations; the pure-Python
-# fallbacks keep every path working when it is absent.
-_venv_site_packages = (
-    PLUGIN_DIR
-    / "venv"
-    / "lib"
-    / f"python{sys.version_info.major}.{sys.version_info.minor}"
-    / "site-packages"
-)
-if _venv_site_packages.is_dir():
-    sys.path.insert(0, str(_venv_site_packages))
 for package_root in (PLUGIN_DIR, PLUGIN_DIR.parent):
     if str(package_root) not in sys.path:
         sys.path.insert(0, str(package_root))
@@ -1609,44 +1594,7 @@ def _profiled[T](
             _log("w", f"Could not save Curator profile: {save_error}")
 
 
-def _install_optional_deps() -> dict[str, object]:
-    """Install the plugin's optional Python dependencies into a local venv.
-
-    Mirrors the community Python Tools Installer pattern: a venv created inside the
-    plugin directory persists on the plugin volume across container recreations, and
-    the backend sys.path shim makes its site-packages importable. Runs without the
-    sidecar database so it works on a fresh install.
-    """
-    venv_dir = PLUGIN_DIR / "venv"
-    requirements = PLUGIN_DIR / "packages" / "curator-tools.txt"
-    if not requirements.is_file():
-        raise RuntimeError(f"missing optional dependency manifest: {requirements}")
-    _log("i", f"Installing optional Curator dependencies from {requirements.name}")
-    _progress(0.05)
-    if not (venv_dir / "pyvenv.cfg").is_file():
-        _log("i", f"Creating virtual environment at {venv_dir}")
-        create_venv(venv_dir, with_pip=True)
-    _progress(0.30)
-    pip = venv_dir / "bin" / "pip"
-    _log("i", "Running " + " ".join([str(pip), "install", "-r", str(requirements)]))
-    completed = subprocess.run(
-        [str(pip), "install", "-r", str(requirements)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    _progress(0.95)
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip().splitlines()
-        raise RuntimeError(f"pip install failed: {detail[-1] if detail else 'unknown error'}")
-    _log("i", "Optional Curator dependencies installed")
-    _progress(1.0)
-    return {"status": "ok", "venv": str(venv_dir), "requirements": str(requirements)}
-
-
 def _run_task(payload: dict[str, Any], mode: str) -> dict[str, object]:
-    if mode == "install-deps":
-        return _install_optional_deps()
     return _profiled(
         payload,
         mode,

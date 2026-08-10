@@ -9,12 +9,12 @@ absent -> numpy, then pure Python, and a broken binary fails the stage loudly.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from curator import core as core_module
+from curator import optional_deps
 from curator.core import CoreError
 from curator.model import PreferenceModelBuilder
 from curator.model import builder as builder_module
@@ -50,18 +50,23 @@ def _built_context(tmp_path: Path) -> tuple[builder_module.PreferenceModelBuilde
 
 
 def test_content_neighbors_core_matches_numpy_on_built_corpus(tmp_path: Path) -> None:
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+    if not optional_deps.NUMPY_AVAILABLE:
         pytest.skip("numpy is not installed")
     if builder_module.core.core_binary() is None:
         pytest.skip("curator-core binary is not built")
     builder, context = _built_context(tmp_path)
-    numpy_result = builder._content_neighbors_numpy(
+    from tests.oracle import content_neighbors_numpy
+
+    numpy_result = content_neighbors_numpy(
         context["preference"],
         context["training_labels"],
         context["label_mean"],
         context["progress_total"],
+        min_similarity=builder.config.model.minimum_neighbor_similarity,
+        neighbor_count=builder.config.model.neighbor_count,
+        confidence_scale=builder.config.model.neighbor_confidence_scale,
     )
-    core_result = builder._content_neighbors_core(
+    core_result = builder._content_neighbors(
         context["feature_version"],
         context["affinities"],
         context["training_labels"],
@@ -91,15 +96,22 @@ def test_content_neighbors_core_matches_numpy_on_built_corpus(tmp_path: Path) ->
 
 
 def test_performer_similarity_core_matches_numpy_on_built_corpus(tmp_path: Path) -> None:
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+    if not optional_deps.NUMPY_AVAILABLE:
         pytest.skip("numpy is not installed")
     if builder_module.core.core_binary() is None:
         pytest.skip("curator-core binary is not built")
     builder, context = _built_context(tmp_path)
-    numpy_result = builder._performer_similarity_scores_numpy(
-        context["feature_version"], context["scene_features"], context["affinities"]
+    from tests.oracle import performer_similarity_numpy
+
+    numpy_result = performer_similarity_numpy(
+        builder.connection,
+        context["feature_version"],
+        context["scene_features"],
+        context["affinities"],
+        block_weights=dict(builder.config.feature.performer_block_weights),
+        cutoff=builder_module.PERFORMER_SIMILARITY_AFFINITY_CUTOFF,
     )
-    core_result = builder._performer_similarity_scores_core(
+    core_result = builder._performer_similarity_scores(
         context["feature_version"], context["scene_features"], context["affinities"]
     )
     assert set(core_result) == set(numpy_result)
@@ -128,176 +140,27 @@ def test_performer_similarity_core_matches_numpy_on_built_corpus(tmp_path: Path)
                 )
 
 
-def test_model_build_with_core_persists_identical_rows(
+def test_missing_binary_fails_the_stage_loudly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two identical seeded sidecars built through different implementations
-    must produce the same model id and matching persisted rows."""
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
-        pytest.skip("numpy is not installed")
-    if builder_module.core.core_binary() is None:
-        pytest.skip("curator-core binary is not built")
-    real_binary = builder_module.core.core_binary
-    core_path = tmp_path / "core.sqlite3"
-    numpy_path = tmp_path / "numpy.sqlite3"
-    core_connection = _database(core_path)
-    numpy_connection = _database(numpy_path)
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    numpy_build = PreferenceModelBuilder(numpy_connection, clock_ms=lambda: REFERENCE_MS).build()
-    monkeypatch.setattr(builder_module.core, "core_binary", real_binary)
-    core_build = PreferenceModelBuilder(core_connection, clock_ms=lambda: REFERENCE_MS).build()
+    """The compiled core is a runtime requirement: a missing binary raises an
+    actionable error instead of silently falling back."""
+    from curator.core import CoreError
 
-    assert core_build.model_id == numpy_build.model_id
-
-    def neighbor_rows(connection: object, model_id: str) -> list[tuple[object, ...]]:
-        return sorted(
-            tuple(row)
-            for row in connection.execute(  # type: ignore[union-attr]
-                """
-                SELECT scene_id, rank, neighbor_scene_id, similarity, weight, outcome
-                FROM model_scene_neighbor WHERE model_id=? ORDER BY scene_id, rank
-                """,
-                (model_id,),
-            )
-        )
-
-    core_neighbors = neighbor_rows(core_connection, core_build.model_id)
-    numpy_neighbors = neighbor_rows(numpy_connection, numpy_build.model_id)
-    assert [row[:3] for row in core_neighbors] == [row[:3] for row in numpy_neighbors]
-    for core_row, numpy_row in zip(core_neighbors, numpy_neighbors, strict=True):
-        for index in (3, 4, 5):
-            assert core_row[index] == pytest.approx(numpy_row[index], rel=1e-9)
-
-    def edge_rows(connection: object, model_id: str) -> list[tuple[object, ...]]:
-        return sorted(
-            tuple(row)
-            for row in connection.execute(  # type: ignore[union-attr]
-                """
-                SELECT performer_id, rank, similar_performer_id, similarity, affinity, confidence
-                FROM model_performer_edge WHERE model_id=? ORDER BY performer_id, rank
-                """,
-                (model_id,),
-            )
-        )
-
-    core_edges = edge_rows(core_connection, core_build.model_id)
-    numpy_edges = edge_rows(numpy_connection, numpy_build.model_id)
-    assert [row[:3] for row in core_edges] == [row[:3] for row in numpy_edges]
-    for core_row, numpy_row in zip(core_edges, numpy_edges, strict=True):
-        for index in (3, 4, 5):
-            assert core_row[index] == pytest.approx(numpy_row[index], rel=1e-9)
-
-    def component_values(connection: object, model_id: str) -> dict[str, dict[str, float]]:
-        values: dict[str, dict[str, float]] = {}
-        for row in connection.execute(  # type: ignore[union-attr]
-            "SELECT scene_id, components_json FROM model_scene_score WHERE model_id=?",
-            (model_id,),
-        ):
-            components = json.loads(str(row["components_json"]))
-            values[str(row["scene_id"])] = {
-                family: float(components[family]["value"])
-                for family in (
-                    "content",
-                    "content_neighbor",
-                    "performer_identity",
-                    "performer_similarity",
-                    "studio",
-                    "structure",
-                )
-            }
-        return values
-
-    core_components = component_values(core_connection, core_build.model_id)
-    numpy_components = component_values(numpy_connection, numpy_build.model_id)
-    assert set(core_components) == set(numpy_components)
-    for scene_id in numpy_components:
-        for family in numpy_components[scene_id]:
-            assert core_components[scene_id][family] == pytest.approx(
-                numpy_components[scene_id][family], rel=1e-9
-            )
-
-
-def test_content_neighbors_dispatch_falls_back_without_core(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
     builder, context = _built_context(tmp_path)
     monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", True)
-    numpy_called: list[bool] = []
-    python_called: list[bool] = []
-
-    def fake_numpy(*args: object, **kwargs: object) -> object:
-        numpy_called.append(True)
-        return {}
-
-    def fake_python(*args: object, **kwargs: object) -> object:
-        python_called.append(True)
-        return {}
-
-    monkeypatch.setattr(builder, "_content_neighbors_numpy", fake_numpy)
-    monkeypatch.setattr(builder, "_content_neighbors_python", fake_python)
-    result = builder._content_neighbors(
-        context["preference"],
-        context["training_labels"],
-        context["label_mean"],
-        context["progress_total"],
-    )
-    assert numpy_called and not python_called and result == {}
-
-    numpy_called.clear()
-    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
-    builder._content_neighbors(
-        context["preference"],
-        context["training_labels"],
-        context["label_mean"],
-        context["progress_total"],
-    )
-    assert python_called and not numpy_called
-
-
-def test_performer_dispatch_prefers_core_when_available(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    builder, context = _built_context(tmp_path)
-    core_called: list[bool] = []
-    numpy_called: list[bool] = []
-    python_called: list[bool] = []
-
-    def fake_core(*args: object, **kwargs: object) -> dict[str, object]:
-        core_called.append(True)
-        return {}
-
-    def fake_numpy(*args: object, **kwargs: object) -> dict[str, object]:
-        numpy_called.append(True)
-        return {}
-
-    def fake_python(*args: object, **kwargs: object) -> dict[str, object]:
-        python_called.append(True)
-        return {}
-
-    monkeypatch.setattr(builder, "_performer_similarity_scores_core", fake_core)
-    monkeypatch.setattr(builder, "_performer_similarity_scores_numpy", fake_numpy)
-    monkeypatch.setattr(builder, "_performer_similarity_scores_python", fake_python)
-
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: Path("/binary"))
-    builder._performer_similarity_scores(
-        context["feature_version"], context["scene_features"], context["affinities"]
-    )
-    assert core_called and not numpy_called and not python_called
-
-    core_called.clear()
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    builder._performer_similarity_scores(
-        context["feature_version"], context["scene_features"], context["affinities"]
-    )
-    assert numpy_called and not core_called and not python_called
-
-    numpy_called.clear()
-    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
-    builder._performer_similarity_scores(
-        context["feature_version"], context["scene_features"], context["affinities"]
-    )
-    assert python_called and not numpy_called and not core_called
+    with pytest.raises(CoreError, match="curator-core is required"):
+        builder._content_neighbors(
+            context["feature_version"],
+            context["affinities"],
+            context["training_labels"],
+            context["label_mean"],
+            context["progress_total"],
+        )
+    with pytest.raises(CoreError, match="curator-core is required"):
+        builder._performer_similarity_scores(
+            context["feature_version"], context["scene_features"], context["affinities"]
+        )
 
 
 def test_broken_binary_fails_the_stage_loudly(

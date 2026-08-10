@@ -10,17 +10,16 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
-from heapq import nsmallest
 from itertools import batched
 from pathlib import Path
 from typing import Any, cast
 
-from curator import core, optional_deps
+from curator import core
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
 from curator.features.builder import _fingerprint_table
-from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES, performer_similarity
+from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
@@ -668,14 +667,9 @@ class PreferenceModelBuilder:
                 vectors, scene_features, affinities
             )
             progress_total = len(preference_vectors) + len(all_scene_ids)
-            if core.core_binary() is not None:
-                neighbors = self._content_neighbors_core(
-                    feature_version, affinities, training_labels, label_mean, progress_total
-                )
-            else:
-                neighbors = self._content_neighbors(
-                    preference_vectors, training_labels, label_mean, progress_total
-                )
+            neighbors = self._content_neighbors(
+                feature_version, affinities, training_labels, label_mean, progress_total
+            )
         with span("python", "model.score_performer_similarity"):
             performer_similarity_scores = self._performer_similarity_scores(
                 feature_version, scene_features, affinities
@@ -1006,176 +1000,6 @@ class PreferenceModelBuilder:
             weighted[scene_id] = {name: value / norm for name, value in values.items()}
         return weighted, sum(strength > 0 for strength in strengths.values())
 
-    def _content_neighbors(
-        self,
-        vectors: dict[str, dict[str, float]],
-        labels: dict[str, _SceneLabel],
-        label_mean: float,
-        progress_total: int,
-    ) -> dict[str, _NeighborEvidence]:
-        if optional_deps.NUMPY_AVAILABLE:
-            return self._content_neighbors_numpy(vectors, labels, label_mean, progress_total)
-        return self._content_neighbors_python(vectors, labels, label_mean, progress_total)
-
-    def _content_neighbors_python(
-        self,
-        vectors: dict[str, dict[str, float]],
-        labels: dict[str, _SceneLabel],
-        label_mean: float,
-        progress_total: int,
-    ) -> dict[str, _NeighborEvidence]:
-        inverted: dict[str, list[tuple[str, float]]] = defaultdict(list)
-        vector_count = len(vectors)
-        for scene_id, vector in vectors.items():
-            if scene_id not in labels:
-                continue
-            for name, value in vector.items():
-                inverted[name].append((scene_id, value))
-        result: dict[str, _NeighborEvidence] = {}
-        for vector_index, (scene_id, vector) in enumerate(vectors.items(), 1):
-            dots: dict[str, float] = defaultdict(float)
-            shared: dict[str, int] = defaultdict(int)
-            for name, value in vector.items():
-                for other_id, other_value in inverted.get(name, ()):
-                    if other_id == scene_id:
-                        continue
-                    dots[other_id] += value * other_value
-                    shared[other_id] += 1
-            evidence = []
-            for other_id, cosine in dots.items():
-                overlap = 1 - math.exp(-shared[other_id] / 4)
-                similarity = cosine * overlap
-                if similarity < self.config.model.minimum_neighbor_similarity:
-                    continue
-                weight = similarity**3 * labels[other_id].confidence
-                evidence.append((other_id, similarity, weight, labels[other_id].outcome))
-            selected = nsmallest(
-                self.config.model.neighbor_count,
-                evidence,
-                key=lambda item: (-item[2], item[0]),
-            )
-            denominator = sum(item[2] for item in selected)
-            outcome_mean = (
-                sum(item[2] * item[3] for item in selected) / denominator if denominator else 0.0
-            )
-            lift = outcome_mean - label_mean if denominator else 0.0
-            confidence = (
-                1 - math.exp(-denominator / self.config.model.neighbor_confidence_scale)
-                if denominator
-                else 0.0
-            )
-            result[scene_id] = _NeighborEvidence(
-                lift * confidence,
-                outcome_mean,
-                lift,
-                confidence,
-                denominator,
-                tuple(
-                    {
-                        "scene_id": item[0],
-                        "similarity": item[1],
-                        "weight": item[2],
-                        "outcome": item[3],
-                    }
-                    for item in selected[:5]
-                ),
-            )
-            if self.progress and (vector_index == vector_count or vector_index % 250 == 0):
-                self._report(0.35 + 0.40 * vector_index / max(1, progress_total))
-        return result
-
-    def _content_neighbors_numpy(
-        self,
-        vectors: dict[str, dict[str, float]],
-        labels: dict[str, _SceneLabel],
-        label_mean: float,
-        progress_total: int,
-    ) -> dict[str, _NeighborEvidence]:
-        np = optional_deps.np
-        assert np is not None
-        scene_ids = list(vectors)
-        # Labels for scenes that left Stash have no vector; they cannot act as
-        # candidates, mirroring the pure-Python inverted index over vectors only.
-        labeled_ids = sorted(scene_id for scene_id in labels if scene_id in vectors)
-        default = _NeighborEvidence(0.0, 0.0, 0.0, 0.0, 0.0, ())
-        result: dict[str, _NeighborEvidence] = {}
-        if not labeled_ids:
-            return {scene_id: default for scene_id in scene_ids}
-        column_names = sorted({name for scene_id in labeled_ids for name in vectors[scene_id]})
-        if not column_names:
-            return {scene_id: default for scene_id in scene_ids}
-        column_index = {name: index for index, name in enumerate(column_names)}
-        labeled_position = {scene_id: column for column, scene_id in enumerate(labeled_ids)}
-        labeled_values = np.zeros((len(labeled_ids), len(column_names)), dtype=np.float64)
-        for column, scene_id in enumerate(labeled_ids):
-            for name, value in vectors[scene_id].items():
-                labeled_values[column, column_index[name]] = value
-        target_values = np.zeros((len(scene_ids), len(column_names)), dtype=np.float64)
-        for row, scene_id in enumerate(scene_ids):
-            for name, value in vectors[scene_id].items():
-                if name not in column_index:
-                    continue
-                target_values[row, column_index[name]] = value
-        labeled_conf = np.array(
-            [labels[scene_id].confidence for scene_id in labeled_ids], dtype=np.float64
-        )
-        labeled_outcome = np.array(
-            [labels[scene_id].outcome for scene_id in labeled_ids], dtype=np.float64
-        )
-        labeled_binary = (labeled_values != 0).astype(np.float32)
-        target_binary = (target_values != 0).astype(np.float32)
-        self_column = np.array(
-            [labeled_position.get(scene_id, -1) for scene_id in scene_ids], dtype=np.int32
-        )
-        minimum_similarity = self.config.model.minimum_neighbor_similarity
-        neighbor_count = self.config.model.neighbor_count
-        confidence_scale = self.config.model.neighbor_confidence_scale
-        vector_count = len(scene_ids)
-        for start in range(0, vector_count, 4096):
-            end = min(start + 4096, vector_count)
-            similarities = target_values[start:end] @ labeled_values.T
-            # Shared counts never exceed the feature count, so float32 is exact and
-            # uses the BLAS matmul path (integer matmul has no optimized loop); the
-            # overlap factor is then computed in float64 to match the Python path.
-            shared = (target_binary[start:end] @ labeled_binary.T).astype(np.float64)
-            similarities *= 1.0 - np.exp(-shared / 4.0)
-            weights = similarities**3 * labeled_conf[np.newaxis, :]
-            valid = similarities >= minimum_similarity
-            for local_row in range(end - start):
-                own = int(self_column[start + local_row])
-                if own >= 0:
-                    valid[local_row, own] = False
-            for local_row in range(end - start):
-                scene_id = scene_ids[start + local_row]
-                valid_indices = np.flatnonzero(valid[local_row])
-                if len(valid_indices) == 0:
-                    result[scene_id] = default
-                    continue
-                row_weights = weights[local_row, valid_indices]
-                chosen = min(neighbor_count, len(row_weights))
-                boundary = float(
-                    np.partition(row_weights, len(row_weights) - chosen)[len(row_weights) - chosen]
-                )
-                candidates = valid_indices[row_weights >= boundary]
-                evidence = [
-                    (
-                        labeled_ids[int(column)],
-                        float(similarities[local_row, int(column)]),
-                        float(weights[local_row, int(column)]),
-                        float(labeled_outcome[int(column)]),
-                    )
-                    for column in candidates
-                ]
-                evidence.sort(key=lambda item: (-item[2], item[0]))
-                selected = evidence[:neighbor_count]
-                result[scene_id] = self._neighbor_evidence(
-                    scene_id, selected, label_mean, confidence_scale
-                )
-                index = start + local_row + 1
-                if self.progress and (index == vector_count or index % 250 == 0):
-                    self._report(0.35 + 0.40 * index / max(1, progress_total))
-        return result
-
     @staticmethod
     def _neighbor_evidence(
         scene_id: str,
@@ -1223,7 +1047,7 @@ class PreferenceModelBuilder:
             raise RuntimeError(f"feature artifact missing for {feature_version}")
         return artifact_path(database_path(self.connection), str(row[0]))
 
-    def _content_neighbors_core(
+    def _content_neighbors(
         self,
         feature_version: str,
         affinities: dict[str, _Affinity],
@@ -1316,22 +1140,6 @@ class PreferenceModelBuilder:
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
     ) -> dict[str, dict[str, object]]:
-        if core.core_binary() is not None:
-            return self._performer_similarity_scores_core(
-                feature_version, scene_features, affinities
-            )
-        if optional_deps.NUMPY_AVAILABLE:
-            return self._performer_similarity_scores_numpy(
-                feature_version, scene_features, affinities
-            )
-        return self._performer_similarity_scores_python(feature_version, scene_features, affinities)
-
-    def _performer_similarity_scores_core(
-        self,
-        feature_version: str,
-        scene_features: dict[str, tuple[StoredFeature, ...]],
-        affinities: dict[str, _Affinity],
-    ) -> dict[str, dict[str, object]]:
         """Performer-similarity scores via the compiled core (numpy's role).
 
         The binary reads the performer profiles from the feature artifact; the
@@ -1354,270 +1162,6 @@ class PreferenceModelBuilder:
             "performer-similarity", payload, profile=current_trace() is not None
         )
         return cast(dict[str, dict[str, object]], response)
-
-    def _performer_similarity_scores_python(
-        self,
-        feature_version: str,
-        scene_features: dict[str, tuple[StoredFeature, ...]],
-        affinities: dict[str, _Affinity],
-    ) -> dict[str, dict[str, object]]:
-        identity_affinity = self._identity_affinity(scene_features, affinities)
-        profiles = FeatureStore(self.connection).performer_profiles(feature_version)
-        weights = dict(self.config.feature.performer_block_weights)
-        known = {
-            key: profiles[key]
-            for key, (value, _) in identity_affinity.items()
-            if key in profiles and abs(value) >= PERFORMER_SIMILARITY_AFFINITY_CUTOFF
-        }
-        matches_by_performer: dict[str, list[dict[str, object]]] = {
-            performer_id: [] for performer_id in profiles
-        }
-        for performer_id, profile in profiles.items():
-            for known_id, known_profile in known.items():
-                if known_id == performer_id or (performer_id in known and known_id < performer_id):
-                    continue
-                similarity = performer_similarity(profile, known_profile, weights)
-                if similarity.similarity <= 0:
-                    continue
-                matches_by_performer[performer_id].append(
-                    {
-                        "performer_id": known_id,
-                        "similarity": similarity.similarity,
-                        "affinity": identity_affinity[known_id][0],
-                        "confidence": identity_affinity[known_id][1],
-                        "blocks": similarity.block_similarities,
-                    }
-                )
-                if performer_id in known:
-                    matches_by_performer[known_id].append(
-                        {
-                            "performer_id": performer_id,
-                            "similarity": similarity.similarity,
-                            "affinity": identity_affinity[performer_id][0],
-                            "confidence": identity_affinity[performer_id][1],
-                            "blocks": similarity.block_similarities,
-                        }
-                    )
-        result: dict[str, dict[str, object]] = {}
-        for performer_id, matches in matches_by_performer.items():
-            selected = nsmallest(
-                5,
-                matches,
-                key=lambda item: (-_number(item["similarity"]), str(item["performer_id"])),
-            )
-            denominator = sum(_number(item["similarity"]) ** 3 for item in selected)
-            value = (
-                sum(
-                    _number(item["affinity"]) * _number(item["similarity"]) ** 3
-                    for item in selected
-                )
-                / denominator
-                if denominator
-                else 0.0
-            )
-            confidence = (
-                sum(
-                    _number(item["confidence"]) * _number(item["similarity"]) ** 3
-                    for item in selected
-                )
-                / denominator
-                if denominator
-                else 0.0
-            )
-            result[performer_id] = {
-                "value": value,
-                "confidence": confidence,
-                "matches": selected[:3],
-            }
-        return result
-
-    def _performer_similarity_scores_numpy(
-        self,
-        feature_version: str,
-        scene_features: dict[str, tuple[StoredFeature, ...]],
-        affinities: dict[str, _Affinity],
-    ) -> dict[str, dict[str, object]]:
-        np = optional_deps.np
-        assert np is not None
-        identity_affinity = self._identity_affinity(scene_features, affinities)
-        profiles = FeatureStore(self.connection).performer_profiles(feature_version)
-        weights = dict(self.config.feature.performer_block_weights)
-        known = {
-            key: profiles[key]
-            for key, (value, _) in identity_affinity.items()
-            if key in profiles and abs(value) >= PERFORMER_SIMILARITY_AFFINITY_CUTOFF
-        }
-        profile_ids = list(profiles)
-        known_ids = list(known)
-        known_position = {performer_id: column for column, performer_id in enumerate(known_ids)}
-        known_affinity = np.array(
-            [identity_affinity[performer_id][0] for performer_id in known_ids], dtype=np.float64
-        )
-        known_confidence = np.array(
-            [identity_affinity[performer_id][1] for performer_id in known_ids], dtype=np.float64
-        )
-        block_names = sorted({block for profile in profiles.values() for block in profile.blocks})
-        block_keys = {
-            block: sorted(
-                {key for profile in profiles.values() for key in profile.blocks.get(block, {})}
-            )
-            for block in block_names
-        }
-        values: dict[str, Any] = {}
-        confidences: dict[str, Any] = {}
-        present: dict[str, Any] = {}
-        for block in block_names:
-            keys = block_keys[block]
-            key_position = {key: column for column, key in enumerate(keys)}
-            block_values = np.zeros((len(profile_ids), len(keys)), dtype=np.float64)
-            block_confidences = np.zeros_like(block_values)
-            block_present = np.zeros(len(profile_ids), dtype=bool)
-            for row, performer_id in enumerate(profile_ids):
-                entries = profiles[performer_id].blocks.get(block)
-                if not entries:
-                    continue
-                block_present[row] = True
-                for key, item in entries.items():
-                    block_values[row, key_position[key]] = item.value
-                    block_confidences[row, key_position[key]] = item.confidence
-            values[block] = block_values
-            confidences[block] = block_confidences
-            present[block] = block_present
-        known_positions = np.array(
-            [profile_ids.index(performer_id) for performer_id in known_ids], dtype=np.int64
-        )
-        known_values = {block: values[block][known_positions, :] for block in block_names}
-        known_confidences = {block: confidences[block][known_positions, :] for block in block_names}
-        known_present = {block: present[block][known_positions] for block in block_names}
-        numerator = np.zeros((len(profile_ids), len(known_ids)), dtype=np.float64)
-        denominator = np.zeros_like(numerator)
-        block_similarities: dict[str, Any] = {}
-        used: dict[str, Any] = {}
-        for block in block_names:
-            weight = weights.get(block, 0.0)
-            if weight <= 0:
-                continue
-            both_present = np.outer(present[block], known_present[block])
-            if block in NUMERIC_BLOCKS:
-                numeric_values, numeric_counts = _numpy_numeric_matrix(
-                    np,
-                    values[block],
-                    known_values[block],
-                    confidences[block],
-                    known_confidences[block],
-                    np.array(
-                        [NUMERIC_SCALES.get(key, 1.0) for key in block_keys[block]],
-                        dtype=np.float64,
-                    ),
-                )
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    block_value = np.divide(
-                        numeric_values,
-                        numeric_counts,
-                        out=np.zeros_like(numeric_values),
-                        where=numeric_counts > 0,
-                    )
-                block_used = both_present & (numeric_counts > 0)
-            else:
-                norms = np.array(
-                    [profiles[performer_id].norms.get(block, 0.0) for performer_id in profile_ids],
-                    dtype=np.float64,
-                )
-                known_norms = norms[known_positions]
-                block_value = _numpy_cosine_matrix(
-                    np,
-                    values[block],
-                    known_values[block],
-                    confidences[block],
-                    known_confidences[block],
-                    norms,
-                    known_norms,
-                )
-                block_used = both_present & (norms[:, None] != 0) & (known_norms[None, :] != 0)
-            block_similarities[block] = block_value
-            used[block] = block_used
-            numerator += block_value * block_used * weight
-            denominator += block_used * weight
-        penalty = np.ones((len(profile_ids), len(known_ids)), dtype=np.float64)
-        measurements = values.get("measurements")
-        if measurements is not None and measurements.shape[1]:
-            cup_position = (
-                block_keys["measurements"].index("cup_index")
-                if "cup_index" in block_keys["measurements"]
-                else -1
-            )
-            if cup_position >= 0:
-                cup_all = measurements[:, cup_position]
-                cup_known = known_values["measurements"][:, cup_position]
-                both_cup = np.outer(cup_all != 0, cup_known != 0)
-                cup_difference = np.abs(np.subtract.outer(cup_all, cup_known))
-                penalty *= np.where(
-                    both_cup, np.exp(-0.18 * np.maximum(0.0, cup_difference - 1.0)), 1.0
-                )
-        augmentation = values.get("augmentation")
-        if augmentation is not None and augmentation.shape[1]:
-            augmentation_binary = (augmentation != 0).astype(np.float32)
-            known_augmentation_binary = (known_values["augmentation"] != 0).astype(np.float32)
-            shared_augmentation = augmentation_binary @ known_augmentation_binary.T
-            both_augmentation = np.outer(
-                augmentation_binary.any(axis=1), known_augmentation_binary.any(axis=1)
-            )
-            penalty *= np.where(both_augmentation & (shared_augmentation == 0), 0.65, 1.0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            similarity = np.where(denominator > 0, numerator / denominator * penalty, 0.0)
-        result: dict[str, dict[str, object]] = {}
-        for performer_index, performer_id in enumerate(profile_ids):
-            row = similarity[performer_index]
-            candidates = [
-                (known_ids[column], float(row[column]))
-                for column in range(len(known_ids))
-                if known_ids[column] != performer_id and float(row[column]) > 0
-            ]
-            selected = nsmallest(
-                5,
-                candidates,
-                key=lambda item: (-item[1], item[0]),
-            )
-            denominator = sum(item[1] ** 3 for item in selected)
-            value = (
-                sum(
-                    float(known_affinity[known_position[item[0]]]) * item[1] ** 3
-                    for item in selected
-                )
-                / denominator
-                if denominator
-                else 0.0
-            )
-            confidence = (
-                sum(
-                    float(known_confidence[known_position[item[0]]]) * item[1] ** 3
-                    for item in selected
-                )
-                / denominator
-                if denominator
-                else 0.0
-            )
-            result[performer_id] = {
-                "value": value,
-                "confidence": confidence,
-                "matches": [
-                    {
-                        "performer_id": known_id,
-                        "similarity": score,
-                        "affinity": identity_affinity[known_id][0],
-                        "confidence": identity_affinity[known_id][1],
-                        "blocks": {
-                            block: float(
-                                block_similarities[block][performer_index, known_position[known_id]]
-                            )
-                            for block in used
-                            if bool(used[block][performer_index, known_position[known_id]])
-                        },
-                    }
-                    for known_id, score in selected[:3]
-                ],
-            }
-        return result
 
     def _performer_priors(self) -> dict[str, _Prior]:
         result: dict[str, _Prior] = {}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import sqlite3
@@ -9,16 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from curator import optional_deps
 from curator.features import FeatureStore
 from curator.model import PreferenceModelBuilder
 from curator.model import builder as builder_module
 from curator.model.multi_hop import (
+    DAMPING,
+    MAX_ITERATIONS,
     REACH_FLOOR,
+    TOLERANCE,
     MultiHopAffinity,
     _Graph,
-    _pagerank_networkx,
-    _pagerank_python,
 )
 from curator.similarity import SimilarityService
 from curator.storage import MigrationRunner, connect_database
@@ -118,67 +119,67 @@ def test_reach_empty_when_seed_has_no_affinity_performers(tmp_path: Path) -> Non
     assert MultiHopAffinity(connection, "m").reach("missing") == {}
 
 
-def _scipy_importable() -> bool:
-    try:
-        import scipy  # noqa: F401
-    except ImportError:
-        return False
-    return True
+def _reference_pagerank(graph: _Graph) -> dict[str, float]:
+    """Reference power iteration (test-local oracle, mirrors the Go kernel)."""
+    adjacency = graph.adjacency
+    seed = graph.seed
+    nodes = sorted(adjacency)
+    dangling = [node for node in nodes if not adjacency[node]]
+    x = {node: 1.0 / len(nodes) for node in nodes}
+    for _ in range(MAX_ITERATIONS):
+        xlast = x
+        x = {node: 0.0 for node in nodes}
+        danglesum = DAMPING * sum(xlast[node] for node in dangling)
+        for node in nodes:
+            for target, weight in adjacency[node].items():
+                x[target] += DAMPING * xlast[node] * weight
+            if node == seed:
+                x[node] += danglesum + (1.0 - DAMPING)
+        error = sum(abs(x[node] - xlast[node]) for node in nodes)
+        if error < len(nodes) * TOLERANCE:
+            break
+    return x
 
 
-@pytest.mark.skipif(
-    optional_deps.nx is None or not _scipy_importable(),
-    reason="networkx with scipy is not installed in this environment",
-)
-def test_networkx_and_python_paths_agree(tmp_path: Path) -> None:
-    connection = _graph_database(tmp_path / "curator.sqlite3")
-    graph = MultiHopAffinity(connection, "m")._graph("s")
-    nx_scores = _pagerank_networkx(graph)
-    python_scores = _pagerank_python(graph)
-
-    assert set(nx_scores) == set(python_scores)
-    for node in nx_scores:
-        assert nx_scores[node] == pytest.approx(python_scores[node], rel=1e-9)
-    ranking = sorted(
-        (
-            node
-            for node in nx_scores
-            if node in graph.scenes and node != "s" and nx_scores[node] >= REACH_FLOOR
-        ),
-        key=lambda node: (-nx_scores[node], node),
-    )
-    assert ranking == ["d"]
-
-
-def test_reach_matches_pure_python_when_networkx_unavailable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    connection = _graph_database(tmp_path / "curator.sqlite3")
-    monkeypatch.setattr(optional_deps, "nx", None)
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    service = MultiHopAffinity(connection, "m")
-    scores = _pagerank_python(service._graph("s"))
-    expected = {
+def _reference_reach(service: MultiHopAffinity, scene_id: str) -> dict[str, float]:
+    scores = _reference_pagerank(service._graph_for(scene_id))
+    return {
         scene: scores[scene]
         for scene in sorted(
             (
                 node
                 for node in scores
-                if node in service._scene_performers and node != "s" and scores[node] >= REACH_FLOOR
+                if node in service._scene_performers
+                and node != scene_id
+                and scores[node] >= REACH_FLOOR
             ),
             key=lambda node: (-scores[node], node),
         )[:50]
     }
-    assert service.reach("s") == expected
+
+
+def _networkx_pagerank(graph: _Graph) -> dict[str, float]:
+    """Test-local networkx oracle (dev group only; not shipped)."""
+    import networkx as nx
+
+    directed = nx.DiGraph()
+    directed.add_nodes_from(sorted(graph.adjacency))
+    for node, edges in graph.adjacency.items():
+        for target, weight in edges.items():
+            directed.add_edge(node, target, weight=weight)
+    return nx.pagerank(
+        directed,
+        alpha=DAMPING,
+        personalization={graph.seed: 1.0},
+        max_iter=MAX_ITERATIONS,
+        tol=TOLERANCE,
+    )
 
 
 def test_publish_writes_performer_edges_matching_the_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    # Force the pure-Python path so the recomputed expectation matches exactly.
-    monkeypatch.setattr(optional_deps, "NUMPY_AVAILABLE", False)
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
     builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
     built = builder.build()
 
@@ -247,7 +248,6 @@ def test_similarity_annotates_multi_hop_when_reachable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    monkeypatch.setattr(optional_deps, "NUMPY_AVAILABLE", False)
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
 
     results = SimilarityService(connection).scenes("old-good", 20)
@@ -273,9 +273,9 @@ def test_core_pagerank_matches_networkx_and_python(tmp_path: Path) -> None:
     service = MultiHopAffinity(connection, "m")
     graph = service._graph_for("s")
     core_scores = service._walk_core(graph)
-    assert core_scores == pytest.approx(_pagerank_python(graph), rel=1e-12)
-    if optional_deps.nx is not None and _scipy_importable():
-        assert core_scores == pytest.approx(_pagerank_networkx(graph), rel=1e-9)
+    assert core_scores == pytest.approx(_reference_pagerank(graph), rel=1e-12)
+    with contextlib.suppress(ImportError):
+        assert core_scores == pytest.approx(_networkx_pagerank(graph), rel=1e-9)
 
 
 @pytest.mark.parametrize(
@@ -302,21 +302,18 @@ def test_core_pagerank_matches_on_seeded_corpora(
     graph = _Graph(adjacency, nodes[seed_index % n_nodes], frozenset())
     service = MultiHopAffinity(None, "m")
     core_scores = service._walk_core(graph)
-    assert core_scores == pytest.approx(_pagerank_python(graph), rel=1e-12)
-    if optional_deps.nx is not None and _scipy_importable():
-        assert core_scores == pytest.approx(_pagerank_networkx(graph), rel=1e-9)
+    assert core_scores == pytest.approx(_reference_pagerank(graph), rel=1e-12)
+    with contextlib.suppress(ImportError):
+        assert core_scores == pytest.approx(_networkx_pagerank(graph), rel=1e-9)
 
 
-def test_core_reach_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_core_reach_matches_reference(tmp_path: Path) -> None:
     if builder_module.core.core_binary() is None:
         pytest.skip("curator-core binary is not built")
     connection = _graph_database(tmp_path / "curator.sqlite3")
     service = MultiHopAffinity(connection, "m")
-    real_binary = builder_module.core.core_binary
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    expected = service.reach("s")
-    monkeypatch.setattr(builder_module.core, "core_binary", real_binary)
     core_reach = service.reach("s")
+    expected = _reference_reach(service, "s")
     assert set(core_reach) == set(expected)
     for scene, score in expected.items():
         assert core_reach[scene] == pytest.approx(score, rel=1e-12)

@@ -3,7 +3,6 @@ import math
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
@@ -163,83 +162,6 @@ def test_satiation_content_dots_match_naive_recent_loop() -> None:
 
     result = builder._satiation("candidate", 1.0, context)
     assert result == pytest.approx(min(builder.config.model.satiation_bound, naive), rel=1e-12)
-
-
-def test_content_neighbors_numpy_matches_python() -> None:
-    builder = PreferenceModelBuilder(None)
-    vectors = {
-        "s1": {"a": 1.0, "b": 0.5},
-        "s2": {"a": 0.8, "c": 0.3},
-        "s3": {"d": 1.0},
-        "s4": {"a": 0.6, "b": 0.7, "c": 0.2},
-    }
-    labels = {
-        "s1": builder_module._SceneLabel(0.8, 0.9, 1.0, ("o",)),
-        "s2": builder_module._SceneLabel(-0.4, 0.7, 0.8, ("o",)),
-        "s3": builder_module._SceneLabel(0.1, 0.5, 0.6, ("o",)),
-    }
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
-        pytest.skip("numpy is not installed")
-    numpy_result = builder._content_neighbors_numpy(vectors, labels, 0.2, 8)
-    python_result = builder._content_neighbors_python(vectors, labels, 0.2, 8)
-    assert set(numpy_result) == set(python_result)
-    for scene_id in vectors:
-        numpy_evidence = numpy_result[scene_id]
-        python_evidence = python_result[scene_id]
-        assert numpy_evidence.value == pytest.approx(python_evidence.value, rel=1e-9)
-        assert numpy_evidence.outcome_mean == pytest.approx(python_evidence.outcome_mean, rel=1e-9)
-        assert numpy_evidence.lift == pytest.approx(python_evidence.lift, rel=1e-9)
-        assert numpy_evidence.confidence == pytest.approx(python_evidence.confidence, rel=1e-9)
-        assert numpy_evidence.total_weight == pytest.approx(python_evidence.total_weight, rel=1e-9)
-        assert [n["scene_id"] for n in numpy_evidence.neighbors] == [
-            n["scene_id"] for n in python_evidence.neighbors
-        ]
-        for numpy_neighbor, python_neighbor in zip(
-            numpy_evidence.neighbors, python_evidence.neighbors, strict=True
-        ):
-            assert numpy_neighbor["similarity"] == pytest.approx(
-                python_neighbor["similarity"], rel=1e-9
-            )
-            assert numpy_neighbor["weight"] == pytest.approx(python_neighbor["weight"], rel=1e-9)
-            assert numpy_neighbor["outcome"] == pytest.approx(python_neighbor["outcome"], rel=1e-9)
-
-
-def test_performer_similarity_numpy_matches_python(tmp_path: Path) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
-    built = builder.build()
-    scene_features = builder_module.FeatureStore(connection).entity_features(
-        built.feature_version, "scene"
-    )
-    labels = builder._scene_labels()
-    training_labels = builder._training_labels(labels)
-    label_mean = builder._label_mean(training_labels)
-    affinities = builder._affinities(scene_features, training_labels, label_mean)
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
-        pytest.skip("numpy is not installed")
-    numpy_result = builder._performer_similarity_scores_numpy(
-        built.feature_version, scene_features, affinities
-    )
-    python_result = builder._performer_similarity_scores_python(
-        built.feature_version, scene_features, affinities
-    )
-    assert set(numpy_result) == set(python_result)
-    for performer_id in numpy_result:
-        assert numpy_result[performer_id]["value"] == pytest.approx(
-            python_result[performer_id]["value"], rel=1e-6
-        )
-        assert numpy_result[performer_id]["confidence"] == pytest.approx(
-            python_result[performer_id]["confidence"], rel=1e-6
-        )
-        assert [m["performer_id"] for m in numpy_result[performer_id]["matches"]] == [
-            m["performer_id"] for m in python_result[performer_id]["matches"]
-        ]
-        for numpy_match, python_match in zip(
-            numpy_result[performer_id]["matches"],
-            python_result[performer_id]["matches"],
-            strict=True,
-        ):
-            assert numpy_match["similarity"] == pytest.approx(python_match["similarity"], rel=1e-6)
 
 
 def test_classification_data_matches_full_scores_for_lane_values(tmp_path: Path) -> None:
@@ -556,56 +478,6 @@ def test_model_build_reports_stage_progress(tmp_path: Path) -> None:
         processed for processed, _ in progress
     )
     assert progress[-1] == (1_000, 1_000)
-
-
-def test_model_compares_known_performer_pairs_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    counted = Mock(wraps=builder_module.performer_similarity)
-    monkeypatch.setattr(builder_module, "performer_similarity", counted)
-    # The pair-count contract belongs to the pure-Python implementation; the numpy
-    # path never calls performer_similarity and is covered by its own parity tests.
-    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
-
-    assert counted.call_count == 3
-
-
-def test_model_ignores_negligible_performer_similarity_seeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
-    built = builder.build()
-    scene_features = builder_module.FeatureStore(connection).entity_features(
-        built.feature_version, "scene"
-    )
-    identities = {
-        feature.name.removeprefix("performer:"): feature
-        for features in scene_features.values()
-        for feature in features
-        if feature.family == "performer_identity"
-    }
-    affinities = {
-        identities[performer_id].feature_id: builder_module._Affinity(
-            identities[performer_id].feature_id, value, 1.0, 1.0, 1, {}
-        )
-        for performer_id, value in (("p1", 0.006), ("p2", 0.004))
-    }
-    counted = Mock(wraps=builder_module.performer_similarity)
-    monkeypatch.setattr(builder_module, "performer_similarity", counted)
-    monkeypatch.setattr(builder_module.optional_deps, "NUMPY_AVAILABLE", False)
-    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
-
-    builder._performer_similarity_scores(built.feature_version, scene_features, affinities)
-
-    compared = {
-        frozenset((call.args[0].performer_id, call.args[1].performer_id))
-        for call in counted.call_args_list
-    }
-    assert compared == {frozenset(("p1", "p2")), frozenset(("p1", "p3"))}
 
 
 def test_wrong_metadata_is_not_reused_but_direct_scene_evidence_remains(tmp_path: Path) -> None:
