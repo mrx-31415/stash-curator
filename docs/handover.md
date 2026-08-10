@@ -1,12 +1,12 @@
 # Stash Curator handover
 
-Updated: 2026-08-09. Phase 2 of the compiled-core work package is delivered:
-the Go binary (`core/`) now accelerates the content-neighbor and
-performer-similarity stages as optional replacement for numpy (see
-`docs/decisions/002-runtime-swap-planning.md` section 8). The resident RPC
-conversion is off the table (disproven — no residency in Stash's `rpc`
-interface; see the correction banner in the planning doc); `docs/handover-rpc-plugin.md`
-is retained as blocked/superseded reference.
+Updated: 2026-08-10. Slice 0 of the full Go backend is delivered: the
+`curator-core` binary now serves the raw-plugin interface for the trivial ops
+with byte-identical outputs and a Python fallback for everything else (see
+`handover-go-backend-slice1.md` for the current state of the port). The
+resident RPC conversion is off the table (disproven — no residency in Stash's
+`rpc` interface; see the correction banner in the planning doc);
+`docs/handover-rpc-plugin.md` is retained as blocked/superseded reference.
 
 ## Current state
 
@@ -25,8 +25,8 @@ performer-similarity kernels are ported to Go with identical semantics, wired
 into the model build as a subprocess (compiled core > numpy > pure Python),
 with a pytest differential gate against numpy (seeded synthetic corpora, 1e-9
 floats, exact ids), cross-thread determinism, and the full unit suite green
-with the binary active. The binary is not yet packaged into the plugin zip —
-distribution (per-arch binaries, runtime select) is the next work package.
+with the binary active. Distribution (Phase 3) ships per-arch binaries in the
+plugin zip with runtime select and a pure-Python fallback.
 
 ## Open acceptance work
 
@@ -36,15 +36,20 @@ distribution (per-arch binaries, runtime select) is the next work package.
 
 ## Next work package
 
-**Full Go backend (Phase 4)** — making `curator-core` the plugin's exec line
-on the raw interface. The kernel port (similarity + pagerank), per-arch
-distribution, and the optional-deps venv removal are all delivered and
-verified on the installed instance (cold build 23.1s similarity vs 72.9s numpy
-baseline, 3.2x, zero runtime installs). The remaining work is porting the
-backend transport and ops; the slice plan and the first agent prompt are in
-[`handover-go-backend.md`](handover-go-backend.md). Slice 0 (transport +
-sidecar-parity foundation + trivial ops + Python fallback dispatch) is the
-next step.
+**Full Go backend (Phase 4), Slice 1 — read-path interactive ops.** The
+kernel port (similarity + pagerank), per-arch distribution, and the
+optional-deps venv removal were delivered earlier; Slice 0 of the backend
+port (transport, settings, the checksummed migration chain, artifact
+attach/views, trivial ops, profiling parity, Python fallback dispatch) is
+delivered and verified (2026-08-10): byte-identical `round_trip`, `health`,
+`get_config`, `get_job_status` vs the Python backend, sidecar migration
+parity both directions, `profile_trace` parity for `get_config`, and the
+fallback round-tripping unported ops through the installed zip. The next
+slice ports the read-path interactive ops (`get_slate`, `get_similar`,
+`get_explanation`, `get_shortlist`, histories, taste profile, diagnostics)
+to byte-exact JSON, then the exec line can switch to the binary with the
+fallback covering the rest. Full handover + first agent prompt:
+[`handover-go-backend-slice1.md`](handover-go-backend-slice1.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):
 
