@@ -1,12 +1,12 @@
 // SQLite connection setup for the backend ops, mirroring
 // curator/storage/database.py connect_database: WAL for writable connections,
 // foreign keys on, a shared 128 MiB page cache, and the read-only mmap for
-// artifacts. Returns a *sql.DB whose single logical connection mirrors the
-// Python side's explicit-transaction discipline (the raw plugin never opens
-// concurrent writers).
+// artifacts. Connections opened under an active trace are wrapped so every
+// statement records a sqlite span, matching Python's ProfiledConnection.
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -17,6 +17,24 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// dbx is the SQLite surface the backend ops use. *sql.DB satisfies it;
+// tracedDB adds span recording while an operation trace is active.
+type dbx interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	Conn(ctx context.Context) (*sql.Conn, error)
+	Close() error
+}
+
+// traceOf returns the span recorder attached to a traced connection, if any.
+func traceOf(db dbx) *trace {
+	if traced, ok := db.(*tracedDB); ok {
+		return traced.t
+	}
+	return nil
+}
 
 // databasePath mirrors backend.py's _database_path: args.database_path, then
 // settings.databasePath, then the plugin data directory.
@@ -48,55 +66,60 @@ func expandUser(path string) string {
 }
 
 // openDatabase opens the sidecar with Python-equivalent PRAGMAs and URI
-// filenames. The caller resolves the path (realpath) first, matching
-// connect_database's path.expanduser().resolve().
-func openDatabase(path string, readonly bool) (*sql.DB, error) {
+// filenames; trace, when non-nil, records every statement as a sqlite span.
+// The caller resolves the path (realpath) first, matching connect_database's
+// path.expanduser().resolve().
+func openDatabase(path string, readonly bool, trace *trace) (dbx, error) {
 	uri := fileURI(path, readonly)
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, err
 	}
+	var out dbx = db
+	if trace != nil {
+		out = &tracedDB{db: db, t: trace}
+	}
 	// sql.Open does not connect; force a real connection so PRAGMA failures
 	// surface here rather than on the first op.
-	if _, err := db.Exec("SELECT 1"); err != nil {
+	if _, err := out.Exec("SELECT 1"); err != nil {
 		db.Close()
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := out.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 30000"); err != nil {
+	if _, err := out.Exec("PRAGMA busy_timeout = 30000"); err != nil {
 		db.Close()
 		return nil, err
 	}
-	if _, err := db.Exec("PRAGMA cache_size = -131072"); err != nil {
+	if _, err := out.Exec("PRAGMA cache_size = -131072"); err != nil {
 		db.Close()
 		return nil, err
 	}
 	if readonly {
-		if _, err := db.Exec("PRAGMA mmap_size = 536870912"); err != nil {
+		if _, err := out.Exec("PRAGMA mmap_size = 536870912"); err != nil {
 			db.Close()
 			return nil, err
 		}
 	} else {
 		var mode string
-		if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		if err := out.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 			db.Close()
 			return nil, err
 		}
 		if !strings.EqualFold(mode, "wal") {
-			if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+			if _, err := out.Exec("PRAGMA journal_mode = WAL"); err != nil {
 				db.Close()
 				return nil, err
 			}
 		}
-		if _, err := db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
+		if _, err := out.Exec("PRAGMA synchronous = NORMAL"); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
-	return db, nil
+	return out, nil
 }
 
 // fileURI builds a Python-connect-style file URI: file:///abs/path with the
@@ -110,7 +133,7 @@ func fileURI(path string, readonly bool) string {
 }
 
 // openSidecar mirrors backend.py's _open: connect, migrate, apply settings.
-func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool) (*sql.DB, error) {
+func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool) (dbx, error) {
 	path := realpath(databasePath(pluginDir, payload, settings))
 	parent := filepath.Dir(path)
 	if _, err := os.Stat(parent); os.IsNotExist(err) {
@@ -118,7 +141,7 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 			return nil, fmt.Errorf("could not create database directory: %v", err)
 		}
 	}
-	db, err := openDatabase(path, false)
+	db, err := openDatabase(path, false, currentTrace())
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -26,6 +27,15 @@ query CuratorPluginRuntime {
   configuration { general { stashBoxes { endpoint api_key } } }
 }
 `
+
+// graphqlOperationName mirrors curator.graphql.client._operation_name.
+func graphqlOperationName(document string) string {
+	re := regexp.MustCompile(`\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	if match := re.FindStringSubmatch(document); match != nil {
+		return match[1]
+	}
+	return "anonymous"
+}
 
 // stashConnection mirrors backend.py's _stash_connection: scheme://host:port
 // plus the Cookie header from the session.
@@ -74,8 +84,14 @@ func pluginSettings(payload jVal) jVal {
 }
 
 // graphqlQuery POSTs one query and returns the response data object,
-// mirroring GraphQLClient._send: errors raise, data must be an object.
+// mirroring GraphQLClient._send: errors raise, data must be an object. When
+// an operation trace is active, the call records a "stash" span named after
+// the query operation, like the Python client's span() wrapper.
 func graphqlQuery(base string, headers map[string]string, query string, variables jVal) (jVal, error) {
+	started := int64(0)
+	if t := currentTrace(); t != nil {
+		started = time.Now().UnixNano()
+	}
 	base = strings.TrimRight(base, "/")
 	url := base
 	if !strings.HasSuffix(base, "/graphql") {
@@ -100,6 +116,9 @@ func graphqlQuery(base string, headers map[string]string, query string, variable
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+	}
+	if t := currentTrace(); t != nil {
+		t.record("stash", graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
 	}
 	payload, err := parseJSON(raw)
 	if err != nil {
