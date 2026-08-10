@@ -52,6 +52,7 @@ type contentPayload struct {
 	Config         contentConfig            `json:"config"`
 	ProgressTotal  int                      `json:"progress_total"`
 	Threads        int                      `json:"threads,omitempty"`
+	Profile        bool                     `json:"profile,omitempty"`
 }
 
 // contentNeighbor mirrors the production evidence tuple (scene id, similarity,
@@ -204,23 +205,29 @@ func runContentNeighbors() {
 	if err := json.NewDecoder(os.Stdin).Decode(&payload); err != nil {
 		fail("content-neighbors: invalid payload: %v", err)
 	}
+	profile := newProfileRecorder(payload.Profile)
 	db, err := openReadonly(payload.DB)
 	if err != nil {
 		fail("content-neighbors: open %s: %v", payload.DB, err)
 	}
 	defer db.Close()
+	end := profile.begin("core.read_features")
 	rows, err := readContentRows(db, payload.FeatureVersion)
+	end()
 	if err != nil {
 		fail("content-neighbors: read features: %v", err)
 	}
+	end = profile.begin("core.preference_vectors")
 	preference, sceneOrder, err := preferenceVectors(rows, payload.Affinities, payload.Config.GenericWeight)
+	end()
 	if err != nil {
 		fail("content-neighbors: derive preference vectors: %v", err)
 	}
-	result, err := contentNeighborEvidence(payload, preference, sceneOrder)
+	result, err := contentNeighborEvidence(payload, preference, sceneOrder, profile)
 	if err != nil {
 		fail("content-neighbors: %v", err)
 	}
+	profile.emit()
 	if err := writeJSONLine(map[string]any{"result": result}); err != nil {
 		fail("content-neighbors: write result: %v", err)
 	}
@@ -230,7 +237,9 @@ func contentNeighborEvidence(
 	payload contentPayload,
 	preference map[string]map[string]float64,
 	sceneOrder []string,
+	profile *profileRecorder,
 ) (map[string]any, error) {
+	end := profile.begin("core.build_columns")
 	// Column mapping: every feature name across all preference vectors, sorted.
 	seenNames := make(map[string]bool)
 	for _, vector := range preference {
@@ -288,9 +297,14 @@ func contentNeighborEvidence(
 		}
 		ownPos[i] = own
 	}
+	end()
+
+	end = profile.begin("core.kernel")
 	neighbors := contentKernel(targetRows, ownPos, colLists, labeledConf, labeledIDs,
 		payload.Config, payload.ProgressTotal, nthreads(payload.Threads))
+	end()
 
+	end = profile.begin("core.encode_result")
 	result := make(map[string]any, n)
 	for i, sceneID := range sceneOrder {
 		entries := make([][]any, 0, len(neighbors[i]))
@@ -304,6 +318,7 @@ func contentNeighborEvidence(
 		}
 		result[sceneID] = map[string]any{"neighbors": entries}
 	}
+	end()
 	return result, nil
 }
 

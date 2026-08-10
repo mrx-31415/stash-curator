@@ -32,6 +32,14 @@ Each stage reads one JSON payload from stdin and writes newline-delimited JSON
 to stdout: optional `{"progress": fraction}` lines followed by a final
 `{"result": ...}` line. Errors go to stderr with a non-zero exit status.
 
+When the payload requests `"profile": true` (the Python side sets it when the
+plugin's profiling is active), the binary additionally emits
+`{"span": {"name", "cat": "core", "offset_us", "dur_us"}}` lines before the
+result — offsets relative to the binary's process start. `curator/core.py`
+folds them into the plugin's profile_trace with category `core`, so builds
+show an inside-the-binary breakdown (read_features, preference_vectors,
+build_columns, kernel, encode_result).
+
 ```
 curator-core version
 curator-core content-neighbors

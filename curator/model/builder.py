@@ -24,7 +24,7 @@ from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES, performer_
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
-from curator.profiling import record_duration, span
+from curator.profiling import current_trace, record_duration, span
 from curator.storage import ModelStore, transaction
 from curator.storage.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
@@ -1270,6 +1270,7 @@ class PreferenceModelBuilder:
             progress=(
                 (lambda fraction: self._report(0.35 + 0.40 * fraction)) if self.progress else None
             ),
+            profile=current_trace() is not None,
         )
         entries = cast(dict[str, dict[str, object]], response)
         default = _NeighborEvidence(0.0, 0.0, 0.0, 0.0, 0.0, ())
@@ -1349,7 +1350,9 @@ class PreferenceModelBuilder:
             "numeric_blocks": sorted(NUMERIC_BLOCKS),
             "numeric_scales": dict(NUMERIC_SCALES),
         }
-        response = core.run_core("performer-similarity", payload)
+        response = core.run_core(
+            "performer-similarity", payload, profile=current_trace() is not None
+        )
         return cast(dict[str, dict[str, object]], response)
 
     def _performer_similarity_scores_python(
