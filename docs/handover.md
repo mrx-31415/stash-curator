@@ -1,9 +1,12 @@
 # Stash Curator handover
 
-Updated: 2026-08-10. Slice 0 of the full Go backend is delivered: the
-`curator-core` binary now serves the raw-plugin interface for the trivial ops
-with byte-identical outputs and a Python fallback for everything else (see
-`handover-go-backend-slice1.md` for the current state of the port). The
+Updated: 2026-08-10. Slices 0 and 1 of the full Go backend are delivered:
+the `curator-core` binary now serves the raw-plugin interface for the trivial
+ops *and* the read-path interactive ops (slate, similar, explanation,
+shortlist, histories, taste profile, diagnostics) with byte-identical outputs,
+and the installed plugin's exec line runs through a launcher that resolves the
+per-arch binary — the Python backend stays as the fallback for everything not
+yet ported (see `handover-go-backend-slice1.md` for the port state). The
 resident RPC conversion is off the table (disproven — no residency in Stash's
 `rpc` interface; see the correction banner in the planning doc);
 `docs/handover-rpc-plugin.md` is retained as blocked/superseded reference.
