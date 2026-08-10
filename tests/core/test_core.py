@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from curator import core as core_module
+from curator import optional_deps
 from curator.config import DEFAULT_CONFIG
 from curator.core import CoreError, core_binary, run_core
 from curator.features.store import StoredFeature
@@ -241,7 +242,7 @@ CONTENT_CORPORA = [
 def test_content_neighbors_core_matches_numpy(
     tmp_path: Path, binary: Path, n_scenes: int, d_features: int, nnz: int
 ) -> None:
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+    if not optional_deps.NUMPY_AVAILABLE:
         pytest.skip("numpy is not installed")
     corpus = synthetic_corpus(7, n_scenes, d_features, nnz, n_performers=0)
     connection, _artifact = core_with_feature_artifact(tmp_path, corpus)
@@ -254,8 +255,18 @@ def test_content_neighbors_core_matches_numpy(
     label_mean = builder._label_mean(labels)
     progress_total = len(preference) + len(corpus["scenes"])
 
-    numpy_result = builder._content_neighbors_numpy(preference, labels, label_mean, progress_total)
-    core_result = builder._content_neighbors_core(
+    from tests.oracle import content_neighbors_numpy
+
+    numpy_result = content_neighbors_numpy(
+        preference,
+        labels,
+        label_mean,
+        progress_total,
+        min_similarity=builder_module.DEFAULT_CONFIG.model.minimum_neighbor_similarity,
+        neighbor_count=builder_module.DEFAULT_CONFIG.model.neighbor_count,
+        confidence_scale=builder_module.DEFAULT_CONFIG.model.neighbor_confidence_scale,
+    )
+    core_result = builder._content_neighbors(
         FEATURE_VERSION, affinities, labels, label_mean, progress_total
     )
 
@@ -298,7 +309,7 @@ def _assert_neighbor_evidence_equal(
 
 
 def test_performer_similarity_core_matches_numpy(tmp_path: Path, binary: Path) -> None:
-    if not builder_module.optional_deps.NUMPY_AVAILABLE:
+    if not optional_deps.NUMPY_AVAILABLE:
         pytest.skip("numpy is not installed")
     corpus = synthetic_corpus(13, 150, 90, 12, n_performers=60)
     connection, _artifact = core_with_feature_artifact(tmp_path, corpus)
@@ -313,10 +324,17 @@ def test_performer_similarity_core_matches_numpy(tmp_path: Path, binary: Path) -
             feature_id, value / confidence, confidence, 1.0, 1, {}
         )
     scene_features = _scene_features(corpus, with_identity=True)
-    numpy_result = builder._performer_similarity_scores_numpy(
-        FEATURE_VERSION, scene_features, identity_affinities
+    from tests.oracle import performer_similarity_numpy
+
+    numpy_result = performer_similarity_numpy(
+        connection,
+        FEATURE_VERSION,
+        scene_features,
+        identity_affinities,
+        block_weights=dict(builder_module.DEFAULT_CONFIG.feature.performer_block_weights),
+        cutoff=builder_module.PERFORMER_SIMILARITY_AFFINITY_CUTOFF,
     )
-    core_result = builder._performer_similarity_scores_core(
+    core_result = builder._performer_similarity_scores(
         FEATURE_VERSION, scene_features, identity_affinities
     )
     assert set(core_result) == set(numpy_result)

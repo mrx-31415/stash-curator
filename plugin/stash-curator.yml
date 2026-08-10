@@ -131,10 +131,6 @@ tasks:
     description: Refresh promising StashDB scenes and performers without affecting library sync.
     execArgs:
       - expand-refresh
-  - name: Install optional dependencies
-    description: Install numpy and networkx acceleration into a plugin-local virtual environment. The model builder falls back to pure Python when this is not run.
-    execArgs:
-      - install-deps
 hooks:
   - name: Sync changed entity
     description: Import or remove a single entity after a Stash create, update, or delete, so the sidecar stays current without a full sync.
