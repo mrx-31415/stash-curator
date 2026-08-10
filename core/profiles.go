@@ -218,3 +218,13 @@ func performerSimilarity(left, right *performerProfile, blockWeights map[string]
 	}
 	return total * similarityPenalty(left, right), similarities, usedWeights
 }
+
+// performerBlockWeightsMap mirrors DEFAULT_CONFIG.feature.performer_block_weights
+// as a lookup map.
+func performerBlockWeightsMap() map[string]float64 {
+	weights := map[string]float64{}
+	for _, entry := range performerBlockWeights {
+		weights[entry.block] = entry.weight
+	}
+	return weights
+}

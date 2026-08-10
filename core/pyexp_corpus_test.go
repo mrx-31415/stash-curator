@@ -6,12 +6,10 @@ import (
 )
 
 // TestPyExpCorpus pins pyExp against CPython/glibc math.exp values (3000
-// random inputs plus structured edges). byte-exactness of the similarity and
-// slate paths depends on matching the platform libm.
-//
-// glibcDeviation lists the sampled inputs where glibc itself is 1 ulp off the
-// correctly rounded value (pyExp is correctly rounded there, so it differs).
-// glibcDeviation must stay empty for every input the ported ops compute.
+// random inputs plus structured edges). pyExp is the glibc dbl-64 exp port,
+// so it matches the platform libm bit-for-bit at every input, including the
+// three documented points where glibc deviates from the correctly rounded
+// value (asserted explicitly below).
 var glibcDeviation = map[uint64]bool{
 	0xc00cf486fc1abd64: true, // exp(-3.619398088041338)
 	0x3ff8c4bdb1a1e3d8: true, // exp(1.5480324686779934)
@@ -19,24 +17,32 @@ var glibcDeviation = map[uint64]bool{
 }
 
 func TestPyExpCorpus(t *testing.T) {
-	deviationHits := 0
 	for _, c := range pyExpCases {
-		if glibcDeviation[math.Float64bits(c.x)] {
-			continue
-		}
 		if got := pyExp(c.x); got != c.want {
 			t.Errorf("pyExp(%.17g) = %.17g, want %.17g", c.x, got, c.want)
 		}
 	}
-	// the ops only ever call pyExp on the corpus-derived inputs; assert the
-	// harness's actual exp arguments match glibc exactly.
-	harnessInputs := []float64{0, -0.5, -1.0 / 6.0, -1.0 / 7.0, -1.0 / 12.0, -1.0 / 4.0}
-	for _, x := range harnessInputs {
-		if glibcDeviation[math.Float64bits(x)] {
-			t.Errorf("harness exp input %v hits a glibc deviation", x)
+	// The deviation inputs are in pyExpCases with the glibc values; assert
+	// pyExp reproduces glibc (not the correctly rounded value) there too —
+	// the old big.Float implementation was 1 ulp off at these points.
+	for bits := range glibcDeviation {
+		x := math.Float64frombits(bits)
+		var want float64
+		found := false
+		for _, c := range pyExpCases {
+			if math.Float64bits(c.x) == bits {
+				want = c.want
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("deviation input %x missing from pyExpCases", bits)
+		}
+		if got := pyExp(x); got != want {
+			t.Errorf("pyExp(%.17g) = %.17g, want glibc %.17g", x, got, want)
 		}
 	}
-	_ = deviationHits
 }
 
 var pyExpCases = []struct {
