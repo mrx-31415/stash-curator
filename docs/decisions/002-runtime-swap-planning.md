@@ -408,4 +408,9 @@ yet** — distribution (5.2/5.3) is the next work package.
   target — native per-arch runners were not needed. The `raw` interface
   stays; switching the exec line to the binary is a later, separate step.
 - **Phase 4 (optional):** full backend in Go on `raw` (no RPC), if the hybrid
-  proves out and the port budget is available.
+  proves out and the port budget is available. **Progress:** the multi-hop
+  pagerank kernel is ported (`core/multi-hop`), keeping networkx/scipy as a
+  dev-only oracle; percentiles stay Python (pure-Python fallback is
+  negligible). The remaining runtime dependencies (the numpy/networkx venv)
+  are the next removal target — the plan is binary-required-at-runtime with
+  numpy as the differential oracle and the pure-Python kernels deleted.

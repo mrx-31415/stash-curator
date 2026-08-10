@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from curator.model import builder as builder_module
 from curator.model.multi_hop import (
     REACH_FLOOR,
     MultiHopAffinity,
+    _Graph,
     _pagerank_networkx,
     _pagerank_python,
 )
@@ -153,6 +155,7 @@ def test_reach_matches_pure_python_when_networkx_unavailable(
 ) -> None:
     connection = _graph_database(tmp_path / "curator.sqlite3")
     monkeypatch.setattr(optional_deps, "nx", None)
+    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
     service = MultiHopAffinity(connection, "m")
     scores = _pagerank_python(service._graph("s"))
     expected = {
@@ -261,3 +264,59 @@ def test_similarity_annotates_multi_hop_when_reachable(
         assert reach is None or 0.0 < reach <= 1.0
         if "multi_hop" in item.relationships:
             assert item.details["multi_hop_reach"] >= REACH_FLOOR
+
+
+def test_core_pagerank_matches_networkx_and_python(tmp_path: Path) -> None:
+    if builder_module.core.core_binary() is None:
+        pytest.skip("curator-core binary is not built")
+    connection = _graph_database(tmp_path / "curator.sqlite3")
+    service = MultiHopAffinity(connection, "m")
+    graph = service._graph_for("s")
+    core_scores = service._walk_core(graph)
+    assert core_scores == pytest.approx(_pagerank_python(graph), rel=1e-12)
+    if optional_deps.nx is not None and _scipy_importable():
+        assert core_scores == pytest.approx(_pagerank_networkx(graph), rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("n_nodes", "density", "seed_index"),
+    [(10, 0.3, 0), (50, 0.15, 1), (200, 0.05, 2), (25, 0.4, 3)],
+)
+def test_core_pagerank_matches_on_seeded_corpora(
+    n_nodes: int, density: float, seed_index: int
+) -> None:
+    if builder_module.core.core_binary() is None:
+        pytest.skip("curator-core binary is not built")
+    rng = random.Random(1000 + seed_index)
+    nodes = [f"n{index:03d}" for index in range(n_nodes)]
+    adjacency: dict[str, dict[str, float]] = {}
+    for node in nodes:
+        edges = {
+            target: rng.random() for target in nodes if target != node and rng.random() < density
+        }
+        if edges:
+            total = sum(edges.values())
+            adjacency[node] = {target: weight / total for target, weight in edges.items()}
+        else:
+            adjacency[node] = {}
+    graph = _Graph(adjacency, nodes[seed_index % n_nodes], frozenset())
+    service = MultiHopAffinity(None, "m")
+    core_scores = service._walk_core(graph)
+    assert core_scores == pytest.approx(_pagerank_python(graph), rel=1e-12)
+    if optional_deps.nx is not None and _scipy_importable():
+        assert core_scores == pytest.approx(_pagerank_networkx(graph), rel=1e-9)
+
+
+def test_core_reach_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if builder_module.core.core_binary() is None:
+        pytest.skip("curator-core binary is not built")
+    connection = _graph_database(tmp_path / "curator.sqlite3")
+    service = MultiHopAffinity(connection, "m")
+    real_binary = builder_module.core.core_binary
+    monkeypatch.setattr(builder_module.core, "core_binary", lambda: None)
+    expected = service.reach("s")
+    monkeypatch.setattr(builder_module.core, "core_binary", real_binary)
+    core_reach = service.reach("s")
+    assert set(core_reach) == set(expected)
+    for scene, score in expected.items():
+        assert core_reach[scene] == pytest.approx(score, rel=1e-12)

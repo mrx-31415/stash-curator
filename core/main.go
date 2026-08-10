@@ -59,6 +59,8 @@ func main() {
 		runContentNeighbors()
 	case "performer-similarity":
 		runPerformerSimilarity()
+	case "multi-hop":
+		runMultiHop()
 	default:
 		fail("unknown command: %s", args[0])
 	}

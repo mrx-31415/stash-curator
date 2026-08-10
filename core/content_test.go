@@ -302,3 +302,26 @@ func TestProfileRecorderSpans(t *testing.T) {
 		t.Fatalf("unexpected span: %+v", span)
 	}
 }
+
+func TestPagerankConvergesAndIsDeterministic(t *testing.T) {
+	adjacency := map[string]map[string]float64{
+		"a": {"b": 0.6, "c": 0.4},
+		"b": {"a": 1.0},
+		"c": {}, // dangling
+	}
+	first := pagerank(adjacency, "a", 0.85, 100, 1e-6)
+	second := pagerank(adjacency, "a", 0.85, 100, 1e-6)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("pagerank must be deterministic")
+	}
+	total := 0.0
+	for _, score := range first {
+		total += score
+	}
+	if math.Abs(total-1.0) > 1e-3 {
+		t.Fatalf("scores must conserve mass, got %v", total)
+	}
+	if first["a"] <= 0 || first["b"] <= 0 || first["c"] <= 0 {
+		t.Fatalf("all nodes must have positive mass: %v", first)
+	}
+}
