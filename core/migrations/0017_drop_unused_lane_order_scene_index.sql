@@ -1,0 +1,1 @@
+DROP INDEX model_lane_order_scene_idx;
