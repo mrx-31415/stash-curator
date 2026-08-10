@@ -36,19 +36,15 @@ distribution (per-arch binaries, runtime select) is the next work package.
 
 ## Next work package
 
-**Phase 2 + 3 are delivered** — the compiled core ships in the plugin zip as
-per-arch binaries (linux amd64/arm64, windows amd64, darwin amd64/arm64);
-runtime select + pure-Python fallback; archive test asserts presence. The
-remaining items:
-
-- **Installed verification (live):** update Curator from Stash's plugin
-  manager once the release lands, then run the cold build on the installed
-  sidecar and compare stage timings against the numpy baseline (the compiled
-  core should show the similarity-stage win; at this library's low label
-  count expect ~10% on that stage, more on denser libraries).
-- **Benchmark follow-up:** re-run the Docker benchmark with `--keep-stash` to
-  capture the container's feature-build density and close the 75.7s-vs-7.5s
-  content-span question (planning doc §8).
+**Full Go backend (Phase 4)** — making `curator-core` the plugin's exec line
+on the raw interface. The kernel port (similarity + pagerank), per-arch
+distribution, and the optional-deps venv removal are all delivered and
+verified on the installed instance (cold build 23.1s similarity vs 72.9s numpy
+baseline, 3.2x, zero runtime installs). The remaining work is porting the
+backend transport and ops; the slice plan and the first agent prompt are in
+[`handover-go-backend.md`](handover-go-backend.md). Slice 0 (transport +
+sidecar-parity foundation + trivial ops + Python fallback dispatch) is the
+next step.
 
 Deferred UI follow-ups (retain as a separate coherent package):
 
