@@ -431,6 +431,14 @@ def test_artifact_views_resolve_same_tables(tmp_path: Path, binary: Path, stub_s
     connection = sqlite3.connect(sidecar)
     try:
         connection.row_factory = sqlite3.Row
+        import os
+        derived = sidecar.parent / f"{sidecar.stem}-derived"
+        for artifact in sorted(derived.iterdir()):
+            st = artifact.stat()
+            with open(artifact, "rb") as fh:
+                head = fh.read(16).hex()
+            print(f"CI-DIAG artifact={artifact} size={st.st_size} mode={oct(st.st_mode)} "
+                  f"mtime={st.st_mtime} head={head}", flush=True)
         attach_active_artifacts(connection)
         aliases = {row["name"] for row in connection.execute("PRAGMA database_list")}
         assert "feature_generation" in aliases
