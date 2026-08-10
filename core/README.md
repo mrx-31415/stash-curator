@@ -82,6 +82,17 @@ production result dict:
 `{"result": {performer_id: {value, confidence, matches: [{performer_id,
 similarity, affinity, confidence, blocks: {block: value}}]}}}`.
 
+### multi-hop
+
+Input: `adjacency` (row-stochastic `{node: {target: weight}}`), `seed`,
+`damping`, `max_iterations`, `tolerance`, optional `threads`/`profile`.
+
+Mirrors `MultiHopAffinity._pagerank_python` / `_pagerank_networkx`: personalized
+PageRank with damping 0.85, personalization concentrated on the seed, dangling
+mass returned to the seed, converging when `sum(|x - xlast|) < N * tolerance`
+(max 100 iterations). Nodes and per-node targets iterate in sorted order,
+matching the pure-Python recurrence. Output: `{"result": {node: score}}`.
+
 ## Determinism
 
 Both kernels are deterministic: fixed chunking across goroutines, no

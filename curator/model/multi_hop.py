@@ -24,8 +24,10 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any, cast
 
-from curator import optional_deps
+from curator import core, optional_deps
+from curator.profiling import current_trace
 
 DAMPING = 0.85
 MAX_ITERATIONS = 100
@@ -232,10 +234,32 @@ class MultiHopAffinity:
         graph = self._graph_for(seed_id)
         if len(graph.adjacency) < 2:
             return {}
+        if core.core_binary() is not None:
+            return self._walk_core(graph)
         nx = optional_deps.nx
         if nx is not None and _scipy_available():
             return _pagerank_networkx(graph)
         return _pagerank_python(graph)
+
+    def _walk_core(self, graph: _Graph) -> dict[str, float]:
+        """PageRank via the compiled core (networkx's role).
+
+        The walkable graph is built here (sidecar reads + seed resolution); the
+        binary only runs the power iteration over the row-stochastic adjacency,
+        mirroring the pure-Python recurrence bit-for-bit.
+        """
+        response = core.run_core(
+            "multi-hop",
+            {
+                "adjacency": {node: dict(edges) for node, edges in graph.adjacency.items()},
+                "seed": graph.seed,
+                "damping": DAMPING,
+                "max_iterations": MAX_ITERATIONS,
+                "tolerance": TOLERANCE,
+            },
+            profile=current_trace() is not None,
+        )
+        return {str(node): float(score) for node, score in cast(dict[str, Any], response).items()}
 
     def _graph_for(self, seed_id: str) -> _Graph:
         """Walkable graph seeded at a scene or performer node."""
