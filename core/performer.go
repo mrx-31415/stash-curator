@@ -45,6 +45,9 @@ type performerProfile struct {
 	id     string
 	blocks map[string]map[string]profileValue
 	norms  map[string]float64
+	// keys holds each block's name set; populated by the query-time
+	// similarity path (readProfiles leaves it nil).
+	keys map[string]map[string]bool
 }
 
 func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (map[string]*performerProfile, error) {

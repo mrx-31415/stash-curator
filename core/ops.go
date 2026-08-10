@@ -229,21 +229,8 @@ func dbSummary(v any) jVal {
 // profilingEnabled is on the trace is saved as a profile_trace row — even
 // when the operation fails. Save failures only log a warning.
 func opGetConfig(pluginDir string, payload jVal) (jVal, error) {
-	t := beginTrace("get_config", "operation")
-	settings := pluginSettings(payload) // swallows failures, like _settings
-	if !settings.get("profilingEnabled").truthy() {
-		endTrace(t)
-		return getConfigBody(pluginDir, payload, settings)
-	}
-	output, err := getConfigBody(pluginDir, payload, settings)
-	if err != nil {
-		t.fail(err)
-	}
-	endTrace(t)
-	if saveErr := saveTrace(databasePath(pluginDir, payload, settings), t); saveErr != nil {
-		warnLog("Could not save Curator profile: " + saveErr.Error())
-	}
-	return output, err
+	return profiledOperation(pluginDir, payload, "get_config",
+		func(settings jVal) (jVal, error) { return getConfigBody(pluginDir, payload, settings) })
 }
 
 func getConfigBody(pluginDir string, payload, settings jVal) (jVal, error) {
