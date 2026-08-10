@@ -515,3 +515,25 @@ def test_run_core_raises_on_broken_binary(tmp_path: Path) -> None:
     finally:
         monkeypatch.undo()
         core_module._clear_cache()
+
+
+def test_run_core_records_multihop_span_into_trace(tmp_path: Path, binary: Path) -> None:
+    from curator.profiling import begin_trace, end_trace
+
+    trace, token = begin_trace("unit", "test")
+    try:
+        run_core(
+            "multi-hop",
+            {
+                "adjacency": {
+                    "a": {"b": 1.0},
+                    "b": {"a": 1.0},
+                    "c": {},
+                },
+                "seed": "a",
+            },
+            profile=True,
+        )
+    finally:
+        end_trace(trace, token)
+    assert [event["name"] for event in trace.events if event["cat"] == "core"] == ["core.pagerank"]
