@@ -170,9 +170,11 @@ func keysOverlap(a, b map[string]profileValue) bool {
 	return false
 }
 
-// performerSimilarity mirrors profiles.performer_similarity; returns the
-// combined similarity plus the per-block similarities and used weights.
-func performerSimilarity(left, right *performerProfile, blockWeights map[string]float64) (float64, map[string]float64, map[string]float64) {
+// blockSimilaritiesAll mirrors profiles.block_similarities: per-block
+// similarities and the weights they were measured with, over the sorted
+// shared blocks (the Python dict insertion order), plus the ordered block
+// names and weights for deterministic accumulation.
+func blockSimilaritiesAll(left, right *performerProfile, blockWeights map[string]float64) (map[string]float64, map[string]float64, []string, []float64) {
 	blocks := make([]string, 0)
 	for block := range left.blocks {
 		if _, ok := right.blocks[block]; ok {
@@ -182,6 +184,7 @@ func performerSimilarity(left, right *performerProfile, blockWeights map[string]
 	sort.Strings(blocks)
 	similarities := make(map[string]float64)
 	usedWeights := make(map[string]float64)
+	var ordered []string
 	var weights []float64
 	for _, block := range blocks {
 		weight := blockWeights[block]
@@ -194,16 +197,22 @@ func performerSimilarity(left, right *performerProfile, blockWeights map[string]
 		}
 		similarities[block] = similarity
 		usedWeights[block] = weight
+		ordered = append(ordered, block)
 		weights = append(weights, weight)
 	}
+	return similarities, usedWeights, ordered, weights
+}
+
+// performerSimilarity mirrors profiles.performer_similarity; returns the
+// combined similarity plus the per-block similarities and used weights.
+func performerSimilarity(left, right *performerProfile, blockWeights map[string]float64) (float64, map[string]float64, map[string]float64) {
+	similarities, usedWeights, ordered, weights := blockSimilaritiesAll(left, right, blockWeights)
 	denominator := neumaierSum(weights)
 	total := 0.0
 	if denominator > 0 {
-		var products []float64
-		for _, block := range blocks {
-			if similarity, ok := similarities[block]; ok {
-				products = append(products, similarity*usedWeights[block])
-			}
+		products := make([]float64, 0, len(ordered))
+		for _, block := range ordered {
+			products = append(products, similarities[block]*usedWeights[block])
 		}
 		total = neumaierSum(products) / denominator
 	}
