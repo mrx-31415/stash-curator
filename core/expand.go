@@ -1369,8 +1369,9 @@ func fetchParallel(clientURL, apiKey string, spec fetchPageSpec, rows *sceneRows
 }
 
 // fetchProbes mirrors ExpandService._fetch_probes: each probe runs its own
-// sequential page loop, and the probes run concurrently (Python's
-// ThreadPoolExecutor). Results merge in probe order.
+// page loop (pages in parallel via fetchParallel, merged in page order),
+// and the probes run concurrently (Python's ThreadPoolExecutor). Results
+// merge in probe order, byte-identical to the sequential loop.
 func fetchProbes(clientURL, apiKey string, probes []fetchPageSpec) (*sceneRows, map[string]map[string]bool, error) {
 	rows := &sceneRows{m: map[string]jVal{}}
 	sources := map[string]map[string]bool{}
@@ -1390,7 +1391,7 @@ func fetchProbes(clientURL, apiKey string, probes []fetchPageSpec) (*sceneRows, 
 			defer wg.Done()
 			probeRows := &sceneRows{m: map[string]jVal{}}
 			probeSources := map[string]map[string]bool{}
-			_, _, err := fetchScenes(clientURL, apiKey, spec, probeRows, probeSources)
+			_, _, err := fetchParallel(clientURL, apiKey, spec, probeRows, probeSources, runtime.GOMAXPROCS(0))
 			results[index] = probeResult{rows: probeRows, sources: probeSources, err: err}
 		}(i, spec)
 	}
