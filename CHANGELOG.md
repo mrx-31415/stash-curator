@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.0](https://github.com/mrx-31415/stash-curator/compare/v0.5.1...v0.6.0) (2026-08-10)
+
+
+### Features
+
+* accelerate similarity stages with an optional compiled Go core ([3afcb54](https://github.com/mrx-31415/stash-curator/commit/3afcb54f8c245f85e88aafaee17bf435441a4b1d))
+* make Expand refresh incremental ([c6f82d7](https://github.com/mrx-31415/stash-curator/commit/c6f82d763f07d95fa98b46f8ba0ab68aa27a740a))
+* ship the compiled core as per-arch binaries in the plugin zip ([80650c2](https://github.com/mrx-31415/stash-curator/commit/80650c2680d5311e5db992076d0bc6024285f876))
+* sync changed entities immediately via Stash hooks ([#90](https://github.com/mrx-31415/stash-curator/issues/90)) ([249d85e](https://github.com/mrx-31415/stash-curator/commit/249d85ebe0fd66fd6f6394fb3a2dc45a07a3e9a6))
+* sync recent plays automatically after playback ([2fb9b2b](https://github.com/mrx-31415/stash-curator/commit/2fb9b2b3242ea616460cf0034148240b1e7e52e1))
+
+
+### Bug Fixes
+
+* batch eligibility probes and cache slate lane counts ([c22de23](https://github.com/mrx-31415/stash-curator/commit/c22de23cc499adaee0aedae6ebc38246c5ac0e04))
+* fall back to full Expand refresh when StashDB lacks the updated_at filter ([2788049](https://github.com/mrx-31415/stash-curator/commit/27880495fdbcdb5fe0c15c49ca70ca37a308d5ee))
+* keep StashDB similar cards from crashing the page ([2e168d7](https://github.com/mrx-31415/stash-curator/commit/2e168d71ebe332fbc6c20692b8d812c78a7e5166))
+
+
+### Documentation
+
+* clarify product behavior and onboarding ([10ead56](https://github.com/mrx-31415/stash-curator/commit/10ead56fb8f14e5461c7a26d042d49f605f646f1))
+* describe incremental Expand refresh with fallback ([37f2de8](https://github.com/mrx-31415/stash-curator/commit/37f2de813fb8231c3c4bfbb169e5f2d8370c4557))
+* record compiled-core Phase 2 delivery ([27fe6b7](https://github.com/mrx-31415/stash-curator/commit/27fe6b7429e5bae09048d6e338a66fb6e35f895a))
+
 ## [0.5.1](https://github.com/mrx-31415/stash-curator/compare/v0.5.0...v0.5.1) (2026-08-08)
 
 
