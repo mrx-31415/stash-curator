@@ -11,7 +11,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math"
+	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,16 +283,17 @@ func expandWhy(scene jVal, tagAffinity map[string]float64, identity, similarity 
 
 // ── anchor matching (performer hunt scoring) ──────────────────────────────
 
-// anchorTerms mirrors _AnchorTerms.
-type anchorTerms struct {
-	anchor       *performerProfile
-	evidence     *performerEvidence
-	similarities map[string]float64
-	weights      map[string]float64
-	ordered      []string
-	numerator    float64
-	denominator  float64
-	penalty      float64
+// compactTerm is one anchor comparison for a performer: the accumulated
+// numerator/denominator and the cup penalty. Retaining the per-anchor block
+// maps for every unique performer would hold ~1GB for the anchor set and
+// scene casts of a large library (the maps dwarf the floats), so the terms
+// stay compact and the chosen anchor's block maps are recomputed on demand
+// in best (one anchor per call, same deterministic values).
+type compactTerm struct {
+	anchorIndex int
+	numerator   float64
+	denominator float64
+	penalty     float64
 }
 
 // anchorMatch mirrors one _AnchorMatcher.best result: the combined value and
@@ -312,7 +316,7 @@ type anchorMatcher struct {
 	weights   map[string]float64
 	ageWeight float64
 	relevant  float64
-	terms     map[string][]anchorTerms
+	terms     map[string][]compactTerm
 }
 
 func newAnchorMatcher(anchors []anchorPair, weights map[string]float64) *anchorMatcher {
@@ -327,16 +331,25 @@ func newAnchorMatcher(anchors []anchorPair, weights map[string]float64) *anchorM
 		weights:   weights,
 		ageWeight: weights["age"],
 		relevant:  relevant,
-		terms:     map[string][]anchorTerms{},
+		terms:     map[string][]compactTerm{},
 	}
 }
 
 // timeless mirrors _AnchorMatcher._timeless: scene-independent block terms.
-func (m *anchorMatcher) timeless(performer jVal) []anchorTerms {
+func (m *anchorMatcher) timeless(performer jVal) []compactTerm {
 	externalID := performer.get("id").asString()
 	if cached, ok := m.terms[externalID]; ok {
 		return cached
 	}
+	terms := m.computeTerms(performer)
+	m.terms[externalID] = terms
+	return terms
+}
+
+// undatedProfile mirrors the _timeless profile construction: the external
+// performer's profile without the age block (the age term is added per
+// recording date in best).
+func undatedProfile(performer jVal) *performerProfile {
 	profile := expandProfile(performer, jvNull())
 	undated := &performerProfile{
 		id:     profile.id,
@@ -350,26 +363,63 @@ func (m *anchorMatcher) timeless(performer jVal) []anchorTerms {
 		}
 	}
 	finalizeProfileNorms(undated)
-	terms := make([]anchorTerms, 0, len(m.anchors))
-	for _, a := range m.anchors {
+	return undated
+}
+
+// computeTerms is the uncached term computation for one external performer.
+// The per-anchor block maps are discarded here; best re-derives them only
+// for the chosen anchor.
+func (m *anchorMatcher) computeTerms(performer jVal) []compactTerm {
+	undated := undatedProfile(performer)
+	terms := make([]compactTerm, 0, len(m.anchors))
+	for index, a := range m.anchors {
 		similarities, used, ordered, weights := blockSimilaritiesAll(undated, a.profile, m.weights)
 		products := make([]float64, 0, len(ordered))
 		for _, block := range ordered {
 			products = append(products, similarities[block]*used[block])
 		}
-		terms = append(terms, anchorTerms{
-			anchor:       a.profile,
-			evidence:     a.evidence,
-			similarities: similarities,
-			weights:      used,
-			ordered:      ordered,
-			numerator:    neumaierSum(products),
-			denominator:  neumaierSum(weights),
-			penalty:      similarityPenalty(undated, a.profile),
+		terms = append(terms, compactTerm{
+			anchorIndex: index,
+			numerator:   neumaierSum(products),
+			denominator: neumaierSum(weights),
+			penalty:     similarityPenalty(undated, a.profile),
 		})
 	}
-	m.terms[externalID] = terms
 	return terms
+}
+
+// precomputeTerms fills the term cache for every unique external performer
+// with a bounded worker pool. Each performer is assigned to exactly one
+// worker and writes its own result slot, so the cache fill afterwards is
+// race-free and the term content is identical regardless of worker order
+// (the anchor iteration order is fixed).
+func (m *anchorMatcher) precomputeTerms(performers []jVal, workers int) {
+	if len(performers) == 0 {
+		return
+	}
+	terms := make([][]compactTerm, len(performers))
+	if workers < 1 {
+		workers = 1
+	}
+	ch := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range ch {
+				terms[index] = m.computeTerms(performers[index])
+			}
+		}()
+	}
+	for i := range performers {
+		ch <- i
+	}
+	close(ch)
+	wg.Wait()
+	for i, termSet := range terms {
+		m.terms[performers[i].get("id").asString()] = termSet
+	}
 }
 
 // best mirrors _AnchorMatcher.best: combine the timeless terms with a fresh
@@ -388,7 +438,7 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 		term := &terms[i]
 		age, ageOK := 0.0, false
 		if m.ageWeight > 0 {
-			age, ageOK = blockSimilarity(profile, term.anchor, "age")
+			age, ageOK = blockSimilarity(profile, m.anchors[term.anchorIndex].profile, "age")
 		}
 		numerator := term.numerator
 		denominator := term.denominator
@@ -414,15 +464,25 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 		return anchorMatch{}, false
 	}
 	chosen := &terms[bestIndex]
-	similarities := make(map[string]float64, len(chosen.similarities)+1)
-	usedWeights := make(map[string]float64, len(chosen.weights)+1)
-	ordered := append([]string{}, chosen.ordered...)
-	for block, value := range chosen.similarities {
-		similarities[block] = value
+	anchor := m.anchors[chosen.anchorIndex].profile
+	// The compact terms discard the per-anchor block maps; re-derive them
+	// for the chosen anchor on demand (one anchor per call). The undated
+	// profile keeps Python's accumulation order: undated blocks sorted,
+	// the age term appended last — identical values and order to the
+	// timeless computation.
+	undated := &performerProfile{
+		id:     profile.id,
+		blocks: map[string]map[string]profileValue{},
+		norms:  map[string]float64{},
+		keys:   map[string]map[string]bool{},
 	}
-	for block, value := range chosen.weights {
-		usedWeights[block] = value
+	for block, values := range profile.blocks {
+		if block != "age" {
+			undated.blocks[block] = values
+		}
 	}
+	finalizeProfileNorms(undated)
+	similarities, usedWeights, ordered, _ := blockSimilaritiesAll(undated, anchor, m.weights)
 	if hasAge {
 		similarities["age"] = chosenAge
 		usedWeights["age"] = m.ageWeight
@@ -440,7 +500,7 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 	if denominator != 0 {
 		total = neumaierSum(products) / denominator
 	}
-	total *= similarityPenalty(profile, chosen.anchor)
+	total *= similarityPenalty(profile, anchor)
 	coverage := 0.0
 	if m.relevant != 0 {
 		coverage = math.Min(1.0, denominator/m.relevant)
@@ -449,7 +509,7 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 		value:        total * math.Sqrt(coverage),
 		similarities: similarities,
 		usedWeights:  usedWeights,
-		evidence:     chosen.evidence,
+		evidence:     m.anchors[chosen.anchorIndex].evidence,
 	}, true
 }
 
@@ -980,29 +1040,49 @@ func (s *expandService) externalTagIDs(localIDs map[string]bool) (map[string]str
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// The taxonomy index loads the snapshot tables once (mirroring Python's
+	// TaxonomyIndex constructor); resolve() then queries only the per-tag
+	// stash ids and matches against memory.
+	taxonomy, err := newTaxonomyIndex(s.db)
+	if err != nil {
+		return nil, err
+	}
 	nameRows, err := s.db.Query(`SELECT tag_id, name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args[:len(ids)]...)
 	if err != nil {
 		return nil, err
 	}
+	// Collect the rows before resolving: the taxonomy resolve queries the
+	// same single pooled connection, and a nested query while nameRows is
+	// still open would deadlock against SetMaxOpenConns(1).
+	pairs := make([]struct {
+		tagID string
+		name  string
+	}, 0)
 	for nameRows.Next() {
 		var tagID, name string
 		if err := nameRows.Scan(&tagID, &name); err != nil {
 			return nil, err
 		}
-		if _, ok := result[tagID]; ok {
-			continue
-		}
-		match, err := taxonomyIndexResolve(s.db, tagID, name)
-		if err != nil {
-			return nil, err
-		}
-		if match.externalTagID != "" && match.confidence >= 0.9 {
-			result[tagID] = match.externalTagID
-		}
+		pairs = append(pairs, struct {
+			tagID string
+			name  string
+		}{tagID: tagID, name: name})
 	}
 	nameRows.Close()
 	if err := nameRows.Err(); err != nil {
 		return nil, err
+	}
+	for _, pair := range pairs {
+		if _, ok := result[pair.tagID]; ok {
+			continue
+		}
+		match, err := taxonomy.resolve(s.db, pair.tagID, pair.name)
+		if err != nil {
+			return nil, err
+		}
+		if match.externalTagID != "" && match.confidence >= 0.9 {
+			result[pair.tagID] = match.externalTagID
+		}
 	}
 	return result, nil
 }
@@ -1648,143 +1728,242 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 		weights[item.block] = item.weight
 	}
 	matcher := newAnchorMatcher(anchorPairs, weights)
+	if os.Getenv("CURATOR_STATS") != "" {
+		fmt.Fprintf(os.Stderr, "[stats] anchors=%d unique=%d\n", len(anchorPairs), 0)
+	}
 
+	// The dominant cost on large libraries is the anchor comparison: every
+	// fetched scene's cast is measured against every positive-strength local
+	// anchor. The terms are scene-independent, so they are precomputed once
+	// per unique external performer with a bounded worker pool, then each
+	// scene is scored in parallel. Results merge in scene order afterwards,
+	// so the output is byte-identical to the sequential loop.
+	uniquePerformers := make([]jVal, 0)
+	seenPerformers := map[string]bool{}
+	for _, scene := range scenes {
+		for _, item := range scene.get("performers").arr {
+			p := item.get("performer")
+			id := p.get("id").asString()
+			if evidence[id] == nil && !seenPerformers[id] {
+				seenPerformers[id] = true
+				uniquePerformers = append(uniquePerformers, p)
+			}
+		}
+	}
+	if os.Getenv("CURATOR_STATS") != "" {
+		fmt.Fprintf(os.Stderr, "[stats] unique=%d\n", len(uniquePerformers))
+	}
+	t0 := time.Now()
+	matcher.precomputeTerms(uniquePerformers, runtime.GOMAXPROCS(0))
+	if os.Getenv("CURATOR_STATS") != "" {
+		fmt.Fprintf(os.Stderr, "[stats] precompute=%.2fs\n", time.Since(t0).Seconds())
+	}
+
+	type castContribution struct {
+		externalID string
+		payload    jVal
+		score      float64
+	}
+	type sceneWork struct {
+		row          scoredScene
+		castContribs []castContribution
+	}
+	work := make([]sceneWork, len(scenes))
+	var bestCalls int64
+	var bestTimeNs int64
+	var bestMutex sync.Mutex
+	workCh := make(chan int)
+	var wg sync.WaitGroup
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range workCh {
+				scene := scenes[index]
+				signals := make([]float64, 0, len(scene.get("tags").arr))
+				for _, tag := range scene.get("tags").arr {
+					signals = append(signals, expandTagValue(tag, tagAffinity))
+				}
+				sort.SliceStable(signals, func(i, j int) bool { return math.Abs(signals[i]) > math.Abs(signals[j]) })
+				if len(signals) > 5 {
+					signals = signals[:5]
+				}
+				tagValue := pyTanh(neumaierSum(signals))
+				cast := make([]jVal, 0, len(scene.get("performers").arr))
+				for _, item := range scene.get("performers").arr {
+					cast = append(cast, item.get("performer"))
+				}
+				castWeight := expandCastWeight(len(cast))
+				identity := 0.0
+				for _, performer := range cast {
+					if item := evidence[performer.get("id").asString()]; item != nil {
+						if item.strength > identity {
+							identity = item.strength
+						}
+					}
+				}
+				identity *= castWeight
+				studio := scene.get("studio")
+				if studio.kind != jObj {
+					studio = jvObj()
+				}
+				studioValue := 0.0
+				if v := studio.get("id"); v.truthy() {
+					studioValue = externalStudioAppeal[v.asString()]
+				}
+				studioPayload := cloneObj(studio)
+				if v := studio.get("id"); v.truthy() {
+					if local, ok := localStudios[v.asString()]; ok {
+						studioPayload.set("curator_local", jvObj(jvKey("id", jvStr(local))))
+					}
+				}
+				similarityValue := 0.0
+				contribs := make([]castContribution, 0, len(cast))
+				for _, performer := range cast {
+					externalID := performer.get("id").asString()
+					local := evidence[externalID]
+					recorded := scene.get("production_date")
+					if !recorded.truthy() {
+						recorded = scene.get("release_date")
+					}
+					match, hasMatch := anchorMatch{}, false
+					if local == nil {
+						if os.Getenv("CURATOR_STATS") != "" {
+							tBest := time.Now()
+							match, hasMatch = matcher.best(performer, recorded)
+							bestMutex.Lock()
+							bestCalls++
+							bestTimeNs += time.Since(tBest).Nanoseconds()
+							bestMutex.Unlock()
+						} else {
+							match, hasMatch = matcher.best(performer, recorded)
+						}
+					}
+					strength := 0.0
+					matchValue := 0.0
+					if hasMatch {
+						strength = match.evidence.strength
+						matchValue = match.value
+					}
+					similarityValue = math.Max(similarityValue, matchValue*strength*castWeight)
+					performerPayload := cloneObj(performer)
+					if local != nil {
+						performerPayload.set("curator_local", jvObj(
+							jvKey("id", jvStr(local.localID)),
+							jvKey("favorite", jvBool(local.favorite)),
+							jvKey("play_count", jvInt(local.playCount)),
+						))
+					}
+					if hasMatch && matchValue > 0 {
+						blocks := make([]string, 0, len(match.similarities))
+						for block := range match.similarities {
+							blocks = append(blocks, block)
+						}
+						sort.SliceStable(blocks, func(i, j int) bool {
+							return match.similarities[blocks[i]]*match.usedWeights[blocks[i]] >
+								match.similarities[blocks[j]]*match.usedWeights[blocks[j]]
+						})
+						if len(blocks) > 3 {
+							blocks = blocks[:3]
+						}
+						attributes := make([]string, 0, len(blocks))
+						for _, block := range blocks {
+							attributes = append(attributes, strings.ReplaceAll(block, "augmentation", "breast type"))
+						}
+						name := match.evidence.name
+						if name == "" {
+							name = "a performer you enjoy"
+						}
+						performerPayload.set("why", jvArr(jvStr("Similar to "+name+" in "+strings.Join(attributes, ", "))))
+					}
+					performerScore := 0.0
+					if hasMatch {
+						performerScore = matchValue * (0.7 + 0.3*strength)
+					}
+					contribs = append(contribs, castContribution{
+						externalID: externalID,
+						payload:    performerPayload,
+						score:      performerScore,
+					})
+				}
+				score := 0.45*tagValue + 0.25*identity + 0.10*studioValue + 0.20*similarityValue
+				payload := cloneObj(scene)
+				payload.set("studio", studioPayload)
+				payload.set("why", expandWhy(scene, tagAffinity, identity, similarityValue, len(cast)))
+				work[index] = sceneWork{
+					row: scoredScene{
+						id:      scene.get("id").asString(),
+						payload: payload,
+						score:   score,
+						sources: sortedStringSet(sources[scene.get("id").asString()]),
+					},
+					castContribs: contribs,
+				}
+			}
+		}()
+	}
+	for i := range scenes {
+		workCh <- i
+	}
+	close(workCh)
+	wg.Wait()
+	if os.Getenv("CURATOR_STATS") != "" {
+		fmt.Fprintf(os.Stderr, "[stats] scene-pool=%.2fs best=%d calls avg=%.3fms\n",
+			time.Since(t0).Seconds(), bestCalls, float64(bestTimeNs)/1e6/float64(maxInt64(1, bestCalls)))
+	}
+
+	// Merge the cast contributions in scene order (Python's setdefault /
+	// max / sources-union order), then render each scene's performers list
+	// from the merged rows — exactly like the sequential loop.
 	performerRows := map[string]*expandPerformerRow{}
 	var performerOrder []string
 	sceneRows := make([]scoredScene, 0, len(scenes))
-	for _, scene := range scenes {
-		signals := make([]float64, 0, len(scene.get("tags").arr))
-		for _, tag := range scene.get("tags").arr {
-			signals = append(signals, expandTagValue(tag, tagAffinity))
-		}
-		sort.SliceStable(signals, func(i, j int) bool { return math.Abs(signals[i]) > math.Abs(signals[j]) })
-		if len(signals) > 5 {
-			signals = signals[:5]
-		}
-		tagValue := pyTanh(neumaierSum(signals))
-		cast := make([]jVal, 0, len(scene.get("performers").arr))
-		for _, item := range scene.get("performers").arr {
-			cast = append(cast, item.get("performer"))
-		}
-		castWeight := expandCastWeight(len(cast))
-		identity := 0.0
-		for _, performer := range cast {
-			if item := evidence[performer.get("id").asString()]; item != nil {
-				if item.strength > identity {
-					identity = item.strength
-				}
-			}
-		}
-		identity *= castWeight
-		studio := scene.get("studio")
-		if studio.kind != jObj {
-			studio = jvObj()
-		}
-		studioValue := 0.0
-		if v := studio.get("id"); v.truthy() {
-			studioValue = externalStudioAppeal[v.asString()]
-		}
-		studioPayload := cloneObj(studio)
-		if v := studio.get("id"); v.truthy() {
-			if local, ok := localStudios[v.asString()]; ok {
-				studioPayload.set("curator_local", jvObj(jvKey("id", jvStr(local))))
-			}
-		}
-		similarityValue := 0.0
-		castPayloads := make([]jVal, 0, len(cast))
-		for _, performer := range cast {
-			externalID := performer.get("id").asString()
-			local := evidence[externalID]
-			recorded := scene.get("production_date")
-			if !recorded.truthy() {
-				recorded = scene.get("release_date")
-			}
-			match, hasMatch := anchorMatch{}, false
-			if local == nil {
-				match, hasMatch = matcher.best(performer, recorded)
-			}
-			strength := 0.0
-			matchValue := 0.0
-			if hasMatch {
-				strength = match.evidence.strength
-				matchValue = match.value
-			}
-			similarityValue = math.Max(similarityValue, matchValue*strength*castWeight)
-			performerPayload := cloneObj(performer)
-			if local != nil {
-				performerPayload.set("curator_local", jvObj(
-					jvKey("id", jvStr(local.localID)),
-					jvKey("favorite", jvBool(local.favorite)),
-					jvKey("play_count", jvInt(local.playCount)),
-				))
-			}
-			if hasMatch && matchValue > 0 {
-				blocks := make([]string, 0, len(match.similarities))
-				for block := range match.similarities {
-					blocks = append(blocks, block)
-				}
-				sort.SliceStable(blocks, func(i, j int) bool {
-					return match.similarities[blocks[i]]*match.usedWeights[blocks[i]] >
-						match.similarities[blocks[j]]*match.usedWeights[blocks[j]]
-				})
-				if len(blocks) > 3 {
-					blocks = blocks[:3]
-				}
-				attributes := make([]string, 0, len(blocks))
-				for _, block := range blocks {
-					attributes = append(attributes, strings.ReplaceAll(block, "augmentation", "breast type"))
-				}
-				name := match.evidence.name
-				if name == "" {
-					name = "a performer you enjoy"
-				}
-				performerPayload.set("why", jvArr(jvStr("Similar to "+name+" in "+strings.Join(attributes, ", "))))
-			}
+	for _, w := range work {
+		for _, contrib := range w.castContribs {
+			externalID := contrib.externalID
 			row := performerRows[externalID]
 			if row == nil {
 				row = &expandPerformerRow{
 					id:      externalID,
-					payload: performerPayload,
+					payload: contrib.payload,
 					sources: map[string]bool{},
 				}
 				performerRows[externalID] = row
 				performerOrder = append(performerOrder, externalID)
 			}
-			performerScore := 0.0
-			if hasMatch {
-				performerScore = matchValue * (0.7 + 0.3*strength)
+			if contrib.score > row.score {
+				row.score = contrib.score
 			}
-			if performerScore > row.score {
-				row.score = performerScore
-			}
-			for source := range sources[scene.get("id").asString()] {
+			for source := range sources[w.row.id] {
 				row.sources[source] = true
 			}
-			castPayloads = append(castPayloads, performerPayload)
 		}
-		score := 0.45*tagValue + 0.25*identity + 0.10*studioValue + 0.20*similarityValue
-		payload := cloneObj(scene)
-		payload.set("studio", studioPayload)
+		payload := w.row.payload
 		performersJSON := jvArr()
-		for _, p := range castPayloads {
-			performersJSON.arr = append(performersJSON.arr, jvObj(jvKey("performer", p)))
+		for _, contrib := range w.castContribs {
+			// The rendered performer payload is the merged first-seen row.
+			performersJSON.arr = append(performersJSON.arr,
+				jvObj(jvKey("performer", performerRows[contrib.externalID].payload)))
 		}
 		payload.set("performers", performersJSON)
-		payload.set("why", expandWhy(scene, tagAffinity, identity, similarityValue, len(cast)))
-		sceneRow := scoredScene{
-			id:      scene.get("id").asString(),
-			payload: payload,
-			score:   score,
-			sources: sortedStringSet(sources[scene.get("id").asString()]),
-		}
-		sceneRows = append(sceneRows, sceneRow)
+		sceneRows = append(sceneRows, w.row)
 	}
 
-	// Multi-hop reach blend (only when a seed is provided).
+	// Multi-hop reach blend (only when a seed is provided). The personalized
+	// walk depends only on the seed, so it is computed once and reused for
+	// every scene (Python re-walks per scene; the result is identical).
 	performers := links.get("performers")
 	if multiHopSeed.kind != jNull {
 		mh := newMultiHop(s.db, modelID)
 		if err := mh.load(); err != nil {
+			return nil, nil, err
+		}
+		seedScores, err := mh.walk(multiHopSeed.asString())
+		if err != nil {
 			return nil, nil, err
 		}
 		for i := range sceneRows {
@@ -1806,14 +1985,10 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 			if len(localIDs) == 0 {
 				continue
 			}
-			reach, err := mh.performerReach(multiHopSeed.asString(), localIDs)
-			if err != nil {
-				return nil, nil, err
-			}
 			mhScore := 0.0
-			for _, value := range reach {
-				if value > mhScore {
-					mhScore = value
+			for performerID := range localIDs {
+				if score, ok := seedScores[performerID]; ok && score >= multiHopReachFloor && score > mhScore {
+					mhScore = score
 				}
 			}
 			row.multiHopReach = mhScore

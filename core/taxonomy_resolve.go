@@ -31,15 +31,78 @@ func isStashdbEndpoint(endpoint string) bool {
 	return strings.EqualFold(parsed.Hostname(), "stashdb.org")
 }
 
-// taxonomyIndexResolve mirrors TaxonomyIndex.resolve for a single local tag.
-func taxonomyIndexResolve(db dbx, localTagID, name string) (taxonomyMatch, error) {
+// taxonomyIndex mirrors TaxonomyIndex: the active snapshot's tag ids,
+// categories, and normalized names/aliases loaded once, so resolve() runs
+// against memory instead of re-scanning the taxonomy tables per tag.
+type taxonomyIndex struct {
+	snapshotID string
+	tags       map[string]string          // tag_id -> category_id ("" when null)
+	names      map[string]map[string]bool // normalized name/alias -> tag ids
+}
+
+// newTaxonomyIndex mirrors TaxonomyIndex.__init__.
+func newTaxonomyIndex(db dbx) (*taxonomyIndex, error) {
 	var snapshotID string
 	err := db.QueryRow(`SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'`).Scan(&snapshotID)
 	if err == sql.ErrNoRows {
-		return taxonomyMatch{method: "unmapped"}, nil
+		return &taxonomyIndex{}, nil
 	}
 	if err != nil {
-		return taxonomyMatch{}, err
+		return nil, err
+	}
+	index := &taxonomyIndex{
+		snapshotID: snapshotID,
+		tags:       map[string]string{},
+		names:      map[string]map[string]bool{},
+	}
+	taxRows, err := db.Query(`SELECT tag_id, category_id, name FROM taxonomy_tag WHERE snapshot_id=?`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	for taxRows.Next() {
+		var tagID string
+		var categoryID sql.NullString
+		var tagName string
+		if err := taxRows.Scan(&tagID, &categoryID, &tagName); err != nil {
+			return nil, err
+		}
+		index.tags[tagID] = categoryID.String
+		normalized := normalizeTagName(tagName)
+		if index.names[normalized] == nil {
+			index.names[normalized] = map[string]bool{}
+		}
+		index.names[normalized][tagID] = true
+	}
+	taxRows.Close()
+	if err := taxRows.Err(); err != nil {
+		return nil, err
+	}
+	aliasRows, err := db.Query(`SELECT tag_id, alias FROM taxonomy_tag_alias WHERE snapshot_id=?`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	for aliasRows.Next() {
+		var tagID, alias string
+		if err := aliasRows.Scan(&tagID, &alias); err != nil {
+			return nil, err
+		}
+		normalized := normalizeTagName(alias)
+		if index.names[normalized] == nil {
+			index.names[normalized] = map[string]bool{}
+		}
+		index.names[normalized][tagID] = true
+	}
+	aliasRows.Close()
+	if err := aliasRows.Err(); err != nil {
+		return nil, err
+	}
+	return index, nil
+}
+
+// resolve mirrors TaxonomyIndex.resolve for a single local tag.
+func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch, error) {
+	if t.snapshotID == "" {
+		return taxonomyMatch{method: "unmapped"}, nil
 	}
 	// external_ids from source_tag_stash_id filtered to stashdb.org.
 	externalIDs := map[string]bool{}
@@ -60,75 +123,27 @@ func taxonomyIndexResolve(db dbx, localTagID, name string) (taxonomyMatch, error
 	if err := rows.Err(); err != nil {
 		return taxonomyMatch{}, err
 	}
-	// tags: {tag_id: (category_id, name)} from the active snapshot.
-	tagIDs := map[string]string{} // tag_id -> category_id ("" when null)
-	tagNames := map[string]string{}
-	taxRows, err := db.Query(`SELECT tag_id, category_id, name FROM taxonomy_tag WHERE snapshot_id=?`, snapshotID)
-	if err != nil {
-		return taxonomyMatch{}, err
-	}
-	for taxRows.Next() {
-		var tagID string
-		var categoryID sql.NullString
-		var tagName string
-		if err := taxRows.Scan(&tagID, &categoryID, &tagName); err != nil {
-			return taxonomyMatch{}, err
-		}
-		tagIDs[tagID] = categoryID.String
-		tagNames[tagID] = tagName
-	}
-	taxRows.Close()
-	if err := taxRows.Err(); err != nil {
-		return taxonomyMatch{}, err
-	}
-	names := map[string]map[string]bool{}
-	for tagID, tagName := range tagNames {
-		normalized := normalizeTagName(tagName)
-		if names[normalized] == nil {
-			names[normalized] = map[string]bool{}
-		}
-		names[normalized][tagID] = true
-	}
-	aliasRows, err := db.Query(`SELECT tag_id, alias FROM taxonomy_tag_alias WHERE snapshot_id=?`, snapshotID)
-	if err != nil {
-		return taxonomyMatch{}, err
-	}
-	for aliasRows.Next() {
-		var tagID, alias string
-		if err := aliasRows.Scan(&tagID, &alias); err != nil {
-			return taxonomyMatch{}, err
-		}
-		normalized := normalizeTagName(alias)
-		if names[normalized] == nil {
-			names[normalized] = map[string]bool{}
-		}
-		names[normalized][tagID] = true
-	}
-	aliasRows.Close()
-	if err := aliasRows.Err(); err != nil {
-		return taxonomyMatch{}, err
-	}
 
 	known := make([]string, 0)
 	for id := range externalIDs {
-		if _, ok := tagIDs[id]; ok {
+		if _, ok := t.tags[id]; ok {
 			known = append(known, id)
 		}
 	}
 	sort.Strings(known)
 	if len(known) == 1 {
-		return taxonomyMatchFor(tagIDs, known[0], "stable_id", 1.0), nil
+		return taxonomyMatchFor(t.tags, known[0], "stable_id", 1.0), nil
 	}
 	if len(known) > 1 {
 		return taxonomyMatch{method: "ambiguous_stable_id", ambiguityCount: len(known)}, nil
 	}
 	candidates := make([]string, 0)
-	for id := range names[normalizeTagName(name)] {
+	for id := range t.names[normalizeTagName(name)] {
 		candidates = append(candidates, id)
 	}
 	sort.Strings(candidates)
 	if len(candidates) == 1 {
-		return taxonomyMatchFor(tagIDs, candidates[0], "unique_name_or_alias", 0.9), nil
+		return taxonomyMatchFor(t.tags, candidates[0], "unique_name_or_alias", 0.9), nil
 	}
 	if len(candidates) > 1 {
 		return taxonomyMatch{method: "ambiguous_name", ambiguityCount: len(candidates)}, nil

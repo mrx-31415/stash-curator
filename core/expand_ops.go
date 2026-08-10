@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
-
 	"time"
 )
 
@@ -300,8 +299,9 @@ func getPerformerHuntBody(pluginDir string, payload, settings jVal) (jVal, error
 	if err != nil {
 		return jvNull(), err
 	}
-	return expandPerformerHunt(db, clientURL, apiKey, links, performerID,
+	result, err := expandPerformerHunt(db, clientURL, apiKey, links, performerID,
 		performerHuntLimit, includeTags, excludeTags)
+	return result, err
 }
 
 // expandPerformerHunt mirrors ExpandService.performer_hunt.
