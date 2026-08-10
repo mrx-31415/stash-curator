@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -161,6 +162,27 @@ def make_sidecar(path: Path, *, with_jobs: bool = True, with_artifact: bool = Fa
                 artifact, temporary, final = create_artifact(core, "feature", FEATURE_VERSION)
                 artifact.close()
                 publish_file(artifact, temporary, final)
+                # CI-only flake: the immutable=1 open of a freshly published
+                # artifact intermittently fails on the runner's filesystem
+                # (rename-visibility race; not reproducible locally). Force the
+                # new inode to materialize here with a bounded retry, so any
+                # failure surfaces at creation with full stat context instead
+                # of at the first attach in a later test step.
+                uri = f"{final.as_uri()}?mode=ro&immutable=1"
+                for attempt in range(3):
+                    try:
+                        probe = sqlite3.connect(uri, uri=True)
+                        probe.execute("SELECT 1")
+                        probe.close()
+                        break
+                    except sqlite3.OperationalError:
+                        if attempt == 2:
+                            st = final.stat()
+                            raise RuntimeError(
+                                f"published artifact not readable with {uri}: "
+                                f"size={st.st_size} mode={oct(st.st_mode)}"
+                            ) from None
+                        time.sleep(0.5)
                 core.execute(
                     """
                     INSERT INTO feature_build(feature_version, status, config_json,
