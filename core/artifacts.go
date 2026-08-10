@@ -191,22 +191,31 @@ func attachBuildSources(db dbx, corePath, featurePath string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	// Collect the names first and close the rows before executing the view
+	// creation: the op connection is pinned to a single sqlite connection
+	// (mirroring Python), so an Exec while the rows are still open would
+	// deadlock against itself.
+	var names []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
+			rows.Close()
 			return err
 		}
 		if owned[name] || strings.HasPrefix(name, "sqlite_") {
 			continue
 		}
+		names = append(names, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, name := range names {
 		if _, err := db.Exec(fmt.Sprintf(`CREATE TEMP VIEW %s AS SELECT * FROM core.%s`,
 			quoteIdent(name), quoteIdent(name))); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	for _, table := range featureTables {
 		if _, err := db.Exec(fmt.Sprintf(`CREATE TEMP VIEW %s AS SELECT * FROM feature_generation.%s`,
