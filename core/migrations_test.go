@@ -1,17 +1,16 @@
 package main
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func openTempDB(t *testing.T) (*sql.DB, string) {
+func openTempDB(t *testing.T) (dbx, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sidecar.sqlite3")
-	db, err := openDatabase(path, false)
+	db, err := openDatabase(path, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
