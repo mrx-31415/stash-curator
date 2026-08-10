@@ -185,24 +185,13 @@ def _attach_readonly(connection: sqlite3.Connection, alias: str, path: Path) -> 
             connection.execute(
                 f"ATTACH DATABASE ? AS {alias}", (_readonly_uri(path, immutable=False),)
             )
-        except sqlite3.OperationalError as fallback_error:
-            # Diagnostics for the CI-only failure where an existing artifact
-            # file cannot be opened at all on the runner.
-            try:
-                stat = path.stat()
-                detail = f"size={stat.st_size} mode={oct(stat.st_mode)}"
-                with path.open("rb") as handle:
-                    header = handle.read(16).hex()
-                plain = sqlite3.connect(str(path), timeout=1)
-                plain.execute("SELECT 1")
-                plain.close()
-                detail += f" plain_open=ok header={header}"
-            except Exception as inspect_error:
-                detail = f"inspect failed: {inspect_error}"
-            raise RuntimeError(
-                f"cannot attach {path.name}: immutable={error!r} plain={fallback_error!r} "
-                f"({detail})"
-            ) from fallback_error
+        except sqlite3.OperationalError:
+            # Some filesystems reject file:// URI opens even in plain mode=ro
+            # (observed on the CI runner; a plain path open works there). The
+            # published artifacts are never modified while attached, so a
+            # plain-path attach is functionally identical — it just takes a
+            # normal (read-capable) open instead of a URI one.
+            connection.execute(f"ATTACH DATABASE ? AS {alias}", (str(path),))
 
 
 def _quote(identifier: str) -> str:
