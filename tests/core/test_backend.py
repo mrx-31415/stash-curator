@@ -438,7 +438,26 @@ def test_artifact_views_resolve_same_tables(tmp_path: Path, binary: Path, stub_s
             with open(artifact, "rb") as fh:
                 head = fh.read(16).hex()
             print(f"CI-DIAG artifact={artifact} size={st.st_size} mode={oct(st.st_mode)} "
-                  f"mtime={st.st_mtime} head={head}", flush=True)
+                  f"mtime={st.st_mtime} head={head} uid={st.st_uid}", flush=True)
+            print(f"CI-DIAG sqlite={sqlite3.sqlite_version}", flush=True)
+            try:
+                c = sqlite3.connect(str(artifact))
+                print("CI-DIAG plain-open ok", c.execute("PRAGMA quick_check").fetchone()[0], flush=True)
+                c.close()
+            except Exception as e:
+                print("CI-DIAG plain-open FAIL", repr(e), flush=True)
+            try:
+                c = sqlite3.connect(sidecar)
+                c.execute("ATTACH DATABASE ? AS t_ro", (f"{artifact.as_uri()}?mode=ro",))
+                print("CI-DIAG attach-ro ok", flush=True)
+            except Exception as e:
+                print("CI-DIAG attach-ro FAIL", repr(e), flush=True)
+            try:
+                c = sqlite3.connect(sidecar)
+                c.execute("ATTACH DATABASE ? AS t_imm", (f"{artifact.as_uri()}?mode=ro&immutable=1",))
+                print("CI-DIAG attach-imm ok", flush=True)
+            except Exception as e:
+                print("CI-DIAG attach-imm FAIL", repr(e), flush=True)
         attach_active_artifacts(connection)
         aliases = {row["name"] for row in connection.execute("PRAGMA database_list")}
         assert "feature_generation" in aliases
