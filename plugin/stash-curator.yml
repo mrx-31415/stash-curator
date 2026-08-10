@@ -6,7 +6,7 @@ url: https://github.com/mrx-31415/stash-curator
 
 exec:
   - python
-  - "{pluginDir}/backend.py"
+  - "{pluginDir}/launcher.py"
   - "{pluginDir}"
 interface: raw
 errLog: info
