@@ -39,20 +39,19 @@ plugin zip with runtime select and a pure-Python fallback.
 
 ## Next work package
 
-**Full Go backend (Phase 4), Slice 1 — read-path interactive ops.** The
-kernel port (similarity + pagerank), per-arch distribution, and the
-optional-deps venv removal were delivered earlier; Slice 0 of the backend
-port (transport, settings, the checksummed migration chain, artifact
-attach/views, trivial ops, profiling parity, Python fallback dispatch) is
-delivered and verified (2026-08-10): byte-identical `round_trip`, `health`,
-`get_config`, `get_job_status` vs the Python backend, sidecar migration
-parity both directions, `profile_trace` parity for `get_config`, and the
-fallback round-tripping unported ops through the installed zip. The next
-slice ports the read-path interactive ops (`get_slate`, `get_similar`,
-`get_explanation`, `get_shortlist`, histories, taste profile, diagnostics)
-to byte-exact JSON, then the exec line can switch to the binary with the
-fallback covering the rest. Full handover + first agent prompt:
-[`handover-go-backend-slice1.md`](handover-go-backend-slice1.md).
+**Full Go backend (Phase 4), Slice 2 — network layer.** Slices 0-1 are
+delivered and merged (2026-08-10): the binary serves every read-path
+interactive op (`get_slate`, `get_similar`, `get_explanation`,
+`get_recommendation_history`, `get_shortlist`, `get_feedback_history`,
+`get_taste_profile`, `get_diagnostics`) with byte-identical JSON, the
+installed plugin's exec line runs through the arch-resolving launcher
+(`plugin/launcher.py`) with `backend.py` as fallback, and the CI-only
+artifact-attach flake was fixed with a plain-path attach fallback. The next
+slice ports the network-layer ops (`get_expand`, `get_performer_hunt`,
+`get_external_similar`, `send_whisparr`) plus the Stash sync client pattern
+— the first real concurrency (performer-hunt errgroup fan-out). Full
+handover + first agent prompt:
+[`handover-go-backend-slice2.md`](handover-go-backend-slice2.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):
 
