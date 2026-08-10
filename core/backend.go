@@ -108,6 +108,24 @@ func dispatch(pluginDir string, payload jVal, raw []byte) (jVal, error) {
 		return opGetConfig(pluginDir, payload)
 	case "get_job_status":
 		return opGetJobStatus(pluginDir, payload)
+	case "get_slate":
+		return opGetSlate(pluginDir, payload)
+	case "replace_item":
+		return opReplaceItem(pluginDir, payload)
+	case "get_similar":
+		return opGetSimilar(pluginDir, payload)
+	case "get_explanation":
+		return opGetExplanation(pluginDir, payload)
+	case "get_recommendation_history":
+		return opGetRecommendationHistory(pluginDir, payload)
+	case "get_shortlist":
+		return opGetShortlist(pluginDir, payload)
+	case "get_feedback_history":
+		return opGetFeedbackHistory(pluginDir, payload)
+	case "get_taste_profile":
+		return opGetTasteProfile(pluginDir, payload)
+	case "get_diagnostics":
+		return opGetDiagnostics(pluginDir, payload)
 	default:
 		fallbackToPython(pluginDir, "", raw)
 	}
