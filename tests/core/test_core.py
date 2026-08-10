@@ -396,6 +396,46 @@ def test_run_core_streams_progress(tmp_path: Path, binary: Path) -> None:
     assert set(result) == set(corpus["scenes"])
 
 
+def test_run_core_records_core_spans_into_trace(tmp_path: Path, binary: Path) -> None:
+    from curator.profiling import begin_trace, end_trace
+
+    corpus = synthetic_corpus(41, 400, 150, 10, n_performers=0)
+    trace, token = begin_trace("unit", "test")
+    try:
+        run_core(
+            "content-neighbors",
+            _content_payload(tmp_path, corpus),
+            profile=True,
+        )
+    finally:
+        end_trace(trace, token)
+    names = [event["name"] for event in trace.events if event["cat"] == "core"]
+    expected = {
+        "core.read_features",
+        "core.preference_vectors",
+        "core.build_columns",
+        "core.kernel",
+        "core.encode_result",
+    }
+    assert expected <= set(names)
+    for event in trace.events:
+        if event["cat"] == "core":
+            assert int(event["dur"]) > 0
+            assert event["ts"] >= trace.started_at_ns // 1_000
+
+
+def test_run_core_profiling_off_emits_no_spans(tmp_path: Path, binary: Path) -> None:
+    from curator.profiling import begin_trace, end_trace
+
+    corpus = synthetic_corpus(43, 200, 100, 8, n_performers=0)
+    trace, token = begin_trace("unit", "test")
+    try:
+        run_core("content-neighbors", _content_payload(tmp_path, corpus), profile=False)
+    finally:
+        end_trace(trace, token)
+    assert not [event for event in trace.events if event["cat"] == "core"]
+
+
 def _fake_binary(tmp_path: Path, *, stage_exit: int = 0) -> Path:
     script = tmp_path / "fake-curator-core"
     script.write_text(

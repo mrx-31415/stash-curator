@@ -25,14 +25,15 @@ import (
 )
 
 type performerPayload struct {
-	DB               string             `json:"db"`
-	FeatureVersion   string             `json:"feature_version"`
+	DB               string               `json:"db"`
+	FeatureVersion   string               `json:"feature_version"`
 	IdentityAffinity map[string][]float64 `json:"identity_affinity"`
-	BlockWeights     map[string]float64 `json:"block_weights"`
-	Cutoff           float64            `json:"cutoff"`
-	NumericBlocks    []string           `json:"numeric_blocks"`
-	NumericScales    map[string]float64 `json:"numeric_scales"`
-	Threads          int                `json:"threads,omitempty"`
+	BlockWeights     map[string]float64   `json:"block_weights"`
+	Cutoff           float64              `json:"cutoff"`
+	NumericBlocks    []string             `json:"numeric_blocks"`
+	NumericScales    map[string]float64   `json:"numeric_scales"`
+	Threads          int                  `json:"threads,omitempty"`
+	Profile          bool                 `json:"profile,omitempty"`
 }
 
 type profileValue struct {
@@ -132,6 +133,7 @@ func runPerformerSimilarity() {
 	if err := json.NewDecoder(os.Stdin).Decode(&payload); err != nil {
 		fail("performer-similarity: invalid payload: %v", err)
 	}
+	profile := newProfileRecorder(payload.Profile)
 	db, err := openReadonly(payload.DB)
 	if err != nil {
 		fail("performer-similarity: open %s: %v", payload.DB, err)
@@ -141,14 +143,21 @@ func runPerformerSimilarity() {
 	for _, block := range payload.NumericBlocks {
 		numeric[block] = true
 	}
+	end := profile.begin("core.read_profiles")
 	profiles, err := readProfiles(db, payload.FeatureVersion, numeric)
+	end()
 	if err != nil {
 		fail("performer-similarity: read profiles: %v", err)
 	}
+	end = profile.begin("core.kernel")
 	result := performerSimilarityScores(payload, profiles, numeric)
+	end()
+	end = profile.begin("core.encode_result")
+	profile.emit()
 	if err := writeJSONLine(map[string]any{"result": result}); err != nil {
 		fail("performer-similarity: write result: %v", err)
 	}
+	end()
 }
 
 func performerSimilarityScores(
