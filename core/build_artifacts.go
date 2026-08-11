@@ -87,6 +87,10 @@ CREATE TABLE model_scene_reason (
     reason_index INTEGER NOT NULL CHECK (reason_index >= 0), reason_code TEXT NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('positive','negative','unknown','neutral')),
     magnitude REAL NOT NULL CHECK (magnitude BETWEEN 0 AND 1),
+    confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+    subject_type TEXT, subject_id TEXT,
+    visibility TEXT NOT NULL CHECK (visibility IN ('standard','sensitive','private')),
+    provenance TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (model_id, scene_id, reason_index)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_lane (

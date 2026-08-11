@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+
+from curator.deterministic import glibc_exp
 from dataclasses import dataclass, field
 
 
@@ -105,7 +107,7 @@ def _numeric(
         scale = NUMERIC_SCALES.get(key, 1.0)
         left_value = left[key]
         right_value = right[key]
-        closeness = math.exp(-abs(left_value.value - right_value.value) / scale)
+        closeness = glibc_exp(-abs(left_value.value - right_value.value) / scale)
         right_confidence = right_value.confidence
         left_confidence = left_value.confidence
         values.append(
@@ -163,7 +165,7 @@ def similarity_penalty(left: PerformerProfile, right: PerformerProfile) -> float
     left_cup = left.blocks.get("measurements", {}).get("cup_index")
     right_cup = right.blocks.get("measurements", {}).get("cup_index")
     if left_cup and right_cup:
-        penalty *= math.exp(-0.18 * max(0.0, abs(left_cup.value - right_cup.value) - 1))
+        penalty *= glibc_exp(-0.18 * max(0.0, abs(left_cup.value - right_cup.value) - 1))
     left_aug = set(left.blocks.get("augmentation", {}))
     right_aug = set(right.blocks.get("augmentation", {}))
     if left_aug and right_aug and not left_aug & right_aug:

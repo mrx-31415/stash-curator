@@ -57,6 +57,42 @@ def _artifact_tables_sha(path: Path) -> str:
         connection.close()
 
 
+def _artifact_schema_diff(go_path: Path, py_path: Path) -> str:
+    """Compare the per-table column lists of two artifacts. The row-content
+    sha comparison is blind to schema differences on empty tables, so a
+    missing column (e.g. model_scene_reason.confidence) only surfaced in
+    integration; check the schemas explicitly."""
+    import sqlite3
+
+    def columns(path: Path) -> dict[str, list[str]]:
+        connection = sqlite3.connect(path)
+        try:
+            tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+            ]
+            return {
+                table: [
+                    row[1]
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                ]
+                for table in tables
+            }
+        finally:
+            connection.close()
+
+    go_cols, py_cols = columns(go_path), columns(py_path)
+    for table in sorted(set(go_cols) | set(py_cols)):
+        if go_cols.get(table) != py_cols.get(table):
+            return (
+                f"schema differs for {table}:\n"
+                f"  go: {go_cols.get(table)}\n  py: {py_cols.get(table)}"
+            )
+    return ""
+
+
 def _first_artifact_diff(go_path: Path, py_path: Path) -> str:
     """Return the first differing table+row (with the row index) between two
     artifacts, for CI diagnostics when the byte-identity assertion fails."""
@@ -174,6 +210,7 @@ def test_model_build_recovers_from_building_row(binary: Path, tmp_path: Path) ->
         f"artifact content differs after recovery:\n"
         f"{_first_artifact_diff(results[0][1], results[1][1])}"
     )
+    assert _artifact_schema_diff(results[0][1], results[1][1]) == ""
 
 
 def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
@@ -198,6 +235,9 @@ def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
     assert _artifact_tables_sha(go_artifact) == _artifact_tables_sha(py_artifact), (
         f"artifact content differs: {go_artifact} vs {py_artifact}\n"
         f"{_first_artifact_diff(go_artifact, py_artifact)}"
+    )
+    assert _artifact_schema_diff(go_artifact, py_artifact) == "", (
+        f"artifact schema differs: {_artifact_schema_diff(go_artifact, py_artifact)}"
     )
 
     py_conn = sqlite3.connect(py_db)

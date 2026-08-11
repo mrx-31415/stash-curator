@@ -476,7 +476,18 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		jvKey("model_build_version", jvInt(modelBuildVersion)),
 		jvKey("reference_at_ms", jvInt(referenceAtMs)),
 	)
-	if err := modelStoreStartBuild(db, modelID, featureVersion, modelConfigJSON.marshalSortedKeys(),
+	if err == nil {
+		// The row already exists (a superseded, failed, or in-flight build of
+		// the same digest). Python's builder flips it back to 'building'
+		// instead of inserting; the plain INSERT would collide on the key.
+		if uerr := withTxn(db, func(conn *sql.Conn) error {
+			_, uerr := conn.ExecContext(context.Background(),
+				`UPDATE model_version SET status='building' WHERE model_id=?`, modelID)
+			return uerr
+		}); uerr != nil {
+			return drainResult{}, uerr
+		}
+	} else if err := modelStoreStartBuild(db, modelID, featureVersion, modelConfigJSON.marshalSortedKeys(),
 		modelSyncWatermark(db), nowMs); err != nil {
 		return drainResult{}, err
 	}
