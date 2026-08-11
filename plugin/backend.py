@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -213,9 +214,8 @@ def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
     )
     if box is None or not box.get("api_key"):
         raise RuntimeError("configure StashDB with an API key in Stash settings")
-    return GraphQLClient(
-        str(box["endpoint"]), api_key=str(box["api_key"]), profile_category="stashdb"
-    )
+    endpoint = str(os.environ.get("CURATOR_STASHDB_ENDPOINT") or box["endpoint"])
+    return GraphQLClient(endpoint, api_key=str(box["api_key"]), profile_category="stashdb")
 
 
 EXTERNAL_LINKS_CACHE_KEY = "external_links"

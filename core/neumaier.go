@@ -10,6 +10,7 @@ package main
 // neumaierSum mirrors CPython 3.12+ sum() over float values in the given
 // order: the first value seeds the accumulator directly, then each value
 // applies the Neumaier step, and the final result is s + c.
+//go:noinline
 func neumaierSum(values []float64) float64 {
 	if len(values) == 0 {
 		return 0

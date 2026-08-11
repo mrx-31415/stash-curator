@@ -478,3 +478,24 @@ func performerName(db dbx, performerID string) (string, error) {
 	}
 	return "", nil
 }
+
+// performerReach mirrors MultiHopAffinity.performer_reach: graph reach
+// scores for specific performers, seeded at a scene or performer id,
+// filtered to the reach floor.
+func (m *multiHop) performerReach(seedID string, targetPerformerIDs map[string]bool) (map[string]float64, error) {
+	if err := m.load(); err != nil {
+		return nil, err
+	}
+	scores, err := m.walk(seedID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]float64)
+	for performerID := range targetPerformerIDs {
+		score, ok := scores[performerID]
+		if ok && score >= multiHopReachFloor {
+			result[performerID] = score
+		}
+	}
+	return result, nil
+}

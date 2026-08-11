@@ -61,8 +61,8 @@ func (p *profileRecorder) emit() {
 	for _, s := range spans {
 		_ = writeJSONLine(map[string]any{
 			"span": map[string]any{
-				"name":     s.name,
-				"cat":      "core",
+				"name":      s.name,
+				"cat":       "core",
 				"offset_us": s.offsetUs,
 				"dur_us":    s.durUs,
 			},

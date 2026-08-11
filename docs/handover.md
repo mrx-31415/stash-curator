@@ -1,12 +1,19 @@
 # Stash Curator handover
 
-Updated: 2026-08-10. Slices 0 and 1 of the full Go backend are delivered:
-the `curator-core` binary now serves the raw-plugin interface for the trivial
-ops *and* the read-path interactive ops (slate, similar, explanation,
-shortlist, histories, taste profile, diagnostics) with byte-identical outputs,
-and the installed plugin's exec line runs through a launcher that resolves the
-per-arch binary — the Python backend stays as the fallback for everything not
-yet ported (see `handover-go-backend-slice1.md` for the port state). The
+Updated: 2026-08-10. Slices 0–2 of the full Go backend are merged:
+the `curator-core` binary serves the raw-plugin interface natively — trivial
+ops, the read-path interactive ops (slate, similar, explanation, shortlist,
+histories, taste profile, diagnostics), and the network-layer ops
+(get_expand, get_performer_hunt, get_external_similar, send_whisparr) with
+byte-identical outputs — plus the StashDB and Stash sync client surfaces.
+The installed plugin's exec line runs through a launcher that resolves the
+per-arch binary, with the Python backend as the fallback for everything not
+yet ported (see `handover-go-backend-slice1.md` and
+`handover-go-backend-slice2.md` for the delivered ports and
+`handover-go-backend-slice3.md` for the next work package: the write path —
+update_shortlist, feedback/tag/preferences/prune writes, update_config,
+backup/compact/vacuum/prepare, the sync-build task, and the build task's
+remaining stages). The
 resident RPC conversion is off the table (disproven — no residency in Stash's
 `rpc` interface; see the correction banner in the planning doc);
 `docs/handover-rpc-plugin.md` is retained as blocked/superseded reference.
@@ -39,20 +46,24 @@ plugin zip with runtime select and a pure-Python fallback.
 
 ## Next work package
 
-**Full Go backend (Phase 4), Slice 1 — read-path interactive ops.** The
-kernel port (similarity + pagerank), per-arch distribution, and the
-optional-deps venv removal were delivered earlier; Slice 0 of the backend
-port (transport, settings, the checksummed migration chain, artifact
-attach/views, trivial ops, profiling parity, Python fallback dispatch) is
-delivered and verified (2026-08-10): byte-identical `round_trip`, `health`,
-`get_config`, `get_job_status` vs the Python backend, sidecar migration
-parity both directions, `profile_trace` parity for `get_config`, and the
-fallback round-tripping unported ops through the installed zip. The next
-slice ports the read-path interactive ops (`get_slate`, `get_similar`,
-`get_explanation`, `get_shortlist`, histories, taste profile, diagnostics)
-to byte-exact JSON, then the exec line can switch to the binary with the
-fallback covering the rest. Full handover + first agent prompt:
-[`handover-go-backend-slice1.md`](handover-go-backend-slice1.md).
+**Full Go backend (Phase 4), Slice 3 — write path.** Slices 0–2 are
+delivered and merged (2026-08-10): the binary serves every read-path
+interactive op and the network-layer ops (`get_expand`,
+`get_performer_hunt`, `get_external_similar`, `send_whisparr`) with
+byte-identical JSON, the installed plugin's exec line runs through the
+arch-resolving launcher (`plugin/launcher.py`) with `backend.py` as
+fallback, and the StashDB + Stash sync client surfaces exist in Go. A
+follow-up perf pass made the network ops interactive on the live library
+(hunt 43.8s → ~12s; external similar from timeout → ~40s, the remainder
+being StashDB server latency on the tag probe; the glibc dbl-64 exp port
+and the parallel anchor-matcher precompute/scoring are the anchors). The
+next slice ports the write path: `update_shortlist`, the feedback/tag/
+preferences/prune/exclusion writes, `update_config`, the backup/
+compact/vacuum/prepare task modes, the sync-build task (the slice-2 sync
+client is its read side), entity-sync hooks, and the build task's
+remaining stages (affinities, scoring, lanes, publication). Full handover
++ first agent prompt:
+[`handover-go-backend-slice3.md`](handover-go-backend-slice3.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):
 

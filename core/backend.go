@@ -126,6 +126,14 @@ func dispatch(pluginDir string, payload jVal, raw []byte) (jVal, error) {
 		return opGetTasteProfile(pluginDir, payload)
 	case "get_diagnostics":
 		return opGetDiagnostics(pluginDir, payload)
+	case "get_expand":
+		return opGetExpand(pluginDir, payload)
+	case "get_performer_hunt":
+		return opGetPerformerHunt(pluginDir, payload)
+	case "get_external_similar":
+		return opGetExternalSimilar(pluginDir, payload)
+	case "send_whisparr":
+		return opSendWhisparr(pluginDir, payload)
 	default:
 		fallbackToPython(pluginDir, "", raw)
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -25,6 +26,89 @@ query CuratorPluginRuntime {
   version { version }
   jobQueue { id status description progress startTime }
   configuration { general { stashBoxes { endpoint api_key } } }
+}
+`
+const stashBoxesQuery = `
+query CuratorStashBoxes {
+  configuration { general { stashBoxes { endpoint api_key name } } }
+}
+`
+const externalLinksStateQuery = `
+query CuratorExternalLinksState {
+  scenes: findScenes(
+    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count scenes { updated_at } }
+  performers: findPerformers(
+    performer_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count performers { updated_at } }
+  studios: findStudios(
+    studio_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
+  ) { count studios { updated_at } }
+}
+`
+const externalLinksQuery = `
+query CuratorExternalLinks($page: Int!, $perPage: Int!) {
+  scenes: findScenes(
+    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) {
+    count
+    scenes {
+      id stash_ids { endpoint stash_id }
+      files { fingerprints { type value } }
+    }
+  }
+  performers: findPerformers(
+    performer_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count performers { id stash_ids { endpoint stash_id } } }
+  studios: findStudios(
+    studio_filter: {stash_id_endpoint: {
+      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+    }}
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count studios { id stash_ids { endpoint stash_id } } }
+}
+`
+
+// StashDB query documents, byte-identical to curator/expand.py.
+const stashdbScenesQuery = `
+query CuratorExpandScenes($input: SceneQueryInput!) {
+  queryScenes(input: $input) {
+    count
+    scenes {
+      id title release_date production_date duration details
+      studio { id name }
+      tags { id name }
+      images { url width height }
+      fingerprints { hash algorithm duration }
+      performers { performer {
+        id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
+        waist_size hip_size breast_type tattoos { location } piercings { location }
+        images { url width height }
+      } }
+    }
+  }
+}
+`
+const stashdbPerformersQuery = `
+query CuratorSimilarPerformers($input: PerformerQueryInput!) {
+  queryPerformers(input: $input) {
+    performers {
+      id name gender birth_date ethnicity eye_color hair_color height cup_size band_size
+      waist_size hip_size breast_type scene_count tattoos { location } piercings { location }
+      images { url width height }
+    }
+  }
 }
 `
 
@@ -88,6 +172,12 @@ func pluginSettings(payload jVal) jVal {
 // an operation trace is active, the call records a "stash" span named after
 // the query operation, like the Python client's span() wrapper.
 func graphqlQuery(base string, headers map[string]string, query string, variables jVal) (jVal, error) {
+	return graphqlQueryCat(base, headers, query, variables, "stash")
+}
+
+// graphqlQueryCat is graphqlQuery with an explicit span category; StashDB
+// queries record "stashdb" spans (GraphQLClient's profile_category).
+func graphqlQueryCat(base string, headers map[string]string, query string, variables jVal, category string) (jVal, error) {
 	started := int64(0)
 	if t := currentTrace(); t != nil {
 		started = time.Now().UnixNano()
@@ -118,7 +208,7 @@ func graphqlQuery(base string, headers map[string]string, query string, variable
 		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
 	}
 	if t := currentTrace(); t != nil {
-		t.record("stash", graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
+		t.record(category, graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
 	}
 	payload, err := parseJSON(raw)
 	if err != nil {
@@ -135,4 +225,46 @@ func graphqlQuery(base string, headers map[string]string, query string, variable
 		return jvNull(), errors.New("Stash GraphQL response has no data object")
 	}
 	return data, nil
+}
+
+// stashdbClient mirrors backend.py's _stashdb: query the configured Stash
+// boxes, pick the one matching the stashdb.org endpoint, and require an API
+// key. The returned base URL and key drive the StashDB queries; the span
+// category for those queries is "stashdb".
+//
+// CURATOR_STASHDB_ENDPOINT (test-only, mirroring the CURATOR_CORE resolver
+// seam) redirects the base URL to a local stub so the differential harness
+// can pin every StashDB response without real network access.
+func stashdbClient(payload jVal) (string, string, error) {
+	base, headers := stashConnection(payload)
+	data, err := graphqlQuery(base, headers, stashBoxesQuery, jvNull())
+	if err != nil {
+		return "", "", err
+	}
+	boxes := data.get("configuration").get("general").get("stashBoxes")
+	if boxes.kind == jArr {
+		for _, box := range boxes.arr {
+			endpoint := strings.TrimRight(box.get("endpoint").asString(), "/")
+			if !strings.EqualFold(endpoint, strings.TrimRight(stashdbEndpoint, "/")) {
+				continue
+			}
+			if !box.get("api_key").truthy() {
+				continue
+			}
+			url := box.get("endpoint").asString()
+			if override := os.Getenv("CURATOR_STASHDB_ENDPOINT"); override != "" {
+				url = override
+			}
+			return url, box.get("api_key").asString(), nil
+		}
+	}
+	return "", "", errors.New("configure StashDB with an API key in Stash settings")
+}
+
+// stashdbQuery executes one StashDB query with the ApiKey header, recording
+// a "stashdb" span, mirroring GraphQLClient(endpoint, api_key=...,
+// profile_category="stashdb").execute.
+func stashdbQuery(baseURL, apiKey, query string, variables jVal) (jVal, error) {
+	headers := map[string]string{"ApiKey": apiKey}
+	return graphqlQueryCat(baseURL, headers, query, variables, "stashdb")
 }
