@@ -855,7 +855,10 @@ func storedReasons(db dbx, modelID, sceneID string) ([]*explanationReason, bool,
 FROM model_scene_reason
 WHERE model_id=? AND scene_id=? ORDER BY reason_index`, modelID, sceneID)
 	if err != nil {
-		return nil, false, err
+		// Artifacts published by an older core may carry the pre-12-column
+		// model_scene_reason schema; treat the query failure as "no stored
+		// reasons" so the caller derives them instead of failing the op.
+		return nil, false, nil
 	}
 	defer rows.Close()
 	var reasons []*explanationReason
