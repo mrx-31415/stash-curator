@@ -11,7 +11,13 @@ package main
 // from backend.py: beginTrace(name, "operation"), settings fetch, and a
 // saveTrace only when the plugin's profilingEnabled setting is on.
 func profiledOperation(pluginDir string, payload jVal, name string, body func(jVal) (jVal, error)) (jVal, error) {
-	t := beginTrace(name, "operation")
+	return profiledKind(pluginDir, payload, name, "operation", body)
+}
+
+// profiledKind is profiledOperation with an explicit trace kind; task modes
+// record kind "task" (backend.py's _run_task).
+func profiledKind(pluginDir string, payload jVal, name, kind string, body func(jVal) (jVal, error)) (jVal, error) {
+	t := beginTrace(name, kind)
 	settings := pluginSettings(payload) // swallows failures, like _settings
 	if !settings.get("profilingEnabled").truthy() {
 		endTrace(t)

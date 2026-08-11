@@ -89,6 +89,27 @@ func artifactPath(corePath, basename string) (string, error) {
 	return path, nil
 }
 
+// tempArtifactName mirrors artifacts._TEMP_NAME.
+var tempArtifactName = regexp.MustCompile(`^\.(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.[0-9a-f]{32}\.tmp$`)
+
+// artifactTempPath mirrors artifacts.artifact_path with temporary=True.
+func artifactTempPath(corePath, basename string) (string, error) {
+	if filepath.Base(basename) != basename || !tempArtifactName.MatchString(basename) {
+		return "", fmt.Errorf("invalid artifact basename: %s", basename)
+	}
+	directory := cacheDirectory(corePath)
+	if info, err := os.Lstat(directory); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", fmt.Errorf("unsafe derived-cache directory: %s", directory)
+		}
+	}
+	path := filepath.Join(directory, basename)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("unsafe artifact path: %s", basename)
+	}
+	return path, nil
+}
+
 // readonlyArtifactURI mirrors artifacts._readonly_uri with immutable=1 for
 // published artifacts.
 func readonlyArtifactURI(path string, immutable bool) string {
@@ -128,7 +149,7 @@ func attachActiveArtifacts(db dbx) error {
 			`SELECT artifact_basename FROM model_version WHERE status='published' AND validation_status='valid'`},
 	}
 	for _, a := range attaches {
-		var basename string
+		var basename sql.NullString
 		err := db.QueryRow(a.query).Scan(&basename)
 		if err == sql.ErrNoRows {
 			continue
@@ -136,10 +157,10 @@ func attachActiveArtifacts(db dbx) error {
 		if err != nil {
 			return err
 		}
-		if basename == "" {
+		if !basename.Valid || basename.String == "" {
 			continue
 		}
-		path, err := artifactPath(corePath, basename)
+		path, err := artifactPath(corePath, basename.String)
 		if err != nil {
 			return err
 		}

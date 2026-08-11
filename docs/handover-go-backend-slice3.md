@@ -94,3 +94,76 @@ the fallback through the installed zip; `scripts/verify core` + `scripts/verify 
 
 Port `list_backups`/`create_backup`/`delete_backup`, `compact`, and `vacuum`
 with differential + state-parity tests, verify, then continue down the plan.
+
+## Session 2026-08-11 — delivered (uncommitted)
+
+The first agent prompt is delivered, plus the interactive-write slice and the
+mechanical task modes:
+
+**Native in `curator-core` (Python fallback still covers the rest):**
+- Backup ops: `list_backups` / `create_backup` / `delete_backup` /
+  `restore_backup` (`core/backups.go`) — online-backup API (modernc
+  `NewBackup` via the driver conn), restore's supersede/rollback state
+  machine, `_validate_backup` parity.
+- Compact/vacuum: `compact_legacy_generations` with the fingerprint-gated
+  restartable state machine (`core/compact.go`).
+- Interactive writes (`core/writes.go`, `core/prune.go`,
+  `core/profile_traces.go`): `update_shortlist`, `submit_feedback`,
+  `correct_feedback`, `submit_tag_preferences`, `submit_events` (incl. the
+  viewing/replacement signal curves using the glibc-faithful `pyExp` so
+  stored REAL outcomes are bit-identical), `update_config`,
+  `get_pruning_queue` / `get_prune_candidates` / `dismiss_prune_candidate` /
+  `update_pruning` / `get_exclusions` / `reverse_exclusion` / `set_prune_tag`
+  (Stash mutation) / `reconcile_prune_tag`, `list_profiles` / `get_profile` /
+  `clear_profiles`.
+- Task runner (`core/tasks.go`): the `_run_task_body` job lifecycle (stale
+  recovery, single-running-job guard, complete/failed transitions) with
+  native `backup`, `compact`, `vacuum`, `prepare`, and `sync-plays` modes.
+- `core/historical.go`: `HistoricalEventStore.rebuild` (used by the sync
+  family) and `core/materialize.go`: `SlateBuilder.materialize` (the greedy
+  orderings reusing the runtime slate's candidate loader) used by `prepare`.
+
+**Differential/state-parity tests** (`tests/core/test_backend_slice3_*.py`,
+128 tests in `tests/core/` green): backup file content parity (both
+implementations produce valid same-size backups of identical logical
+content), compact/vacuum/backup task-mode byte-identity + state parity,
+interactive-write byte-identity incl. every error path, behavior_event
+outcome-float parity (pyExp), profile ops.
+
+**Bugs found and fixed while porting:** the Go attach path failed on NULL
+`artifact_basename` (published rows without artifacts); the task runner
+shadowed `job_id` inside the transaction closure so the INSERT stored an
+empty id and the completion UPDATE matched nothing.
+
+Follow-up in the same session: the `expand-refresh` task mode is native too
+(`core/expand_refresh.go`): the full `ExpandService.refresh` port including
+the taxonomy refresh/publish side (`taxonomyFetch`/`taxonomyStorePublish`,
+the embedded `stashdb_category_roles.json` resource for the category-role
+fingerprint), the incremental-fetch probe, seeds, the candidate
+merge/age-out/expand_cache writes, and `_rescore_candidates`. The StashDB
+fetch reuses the network-layer `fetchScenes` + `expandService.score`.
+Differential + state-parity tests in `tests/core/test_backend_slice3_refresh.py`
+(reuses the slice-2 builder-seeded expand sidecar; 130 tests in `tests/core/`
+green).
+
+Follow-up in the same session: the **feature build stage is native and
+differentially verified** (`core/featurebuild.go` + `core/build_artifacts.go`):
+the deterministic `fv-<sha256>` version derivation (with a raw-UTF8 JSON
+fingerprint variant for Python's `ensure_ascii=False` hashing), tag-role
+resolution (the config rules + the taxonomy index with the default category
+role), scene features (tag df/rarity/shrinkage + description TF-IDF with the
+160-word stopword set), performer features (profile:content/age/measurements/
+categoricals/augmentation with the fallback `repeated_scene_tags` path), and
+the artifact publication (create/publish/activate + `tag_role`/
+`tag_taxonomy_match`/`feature_build` sidecar writes). Exposed as a
+`feature-build` kernel command; `tests/core/test_backend_slice3_featurebuild.py`
+proves content-identical feature artifacts, matching `feature_version`, sidecar
+row parity, and cross-implementation reuse (132 tests in `tests/core/` green).
+
+**Still open in this slice (Python fallback active):** the `build`/`update-model`
+and `sync-build`/`full-sync-build` modes (the remaining model build stages:
+labels, affinities, scoring with the compiled-core kernels, lane
+classification, publication — `curator/model/builder.py` + `ranking/policy.py`
+oracles extracted), profile-trace parity tests for task modes, `scripts/verify
+full` + integration, and the live installed verification on 192.168.1.100
+after a Stash reload.

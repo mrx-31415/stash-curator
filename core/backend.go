@@ -71,8 +71,24 @@ func runBackend(pluginDir, mode string) {
 	}
 
 	if mode != "" {
-		// All task modes and the entity-sync hook mode are unported in Slice 0.
-		fallbackToPython(pluginDir, mode, payloadBytes)
+		// Task modes run under the _profiled "task" lifecycle. The
+		// entity-sync hook mode and unported task modes keep the Python
+		// fallback.
+		if mode == "entity-sync" || !taskModeNative(mode) {
+			fallbackToPython(pluginDir, mode, payloadBytes)
+		}
+		output, err := runTask(pluginDir, payload, mode)
+		if err != nil {
+			writeError(err.Error())
+		}
+		var b strings.Builder
+		b.WriteString(`{"output":`)
+		output.writeJSON(&b)
+		b.WriteString("}\n")
+		if _, err := os.Stdout.WriteString(b.String()); err != nil {
+			fail("write output: %v", err)
+		}
+		return
 	}
 	output, err := dispatch(pluginDir, payload, payloadBytes)
 	if err != nil {
@@ -85,6 +101,16 @@ func runBackend(pluginDir, mode string) {
 	if _, err := os.Stdout.WriteString(b.String()); err != nil {
 		fail("write output: %v", err)
 	}
+}
+
+// taskModeNative reports whether the binary serves a task mode natively; the
+// rest keep the Python fallback (backend.go's runBackend consults it).
+func taskModeNative(mode string) bool {
+	switch mode {
+	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh":
+		return true
+	}
+	return false
 }
 
 // dispatch implements backend.py's dispatch(): the ported operations run
@@ -134,6 +160,40 @@ func dispatch(pluginDir string, payload jVal, raw []byte) (jVal, error) {
 		return opGetExternalSimilar(pluginDir, payload)
 	case "send_whisparr":
 		return opSendWhisparr(pluginDir, payload)
+	case "list_backups", "create_backup", "restore_backup", "delete_backup":
+		return opBackupControl(pluginDir, payload)
+	case "update_shortlist":
+		return opUpdateShortlist(pluginDir, payload)
+	case "submit_feedback":
+		return opSubmitFeedback(pluginDir, payload)
+	case "correct_feedback":
+		return opCorrectFeedback(pluginDir, payload)
+	case "submit_tag_preferences":
+		return opSubmitTagPreferences(pluginDir, payload)
+	case "submit_events":
+		return opSubmitEvents(pluginDir, payload)
+	case "update_config":
+		return opUpdateConfig(pluginDir, payload)
+	case "get_pruning_queue":
+		return opGetPruningQueue(pluginDir, payload)
+	case "get_prune_candidates":
+		return opGetPruneCandidates(pluginDir, payload)
+	case "dismiss_prune_candidate":
+		return opDismissPruneCandidate(pluginDir, payload)
+	case "set_prune_tag":
+		return opSetPruneTag(pluginDir, payload)
+	case "update_pruning":
+		return opUpdatePruning(pluginDir, payload)
+	case "get_exclusions":
+		return opGetExclusions(pluginDir, payload)
+	case "reverse_exclusion":
+		return opReverseExclusion(pluginDir, payload)
+	case "list_profiles":
+		return opListProfiles(pluginDir, payload)
+	case "get_profile":
+		return opGetProfile(pluginDir, payload)
+	case "clear_profiles":
+		return opClearProfiles(pluginDir, payload)
 	default:
 		fallbackToPython(pluginDir, "", raw)
 	}

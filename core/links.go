@@ -82,9 +82,19 @@ func cachedExternalLinks(db dbx, state string) (jVal, bool, error) {
 // and each map's keys are inserted in scan order — the byte-identical cache
 // row depends on that.
 func externalLinks(payload jVal, db dbx) (jVal, error) {
+	return externalLinksImpl(payload, db, false)
+}
+
+// externalLinksRefresh mirrors _external_links with refresh=True: skip the
+// cache read but still write the cache row.
+func externalLinksRefresh(payload jVal, db dbx) (jVal, error) {
+	return externalLinksImpl(payload, db, true)
+}
+
+func externalLinksImpl(payload jVal, db dbx, refresh bool) (jVal, error) {
 	state := ""
 	var err error
-	if db != nil {
+	if db != nil && !refresh {
 		state, err = externalLinksState(payload)
 		if err != nil {
 			return jvNull(), err
