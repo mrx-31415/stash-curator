@@ -52,6 +52,60 @@ plugin zip with runtime select and a pure-Python fallback.
 
 ## Next work package
 
+**Open-issues follow-up (issues #92, #93, #94, #95, #103, #109, #110) —
+delivered (2026-08-11) on `fix/slice4-open-issues` (stacked on
+`feat/slice4-frontend-parity`).** A single package closing the seven open
+issues:
+
+- **#92** — the compact tag-rating rows reserve the Clear slot (`visibility:
+  hidden` placeholder) so rated and unrated rows align, and the card action
+  row renders above the expanded list.
+- **#93** — `get_scene_tag_choices` op (scene's classified tags, alphabetical,
+  with direct preferences) plus the "Rate tags & terms" panel on
+  recommendation lanes and library Similar cards (outside `card-section`, so
+  the SFW Switch contract holds).
+- **#94** — migration 0028 (`direct_term_preference` + history, mirroring
+  0016/0026), `get_scene_description_tokens` + `submit_term_preferences` ops
+  (Go + Python oracle), the direct-term affinity blend in the model build,
+  blocked-term enforcement (lanes via `entity_feature` mapping, Similar,
+  remote Expand via description tokenization; the slate eligibility
+  fingerprint gained a `blocked_terms` digest), and the merged
+  tags-and-terms expander on external, recommendation, and Similar cards.
+  Terms are truthful to the built model (never re-tokenized for display).
+- **#95** — remote scenes are ranked by description term affinity: a new
+  `0.10 * term_value` component (weights renormalized to
+  `0.40/0.10/0.25/0.10/0.15`), blocked terms exclude remote candidates whose
+  description tokens carry them, and `_why`/`expandWhy` name positive term
+  contributions. Local Similar's content dot-product is intentionally
+  unchanged (affinities are not blended into vectors).
+- **#109** — root-caused: concurrent first opens of a WAL sidecar race on the
+  `-shm` recovery lock and fail *instantly* with `database is locked (5)`
+  (the busy handler does not cover it; reproduced by a new contention test).
+  The whole `openSidecar` phase plus `withTxn`/`execImmediate` now retry busy
+  failures (bounded, 150/300 ms backoff; COMMIT failures are never retried),
+  and the frontend maps surviving lock errors to an actionable
+  `databasePath`-on-local-storage message. `busy_timeout` itself is honored
+  for ordinary contention (verified 30 s waits).
+- **#110** — the expand-refresh marker stream gained dense ticks for the
+  previously markerless pre-work (external-links walk 0.05→0.08, taxonomy
+  and seed phases bracketed at 50/150 ticks inside 0.08→0.98), matched
+  Go/Python, and the task indicator shows a completed job at 100% ("Done")
+  for 15 s instead of reverting to idle at the last sub-100% value.
+- **#103** — the two-path layout is documented in `getting-started.md` and
+  `privacy.md`: the working sidecar on local storage, backups (SQLite backup
+  API, WAL-consistent) on the network share via `backupPath`. No sync task
+  (deferred); #109's retry + message is the mitigation until the layout is
+  applied.
+
+Delivery details: migration 0028 is byte-identical in
+`core/migrations/` and `curator/storage/sql/` (checksum-guarded); all new
+ops have Go/Python byte-identical differential tests
+(`tests/core/test_backend_slice4.py`, `test_backend_slice3_modelbuild.py`,
+`test_backend_slice3_writes.py`); blocked-term and ranking behavior has
+synthetic tests (`tests/ranking/test_slate.py`,
+`tests/model/test_multi_hop.py`, `tests/test_expand.py`,
+`tests/test_interactions.py`); `scripts/verify full` passes (490 tests).
+
 **Full Go backend (Phase 4), Slice 4 — frontend parity + cleanup — delivered
 (2026-08-11).** Slices 0–4 are complete: the binary serves every operation,
 task mode, and the `entity-sync` hook mode the frontend or Stash can invoke

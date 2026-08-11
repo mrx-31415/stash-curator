@@ -789,6 +789,51 @@ def test_available_count_batched_blocked_tag_probe_excludes_scenes(tmp_path: Pat
     assert builder.available_count("model", "best_bets") == first - 1
 
 
+def test_available_count_blocked_term_probe_excludes_scenes(tmp_path: Path) -> None:
+    """Blocking a description term hard-excludes every scene whose built
+    entity_feature rows carry it — the term->scene mapping comes from the
+    published model's desc features, not a scene_tag join."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection)
+    builder.materialize("model", force=True)
+
+    first = builder.available_count("model", "best_bets")
+    assert first is not None and first > 0
+
+    connection.execute(
+        """
+        INSERT INTO feature_definition(
+            feature_id, feature_version, family, name, provenance, metadata_json
+        ) VALUES ('fd-term', 'features', 'content', 'desc:anal', 'seed',
+                  '{"document_frequency": 3}')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO entity_feature(
+            feature_version, entity_type, entity_id, feature_id, value, confidence
+        ) VALUES ('features', 'scene', 'a-best', 'fd-term', 0.8, 1.0)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_term_preference_history(
+            preference_id, term, value, occurred_at_ms, blocked
+        ) VALUES ('pref-term', 'anal', 0, 3, 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_term_preference(
+            term, preference_id, value, occurred_at_ms, blocked
+        ) VALUES ('anal', 'pref-term', 0, 3, 1)
+        """
+    )
+    connection.commit()
+    assert builder.available_count("model", "best_bets") == first - 1
+
+
 def test_available_count_probes_are_batched_not_per_scene(tmp_path: Path) -> None:
     """A large lane must not run one blocked-tag probe per scene.
 

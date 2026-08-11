@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 const (
@@ -577,6 +578,56 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	termFeatures := map[string]string{}
+	for _, features := range sceneFeatures {
+		for _, feature := range features {
+			if feature.family == "content" && strings.HasPrefix(feature.name, "desc:") {
+				termFeatures[strings.TrimPrefix(feature.name, "desc:")] = feature.featureID
+			}
+		}
+	}
+	termRows, err := db.Query(`SELECT term, value FROM direct_term_preference ORDER BY term`)
+	if err != nil {
+		return nil, err
+	}
+	for termRows.Next() {
+		var term string
+		var directValue float64
+		if err := termRows.Scan(&term, &directValue); err != nil {
+			termRows.Close()
+			return nil, err
+		}
+		featureID, ok := termFeatures[term]
+		if !ok {
+			continue
+		}
+		learned, exists := result[featureID]
+		if !exists {
+			learned = modelAffinity{featureID: featureID}
+		}
+		directSupport := 8.0
+		blended := clamp((learned.affinity*learned.support + directValue*directSupport) /
+			(learned.support + directSupport))
+		contextJSON := jvObj()
+		for _, pair := range learned.contexts.obj {
+			contextJSON.set(pair.key, pair.val)
+		}
+		contextJSON.set("declared_preference", jvFloat(directValue))
+		contextJSON.set("learned_affinity", jvFloat(learned.affinity))
+		contextJSON.set("learned_confidence", jvFloat(learned.confidence))
+		result[featureID] = modelAffinity{
+			featureID:  featureID,
+			affinity:   blended,
+			confidence: math.Max(learned.confidence, 0.9),
+			support:    learned.support + directSupport,
+			sceneCount: learned.sceneCount,
+			contexts:   contextJSON,
+		}
+	}
+	termRows.Close()
+	if err := termRows.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
