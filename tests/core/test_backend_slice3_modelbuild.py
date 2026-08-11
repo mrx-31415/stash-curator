@@ -74,10 +74,7 @@ def _artifact_schema_diff(go_path: Path, py_path: Path) -> str:
                 )
             ]
             return {
-                table: [
-                    row[1]
-                    for row in connection.execute(f"PRAGMA table_info({table})")
-                ]
+                table: [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
                 for table in tables
             }
         finally:
