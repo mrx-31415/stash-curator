@@ -89,10 +89,13 @@ write-path ops (`update_shortlist`, `submit_feedback`, `correct_feedback`,
 `reverse_exclusion`, `update_config`, backup ops, `reset`), all task modes
 and `entity-sync`.
 
-### The byte-exactness contract — read this before writing any test
+### The differential contract — read this before writing any test
 
 All Slice-1 outputs are deterministic given (payload, sidecar state, stub
-Stash) **except** a small set of fields Python itself regenerates per call:
+Stash) **except** a small set of fields Python itself regenerates per call;
+stored floats may also differ by last bits across libm/CPU environments, so
+the differential gates compare structure exactly (keys, ids, counts,
+orderings, strings, integers) and floats within rel 1e-9 tolerance:
 
 | op | run-varying fields |
 | --- | --- |
