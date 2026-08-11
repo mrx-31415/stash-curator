@@ -12,9 +12,11 @@ The shim imports only the standard library and does no work beyond the
 exec, so its own spawn cost stays in the tens of milliseconds instead of
 backend.py's full import (~700 ms). When the binary is absent for this
 platform (never in the shipped zip, but possible for hand-installed
-plugins), the shim falls back to the bundled backend.py so unported ops,
-tasks, and hooks keep working. backend.py stays in the zip until Slice 4
-deletes Python; the exec line then points at the binary directly.
+plugins), the shim falls back to the bundled backend.py. Every operation,
+task mode, and the entity-sync hook mode is native in the binary now (Slice
+4); backend.py is retained in the zip purely as this launcher-level
+fallback for platforms without a shipped binary, pending a decision to
+remove the packaged Python.
 """
 
 from __future__ import annotations

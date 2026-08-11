@@ -1,6 +1,7 @@
-"""Exec-swap integration tests: ported ops run natively through the installed
-zip, unported ops fall back, and both stay byte-identical to the Python
-backend on the same sidecar.
+"""Exec-swap integration tests: every operation the frontend or Stash can
+invoke runs natively through the installed zip and stays byte-identical to
+the Python backend on the same sidecar (backend.py remains the direct
+comparison oracle in the container).
 
 These tests require a Stash instance with the plugin installed (the zip built
 with the launcher exec line). `scripts/verify integration` handles build,
@@ -309,6 +310,24 @@ def _entity_ops() -> list[tuple[str, dict[str, object], tuple[str, ...], tuple[s
             (),
         ),
         ("get_explanation", {"scene_id": scene_id}, (), ()),
+        (
+            "get_inspector_entity",
+            {"entity_type": "scene", "entity_id": scene_id},
+            (),
+            (),
+        ),
+        (
+            "get_inspector_entity",
+            {"entity_type": "performer", "entity_id": performer_id},
+            (),
+            (),
+        ),
+        (
+            "get_tag_sentiment_follow_up",
+            {"scene_id": scene_id, "limit": 3},
+            (),
+            (),
+        ),
     ]
 
 
@@ -331,9 +350,9 @@ def test_network_op_stashdb_unconfigured_error_matches_direct(seeded: None) -> N
     assert "configure StashDB with an API key in Stash settings" in direct_text
 
 
-def test_unported_op_falls_back_byte_identical(seeded: None) -> None:
-    """An unported op still works through the same zip via the Python
-    fallback, byte-identical to the direct backend."""
+def test_write_op_byte_identical_through_plugin(seeded: None) -> None:
+    """A write-path op served through the installed zip (launcher -> binary)
+    matches the direct Python backend byte for byte on the same sidecar."""
     _assert_plugin_matches_direct("get_pruning_queue", {}, timing_fields=())
 
 

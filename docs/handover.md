@@ -1,21 +1,25 @@
 # Stash Curator handover
 
-Updated: 2026-08-11. Slices 0–3 of the Go backend are merged: the
+Updated: 2026-08-11. Slices 0–4 of the Go backend are merged: the
 `curator-core` binary serves the raw-plugin interface natively — trivial
 ops, the read-path interactive ops (slate, similar, explanation, shortlist,
 histories, taste profile, diagnostics), the network-layer ops
 (get_expand, get_performer_hunt, get_external_similar, send_whisparr), the
 write-path ops and task modes (backup/compact/vacuum/prepare, sync-build,
-model build), and the StashDB + Stash sync client surfaces. The
+model build), the StashDB + Stash sync client surfaces, the last
+frontend-parity ops (get_external_tag_choices, get_inspector_entity,
+get_tag_sentiment_follow_up, reset), and the entity-sync hook mode. The
 differential gates compare structure exactly (ids, counts, orderings,
 strings, integers) and floats within a relative tolerance (rel 1e-9); the
 bit-exact CPython math ports that previously anchored byte-identity were
 removed (see `docs/decisions/002-runtime-swap-planning.md` §4 and issue
 #113). The installed plugin's exec line runs through a launcher that
-resolves the per-arch binary, with the Python backend as the fallback for
-the remaining frontend-parity leftovers (see `handover-go-backend-slice1.md`,
-`handover-go-backend-slice2.md`, and `handover-go-backend-slice3.md` for
-the delivered ports). The
+resolves the per-arch binary; the in-binary Python fallback is retired
+(unknown ops and task modes error with Python's exact messages), while
+`backend.py` stays in the zip as the launcher-level fallback for platforms
+without a shipped binary, pending the user's packaging decision (see
+`handover-go-backend-slice1.md` through `handover-go-backend-slice4.md`
+for the delivered ports). The
 resident RPC conversion is off the table (disproven — no residency in Stash's
 `rpc` interface; see the correction banner in the planning doc);
 `docs/handover-rpc-plugin.md` is retained as blocked/superseded reference.
@@ -48,22 +52,26 @@ plugin zip with runtime select and a pure-Python fallback.
 
 ## Next work package
 
-**Full Go backend (Phase 4), Slice 4 — frontend parity + cleanup.** Slices 0–3
-are delivered and merged (2026-08-11): the binary serves every read-path
-interactive op, the network-layer ops (`get_expand`,
-`get_performer_hunt`, `get_external_similar`, `send_whisparr`), the
-write-path ops and task modes, and the model build natively; the installed
-plugin's exec line runs through the arch-resolving launcher
-(`plugin/launcher.py`) with `backend.py` as fallback for the remaining
-frontend-parity leftovers, and the StashDB + Stash sync client surfaces
-exist in Go. The differential gates compare structure exactly and floats
-within rel 1e-9 tolerance; the glibc-math ports (`pyExp`/`pyLog`/`pyTanh`,
-correctly-rounded square/cube, Python `round()`, Neumaier sum) and their
-corpus fixtures were removed (issue #113) so the core uses plain Go stdlib
-math and stored floats may differ from Python by last bits. The remaining
-slice ports the frontend parity leftovers (unported ops still served by the
-Python fallback) and removes the Python fallback paths. Full handover +
-first agent prompt:
+**Full Go backend (Phase 4), Slice 4 — frontend parity + cleanup — delivered
+(2026-08-11).** Slices 0–4 are complete: the binary serves every operation,
+task mode, and the `entity-sync` hook mode the frontend or Stash can invoke
+natively — the read-path interactive ops, the network-layer ops (`get_expand`,
+`get_performer_hunt`, `get_external_similar`, `send_whisparr`), the write-path
+ops and task modes, the model build, and the last frontend-parity ops
+(`get_external_tag_choices`, `get_inspector_entity`,
+`get_tag_sentiment_follow_up`, `reset`) plus the entity hook. The differential
+gates compare structure exactly and floats within rel 1e-9 tolerance; the
+glibc-math ports (`pyExp`/`pyLog`/`pyTanh`, correctly-rounded square/cube,
+Python `round()`, Neumaier sum) and their corpus fixtures were removed (issue
+#113) so the core uses plain Go stdlib math and stored floats may differ from
+Python by last bits. The in-binary Python fallback is retired: unknown
+operations and task modes error with Python's exact messages, and
+`core/fallback.go` is deleted. `backend.py` is **retained in the shipped zip**
+by decision — the launcher still falls back to it when no binary exists for
+the platform — pending the user's confirmation to remove the packaged Python
+(see `handover-go-backend-slice4.md`). The installed plugin's exec line runs
+through the arch-resolving launcher (`plugin/launcher.py`). Delivery details
+and verification:
 [`handover-go-backend-slice4.md`](handover-go-backend-slice4.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):

@@ -133,3 +133,50 @@ After items 1–2, every op in `_api` and every task mode is native. Then:
   Stash logs, task progress, and desktop/mobile layouts. Live behavior on
   192.168.1.100 can only be verified after the user reloads plugins/restarts
   Stash — never claim an installed fix is verified until that retest happens.
+## Session 2026-08-11 — delivered (uncommitted)
+
+All four remaining ops and the entity-sync hook mode are native in
+`curator-core`; the in-binary Python fallback is retired.
+
+**Native in `curator-core`:**
+- `get_external_tag_choices` (`core/frontend.go`): the source_tag /
+  tag_role / direct_tag_preference / source_tag_stash_id read plus the
+  taxonomy alias → local tag fallback (same UNION query as Python).
+- `get_inspector_entity` (`core/frontend.go`): scene (full
+  `ModelSceneScore` asdict + explanation via the extracted
+  `renderExplanationForScene`, shared with `get_explanation`) and performer
+  (`source_performer` dict row + `similar_performers` via the existing
+  `performerProfilesAll`/`performerSimilarity` kernels).
+- `get_tag_sentiment_follow_up` (`core/frontend.go`): reuses the native
+  taste-profile output (`getTasteProfileBody`) and applies the Python
+  filter/sort/limit.
+- `reset` (`core/frontend.go`): confirmation gate, running-job guard,
+  removal of the database + WAL/SHM + `recognized_artifacts` (new
+  `recognizedArtifacts` port of `artifacts.recognized_artifacts`), then a
+  fresh migrated sidecar. Unprofiled like Python's dispatch branch.
+- `entity-sync` (`core/entity_hook.go`): the `_run_entity_hook` port —
+  hook-type map, upsert/delete by `.Destroy.Post` suffix, one bounded
+  `pending_entity_change` upsert + `coordinatorRequest("entity_hook")`
+  inside a transaction, **no `curator_job` row**, and a neutral
+  `{"handled": false, "reason": ...}` (truncated to 500) instead of raising.
+
+**Fallback retirement (decision recorded):** `core/fallback.go` is deleted;
+`dispatch`'s default and unknown task modes error with Python's exact
+messages (`unknown Curator API operation: ...`, `unknown Curator task: ...`).
+`backend.py` stays in the shipped zip by decision — `plugin/launcher.py`
+still falls back to it when no per-arch binary exists — pending the user's
+confirmation to remove the packaged Python.
+
+**Differential tests** (`tests/core/test_backend_slice4.py`, 26 tests):
+stdout byte-parity (tolerance comparator) for the four ops' success and
+error paths, reset's surviving-file/artifact/remake parity, and the hook's
+output + `pending_entity_change` + no-job-row + coordinator parity (modulo
+`created_at_ms`). The integration suite's stale "unported op falls back"
+test became `test_write_op_byte_identical_through_plugin`, and the
+inspector/sentiment ops were added to `_entity_ops`.
+
+**Verification:** `scripts/verify core`-equivalent gate (168 tests in
+`tests/core` + `tests/model/test_core.py` green), full non-integration
+suite (476 passed), `go vet` clean, static binary; `core/go.mod`
+unchanged. Live installed verification on 192.168.1.100 still requires a
+Stash reload/restart after the user installs the rebuilt plugin.
