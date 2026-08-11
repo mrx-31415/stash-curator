@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -509,6 +510,50 @@ def test_submit_tag_preferences_unknown_tag_byte_identical(
         ],
     )
     assert_slice3_identical(binary, raw, writes_sidecar)
+
+
+# ── concurrency ──────────────────────────────────────────────────────────────
+
+
+def test_concurrent_write_ops_never_surface_database_locked(tmp_path: Path, binary: Path) -> None:
+    """Concurrent plugin processes opening the sidecar at once — the #109
+    multi-tab burst (health polls, hooks, and tasks each spawn a process) —
+    must never surface a SQLite busy error: the 30 s busy_timeout plus the
+    Go-side retry on the extended busy codes absorbs the contention. Every
+    write must land."""
+    sidecar = tmp_path / "curator.sqlite3"
+    make_writes_sidecar(sidecar)
+    raws = [
+        _writes_payload(
+            "submit_tag_preferences",
+            sidecar,
+            "http://127.0.0.1:1",
+            entries=[
+                {
+                    "preference_id": f"concurrent-{index}",
+                    "tag_id": "t1",
+                    "value": 0.5,
+                    "occurred_at_ms": index,
+                }
+            ],
+        )
+        for index in range(12)
+    ]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(run_backend, binary, PLUGIN_DIR, raw) for raw in raws]
+        results = [future.result() for future in futures]
+    for result in results:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert b"locked" not in (result.stdout + result.stderr).lower()
+    connection = sqlite3.connect(sidecar)
+    try:
+        count = connection.execute(
+            "SELECT count(*) FROM direct_tag_preference_history"
+            " WHERE preference_id LIKE 'concurrent-%'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 12
 
 
 # ── events ───────────────────────────────────────────────────────────────────

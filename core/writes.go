@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -535,6 +536,164 @@ ON CONFLICT(tag_id) DO UPDATE SET
 		}
 		if inserted > 0 {
 			return coordinatorRequest(conn, "direct_tag_preference", nowMs())
+		}
+		return nil
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("accepted", jvInt(inserted)),
+	), nil
+}
+
+// ── submit_term_preferences ─────────────────────────────────────────────────
+
+// termPreferenceEntry mirrors InteractionStore._term_preference_entry's output.
+type termPreferenceEntry struct {
+	preferenceID string
+	term         string
+	value        jVal // jvNull = None
+	blocked      bool
+	occurredAtMs int64
+}
+
+var termTokenRE = regexp.MustCompile(`^[a-zA-Z]{3,}$`)
+
+// normalizeTermPreferenceEntry mirrors InteractionStore._term_preference_entry:
+// the five-point scale and blocked semantics of tags, keyed by a lowercase
+// description token (the tokenizer's [a-zA-Z]{3,} shape). Terms have no source
+// table, so unlike tags there is no membership check — a preference for a term
+// the current model has not qualified simply has no feature to blend into.
+func normalizeTermPreferenceEntry(entry jVal) (termPreferenceEntry, error) {
+	preferenceID := pythonStrOrEmpty(entry.get("preference_id"))
+	term := strings.ToLower(strings.TrimSpace(pythonStrOrEmpty(entry.get("term"))))
+	occurredAtMs := pythonIntErrOr(entry.get("occurred_at_ms"), -1)
+	blocked := entry.get("blocked").truthy()
+	value := entry.get("value")
+	if value.kind != jNull {
+		if value.kind == jBool || !isJSONNumber(value) {
+			return termPreferenceEntry{}, fmt.Errorf("term sentiment must be numeric or null")
+		}
+		f, err := pythonFloat(value)
+		if err != nil || !tagSentimentValues[f] {
+			return termPreferenceEntry{}, fmt.Errorf("term sentiment must use the fixed five-point scale")
+		}
+		value = jvFloat(f)
+	}
+	if blocked {
+		value = jvFloat(blockedTagValue)
+	}
+	if preferenceID == "" || term == "" || occurredAtMs < 0 {
+		return termPreferenceEntry{}, fmt.Errorf("preference_id, term, and occurred_at_ms are required")
+	}
+	if !termTokenRE.MatchString(term) {
+		return termPreferenceEntry{}, fmt.Errorf("term must be a description token ([a-zA-Z]{3,})")
+	}
+	return termPreferenceEntry{
+		preferenceID: preferenceID,
+		term:         term,
+		value:        value,
+		blocked:      blocked,
+		occurredAtMs: occurredAtMs,
+	}, nil
+}
+
+func opSubmitTermPreferences(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "submit_term_preferences",
+		func(settings jVal) (jVal, error) { return submitTermPreferencesBody(pluginDir, payload, settings) })
+}
+
+func submitTermPreferencesBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	entries := payload.get("args").get("entries")
+	if !isList(entries) {
+		return jvNull(), fmt.Errorf("entries must be a list")
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	normalized := make([]termPreferenceEntry, len(entries.arr))
+	for i, entry := range entries.arr {
+		item, err := normalizeTermPreferenceEntry(entry)
+		if err != nil {
+			return jvNull(), err
+		}
+		normalized[i] = item
+	}
+	inserted := int64(0)
+	err = withTxn(db, func(conn *sql.Conn) error {
+		ctx := context.Background()
+		for _, entry := range normalized {
+			var currentID string
+			var currentAtMs int64
+			currentErr := conn.QueryRowContext(ctx,
+				`SELECT preference_id, occurred_at_ms FROM direct_term_preference WHERE term=?`,
+				entry.term).Scan(&currentID, &currentAtMs)
+			hasCurrent := currentErr == nil
+			if currentErr != nil && currentErr != sql.ErrNoRows {
+				return currentErr
+			}
+			valueArg := any(nil)
+			if entry.value.kind != jNull {
+				valueArg = pythonFloatOr(entry.value, 0)
+			}
+			res, err := conn.ExecContext(ctx, `
+INSERT OR IGNORE INTO direct_term_preference_history(
+    preference_id, term, value, blocked, occurred_at_ms
+) VALUES (?, ?, ?, ?, ?)`,
+				entry.preferenceID, entry.term, valueArg, boolToInt(entry.blocked), entry.occurredAtMs)
+			if err != nil {
+				return err
+			}
+			rows, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				continue
+			}
+			inserted++
+			if hasCurrent && (currentAtMs > entry.occurredAtMs ||
+				(currentAtMs == entry.occurredAtMs && currentID >= entry.preferenceID)) {
+				if _, err := conn.ExecContext(ctx,
+					`UPDATE direct_term_preference_history SET replaced_by_id=? WHERE preference_id=?`,
+					currentID, entry.preferenceID); err != nil {
+					return err
+				}
+				continue
+			}
+			if hasCurrent {
+				if _, err := conn.ExecContext(ctx,
+					`UPDATE direct_term_preference_history SET replaced_by_id=? WHERE preference_id=?`,
+					entry.preferenceID, currentID); err != nil {
+					return err
+				}
+			}
+			if entry.value.kind == jNull {
+				if _, err := conn.ExecContext(ctx,
+					`DELETE FROM direct_term_preference WHERE term=?`, entry.term); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := conn.ExecContext(ctx, `
+INSERT INTO direct_term_preference(
+    term, preference_id, value, blocked, occurred_at_ms
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(term) DO UPDATE SET
+    preference_id=excluded.preference_id,
+    value=excluded.value,
+    blocked=excluded.blocked,
+    occurred_at_ms=excluded.occurred_at_ms`,
+				entry.term, entry.preferenceID, valueArg, boolToInt(entry.blocked), entry.occurredAtMs); err != nil {
+				return err
+			}
+		}
+		if inserted > 0 {
+			return coordinatorRequest(conn, "direct_term_preference", nowMs())
 		}
 		return nil
 	})

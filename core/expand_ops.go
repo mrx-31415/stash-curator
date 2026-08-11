@@ -132,6 +132,10 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if err != nil {
 		return jvNull(), err
 	}
+	blockedTerms, err := service.blockedTermSet()
+	if err != nil {
+		return jvNull(), err
+	}
 	rows := make([]jVal, 0)
 	entityRows, err := db.Query(`SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'`, entityType)
 	if err != nil {
@@ -195,7 +199,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		}
 		if entityType == "scene" && !expandSceneMatches(payload, includeTags, excludeTags,
 			performerNames, studioNames, performerQuery, studioQuery,
-			includeGroups, excludeGroups, blockedGroups) {
+			includeGroups, excludeGroups, blockedGroups, blockedTerms) {
 			continue
 		}
 		sources, err := parseJSON([]byte(asDBString(row["sources_json"])))
@@ -385,6 +389,10 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	if err != nil {
 		return jvNull(), err
 	}
+	blockedTerms, err := service.blockedTermSet()
+	if err != nil {
+		return jvNull(), err
+	}
 	shortlisted := map[string]bool{}
 	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type='scene'`)
 	if err != nil {
@@ -404,7 +412,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	items := make([]jVal, 0, len(scenes))
 	for _, scene := range scenes {
 		if !expandSceneMatches(scene.payload, includeTags, excludeTags, nil, nil, "", "",
-			includeGroups, excludeGroups, blockedGroups) {
+			includeGroups, excludeGroups, blockedGroups, blockedTerms) {
 			continue
 		}
 		item := jvObj(

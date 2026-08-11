@@ -252,7 +252,7 @@ func taskExpandRefresh(db dbx, pluginDir string, payload jVal, settings jVal) (j
 	if err != nil {
 		return jvNull(), err
 	}
-	links, err := externalLinksRefresh(payload, db)
+	links, err := externalLinksRefresh(payload, db, mappedProgress(0.05, 0.08))
 	if err != nil {
 		return jvNull(), err
 	}
@@ -263,7 +263,7 @@ func taskExpandRefresh(db dbx, pluginDir string, payload jVal, settings jVal) (j
 			int(pythonInt(cfg.get("expand_horizon_days"))),
 			cfg.get("expand_gender").asString(),
 			cfg.get("expand_wildcard").truthy(),
-			nowMs(), mappedProgress(0.05, 0.98))
+			nowMs(), mappedProgress(0.08, 0.98))
 		return err
 	})
 	if err != nil {

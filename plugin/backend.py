@@ -260,11 +260,15 @@ def _external_links(
     connection: sqlite3.Connection | None = None,
     *,
     refresh: bool = False,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Map local entities to their StashDB ids, reusing the last scan while Stash is unchanged.
 
     Rebuilding this walks every linked scene for its fingerprints, which dominates the cost of
     the operations that need it, so it is kept until Stash reports a different library.
+    progress, when non-nil, receives (processed, total) page ticks over the
+    walk (issue #110: the expand-refresh bar used to sit at 5% for the whole
+    library walk).
     """
     state = _external_links_state(payload) if connection is not None else ""
     if connection is not None and not refresh:
@@ -306,6 +310,9 @@ def _external_links(
                                 if value:
                                     result["scene_phashes"].setdefault(value, str(row["id"]))
             more |= page * 500 < int(collection["count"])
+        if progress:
+            total = max(int(data[kind]["count"]) for kind in ("scenes", "performers", "studios"))
+            progress(min(page * 500, total), total)
         if not more:
             break
         page += 1
@@ -856,6 +863,15 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(tags, list):
                 raise ValueError("tags must be a list")
             return api.external_tag_choices(tags)
+        if operation == "get_scene_tag_choices":
+            return api.get_scene_tag_choices(str(args.get("scene_id") or ""))
+        if operation == "get_scene_description_tokens":
+            return api.get_scene_description_tokens(str(args.get("scene_id") or ""))
+        if operation == "submit_term_preferences":
+            entries = args.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("entries must be a list")
+            return api.submit_term_preferences(entries)
         if operation == "submit_events":
             entries = args.get("entries")
             if not isinstance(entries, list):
@@ -1527,11 +1543,16 @@ def _run_task_body(
                 summary = ExpandService(connection).refresh(
                     _stashdb(payload),
                     # The refresh task is the escape hatch when Stash under-reports a change.
-                    _external_links(payload, connection, refresh=True),
+                    _external_links(
+                        payload,
+                        connection,
+                        refresh=True,
+                        progress=_mapped_progress(0.05, 0.08),
+                    ),
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),
                     wildcard=bool(config["expand_wildcard"]),
-                    progress=_mapped_progress(0.05, 0.98),
+                    progress=_mapped_progress(0.08, 0.98),
                 )
             _progress(0.98)
         else:

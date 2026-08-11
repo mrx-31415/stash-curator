@@ -171,6 +171,171 @@ WHERE tta.snapshot_id=? AND lower(tta.alias)=?`,
 	), nil
 }
 
+// ── get_scene_tag_choices ──────────────────────────────────────────────────
+
+// opGetSceneTagChoices mirrors backend.py's get_scene_tag_choices branch:
+// the scene's own classified tags (tag_role for the current config version)
+// with their direct preferences, sorted by name — the local-card counterpart
+// of get_external_tag_choices. A tag can appear once per provenance, so rows
+// are grouped by tag_id.
+func opGetSceneTagChoices(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_scene_tag_choices",
+		func(settings jVal) (jVal, error) { return sceneTagChoicesBody(pluginDir, payload, settings) })
+}
+
+func sceneTagChoicesBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	sceneID := pythonStrOrEmpty(payload.get("args").get("scene_id"))
+	if sceneID == "" {
+		return jvNull(), fmt.Errorf("scene_id is required")
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	configVersion := "cfg-" + featureFingerprint()[:20]
+	rows, err := db.Query(`SELECT t.tag_id, t.name, p.value AS direct_value,
+       p.blocked AS direct_blocked
+FROM scene_tag st
+JOIN source_tag t ON t.tag_id=st.tag_id
+JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?
+LEFT JOIN direct_tag_preference p ON p.tag_id=t.tag_id
+WHERE st.scene_id=?
+GROUP BY t.tag_id
+ORDER BY t.name COLLATE NOCASE, t.tag_id`, configVersion, sceneID)
+	if err != nil {
+		return jvNull(), err
+	}
+	out := jvArr()
+	for rows.Next() {
+		var tagID string
+		var name string
+		var directValue sql.NullFloat64
+		var directBlocked sql.NullInt64
+		if err := rows.Scan(&tagID, &name, &directValue, &directBlocked); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		if name == "" {
+			name = tagID
+		}
+		value := jvNull()
+		if directValue.Valid {
+			value = jvFloat(directValue.Float64)
+		}
+		out.arr = append(out.arr, jvObj(
+			jvKey("tag_id", jvStr(tagID)),
+			jvKey("name", jvStr(name)),
+			jvKey("direct_value", value),
+			jvKey("direct_blocked", jvBool(directBlocked.Valid && directBlocked.Int64 != 0)),
+		))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("items", out),
+	), nil
+}
+
+// ── get_scene_description_tokens ───────────────────────────────────────────
+
+// opGetSceneDescriptionTokens mirrors backend.py's get_scene_description_tokens
+// branch: the scene's desc:<term> content features from the current feature
+// build, with direct term preferences — the data source for the term-rating
+// view. Terms are truthful to the built model (library-relative TF-IDF), never
+// re-tokenized from the scene text.
+func opGetSceneDescriptionTokens(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_scene_description_tokens",
+		func(settings jVal) (jVal, error) { return sceneDescriptionTokensBody(pluginDir, payload, settings) })
+}
+
+func sceneDescriptionTokensBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	sceneID := pythonStrOrEmpty(payload.get("args").get("scene_id"))
+	if sceneID == "" {
+		return jvNull(), fmt.Errorf("scene_id is required")
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	direct := make(map[string]termPref)
+	rows, err := db.Query(`SELECT term, value, blocked FROM direct_term_preference`)
+	if err != nil {
+		return jvNull(), err
+	}
+	for rows.Next() {
+		var term string
+		var value float64
+		var blocked int64
+		if err := rows.Scan(&term, &value, &blocked); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		direct[term] = termPref{value: value, blocked: blocked != 0}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	featureVersion, err := currentFeatureVersion(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	out := jvArr()
+	if featureVersion != "" {
+		rows, err := db.Query(`SELECT fd.name, fd.metadata_json
+FROM entity_feature ef
+JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+WHERE ef.feature_version=? AND ef.entity_type='scene' AND ef.entity_id=?
+  AND fd.family='content' AND fd.name LIKE 'desc:%'
+ORDER BY fd.name`, featureVersion, sceneID)
+		if err != nil {
+			return jvNull(), err
+		}
+		for rows.Next() {
+			var name string
+			var metadataJSON string
+			if err := rows.Scan(&name, &metadataJSON); err != nil {
+				rows.Close()
+				return jvNull(), err
+			}
+			term := strings.TrimPrefix(name, "desc:")
+			metadata := parseJSONOr(metadataJSON)
+			documentFrequency := int64(pythonFloatOr(metadata.get("document_frequency"), 0))
+			value := jvNull()
+			blocked := false
+			if pref, ok := direct[term]; ok {
+				value = jvFloat(pref.value)
+				blocked = pref.blocked
+			}
+			out.arr = append(out.arr, jvObj(
+				jvKey("term", jvStr(term)),
+				jvKey("document_frequency", jvInt(documentFrequency)),
+				jvKey("direct_value", value),
+				jvKey("direct_blocked", jvBool(blocked)),
+			))
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return jvNull(), err
+		}
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("items", out),
+	), nil
+}
+
+// termPref is a direct_term_preference row (value + blocked flag).
+type termPref struct {
+	value   float64
+	blocked bool
+}
+
 // ── get_inspector_entity ───────────────────────────────────────────────────
 
 // inspectorSceneScore carries every ModelSceneScore field asdict() exposes,

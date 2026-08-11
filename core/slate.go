@@ -843,6 +843,7 @@ func eligibilityFingerprint(db dbx) (string, error) {
 		{"exclusion", `SELECT count(*), coalesce(max(created_at_ms), 0) FROM exclusion WHERE reversed_at_ms IS NULL`},
 		{"pruning", `SELECT count(*), coalesce(max(updated_at_ms), 0) FROM pruning_candidate`},
 		{"blocked_tags", `SELECT count(*), coalesce(max(occurred_at_ms), 0) FROM direct_tag_preference WHERE blocked=1`},
+		{"blocked_terms", `SELECT count(*), coalesce(max(occurred_at_ms), 0) FROM direct_term_preference WHERE blocked=1`},
 		{"files", `SELECT count(*), 0 FROM source_file WHERE available=1`},
 	}
 	for _, q := range queries {

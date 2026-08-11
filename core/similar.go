@@ -536,6 +536,50 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			return nil, err
 		}
 	}
+	blockedTerms := make([]string, 0)
+	rows, err = s.db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var term string
+		if err := rows.Scan(&term); err != nil {
+			return nil, err
+		}
+		blockedTerms = append(blockedTerms, term)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(blockedTerms)
+	if len(blockedTerms) > 0 {
+		placeholders := inClause(len(blockedTerms))
+		args := make([]any, 0, len(blockedTerms)+1)
+		args = append(args, s.featureVersion)
+		for _, term := range blockedTerms {
+			args = append(args, "desc:"+term)
+		}
+		rows, err := s.db.Query(`SELECT DISTINCT ef.entity_id FROM entity_feature ef
+JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+WHERE ef.feature_version=? AND ef.entity_type='scene'
+  AND fd.family='content'
+  AND fd.name IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var sceneID string
+			if err := rows.Scan(&sceneID); err != nil {
+				return nil, err
+			}
+			blockedScenes[sceneID] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
 	performerIDSet := make(map[string]bool, len(performerIDs))
 	for _, id := range performerIDs {
 		performerIDSet[id] = true

@@ -7,6 +7,7 @@ from collections.abc import Collection
 from itertools import batched
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
+from curator.model.store import RecommendationModelStore
 
 
 def scene_eligibility(
@@ -56,6 +57,21 @@ def scene_eligibility(
         str(row[0])
         for row in connection.execute("SELECT tag_id FROM direct_tag_preference WHERE blocked=1")
     }
+    blocked_terms = sorted(
+        str(row[0])
+        for row in connection.execute("SELECT term FROM direct_term_preference WHERE blocked=1")
+    )
+    # Blocked-term exclusion maps terms to scenes through the built model's
+    # entity_feature desc rows (the term->scene mapping has no scene_tag join:
+    # a scene "carries" a term only when the model built a desc:<term> feature
+    # for it). Terms the model never qualified simply have no scenes.
+    model_id = RecommendationModelStore(connection).current_model_id()
+    term_feature_version: str | None = None
+    if model_id is not None:
+        row = connection.execute(
+            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()
+        term_feature_version = str(row[0]) if row else None
     # Eligibility probes can cover the whole lane or library, so the scene predicates are
     # batched: one query with tens of thousands of IN placeholders is slow and can exceed
     # SQLite's variable limit, and a per-scene probe is an N+1 that dominates the request.
@@ -82,6 +98,24 @@ def scene_eligibility(
                     AND tag_id IN ({",".join("?" for _ in blocked_tag_ids)})
                     """,
                     (*chunk, *sorted(blocked_tag_ids)),
+                )
+            )
+        if blocked_terms and term_feature_version is not None:
+            blocked_scenes.update(
+                str(row[0])
+                for row in connection.execute(
+                    f"""SELECT DISTINCT ef.entity_id FROM entity_feature ef
+                    JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+                    WHERE ef.feature_version=? AND ef.entity_type='scene'
+                    AND ef.entity_id IN ({placeholders})
+                    AND fd.family='content'
+                    AND fd.name IN ({",".join("?" for _ in blocked_terms)})
+                    """,
+                    (
+                        term_feature_version,
+                        *chunk,
+                        *[f"desc:{term}" for term in blocked_terms],
+                    ),
                 )
             )
     result: dict[str, dict[str, object]] = {}

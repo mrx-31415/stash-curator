@@ -82,16 +82,18 @@ func cachedExternalLinks(db dbx, state string) (jVal, bool, error) {
 // and each map's keys are inserted in scan order — the byte-identical cache
 // row depends on that.
 func externalLinks(payload jVal, db dbx) (jVal, error) {
-	return externalLinksImpl(payload, db, false)
+	return externalLinksImpl(payload, db, false, nil)
 }
 
 // externalLinksRefresh mirrors _external_links with refresh=True: skip the
-// cache read but still write the cache row.
-func externalLinksRefresh(payload jVal, db dbx) (jVal, error) {
-	return externalLinksImpl(payload, db, true)
+// cache read but still write the cache row. progress, when non-nil, receives
+// (processed, total) page ticks over the paginated walk (issue #110: the
+// expand-refresh bar used to sit at 5% for the whole library walk).
+func externalLinksRefresh(payload jVal, db dbx, progress func(processed, total int)) (jVal, error) {
+	return externalLinksImpl(payload, db, true, progress)
 }
 
-func externalLinksImpl(payload jVal, db dbx, refresh bool) (jVal, error) {
+func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(processed, total int)) (jVal, error) {
 	state := ""
 	var err error
 	if db != nil && !refresh {
@@ -165,6 +167,19 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool) (jVal, error) {
 			if page*500 < pythonInt(collection.get("count")) {
 				more = true
 			}
+		}
+		if progress != nil {
+			total := int64(0)
+			for _, kind := range []string{"scenes", "performers", "studios"} {
+				if count := pythonInt(data.get(kind).get("count")); count > total {
+					total = count
+				}
+			}
+			processed := page * 500
+			if processed > total {
+				processed = total
+			}
+			progress(int(processed), int(total))
 		}
 		if !more {
 			break

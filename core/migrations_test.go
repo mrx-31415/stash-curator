@@ -19,7 +19,7 @@ func openTempDB(t *testing.T) (dbx, string) {
 }
 
 // The full chain applies on a fresh database, producing the same status a
-// Python-migrated sidecar has (current/latest 27, nothing pending), and a
+// Python-migrated sidecar has (current/latest 28, nothing pending), and a
 // second migrate is a no-op.
 func TestMigrateFullChain(t *testing.T) {
 	db, _ := openTempDB(t)
@@ -34,18 +34,18 @@ func TestMigrateFullChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.currentVersion != 27 || status.latestVersion != 27 || len(status.pending) != 0 {
+	if status.currentVersion != 28 || status.latestVersion != 28 || len(status.pending) != 0 {
 		t.Fatalf("unexpected status: %+v", status)
 	}
-	if len(migrations) != 27 {
-		t.Fatalf("expected 27 migrations, got %d", len(migrations))
+	if len(migrations) != 28 {
+		t.Fatalf("expected 28 migrations, got %d", len(migrations))
 	}
 	var rows int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 27 {
-		t.Fatalf("schema_migration has %d rows, want 27", rows)
+	if rows != 28 {
+		t.Fatalf("schema_migration has %d rows, want 28", rows)
 	}
 	// Idempotent second migrate.
 	if err := migrate(db, 1_700_000_000_001); err != nil {
@@ -54,7 +54,7 @@ func TestMigrateFullChain(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 27 {
+	if rows != 28 {
 		t.Fatalf("second migrate added rows: %d", rows)
 	}
 	var integrity string

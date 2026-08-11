@@ -266,6 +266,76 @@ def test_similarity_annotates_multi_hop_when_reachable(
             assert item.details["multi_hop_reach"] >= REACH_FLOOR
 
 
+def test_similarity_excludes_scenes_carrying_a_blocked_term(tmp_path: Path) -> None:
+    """Blocking a description term removes every local scene whose built
+    entity_feature rows carry it from Similar results (term->scene mapping
+    via the published model's desc features, mirroring the blocked-tag path).
+
+    The model build publishes feature tables into the derived artifact and
+    attaches them as views, so the desc feature is written into the artifact
+    database — the same place the runtime reads it from."""
+    sidecar = tmp_path / "curator.sqlite3"
+    connection = _database(sidecar)
+    model = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    basename = connection.execute(
+        "SELECT artifact_basename FROM feature_build WHERE feature_version=?",
+        (model.feature_version,),
+    ).fetchone()[0]
+    connection.close()
+
+    # The published artifact is attached read-only (immutable=1), so a fresh
+    # sidecar connection is opened both before and after the artifact write.
+    service = SimilarityService(connect_database(sidecar))
+    before = {item.entity_id for item in service.scenes("old-good", 20)}
+    assert before
+    target = sorted(before)[0]
+
+    artifact = sqlite3.connect(tmp_path / "curator-derived" / basename)
+    try:
+        artifact.execute(
+            """
+            INSERT INTO feature_definition(
+                feature_id, feature_version, family, name, provenance, metadata_json
+            ) VALUES ('fd-term', ?, 'content', 'desc:anal', 'seed',
+                      '{"document_frequency": 3}')
+            """,
+            (model.feature_version,),
+        )
+        artifact.execute(
+            """
+            INSERT INTO entity_feature(
+                feature_version, entity_type, entity_id, feature_id, value, confidence
+            ) VALUES (?, 'scene', ?, 'fd-term', 0.8, 1.0)
+            """,
+            (model.feature_version, target),
+        )
+        artifact.commit()
+    finally:
+        artifact.close()
+    fresh = connect_database(sidecar)
+    try:
+        fresh.execute(
+            """
+            INSERT INTO direct_term_preference_history(
+                preference_id, term, value, occurred_at_ms, blocked
+            ) VALUES ('pref-term', 'anal', 0, 3, 1)
+            """
+        )
+        fresh.execute(
+            """
+            INSERT INTO direct_term_preference(
+                term, preference_id, value, occurred_at_ms, blocked
+            ) VALUES ('anal', 'pref-term', 0, 3, 1)
+            """
+        )
+        fresh.commit()
+        after = {item.entity_id for item in SimilarityService(fresh).scenes("old-good", 20)}
+    finally:
+        fresh.close()
+    assert target not in after
+    assert len(after) == len(before) - 1
+
+
 def test_core_pagerank_matches_networkx_and_python(tmp_path: Path) -> None:
     if builder_module.core.core_binary() is None:
         pytest.skip("curator-core binary is not built")

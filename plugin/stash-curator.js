@@ -117,6 +117,7 @@
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
+  const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
@@ -169,6 +170,16 @@
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
   }
 
+  // actionError adds an actionable hint to SQLite busy/lock failures (#109):
+  // the working sidecar must live on local storage, not a network share.
+  function actionError(message) {
+    const text = String(message || "");
+    if (/database is locked|database is busy|SQLITE_BUSY/i.test(text)) {
+      return `${text} — Curator could not access its database. If this repeats, move the Sidecar database path to local storage and keep backups on the network share (plugin settings).`;
+    }
+    return text;
+  }
+
   async function operation(args, timeoutMs = 30000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -192,6 +203,7 @@
       return payload.data.runPluginOperation;
     } catch (error) {
       if (error.name === "AbortError") throw new Error("Curator operation timed out");
+      error.message = actionError(error.message);
       throw error;
     } finally {
       clearTimeout(timeout);
@@ -465,6 +477,7 @@
   ];
 
   function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
+    const rated = value !== null && value !== undefined || blocked;
     return React.createElement(
       "div",
       { className: `curator-sentiment${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
@@ -474,7 +487,7 @@
         const shortLabel = score === -1 ? "--" : score === -0.5 ? "-" : score === 0 ? "0" : score === 0.5 ? "+" : "++";
         return React.createElement(Button, { key: score, size: "sm", className: `${cls}${selected ? " curator-sentiment-active" : ""}`, "aria-pressed": selected, "aria-label": label, title: label, onClick: () => onChange({ value: score, blocked: false }) }, compact ? shortLabel : label);
       }),
-      (value !== null && value !== undefined || blocked) && React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
+      (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
   }
 
@@ -511,6 +524,145 @@
     queue.push({ preference_id: uuid(), tag_id: tagId, value, blocked: !!blocked, occurred_at_ms: Date.now() });
     localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(queue));
     flushTagPreferenceQueue();
+  }
+
+  function readTermPreferenceQueue() {
+    try {
+      const value = JSON.parse(localStorage.getItem(TERM_PREFERENCE_QUEUE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  let flushingTermPreferences = false;
+  async function flushTermPreferenceQueue() {
+    if (flushingTermPreferences) return;
+    const entries = readTermPreferenceQueue();
+    if (!entries.length) return;
+    flushingTermPreferences = true;
+    try {
+      await operation({ operation: "submit_term_preferences", entries });
+      const sent = new Set(entries.map((entry) => entry.preference_id));
+      localStorage.setItem(TERM_PREFERENCE_QUEUE_KEY, JSON.stringify(readTermPreferenceQueue().filter((entry) => !sent.has(entry.preference_id))));
+      clearSlateCache();
+      scheduleModelUpdate();
+    } catch (_) {
+      // Retry on the next route, online event, or plugin page load.
+    } finally {
+      flushingTermPreferences = false;
+    }
+  }
+
+  function submitTermPreference(term, {value, blocked}) {
+    const queue = readTermPreferenceQueue();
+    queue.push({ preference_id: uuid(), term, value, blocked: !!blocked, occurred_at_ms: Date.now() });
+    localStorage.setItem(TERM_PREFERENCE_QUEUE_KEY, JSON.stringify(queue));
+    flushTermPreferenceQueue();
+  }
+
+  // RatingRows renders one sentiment row (name + compact TagSentimentControl).
+  // Shared by the external, recommendation, and Similar cards' rating panels.
+  function RatingRows({ rows, onAnswer, emptyLabel }) {
+    if (!rows.length) {
+      return React.createElement("small", null, emptyLabel);
+    }
+    return rows.map((row) =>
+      React.createElement(
+        "div",
+        { key: row.key, className: "curator-external-tag-row" },
+        React.createElement("strong", { className: "curator-external-tag-name" }, row.name),
+        React.createElement(TagSentimentControl, {
+          tag: { name: row.name },
+          value: row.direct_value,
+          blocked: row.direct_blocked,
+          compact: true,
+          onChange: (value) => onAnswer(row, value),
+        })
+      )
+    );
+  }
+
+  // RatingSection is one titled block of sentiment rows inside a rating panel.
+  function RatingSection({ title, rows, onAnswer, emptyLabel }) {
+    return React.createElement(
+      "div",
+      { className: "curator-rating-section" },
+      React.createElement("strong", { className: "curator-rating-section-title" }, `${title} (${rows.length})`),
+      React.createElement(RatingRows, { rows, onAnswer, emptyLabel })
+    );
+  }
+
+  // LocalRatingPanel is the "Rate tags & terms" expander for local cards
+  // (recommendation lanes and library Similar): the scene's classified tags
+  // (get_scene_tag_choices) plus its built description terms. The toggle
+  // renders above the expanded list, and the panel sits outside card-section
+  // so the SFW Switch contract holds.
+  function LocalRatingPanel({ sceneId }) {
+    const [open, setOpen] = React.useState(false);
+    const [tagChoices, setTagChoices] = React.useState(null);
+    const [termChoices, setTermChoices] = React.useState(null);
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState("");
+    useCuratorActivity(`local-tags-${sceneId}`, loading, "Matching local tags…");
+    async function toggle() {
+      if (open) {
+        setOpen(false);
+        return;
+      }
+      setOpen(true);
+      setLoading(true);
+      setError("");
+      try {
+        const [tagsResult, termsResult] = await Promise.all([
+          operation({ operation: "get_scene_tag_choices", scene_id: sceneId }),
+          operation({ operation: "get_scene_description_tokens", scene_id: sceneId }),
+        ]);
+        setTagChoices(tagsResult.items);
+        setTermChoices(termsResult.items);
+      } catch (failure) {
+        setError(failure.message);
+        setTagChoices([]);
+        setTermChoices([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+    function answerTag(row, {value, blocked}) {
+      submitTagPreference(row.tag_id, {value, blocked});
+      setTagChoices((current) => current.map((item) => item.tag_id === row.tag_id ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
+    }
+    function answerTerm(row, {value, blocked}) {
+      submitTermPreference(row.term, {value, blocked});
+      setTermChoices((current) => current.map((item) => item.term === row.term ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
+    }
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        Button,
+        { className: "curator-icon-action", size: "sm", variant: open ? "primary" : "secondary", title: "Rate tags & terms", "aria-label": "Rate tags & terms", "aria-pressed": open, onClick: toggle },
+        React.createElement(FontAwesomeIcon, { icon: faTag })
+      ),
+      open && React.createElement(
+        "div",
+        { className: "curator-external-tag-rating" },
+        React.createElement(
+          "div",
+          { className: "curator-external-tag-rating-header" },
+          React.createElement("strong", null, "Rate tags & terms"),
+          React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: toggle }, "Collapse")
+        ),
+        loading && React.createElement("small", { role: "status" }, "Matching local tags…"),
+        error && React.createElement("small", { className: "text-danger", role: "status" }, error),
+        !loading && !error && React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }),
+          React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })
+        )
+      )
+    );
   }
 
   function TasteProfilePanel() {
@@ -671,6 +823,7 @@
     const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
     const [tagChoices, setTagChoices] = React.useState(null);
+    const [termChoices, setTermChoices] = React.useState(null);
     const [tagLoading, setTagLoading] = React.useState(false);
     const [tagError, setTagError] = React.useState("");
     useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
@@ -713,25 +866,38 @@
       }
     }
     async function rateTags() {
-      if (tagChoices !== null) return setTagChoices(null);
+      if (tagChoices !== null) {
+        setTagChoices(null);
+        setTermChoices(null);
+        return;
+      }
       setTagLoading(true);
       setTagError("");
       try {
-        const result = await operation({
-          operation: "get_external_tag_choices",
-          tags: tags.map((tag) => ({ id: tag.id, name: tag.name })),
-        });
-        setTagChoices(result.items);
+        const [tagsResult, termsResult] = await Promise.all([
+          operation({
+            operation: "get_external_tag_choices",
+            tags: tags.map((tag) => ({ id: tag.id, name: tag.name })),
+          }),
+          operation({ operation: "get_scene_description_tokens", scene_id: item.id }),
+        ]);
+        setTagChoices(tagsResult.items);
+        setTermChoices(termsResult.items);
       } catch (failure) {
         setTagError(failure.message);
         setTagChoices([]);
+        setTermChoices([]);
       } finally {
         setTagLoading(false);
       }
     }
-    function answerTag(tag, {value, blocked}) {
-      submitTagPreference(tag.tag_id, {value, blocked});
-      setTagChoices((current) => current.map((item) => item.tag_id === tag.tag_id ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
+    function answerTag(row, {value, blocked}) {
+      submitTagPreference(row.tag_id, {value, blocked});
+      setTagChoices((current) => current.map((item) => item.tag_id === row.tag_id ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
+    }
+    function answerTerm(row, {value, blocked}) {
+      submitTermPreference(row.term, {value, blocked});
+      setTermChoices((current) => current.map((item) => item.term === row.term ? { ...item, direct_value: value, direct_blocked: !!blocked } : item));
     }
     return React.createElement(
       "article",
@@ -742,8 +908,8 @@
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
       React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, scoreDetail))); })()),
-      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, `Matching local tags (${tagChoices.length})`), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && tagChoices.length === 0 && React.createElement("small", null, "No matching local tags."), tagChoices.map((tag) => React.createElement("div", { key: tag.tag_id, className: "curator-external-tag-row" }, React.createElement("strong", { className: "curator-external-tag-name" }, tag.name), React.createElement(TagSentimentControl, { tag, value: tag.direct_value, blocked: tag.direct_blocked, compact: true, onChange: (value) => answerTag(tag, value) })))),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate matching local tags", "aria-label": "Rate matching local tags", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message))
+      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)),
+      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
   });
 
@@ -1020,6 +1186,7 @@
       React.createElement(
         "div",
         { className: "curator-card-body" },
+        scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }),
         React.createElement(
           "div",
           { className: "curator-card-details" },
@@ -1423,7 +1590,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, relationshipChips(item))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`))));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, relationshipChips(item))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`))));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -1976,7 +2143,32 @@
     return stage;
   }
 
-  function CuratorTaskIndicator({ activeJobs, activities, failure }) {
+  const TASK_MODE_LABELS = {
+    "sync-build": "Sync and build recommendations",
+    "full-sync-build": "Full sync and build recommendations",
+    build: "Rebuild recommendation model",
+    "update-model": "Apply recent Curator feedback",
+    prepare: "Prepare recommendation pages",
+    "sync-plays": "Sync recent plays",
+    backup: "Backup Curator data",
+    compact: "Compact legacy Curator data",
+    vacuum: "Vacuum compacted Curator data",
+    "expand-refresh": "Refresh Expand cache",
+  };
+
+  function taskModeLabel(job) {
+    return TASK_MODE_LABELS[job?.job_type] || "Curator task";
+  }
+
+  // doneJob is a curator_job row that just completed; the indicator shows it
+  // at 100% ("Done") until it ages out (issue #110: the final 1.0 marker
+  // leaves Stash's queue before the 5 s poll can catch it, so the bar used
+  // to freeze at the last sub-100% value and then revert to idle).
+  function CuratorTaskIndicator({ activeJobs, activities, failure, doneJob }) {
+    const running = activeJobs.length > 0 || activities.length > 0;
+    const doneTask = !running && doneJob
+      ? { key: `done-${doneJob.job_id}`, label: taskModeLabel(doneJob), progress: 1, stage: "Done" }
+      : null;
     const tasks = [
       ...activeJobs.map((job) => ({
         key: `job-${job.id}`,
@@ -1985,18 +2177,20 @@
         stage: curatorTaskStage(job),
       })),
       ...activities.map((activity) => ({ ...activity, stage: activity.label })),
+      ...(doneTask ? [doneTask] : []),
     ];
-    const running = tasks.length > 0;
     const primary = tasks[0];
-    const state = running ? "running" : failure ? "failed" : "idle";
+    const state = running ? "running" : failure ? "failed" : doneTask ? "done" : "idle";
     const progress = primary?.progress ?? null;
-    const showTaskDetails = activeJobs.length > 0 || state === "failed";
+    const showTaskDetails = running || state === "failed" || state === "done";
     const detail = tasks.map((task) => `${task.label}: ${task.stage}`).join("; ");
     const label = running
       ? `${tasks.length} Curator task${tasks.length === 1 ? "" : "s"} running: ${detail}`
       : failure
-        ? `Last Curator task failed: ${failure.error || "Open Tasks for details"}`
-        : "Curator is idle";
+        ? `Last Curator task failed: ${actionError(failure.error || "Open Tasks for details")}`
+        : doneTask
+          ? `Curator task complete: ${doneTask.label}`
+          : "Curator is idle";
     return React.createElement(
       NavLink,
       { className: `curator-task-indicator curator-task-indicator-${state}`, to: "/settings?tab=tasks", title: `${label}. Open Tasks`, "aria-label": `${label}. Open Tasks` },
@@ -2006,15 +2200,15 @@
         showTaskDetails && React.createElement(
           "span",
           { className: "curator-task-progress-meta" },
-          React.createElement("strong", null, running ? progress === null ? "Working" : `${Math.round(progress * 100)}%` : "Failed"),
+          React.createElement("strong", null, running ? progress === null ? "Working" : `${Math.round(progress * 100)}%` : doneTask ? "Done" : "Failed"),
           running && tasks.length > 1 && React.createElement("span", null, `${tasks.length} tasks`)
         ),
         React.createElement(
           "span",
           { className: `curator-task-progress-track${running && progress === null ? " curator-task-progress-indeterminate" : ""}` },
-          React.createElement("span", { className: "curator-task-progress-fill", style: running && progress !== null ? { width: `${Math.round(progress * 100)}%` } : undefined })
+          React.createElement("span", { className: "curator-task-progress-fill", style: (running || doneTask) && progress !== null ? { width: `${Math.round(progress * 100)}%` } : undefined })
         ),
-        showTaskDetails && React.createElement("span", { className: "curator-task-progress-detail" }, running ? primary?.stage : failure.error || "Open Tasks for details")
+        showTaskDetails && React.createElement("span", { className: "curator-task-progress-detail" }, running ? primary?.stage : doneTask ? "Done" : failure.error || "Open Tasks for details")
       )
     );
   }
@@ -2045,7 +2239,12 @@
       refreshStatus();
     }, []);
     React.useEffect(() => {
-      if (!health?.active_jobs?.length && !health?.active_job) return undefined;
+      // One extra poll shortly after the last active job leaves Stash's queue
+      // so the completed curator_job row (and its summary) is picked up.
+      if (!health?.active_jobs?.length && !health?.active_job) {
+        const timer = setTimeout(refreshStatus, 5000);
+        return () => clearTimeout(timer);
+      }
       const timer = setInterval(refreshStatus, 5000);
       return () => clearInterval(timer);
     }, [Boolean(health?.active_jobs?.length || health?.active_job)]);
@@ -2082,6 +2281,21 @@
     const activeJobs = health?.active_jobs || (health?.active_job ? [health.active_job] : []);
     const activeJob = activeJobs[0];
     const latestFailure = !activeJobs.length && jobs[0]?.state === "failed" ? jobs[0] : null;
+    const recentlyDone =
+      !activeJobs.length && jobs[0]?.state === "complete"
+        ? jobs[0]
+        : null;
+    const [doneExpiredAt, setDoneExpiredAt] = React.useState(0);
+    React.useEffect(() => {
+      if (!recentlyDone) return undefined;
+      const timer = setTimeout(
+        () => setDoneExpiredAt(Date.now()),
+        Math.max(0, recentlyDone.finished_at_ms + 15_000 - Date.now())
+      );
+      return () => clearTimeout(timer);
+    }, [recentlyDone?.job_id]);
+    const doneJob =
+      recentlyDone && recentlyDone.finished_at_ms > doneExpiredAt ? recentlyDone : null;
     const setupChecklist = health && !health.ready && React.createElement(
       "section",
       { className: "curator-setup-checklist", "aria-labelledby": "curator-setup-heading" },
@@ -2113,7 +2327,7 @@
           "div",
           { className: "curator-status", role: "status" },
           React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
-          React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure }),
+          React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
           React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
           React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
           health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))

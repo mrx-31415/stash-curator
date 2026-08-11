@@ -16,6 +16,10 @@ from typing import Any
 
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, PerformerProfile, performer_similarity
+from curator.features.builder import (
+    _DESCRIPTION_STOPWORDS,
+    _DESCRIPTION_TOKEN_RE,
+)
 from curator.features.measurements import CUP_ALIASES, augmentation_category
 from curator.features.profiles import (
     ProfileValue,
@@ -39,6 +43,21 @@ from curator.taxonomy import (
 
 STASHDB = "https://stashdb.org/graphql"
 PERFORMER_HUNT_LIMIT = 1_000
+
+
+def _description_tokens(details: str | None) -> frozenset[str]:
+    """Tokenize a description with the model's tokenizer pipeline: [a-zA-Z]{3,}
+    matches, lowercased, stopword-filtered, per-scene deduped (features/builder.py
+    desc-term extraction, without the library-wide TF-IDF selection). Tokens the
+    model never qualified have no affinity and simply contribute nothing."""
+    tokens: set[str] = set()
+    for token in _DESCRIPTION_TOKEN_RE.findall(str(details or "")):
+        token = token.lower()
+        if token not in _DESCRIPTION_STOPWORDS:
+            tokens.add(token)
+    return frozenset(tokens)
+
+
 SCENES = """
 query CuratorExpandScenes($input: SceneQueryInput!) {
   queryScenes(input: $input) {
@@ -236,6 +255,11 @@ class ExpandService:
         progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, object]:
         fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
+        # The taxonomy check and seed load used to be markerless: on a large
+        # library the bar sat at 5% for the whole stretch. The 50/150 ticks
+        # bracket both phases (issue #110).
+        if progress:
+            progress(50, 1_000)
         taxonomy_refreshed = self._refresh_taxonomy(client, fetched_at_ms)
         if progress:
             progress(100, 1_000)
@@ -247,6 +271,8 @@ class ExpandService:
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
         feature_version = str(model[0])
+        if progress:
+            progress(150, 1_000)
         seeds = self._seeds(model_id, feature_version, links)
         if progress:
             progress(200, 1_000)
@@ -480,6 +506,7 @@ class ExpandService:
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         blocked_groups = self._blocked_tag_name_groups()
+        blocked_terms = self._blocked_terms()
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
@@ -504,6 +531,7 @@ class ExpandService:
                 include_groups=include_groups,
                 exclude_groups=exclude_groups,
                 blocked_groups=blocked_groups,
+                blocked_terms=blocked_terms,
             )
         ]
         items.sort(
@@ -579,6 +607,7 @@ class ExpandService:
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         blocked_groups = self._blocked_tag_name_groups()
+        blocked_terms = self._blocked_terms()
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'",
             (entity_type,),
@@ -620,6 +649,7 @@ class ExpandService:
                 include_groups,
                 exclude_groups,
                 blocked_groups=blocked_groups,
+                blocked_terms=blocked_terms,
             ):
                 continue
             rows.append(
@@ -665,6 +695,7 @@ class ExpandService:
         include_groups: tuple[frozenset[str], ...] = (),
         exclude_groups: tuple[frozenset[str], ...] = (),
         blocked_groups: tuple[frozenset[str], ...] = (),
+        blocked_terms: frozenset[str] = frozenset(),
     ) -> bool:
         tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
         cast = {
@@ -674,6 +705,7 @@ class ExpandService:
         studio = str((payload.get("studio") or {}).get("name") or "").casefold()
         return (
             not any(group & tags for group in blocked_groups)
+            and not (_description_tokens(payload.get("details")) & blocked_terms)
             and (not include_tags or all(group & tags for group in include_groups))
             and not any(group & tags for group in exclude_groups)
             and (not performer_names or all(value.casefold() in cast for value in performer_names))
@@ -702,6 +734,17 @@ class ExpandService:
                     sorted(blocked_ids),
                 )
             ),
+        )
+
+    def _blocked_terms(self) -> frozenset[str]:
+        """Every blocked description term. Remote scenes whose description
+        tokens include one are excluded (tokenized with the model's pipeline;
+        the term->scene mapping has no SQL join for remote candidates)."""
+        return frozenset(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT term FROM direct_term_preference WHERE blocked=1"
+            )
         )
 
     @staticmethod
@@ -1214,6 +1257,7 @@ class ExpandService:
         raw_items = result["items"]
         assert isinstance(raw_items, list)
         blocked_groups = self._blocked_tag_name_groups()
+        blocked_terms = self._blocked_terms()
         filtered_items = [
             item
             for item in raw_items
@@ -1223,7 +1267,9 @@ class ExpandService:
             filtered_items = [
                 item
                 for item in filtered_items
-                if self._scene_matches(item["payload"], blocked_groups=blocked_groups)
+                if self._scene_matches(
+                    item["payload"], blocked_groups=blocked_groups, blocked_terms=blocked_terms
+                )
             ]
         filtered_items = filtered_items[:count]
         if entity_type == "performer":
@@ -1767,6 +1813,19 @@ class ExpandService:
             tag_affinity.setdefault(f"name:{str(row['name']).casefold()}", value)
             if row["stash_id"]:
                 tag_affinity.setdefault(f"id:{row['stash_id']}", value)
+        term_affinity: dict[str, float] = {}
+        for row in self.connection.execute(
+            """
+            SELECT d.name, a.affinity * a.confidence AS value
+            FROM feature_affinity a JOIN feature_definition d USING(feature_id)
+            WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
+              AND d.name LIKE 'desc:%'
+            """,
+            (model_id, feature_version),
+        ):
+            term_affinity[str(row["name"])[len("desc:") :]] = float(row["value"])
+        for row in self.connection.execute("SELECT term, value FROM direct_term_preference"):
+            term_affinity.setdefault(str(row["term"]), float(row["value"]))
         external_studio_appeal = {
             links["studios"][str(row["studio_id"])]: float(row["appeal"])
             for row in self.connection.execute(
@@ -1802,6 +1861,15 @@ class ExpandService:
                 reverse=True,
             )[:5]
             tag_value = math.tanh(sum(tag_signals))
+            term_signals = sorted(
+                (
+                    term_affinity.get(token, 0.0)
+                    for token in _description_tokens(scene.get("details"))
+                ),
+                key=abs,
+                reverse=True,
+            )[:5]
+            term_value = math.tanh(sum(term_signals))
             cast = [item["performer"] for item in scene.get("performers", [])]
             cast_weight = self._cast_weight(len(cast))
             identity_evidence = max(
@@ -1867,7 +1935,11 @@ class ExpandService:
                 )
                 performer_rows[external_id]["sources"].update(sources[str(scene["id"])])
             score = (
-                0.45 * tag_value + 0.25 * identity + 0.10 * studio_value + 0.20 * similarity_value
+                0.40 * tag_value
+                + 0.10 * term_value
+                + 0.25 * identity
+                + 0.10 * studio_value
+                + 0.15 * similarity_value
             )
             payload = {
                 **scene,
@@ -1875,7 +1947,9 @@ class ExpandService:
                 "performers": [
                     {"performer": performer_rows[str(item["id"])]["payload"]} for item in cast
                 ],
-                "why": self._why(scene, tag_affinity, identity, similarity_value, len(cast)),
+                "why": self._why(
+                    scene, tag_affinity, term_affinity, identity, similarity_value, len(cast)
+                ),
             }
             scene_rows.append(
                 {
@@ -2070,6 +2144,7 @@ class ExpandService:
     def _why(
         scene: dict[str, Any],
         tag_affinity: dict[str, float],
+        term_affinity: dict[str, float],
         identity: float,
         similarity: float,
         cast_count: int = 1,
@@ -2083,6 +2158,15 @@ class ExpandService:
             reverse=True,
         )[:3]
         reasons = [name for _, name in tags]
+        terms = sorted(
+            (
+                (term_affinity.get(token, 0.0), token)
+                for token in _description_tokens(scene.get("details"))
+                if term_affinity.get(token, 0.0) > 0
+            ),
+            reverse=True,
+        )[:2]
+        reasons.extend(term for _, term in terms)
         if identity > 0:
             reasons.append("a performer you already enjoy")
         elif similarity > 0:

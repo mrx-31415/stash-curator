@@ -99,6 +99,75 @@ def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_pat
     assert bool(row[1]) is True
 
 
+def test_term_preferences_validate_replace_clear_and_ignore_stale_retries(
+    tmp_path: Path,
+) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    store = InteractionStore(connection)
+    positive = {
+        "preference_id": "term-positive",
+        "term": "romantic",
+        "value": 1,
+        "occurred_at_ms": 20,
+    }
+    stale = {**positive, "preference_id": "term-stale", "value": -1, "occurred_at_ms": 10}
+    clear = {**positive, "preference_id": "term-clear", "value": None, "occurred_at_ms": 30}
+
+    assert store.submit_term_preferences([positive]) == 1
+    assert store.submit_term_preferences([positive]) == 0
+    assert store.submit_term_preferences([stale]) == 1
+    assert (
+        connection.execute(
+            "SELECT value FROM direct_term_preference WHERE term='romantic'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert store.submit_term_preferences([clear]) == 1
+    assert (
+        connection.execute("SELECT 1 FROM direct_term_preference WHERE term='romantic'").fetchone()
+        is None
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM direct_term_preference_history WHERE term='romantic'"
+        ).fetchone()[0]
+        == 3
+    )
+
+    with pytest.raises(ValueError, match="five-point"):
+        store.submit_term_preferences([{**positive, "preference_id": "bad", "value": 0.25}])
+    with pytest.raises(ValueError, match="token"):
+        store.submit_term_preferences([{**positive, "preference_id": "bad-term", "term": "a!"}])
+    with pytest.raises(ValueError, match="required"):
+        store.submit_term_preferences([{**positive, "preference_id": ""}])
+
+    # Terms are normalized to lowercase before storage.
+    assert (
+        store.submit_term_preferences([{**positive, "preference_id": "case", "term": "ROMANTIC"}])
+        == 1
+    )
+    assert (
+        connection.execute("SELECT 1 FROM direct_term_preference WHERE term='romantic'").fetchone()
+        is not None
+    )
+
+    blocked = {
+        "preference_id": "term-blocked",
+        "term": "romantic",
+        "value": 1,
+        "blocked": True,
+        "occurred_at_ms": 40,
+    }
+    assert store.submit_term_preferences([blocked]) == 1
+    row = connection.execute(
+        "SELECT value, blocked FROM direct_term_preference WHERE term='romantic'"
+    ).fetchone()
+    assert row is not None
+    assert float(row[0]) == -1.0
+    assert bool(row[1]) is True
+
+
 def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     store = InteractionStore(connection)

@@ -67,7 +67,13 @@ the Python code and the per-platform binaries.
 Curator's settings live with Stash's plugin settings. Useful early choices are:
 
 - **Sidecar database path:** set this before first use if plugin updates or removal
-  may replace the plugin data directory.
+  may replace the plugin data directory. SQLite does not work reliably on network
+  filesystems (NFS/SMB shares): the working sidecar must live on **local** storage.
+  If your plugin data directory is on a share, point this at a local directory and
+  use the **Backup directory** setting for durable copies (below).
+- **Backup directory:** where **Backup Curator data** writes timestamped snapshots.
+  Leave empty to write beside the sidecar. A network share is a fine place for
+  backups — it is the *working* database that must stay local.
 - **Results per page:** defaults to 20 for recommendations, Similar, and Expand.
 - **Disable recommendation variety:** leave unchecked to avoid repeating performers,
   studios, and similar content; check it for score-first ordering.
@@ -101,8 +107,17 @@ database migrations to finish, then load Curator and confirm the model is ready.
 ## Back up and uninstall safely
 
 Run **Backup Curator data** from Stash's Tasks page. The timestamped SQLite backup is
-written beside the sidecar. Keep a copy outside the plugin directory before an
-update or uninstall if that directory may be replaced.
+written beside the sidecar, or into the configured **Backup directory**. The backup
+uses SQLite's backup API, so it is a consistent snapshot even while the sidecar is
+in WAL mode — safe to keep on a network share. Keep a copy outside the plugin
+directory before an update or uninstall if that directory may be replaced.
+
+If your plugin data directory lives on a network share, the recommended layout is
+two paths: **Sidecar database path** on local storage (the hot, lock-contended
+files) and **Backup directory** on the share (durable, crash-consistent snapshots).
+A live WAL database must never be file-copied while Stash is running; restore only
+through the Curator **Backups** view, which uses the backup API and validates the
+snapshot first.
 
 The Curator **Backups** view can also create, restore, and delete recognized backups.
 Restoring first creates a safety copy of the current sidecar, then invalidates the

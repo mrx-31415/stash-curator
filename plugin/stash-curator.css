@@ -271,6 +271,10 @@
   white-space: nowrap;
 }
 
+.curator-sentiment-clear-placeholder {
+  visibility: hidden;
+}
+
 .curator-sentiment .btn-sm {
   font-size: 0.75rem;
   padding: 0.15rem 0.4rem;
@@ -375,6 +379,17 @@
   font-size: 0.7rem;
   min-width: 1.45rem;
   padding: 0.12rem 0.25rem;
+}
+
+.curator-rating-section {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.curator-rating-section-title {
+  color: var(--text-muted, #adb5bd);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .curator-profiling-toolbar {
@@ -600,6 +615,15 @@
 .curator-task-indicator-failed .curator-task-progress-fill {
   background: #dc3545;
   width: 100%;
+}
+
+.curator-task-indicator-done .curator-task-progress-fill {
+  background: var(--success, #198754);
+  width: 100%;
+}
+
+.curator-task-indicator-done .curator-task-progress-meta strong {
+  color: var(--success, #198754);
 }
 
 .curator-task-indicator-idle .curator-task-progress-fill {

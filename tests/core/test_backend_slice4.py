@@ -235,6 +235,54 @@ def make_slice4_sidecar(path: Path) -> None:
         )
         connection.execute(
             """
+            INSERT INTO feature_definition(
+                feature_id, feature_version, family, name, provenance, metadata_json
+            ) VALUES
+                ('fd-d1', ?, 'content', 'desc:anal', 'seed', '{"document_frequency": 7}'),
+                ('fd-d2', ?, 'content', 'desc:blonde', 'seed', '{"document_frequency": 3}'),
+                ('fd-d3', ?, 'content', 'desc:solo', 'seed', '{"document_frequency": 9}')
+            """,
+            (FEATURE_VERSION, FEATURE_VERSION, FEATURE_VERSION),
+        )
+        connection.execute(
+            """
+            INSERT INTO feature_affinity(
+                feature_id, model_id, affinity, confidence, effective_support,
+                distinct_scene_count
+            ) VALUES
+                ('fd-d1', ?, 0.8, 0.9, 0.6, 2),
+                ('fd-d2', ?, -0.2, 0.4, 0.2, 1),
+                ('fd-d3', ?, 0.5, 0.7, 0.4, 3)
+            """,
+            (MODEL_ID, MODEL_ID, MODEL_ID),
+        )
+        connection.execute(
+            """
+            INSERT INTO entity_feature(
+                feature_version, entity_type, entity_id, feature_id, value, confidence
+            ) VALUES
+                (?, 'scene', 's1', 'fd-d1', 0.9, 1.0),
+                (?, 'scene', 's1', 'fd-d3', 0.5, 1.0),
+                (?, 'scene', 's2', 'fd-d2', 0.4, 1.0)
+            """,
+            (FEATURE_VERSION, FEATURE_VERSION, FEATURE_VERSION),
+        )
+        connection.execute(
+            """
+            INSERT INTO direct_term_preference_history(
+                preference_id, term, value, occurred_at_ms, blocked
+            ) VALUES ('pref-d1', 'anal', 0.5, 1, 0), ('pref-d2', 'solo', 0.0, 1, 1)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO direct_term_preference(
+                term, preference_id, value, occurred_at_ms, blocked
+            ) VALUES ('anal', 'pref-d1', 0.5, 1, 0), ('solo', 'pref-d2', 0.0, 1, 1)
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO entity_feature(
                 feature_version, entity_type, entity_id, feature_id, value, confidence
             ) VALUES
@@ -364,6 +412,144 @@ def test_external_tag_choices_validation_errors(
                 {"id": "", "name": "   "},
             ],
         ),
+        slice4_sidecar,
+    )
+
+
+# ── get_scene_tag_choices ───────────────────────────────────────────────────
+
+
+def test_scene_tag_choices_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    # s1 carries t1 (blonde, direct 0.5), t2 (anal), t4 (ponytail): the
+    # classified scene tags sorted by name with their direct preferences.
+    raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="s1")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+def test_scene_tag_choices_unclassified_and_unknown(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    # s3 carries only t3 (solo, blocked) — classified, with its preference.
+    raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="s3")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+    # Unknown scene and missing scene_id both error identically.
+    raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="ghost")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+    raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+# ── get_scene_description_tokens ────────────────────────────────────────────
+
+
+def test_scene_description_tokens_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    # s1 has desc:anal (df 7, direct 0.5) and desc:solo (df 9, blocked).
+    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="s1")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+def test_scene_description_tokens_empty_and_unknown(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    # s3 has no desc features -> empty items.
+    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="s3")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="ghost")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="")
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+# ── submit_term_preferences ─────────────────────────────────────────────────
+
+
+def test_submit_term_preferences_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    raw = payload(
+        "submit_term_preferences",
+        slice4_sidecar,
+        stub_stash,
+        entries=[
+            # overwrite the seeded anal preference
+            {"preference_id": "pref-n1", "term": "anal", "value": -0.5, "occurred_at_ms": 200},
+            # clear a term with no current preference (no-op upsert path)
+            {"preference_id": "pref-n2", "term": "blonde", "value": None, "occurred_at_ms": 300},
+            # term normalization: "HARDcore" -> "hardcore", a valid token
+            {"preference_id": "pref-n3", "term": "HARDcore", "value": 1.0, "occurred_at_ms": 400},
+        ],
+    )
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+def test_submit_term_preferences_blocked_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    raw = payload(
+        "submit_term_preferences",
+        slice4_sidecar,
+        stub_stash,
+        entries=[
+            {
+                "preference_id": "pref-n4",
+                "term": "anal",
+                "value": 1.0,
+                "blocked": True,
+                "occurred_at_ms": 250,
+            }
+        ],
+    )
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+def test_submit_term_preferences_validation_errors(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    # Off-scale value.
+    assert_slice4_identical(
+        binary,
+        payload(
+            "submit_term_preferences",
+            slice4_sidecar,
+            stub_stash,
+            entries=[
+                {"preference_id": "pref-n5", "term": "anal", "value": 0.3, "occurred_at_ms": 100}
+            ],
+        ),
+        slice4_sidecar,
+    )
+    # Non-token term (too short / punctuation).
+    assert_slice4_identical(
+        binary,
+        payload(
+            "submit_term_preferences",
+            slice4_sidecar,
+            stub_stash,
+            entries=[
+                {"preference_id": "pref-n6", "term": "a!", "value": 0.5, "occurred_at_ms": 100}
+            ],
+        ),
+        slice4_sidecar,
+    )
+    # Missing preference_id and negative occurred_at_ms.
+    assert_slice4_identical(
+        binary,
+        payload(
+            "submit_term_preferences",
+            slice4_sidecar,
+            stub_stash,
+            entries=[{"preference_id": "", "term": "anal", "value": 0.5, "occurred_at_ms": -1}],
+        ),
+        slice4_sidecar,
+    )
+    # Non-list entries.
+    assert_slice4_identical(
+        binary,
+        payload("submit_term_preferences", slice4_sidecar, stub_stash, entries="nope"),
         slice4_sidecar,
     )
 
@@ -578,7 +764,7 @@ def test_reset_removes_core_and_artifacts_identically(
     assert py[0] == go[0], f"stdout differs:\npython: {py[0]!r}\ngo:     {go[0]!r}"
     assert py[2] == go[2] == ["curator-derived", "curator.sqlite3"]
     assert py[3] == go[3] == ["junk.txt"]
-    assert py[4] == go[4] == 27
+    assert py[4] == go[4] == 28
     assert py[5] == go[5] == "ok"
 
 

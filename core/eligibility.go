@@ -4,6 +4,7 @@
 package main
 
 import (
+	"database/sql"
 	"math"
 	"sort"
 	"strings"
@@ -143,6 +144,36 @@ AND reversed_at_ms IS NULL AND (expires_at_ms IS NULL OR expires_at_ms > ?)`, re
 		return nil, err
 	}
 	sort.Strings(blockedTagIDs)
+	blockedTerms := make([]string, 0)
+	rows, err = db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var term string
+		if err := rows.Scan(&term); err != nil {
+			return nil, err
+		}
+		blockedTerms = append(blockedTerms, term)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(blockedTerms)
+	// Blocked-term exclusion maps terms to scenes through the built model's
+	// entity_feature desc rows (no scene_tag join: a scene "carries" a term
+	// only when the model built a desc:<term> feature for it).
+	termFeatureVersion := ""
+	if modelID, err := currentModelID(db); err == nil && modelID != "" {
+		err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`,
+			modelID).Scan(&termFeatureVersion)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, err
+	}
 
 	notNowMs := int64(notNowDays * 86_400_000)
 	available := make(map[string]bool)
@@ -180,6 +211,36 @@ WHERE available=1 AND scene_id IN (`+placeholders+`)`, args...)
 			}
 			rows, err = db.Query(`SELECT DISTINCT scene_id FROM scene_tag
 WHERE scene_id IN (`+placeholders+`) AND tag_id IN (`+inClause(len(blockedTagIDs))+`)`, tagArgs...)
+			if err != nil {
+				return nil, err
+			}
+			for rows.Next() {
+				var sceneID string
+				if err := rows.Scan(&sceneID); err != nil {
+					return nil, err
+				}
+				blockedScenes[sceneID] = true
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if len(blockedTerms) > 0 && termFeatureVersion != "" {
+			termArgs := make([]any, 0, len(chunk)+len(blockedTerms)+1)
+			termArgs = append(termArgs, termFeatureVersion)
+			for _, sceneID := range chunk {
+				termArgs = append(termArgs, sceneID)
+			}
+			for _, term := range blockedTerms {
+				termArgs = append(termArgs, "desc:"+term)
+			}
+			rows, err = db.Query(`SELECT DISTINCT ef.entity_id FROM entity_feature ef
+JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+WHERE ef.feature_version=? AND ef.entity_type='scene'
+  AND ef.entity_id IN (`+placeholders+`)
+  AND fd.family='content'
+  AND fd.name IN (`+inClause(len(blockedTerms))+`)`, termArgs...)
 			if err != nil {
 				return nil, err
 			}
