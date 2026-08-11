@@ -64,6 +64,12 @@ jobs:
         run: uv sync --locked
       - name: Differential gate (binary vs numpy)
         run: scripts/verify core
+      - name: Upload core binary for diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: curator-core-ci
+          path: core/bin/curator-core
 
   integration:
     name: Integration (Playwright)
