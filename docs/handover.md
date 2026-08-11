@@ -64,7 +64,7 @@ math and stored floats may differ from Python by last bits. The remaining
 slice ports the frontend parity leftovers (unported ops still served by the
 Python fallback) and removes the Python fallback paths. Full handover +
 first agent prompt:
-[`handover-go-backend-slice3.md`](handover-go-backend-slice3.md).
+[`handover-go-backend-slice4.md`](handover-go-backend-slice4.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):
 
