@@ -24,7 +24,7 @@ func sceneRecovery(daysSincePlayed float64) float64 {
 	}
 	exponent := -(daysSincePlayed - cooldownCenterDays) / cooldownWidthDays
 	exponent = math.Max(-60.0, math.Min(60.0, exponent))
-	return 1 / (1 + pyExp(exponent))
+	return 1 / (1 + math.Exp(exponent))
 }
 
 // eligibilityResult mirrors the {"eligible": bool, "reasons": [...]} value

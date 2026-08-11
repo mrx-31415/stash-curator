@@ -679,8 +679,8 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			jvKey("shared_tags", jvArr()),
 			jvKey("shared_performer_ids", sharedIDsJSON),
 			jvKey("score_breakdown", jvObj(
-				jvKey("similarity", jvFloat(pyRoundTo(0.7*similarity, 4))),
-				jvKey("appeal", jvFloat(pyRoundTo(0.3*appeal, 4))),
+				jvKey("similarity", jvFloat(math.Round(0.7*similarity*1e4)/1e4)),
+				jvKey("appeal", jvFloat(math.Round(0.3*appeal*1e4)/1e4)),
 			)),
 		)
 		results = append(results, &similarityResult{
@@ -720,9 +720,9 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			cp.rankScore = item.rankScore + multiHopBlendWeight*reachScore
 			details := jVal{kind: jObj, obj: append([]jPair(nil), item.details.obj...)}
 			details.set("score_breakdown", jvObj(
-				jvKey("similarity", jvFloat(pyRoundTo(0.7*item.similarity, 4))),
-				jvKey("appeal", jvFloat(pyRoundTo(0.3*item.appeal, 4))),
-				jvKey("multi_hop", jvFloat(pyRoundTo(multiHopBlendWeight*reachScore, 4))),
+				jvKey("similarity", jvFloat(math.Round(0.7*item.similarity*1e4)/1e4)),
+				jvKey("appeal", jvFloat(math.Round(0.3*item.appeal*1e4)/1e4)),
+				jvKey("multi_hop", jvFloat(math.Round(multiHopBlendWeight*reachScore*1e4)/1e4)),
 			))
 			if reached {
 				via, err := mh.multiHopVia(sceneID, item.entityID)
@@ -1009,7 +1009,7 @@ func (s *similarityService) performers(performerID string, count int64, gender s
 		}
 		appeal := 0.5
 		if len(values) > 0 {
-			appeal = neumaierSum(values) / float64(len(values))
+			appeal = sumFloats(values) / float64(len(values))
 		}
 		blocks := jvObj()
 		for _, block := range sortedFloatKeysM(match.blocks) {
@@ -1097,13 +1097,12 @@ ORDER BY ef.entity_id, ef.feature_id`, s.featureVersion)
 			if numericBlocks[block] {
 				continue
 			}
-			// profiles.py: norm = sqrt(sum(value**2 ...)): the **2 is
-			// glibc pow(x, 2.0) (pySquare) and sum() is Neumaier.
+			// profiles.py: norm = sqrt(sum(value**2 ...)).
 			squares := make([]float64, 0, len(values))
 			for _, item := range values {
-				squares = append(squares, pySquare(item.value))
+				squares = append(squares, item.value*item.value)
 			}
-			profile.norms[block] = math.Sqrt(neumaierSum(squares))
+			profile.norms[block] = math.Sqrt(sumFloats(squares))
 		}
 	}
 	return profiles, nil

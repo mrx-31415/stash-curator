@@ -227,12 +227,20 @@ def _assert_plugin_matches_direct(
     # Stash re-marshals plugin stdout through a Go struct, which re-sorts JSON
     # keys, so through the plugin interface the comparison is value equality.
     # Byte-level key order is already covered by the stdout differential
-    # harness (tests/core) where the raw output is compared directly.
-    assert plugin == direct, (
-        f"plugin output for {operation} differs from the direct backend:\n"
-        f"plugin: {json.dumps(plugin, separators=(',', ':'))}\n"
-        f"direct: {json.dumps(direct, separators=(',', ':'))}"
-    )
+    # harness (tests/core) where the raw output is compared directly. Stored
+    # floats may differ by last bits across libm/CPU environments, so compare
+    # them within tolerance.
+    from tests.core.compare import assert_equivalent
+
+    try:
+        assert_equivalent(plugin, direct)
+    except AssertionError as error:
+        raise AssertionError(
+            f"plugin output for {operation} differs from the direct backend:\n"
+            f"plugin: {json.dumps(plugin, separators=(',', ':'))}\n"
+            f"direct: {json.dumps(direct, separators=(',', ':'))}\n"
+            f"{error}"
+        ) from error
 
 
 PORTED_OPS: list[tuple[str, dict[str, object], tuple[str, ...], tuple[str, ...]]] = [

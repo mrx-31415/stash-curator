@@ -281,6 +281,76 @@ func (v jVal) writeJSON(b *strings.Builder) {
 	}
 }
 
+// writeJSONRaw is writeJSON with raw-UTF8 string escaping (ensure_ascii=False).
+func (v jVal) writeJSONRaw(b *strings.Builder) {
+	switch v.kind {
+	case jNull:
+		b.WriteString("null")
+	case jBool:
+		if v.b {
+			b.WriteString("true")
+		} else {
+			b.WriteString("false")
+		}
+	case jNum:
+		writeJSONNumber(b, v.num)
+	case jStr:
+		writeJSONStringRaw(b, v.s)
+	case jArr:
+		b.WriteByte('[')
+		for i, item := range v.arr {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			item.writeJSONRaw(b)
+		}
+		b.WriteByte(']')
+	case jObj:
+		b.WriteByte('{')
+		for i, p := range v.obj {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			writeJSONStringRaw(b, p.key)
+			b.WriteByte(':')
+			p.val.writeJSONRaw(b)
+		}
+		b.WriteByte('}')
+	}
+}
+
+// writeJSONStringRaw writes a string like writeJSONString but passes code
+// points >= U+0080 through raw (Python ensure_ascii=False); control
+// characters keep their short forms / \uXXXX escapes.
+func writeJSONStringRaw(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+}
+
 func (v jVal) writeJSONSorted(b *strings.Builder) {
 	switch v.kind {
 	case jNull, jBool, jNum, jStr:
@@ -308,6 +378,15 @@ func (v jVal) writeJSONSorted(b *strings.Builder) {
 		}
 		b.WriteByte('}')
 	}
+}
+
+// marshalCompactUTF8 serializes like marshalCompact but with Python's
+// ensure_ascii=False: code points >= U+0080 pass through raw (control
+// characters still use the short forms / \uXXXX escapes).
+func (v jVal) marshalCompactUTF8() string {
+	var b strings.Builder
+	v.writeJSONRaw(&b)
+	return b.String()
 }
 
 // writeJSONString writes a string with Python ensure_ascii escaping: control
@@ -482,6 +561,26 @@ func (v jVal) asString() string {
 		return "None"
 	}
 	return v.marshalCompact()
+}
+
+// kindName mirrors Python's type(value).__name__ for decoded JSON values.
+func (v jVal) kindName() string {
+	switch v.kind {
+	case jObj:
+		return "dict"
+	case jArr:
+		return "list"
+	case jStr:
+		return "str"
+	case jBool:
+		return "bool"
+	case jNull:
+		return "NoneType"
+	}
+	if strings.ContainsAny(v.num, ".eE") {
+		return "float"
+	}
+	return "int"
 }
 
 // pyRound implements Python's round() (round half to even) for float64 inputs.
