@@ -479,6 +479,7 @@ func whyForShared(tags jVal, shared map[string]bool, exactPerformer bool, perfor
 
 // profileMatchFull mirrors ExpandService._profile_match, also returning the
 // per-block similarities and weights for the why attributes.
+//go:noinline
 func profileMatchFull(left, right *performerProfile, weights map[string]float64) (float64, float64, map[string]float64, map[string]float64) {
 	total, sims, used := performerSimilarity(left, right, weights)
 	relevant := 0.0

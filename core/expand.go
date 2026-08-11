@@ -1563,6 +1563,7 @@ GROUP BY p.performer_id`, modelID)
 
 // profileMatch mirrors ExpandService._profile_match: combined similarity
 // scaled by profile coverage.
+//go:noinline
 func profileMatch(left, right *performerProfile, weights map[string]float64) (float64, float64) {
 	total, _, used := performerSimilarity(left, right, weights)
 	relevant := 0.0
