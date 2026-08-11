@@ -151,7 +151,9 @@ class _StubSync(BaseHTTPRequestHandler):
                 }
             }
         if op == "CuratorTags":
-            return {"data": {"findTags": {"count": 2, "tags": [_tag("t1", "Familiar Scenario"), _tag("t2", "Augmentation")]}}}
+            return {"data": {"findTags": {"count": 2, "tags": [
+                _tag("t1", "Familiar Scenario"), _tag("t2", "Augmentation")
+            ]}}}
         if op == "CuratorStudios":
             return {
                 "data": {
