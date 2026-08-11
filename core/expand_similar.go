@@ -253,7 +253,7 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 				value := targetContent[name]
 				contentValues = append(contentValues, value*pythonFloatOr(candidateContent.get(name), 0))
 			}
-			content = neumaierSum(contentValues)
+			content = sumFloats(contentValues)
 			targetPerformerSet := map[string]bool{}
 			for _, id := range targetPerformers {
 				targetPerformerSet[id] = true
@@ -494,7 +494,7 @@ func profileMatchFull(left, right *performerProfile, weights map[string]float64)
 		for _, value := range used {
 			weightValues = append(weightValues, value)
 		}
-		coverage = math.Min(1.0, neumaierSum(weightValues)/relevant)
+		coverage = math.Min(1.0, sumFloats(weightValues)/relevant)
 	}
 	return total * math.Sqrt(coverage), coverage, sims, used
 }

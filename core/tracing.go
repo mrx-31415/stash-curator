@@ -243,18 +243,41 @@ type tracedDB struct {
 func (d *tracedDB) Conn(ctx context.Context) (*sql.Conn, error) { return d.db.Conn(ctx) }
 func (d *tracedDB) Close() error                                { return d.db.Close() }
 
+// annotateBindError appends the failing SQL to database/sql parameter
+// conversion errors so a jVal slipping into args is diagnosable from the
+// task error alone.
+func annotateBindError(err error, query string) error {
+	if err == nil || !strings.Contains(err.Error(), "unsupported type") {
+		return err
+	}
+	return fmt.Errorf("%w\nstatement: %s", err, query)
+}
+
+// annotateSQLError appends the failing SQL to driver errors (SQL logic
+// errors like missing columns) so a bad statement is diagnosable from the
+// op error alone.
+func annotateSQLError(err error, query string) error {
+	if err == nil {
+		return err
+	}
+	return fmt.Errorf("%w\nstatement: %s", err, query)
+}
+
 func (d *tracedDB) Exec(query string, args ...any) (sql.Result, error) {
 	name, details := sqlSpanDetails(query)
 	started := time.Now().UnixNano()
 	result, err := d.db.Exec(query, args...)
+	err = annotateSQLError(annotateBindError(err, query), query)
 	d.t.record("sqlite", name, started, time.Now().UnixNano()-started, details)
 	return result, err
 }
+
 
 func (d *tracedDB) Query(query string, args ...any) (*sql.Rows, error) {
 	name, details := sqlSpanDetails(query)
 	started := time.Now().UnixNano()
 	rows, err := d.db.Query(query, args...)
+	err = annotateSQLError(annotateBindError(err, query), query)
 	d.t.record("sqlite", name, started, time.Now().UnixNano()-started, details)
 	return rows, err
 }

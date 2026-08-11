@@ -627,8 +627,10 @@ def assert_slice2_identical(
     )
     py_out = json.loads(python_result.stdout)
     go_out = json.loads(go_result.stdout)
+    from tests.core.compare import assert_equivalent
+
     if python_result.returncode != 0:
-        assert py_out == go_out
+        assert_equivalent(py_out, go_out)
         return
     assert set(py_out) == {"output"} and set(go_out) == {"output"}
     a, b = py_out["output"], go_out["output"]
@@ -642,11 +644,9 @@ def assert_slice2_identical(
             assert a[field] >= 0 and b[field] >= 0
         a.pop(field)
         b.pop(field)
-    assert json.dumps(a, separators=(",", ":")) == json.dumps(b, separators=(",", ":")), (
-        "outputs differ:\n"
-        f"python: {json.dumps(a, separators=(',', ':'))}\n"
-        f"go:     {json.dumps(b, separators=(',', ':'))}"
-    )
+    # Stored floats may differ by last bits across libm/CPU environments;
+    # compare structure exactly and floats within tolerance.
+    assert_equivalent(a, b)
 
 
 def _with_db_path(raw: bytes, db_path: Path) -> bytes:

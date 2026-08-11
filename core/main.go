@@ -39,6 +39,8 @@ var kernelCommands = map[string]bool{
 	"content-neighbors":    true,
 	"performer-similarity": true,
 	"multi-hop":            true,
+	"feature-build":        true,
+	"model-build":          true,
 }
 
 func fail(format string, args ...any) {
@@ -76,6 +78,10 @@ func main() {
 			runPerformerSimilarity()
 		case "multi-hop":
 			runMultiHop()
+		case "feature-build":
+			runFeatureBuild()
+		case "model-build":
+			runModelBuild()
 		}
 		return
 	}
