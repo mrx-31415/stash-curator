@@ -65,7 +65,7 @@ func oOutcome(observedAtMs int64) outcomeSignal {
 
 // repeatOutcome mirrors curves.repeat_outcome.
 func repeatOutcome(gapHours float64, observedAtMs int64) (outcomeSignal, bool) {
-	value := repeatBase * (1 - math.Exp(-gapHours/repeatTauHours))
+	value := repeatBase * (1 - pyExp(-gapHours/repeatTauHours))
 	if value <= 0 {
 		return outcomeSignal{}, false
 	}
