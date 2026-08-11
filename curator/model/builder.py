@@ -22,6 +22,7 @@ from curator.features.builder import _fingerprint_table
 from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
+from curator.deterministic import glibc_exp
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
 from curator.profiling import current_trace, record_duration, span
 from curator.storage import ModelStore, transaction
@@ -433,7 +434,7 @@ class PreferenceModelBuilder:
             outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
             labels[scene_id] = _SceneLabel(
                 _clamp(outcome),
-                1 - math.exp(-evidence),
+                1 - glibc_exp(-evidence),
                 evidence,
                 tuple(signal for _, _, signal in scene_signals),
             )
@@ -578,7 +579,7 @@ class PreferenceModelBuilder:
             result[feature_id] = _Affinity(
                 feature_id,
                 _clamp(affinity),
-                1 - math.exp(-support / self.config.model.affinity_confidence_scale),
+                1 - glibc_exp(-support / self.config.model.affinity_confidence_scale),
                 support,
                 len({scene_id for scene_id, _, _ in values}),
                 {"studios": len(studios), "performers": len(performers)},
@@ -902,7 +903,7 @@ class PreferenceModelBuilder:
             performer_profile_count = sum(
                 str(item.get("performer_id")) in profiles for item in identity_values
             )
-            metadata_confidence = 1 - math.exp(
+            metadata_confidence = 1 - glibc_exp(
                 -(content_count + performer_profile_count + len(studio_items)) / 5
             )
             active_evidence: list[tuple[float, float]] = []
@@ -919,7 +920,7 @@ class PreferenceModelBuilder:
                 if evidence_mass
                 else 0.0
             )
-            breadth = 1 - math.exp(-len(active_evidence) / 2)
+            breadth = 1 - glibc_exp(-len(active_evidence) / 2)
             prediction_confidence = evidence_confidence * (0.65 + 0.35 * breadth)
             confidence = _clamp(
                 exact_confidence + (1 - exact_confidence) * prediction_confidence,
@@ -1017,7 +1018,7 @@ class PreferenceModelBuilder:
             sum(item[2] * item[3] for item in selected) / denominator if denominator else 0.0
         )
         lift = outcome_mean - label_mean if denominator else 0.0
-        confidence = 1 - math.exp(-denominator / confidence_scale) if denominator else 0.0
+        confidence = 1 - glibc_exp(-denominator / confidence_scale) if denominator else 0.0
         return _NeighborEvidence(
             lift * confidence,
             outcome_mean,
@@ -1289,13 +1290,13 @@ class PreferenceModelBuilder:
             timestamp = performer_times.get(str(performer_id))
             if isinstance(timestamp, int):
                 days = max(0.0, (reference - timestamp) / 86_400_000)
-                performer_penalty = max(performer_penalty, 0.06 * math.exp(-days / 7))
+                performer_penalty = max(performer_penalty, 0.06 * glibc_exp(-days / 7))
         studio_penalty = 0.0
         studio_id = scene_studios.get(scene_id)
         if isinstance(studio_id, str) and isinstance(studio_times.get(studio_id), int):
             timestamp = int(studio_times[studio_id])
             days = max(0.0, (reference - timestamp) / 86_400_000)
-            studio_penalty = 0.03 * math.exp(-days / 7)
+            studio_penalty = 0.03 * glibc_exp(-days / 7)
         content_penalty = 0.0
         recent_by_name = context["recent_by_name"]
         recent_scene_ids = context["recent_scene_ids"]
@@ -1315,7 +1316,7 @@ class PreferenceModelBuilder:
                 if recent_scene_ids[index] == scene_id:
                     continue
                 days = max(0.0, (reference - recent_played[index]) / 86_400_000)
-                content_penalty = max(content_penalty, 0.04 * cosine * math.exp(-days / 7))
+                content_penalty = max(content_penalty, 0.04 * cosine * glibc_exp(-days / 7))
         return min(
             self.config.model.satiation_bound,
             appeal * (performer_penalty + studio_penalty + content_penalty),

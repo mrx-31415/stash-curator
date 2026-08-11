@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from curator.deterministic import glibc_exp
+
 from curator.config import DEFAULT_CONFIG, ModelConfig
 
 
@@ -12,7 +14,7 @@ def direct_confidence(
 ) -> float:
     if effective_evidence < 0 or not math.isfinite(effective_evidence):
         raise ValueError("effective_evidence must be finite and non-negative")
-    return 1 - math.exp(-effective_evidence / config.direct_confidence_scale)
+    return 1 - glibc_exp(-effective_evidence / config.direct_confidence_scale)
 
 
 def scene_recovery(
@@ -21,7 +23,7 @@ def scene_recovery(
     if days_since_played < 0 or not math.isfinite(days_since_played):
         raise ValueError("days_since_played must be finite and non-negative")
     exponent = -(days_since_played - config.cooldown_center_days) / config.cooldown_width_days
-    return 1 / (1 + math.exp(max(-60.0, min(60.0, exponent))))
+    return 1 / (1 + glibc_exp(max(-60.0, min(60.0, exponent))))
 
 
 def blend_appeal(general: float, direct: float, confidence: float) -> float:
