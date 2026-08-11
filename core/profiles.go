@@ -49,6 +49,7 @@ var performerBlockWeights = []struct {
 }
 
 // blockSimilarity mirrors profiles.block_similarity.
+//go:noinline
 func blockSimilarity(left, right *performerProfile, block string) (float64, bool) {
 	leftBlock, leftOK := left.blocks[block]
 	rightBlock, rightOK := right.blocks[block]
@@ -63,6 +64,7 @@ func blockSimilarity(left, right *performerProfile, block string) (float64, bool
 
 // numericSimilarity mirrors profiles._numeric: shared keys sorted, mean of
 // exp(-|diff|/scale) * min confidence.
+//go:noinline
 func numericSimilarity(left, right map[string]profileValue, leftKeys, rightKeys map[string]bool) (float64, bool) {
 	shared := intersectKeys(leftKeys, rightKeys)
 	if len(shared) == 0 {
@@ -89,6 +91,7 @@ func numericSimilarity(left, right map[string]profileValue, leftKeys, rightKeys 
 
 // cosineSimilarity mirrors profiles._cosine: dot over shared keys, scaled by
 // the mean pairwise-min confidence, clamped to [0, 1].
+//go:noinline
 func cosineSimilarity(left, right map[string]profileValue, leftNorm, rightNorm float64, leftKeys, rightKeys map[string]bool) (float64, bool) {
 	shared := intersectKeys(leftKeys, rightKeys)
 	if len(shared) == 0 {
@@ -137,6 +140,7 @@ func intersectKeys(left, right map[string]bool) []string {
 }
 
 // similarityPenalty mirrors profiles.similarity_penalty.
+//go:noinline
 func similarityPenalty(left, right *performerProfile) float64 {
 	penalty := 1.0
 	leftCup, leftOK := profileValueAt(left, "measurements", "cup_index")
@@ -170,9 +174,12 @@ func keysOverlap(a, b map[string]profileValue) bool {
 	return false
 }
 
-// performerSimilarity mirrors profiles.performer_similarity; returns the
-// combined similarity plus the per-block similarities and used weights.
-func performerSimilarity(left, right *performerProfile, blockWeights map[string]float64) (float64, map[string]float64, map[string]float64) {
+// blockSimilaritiesAll mirrors profiles.block_similarities: per-block
+// similarities and the weights they were measured with, over the sorted
+// shared blocks (the Python dict insertion order), plus the ordered block
+// names and weights for deterministic accumulation.
+//go:noinline
+func blockSimilaritiesAll(left, right *performerProfile, blockWeights map[string]float64) (map[string]float64, map[string]float64, []string, []float64) {
 	blocks := make([]string, 0)
 	for block := range left.blocks {
 		if _, ok := right.blocks[block]; ok {
@@ -182,6 +189,7 @@ func performerSimilarity(left, right *performerProfile, blockWeights map[string]
 	sort.Strings(blocks)
 	similarities := make(map[string]float64)
 	usedWeights := make(map[string]float64)
+	var ordered []string
 	var weights []float64
 	for _, block := range blocks {
 		weight := blockWeights[block]
@@ -194,18 +202,35 @@ func performerSimilarity(left, right *performerProfile, blockWeights map[string]
 		}
 		similarities[block] = similarity
 		usedWeights[block] = weight
+		ordered = append(ordered, block)
 		weights = append(weights, weight)
 	}
+	return similarities, usedWeights, ordered, weights
+}
+
+// performerSimilarity mirrors profiles.performer_similarity; returns the
+// combined similarity plus the per-block similarities and used weights.
+//go:noinline
+func performerSimilarity(left, right *performerProfile, blockWeights map[string]float64) (float64, map[string]float64, map[string]float64) {
+	similarities, usedWeights, ordered, weights := blockSimilaritiesAll(left, right, blockWeights)
 	denominator := neumaierSum(weights)
 	total := 0.0
 	if denominator > 0 {
-		var products []float64
-		for _, block := range blocks {
-			if similarity, ok := similarities[block]; ok {
-				products = append(products, similarity*usedWeights[block])
-			}
+		products := make([]float64, 0, len(ordered))
+		for _, block := range ordered {
+			products = append(products, similarities[block]*usedWeights[block])
 		}
 		total = neumaierSum(products) / denominator
 	}
 	return total * similarityPenalty(left, right), similarities, usedWeights
+}
+
+// performerBlockWeightsMap mirrors DEFAULT_CONFIG.feature.performer_block_weights
+// as a lookup map.
+func performerBlockWeightsMap() map[string]float64 {
+	weights := map[string]float64{}
+	for _, entry := range performerBlockWeights {
+		weights[entry.block] = entry.weight
+	}
+	return weights
 }

@@ -113,6 +113,53 @@ def _container_id() -> str:
     return out
 
 
+def _plugin_operation_raw(operation: str, **args: object) -> dict[str, Any]:
+    """Invoke the plugin without raising on GraphQL errors, so failing ops
+    can be compared with the direct backend's error output."""
+    payload = json.dumps(
+        {
+            "query": (
+                'mutation Op($args: Map!) { runPluginOperation(plugin_id: "stash-curator",'
+                " args: $args) }"
+            ),
+            "variables": {"args": {"operation": operation, **args}},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{_stash_url()}/graphql",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return cast(dict[str, Any], json.loads(resp.read()))
+    except urllib.error.HTTPError as exc:
+        return {"http_error": exc.read().decode(errors="replace")[:500]}
+
+
+def _direct_backend_raw(operation: str, **args: object) -> bytes:
+    """Run backend.py inside the container without asserting success, for
+    error-path parity checks."""
+    stash_url = _stash_url().rsplit(":", 1)
+    port = int(stash_url[1]) if len(stash_url) == 2 else 9999
+    plugin_dir = "/root/.stash/plugins/stash-curator"
+    payload = {
+        "server_connection": {"Host": "localhost", "Port": port, "Scheme": "http"},
+        "args": {
+            "operation": operation,
+            "database_path": plugin_dir + "/data/curator.sqlite3",
+            **args,
+        },
+    }
+    completed = subprocess.run(
+        ["docker", "exec", "-i", _container_id(), "python", plugin_dir + "/backend.py", plugin_dir],
+        input=json.dumps(payload, separators=(",", ":")).encode(),
+        capture_output=True,
+        timeout=180,
+    )
+    return completed.stdout
+
+
 def _direct_backend(operation: str, **args: object) -> dict[str, object]:
     """Run backend.py inside the container against the same sidecar the plugin
     uses, with the same args the plugin call received.
@@ -202,6 +249,10 @@ PORTED_OPS: list[tuple[str, dict[str, object], tuple[str, ...], tuple[str, ...]]
         ("impression_id",),
     ),
     ("get_recommendation_history", {"page": 1, "page_size": 10}, (), ()),
+    # Slice 2: get_expand is sidecar-only, so it serves natively through the
+    # installed zip even though the docker env has no StashDB box; without an
+    # expand_cache the result is the deterministic not-ready shape.
+    ("get_expand", {"entity_type": "scene", "page": 1, "count": 10}, (), ()),
     ("get_shortlist", {"page": 1, "page_size": 10}, (), ()),
     ("get_feedback_history", {"page": 1, "page_size": 10}, (), ()),
     ("get_taste_profile", {}, (), ()),
@@ -258,6 +309,18 @@ def test_entity_ops_byte_identical_through_plugin(seeded: None) -> None:
         _assert_plugin_matches_direct(
             operation, args, timing_fields=timing_fields, normalize=normalize
         )
+
+
+def test_network_op_stashdb_unconfigured_error_matches_direct(seeded: None) -> None:
+    """The docker env has no StashDB box, so the network ops fail with the
+    same unconfigured-StashDB error through the installed binary and the
+    direct Python backend."""
+    plugin = _plugin_operation_raw("get_performer_hunt", performer_id="missing-performer")
+    direct = _direct_backend_raw("get_performer_hunt", performer_id="missing-performer")
+    plugin_text = json.dumps(plugin, separators=(",", ":"))
+    direct_text = direct.decode(errors="replace")
+    assert "configure StashDB with an API key in Stash settings" in plugin_text
+    assert "configure StashDB with an API key in Stash settings" in direct_text
 
 
 def test_unported_op_falls_back_byte_identical(seeded: None) -> None:
