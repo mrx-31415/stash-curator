@@ -303,11 +303,11 @@ _MASK = 0xFFFFFFFFFFFFFFFF
 
 
 def _bits(value: float) -> int:
-    return struct.unpack("<Q", struct.pack("<d", value))[0]
+    return int(struct.unpack("<Q", struct.pack("<d", value))[0])
 
 
 def _from_bits(bits: int) -> float:
-    return struct.unpack("<d", struct.pack("<Q", bits & _MASK))[0]
+    return float(struct.unpack("<d", struct.pack("<Q", bits & _MASK))[0])
 
 
 def _ldexp(value: float, exp: int) -> float:
