@@ -1,10 +1,11 @@
-"""Builder-level compiled-core differential and fallback behavior.
+"""Builder-level compiled-core differential tests.
 
 Runs the real PreferenceModelBuilder pipeline against a seeded synthetic
 sidecar (same fixture as tests/model/test_builder.py) and asserts the compiled
 core matches the numpy stage outputs within tolerance (exact ids, 1e-9 floats),
-and that the dispatch/fallback contract holds: binary present -> core used,
-absent -> numpy, then pure Python, and a broken binary fails the stage loudly.
+and that the dispatch contract holds: the binary is the single kernel
+implementation, a missing binary surfaces as ``CoreError`` at the stage
+boundary, and a broken binary fails the stage loudly.
 """
 
 from __future__ import annotations

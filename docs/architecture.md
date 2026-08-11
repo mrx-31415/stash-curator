@@ -6,10 +6,12 @@ permalink: /architecture/
 # Architecture
 
 Curator is a self-contained external raw plugin with no runtime dependencies
-beyond Python 3.12+ and the compiled Go core (`curator-core`) that ships in the
-plugin zip; there is no runtime install task or virtual environment. Stash loads
-`plugin/backend.py`; the browser UI is one JavaScript file and one CSS file, and
-model code lives in the packaged `curator` module.
+beyond the compiled Go core (`curator-core`) that ships in the plugin zip;
+there is no runtime install task, virtual environment, or Python backend.
+Stash loads `plugin/launcher.py`, which execs the per-arch `curator-core`
+binary; the browser UI is one JavaScript file and one CSS file. `backend.py`
+and the `curator` Python package remain in the repository only as the
+differential-test oracle (`tests/core/`, `tests/plugin/`).
 
 ```text
 Stash GraphQL
@@ -34,8 +36,11 @@ source cache ──► normalized events                  StashDB
 
 - `plugin/stash-curator.js` registers the route, renders Stash-native cards, captures
   feedback/playback, and retries unacknowledged browser events.
-- `plugin/backend.py` resolves Stash connection details, applies plugin settings,
-  opens SQLite, and dispatches interactive operations and one-shot tasks.
+- `curator-core` (Go, shipped as per-arch `curator-core-<goos>-<goarch>`
+  binaries in the plugin zip, exec'd by `plugin/launcher.py`) resolves Stash
+  connection details, applies plugin settings, opens SQLite, and dispatches
+  interactive operations, one-shot tasks, and the entity-sync hook mode; it
+  also implements the model-build kernels.
 - `curator/graphql/` and `curator/sync/` incrementally copy the required Stash facts.
 - `curator/events/` conservatively reconstructs history and stores direct outcomes.
 - `curator/features/`, `curator/model/`, and `curator/ranking/` publish immutable

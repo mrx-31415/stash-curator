@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -53,17 +54,15 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         names = set(package.namelist())
         package.extractall(tmp_path / "installed")
     expected = {"LICENSE"}
-    for directory in ("plugin", "curator"):
-        source = root / directory
-        for path in source.rglob("*"):
-            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                relative = path.relative_to(source)
-                if directory != "plugin" or "data" not in relative.parts:
-                    expected.add(
-                        (Path("curator") / relative).as_posix()
-                        if directory == "curator"
-                        else relative.as_posix()
-                    )
+    source = root / "plugin"
+    for path in source.rglob("*"):
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+            relative = path.relative_to(source)
+            # The zip ships no Python backend; the only curator-package
+            # resource is the explanation catalog the binary reads at runtime.
+            if "data" not in relative.parts and relative.as_posix() != "backend.py":
+                expected.add(relative.as_posix())
+    expected.add("curator/explanations/realizations.json")
     # The compiled core ships as per-arch binaries; every shipped platform must
     # be present (the runtime selects one and falls back to numpy / pure Python).
     from scripts.build_plugin import SHIPPED_PLATFORMS, core_binary_name
@@ -96,6 +95,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "id: stash-curator" in index
     assert f"sha256: {sha256(archive.read_bytes()).hexdigest()}" in index
     assert re.search(r"date: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", index)
+    host_binary = extracted / current_platform
+    assert host_binary.is_file()
     installed = tmp_path / "installed"
     plugin_manifest = (installed / "stash-curator.yml").read_text(encoding="utf-8")
     with (root / "pyproject.toml").open("rb") as source:
@@ -114,7 +115,8 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert '"{pluginDir}/launcher.py"' in "\n".join(exec_lines)
     launcher = (installed / "launcher.py").read_text(encoding="utf-8")
     assert "curator-core-" in launcher
-    assert "backend.py" in launcher
+    assert "backend.py" not in launcher
+    assert "reinstall the plugin" in launcher
     javascript = (installed / "stash-curator.js").read_text()
     assert "data:image/png;base64" in javascript
     assert "curator-whisparr-fallback" in javascript
@@ -122,15 +124,29 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     assert "Adding to Whisparr…" in javascript
     assert "Added to Whisparr." in javascript
     assert "Retry sending to Whisparr" in javascript
-    assert _run(installed / "backend.py", installed)["round_trips"] == 1
-    assert _run(installed / "launcher.py", installed)["round_trips"] == 2
+    assert _run(installed / "launcher.py", installed)["round_trips"] == 1
+    # The zip carries no Python backend; a platform without a shipped binary
+    # makes the launcher fail with a clear reinstall message instead of
+    # half-running.
+    assert "backend.py" not in names
+    bare = tmp_path / "bare-plugin"
+    shutil.copytree(installed, bare)
+    (bare / current_platform).unlink()
+    missing = subprocess.run(
+        [sys.executable, str(bare / "launcher.py"), str(bare)],
+        input=json.dumps(_payload(bare)),
+        text=True,
+        capture_output=True,
+    )
+    assert missing.returncode == 1
+    assert "no curator-core binary for this platform" in missing.stderr
     with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
         connection.execute(
             "UPDATE model_update_state SET last_started_at_ms=2, "
             "last_finished_at_ms=1, last_error=NULL"
         )
     task = subprocess.run(
-        [sys.executable, str(installed / "backend.py"), str(installed), "backup"],
+        [str(host_binary), str(installed), "backup"],
         input=json.dumps(_payload(installed)),
         text=True,
         capture_output=True,

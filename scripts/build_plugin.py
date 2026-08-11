@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Build the self-contained Stash Curator plugin archive.
 
-The compiled core (`curator-core`, optional acceleration) ships inside the zip
-as per-arch binaries — one zip, the runtime selects the matching binary and
-falls back to numpy / pure Python when none exists. Go is a build-time
-dependency for packaging; the binaries are static (CGO_ENABLED=0, modernc
-sqlite), so a single machine cross-compiles every shipped platform.
+The compiled core (`curator-core`) ships inside the zip as per-arch
+binaries — the binary serves the whole raw-plugin interface (every operation,
+task mode, and the entity-sync hook) and the model-build kernels, so no
+Python runtime ships. The only non-binary runtime resource is the explanation
+catalog (`curator/explanations/realizations.json`, read from disk by the
+binary). Go is a build-time dependency for packaging; the binaries are static
+(CGO_ENABLED=0, modernc sqlite), so a single machine cross-compiles every
+shipped platform.
 """
 
 from __future__ import annotations
@@ -107,13 +110,14 @@ def build(output: Path = OUTPUT) -> Path:
         shutil.copytree(
             ROOT / "plugin",
             staging,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "data"),
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "data", "backend.py"),
         )
-        shutil.copytree(
-            ROOT / "curator",
-            staging / "curator",
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
+        # The binary is self-contained; the only runtime resource from the
+        # Python package is the explanation catalog the renderer reads from
+        # disk (core/explanations_render.go loadCatalog).
+        realizations = ROOT / "curator" / "explanations" / "realizations.json"
+        (staging / "curator" / "explanations").mkdir(parents=True)
+        shutil.copy2(realizations, staging / "curator" / "explanations" / realizations.name)
         # Keep the plugin definition's version in lockstep with the index.
         manifest = staging / "stash-curator.yml"
         manifest.write_text(

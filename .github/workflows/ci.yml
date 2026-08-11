@@ -9,19 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  # The plugin runtime is the compiled Go core; Python exists only as the
+  # test harness and differential oracle, so a single interpreter leg is
+  # sufficient (the differential gates compare behavior, not Python versions).
   quality:
-    name: Python ${{ matrix.python-version }}
+    name: Quality (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - name: Install uv and Python
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.21"
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
           enable-cache: true
       - name: Install Go (compiled core is a dev dependency)
         uses: actions/setup-go@v5
@@ -32,7 +32,6 @@ jobs:
       - name: Verify
         run: scripts/verify full
       - uses: actions/upload-artifact@v7
-        if: matrix.python-version == '3.12'
         with:
           name: stash-curator-plugin
           path: |

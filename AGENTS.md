@@ -64,7 +64,11 @@ git config core.hooksPath .githooks
 
 ## Required pre-push verification
 
-Run the same checks as CI:
+The pre-push hook is diff-scoped: code, packaging, or infra changes run the
+full gate (`scripts/verify full` — the same checks CI runs, with the built
+binary pinned and a fresh plugin archive validated by the packaging tests);
+docs-only pushes run the cheap checks, since CI always runs the full matrix
+on the pushed refs. Run the same gate manually when iterating:
 
 ```bash
 scripts/verify full

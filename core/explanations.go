@@ -914,6 +914,13 @@ func getExplanationBody(pluginDir string, payload, settings jVal) (jVal, error) 
 		return jvNull(), fmt.Errorf("no published model")
 	}
 	sceneID := argsString(payload.get("args"), "scene_id", "")
+	return renderExplanationForScene(db, pluginDir, modelID, sceneID)
+}
+
+// renderExplanationForScene mirrors CuratorAPI.explanation on an open
+// connection: stored reasons (or derived), then the rendered summary and
+// supporting reasons. Shared by get_explanation and the inspector.
+func renderExplanationForScene(db dbx, pluginDir, modelID, sceneID string) (jVal, error) {
 	reasons, found, err := storedReasons(db, modelID, sceneID)
 	if err != nil {
 		return jvNull(), err
