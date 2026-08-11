@@ -108,8 +108,10 @@ After items 1–2, every op in `_api` and every task mode is native. Then:
 - The `main.jVal` bind error from the live sync task: fixed (file durations /
   marker `end_seconds` now bind as floats) and reinstall superseded the stale
   binary; if it recurs, capture the op that triggered it.
-- The integration `get_similar` 1-ulp flake is tolerance-covered now; keep the
-  structural-exact assertions when touching `test_backend_swap.py`.
+- The integration `get_similar` 1-ulp flake is tolerance-covered now; the
+  installed-level oracle comparisons that used it (`test_backend_swap.py`'s
+  docker-exec parity tests) were retired in favor of the repo-level
+  differential harness.
 
 ## Acceptance criteria
 
@@ -171,21 +173,28 @@ is `curator/explanations/realizations.json`, which the explanation renderer
 reads from disk (`core/explanations_render.go`). `plugin/launcher.py` fails
 with a clear reinstall message when no per-arch binary exists instead of
 exec'ing `backend.py`; `scripts/install-local.sh` prunes stale Python from
-the install target; `scripts/verify integration` copies the repo copy of the
-Python backend into the container as the differential oracle (the zip itself
-stays Python-free). `backend.py` and the `curator` package remain in the
-repository as the differential-test oracle. The pre-push hook is now
-diff-scoped: code changes run `scripts/verify full` (single pytest pass,
-fresh-zip-first), docs-only pushes run the cheap checks; CI always runs the
-full suite.
+the install target. `backend.py` and the `curator` package remain in the
+repository as the differential-test oracle (repo-level `tests/core/`). The
+pre-push hook is now diff-scoped: code changes run `scripts/verify full`
+(single pytest pass, fresh-zip-first), docs-only pushes run the cheap
+checks; CI always runs the full suite.
+
+**Follow-up (same day, third commit):** the installed-level oracle
+comparisons are retired. `tests/integration/test_backend_swap.py` no longer
+docker-execs `backend.py` against the seeded sidecar — the same parity is
+already proven at the repo level (`tests/core/test_backend*.py`, which run
+both subprocesses directly), and the installed plugin is functionally
+verified by the rest of the integration suite (smoke, hooks, plays, similar).
+The file now covers the installed-binary checks that remain unique: the
+launcher exec chain, real model-backed output, and the unconfigured-StashDB
+failure path. `scripts/verify integration` no longer copies an oracle into
+the container.
 
 **Differential tests** (`tests/core/test_backend_slice4.py`, 26 tests):
 stdout byte-parity (tolerance comparator) for the four ops' success and
 error paths, reset's surviving-file/artifact/remake parity, and the hook's
 output + `pending_entity_change` + no-job-row + coordinator parity (modulo
-`created_at_ms`). The integration suite's stale "unported op falls back"
-test became `test_write_op_byte_identical_through_plugin`, and the
-inspector/sentiment ops were added to `_entity_ops`.
+`created_at_ms`).
 
 **Verification:** `scripts/verify core`-equivalent gate (168 tests in
 `tests/core` + `tests/model/test_core.py` green), full non-integration

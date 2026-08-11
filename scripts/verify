@@ -92,12 +92,6 @@ case "${1:-}" in
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
-    # The zip no longer ships the Python backend; the differential tests run
-    # backend.py inside the container as the comparison oracle, so copy the
-    # repo copy of the oracle into the installed plugin dir. It is inert at
-    # runtime: the launcher execs the binary and never consults it.
-    cp plugin/backend.py "$plugin_dir/backend.py"
-    cp -r curator "$plugin_dir/curator"
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
     # ── start stash ──
