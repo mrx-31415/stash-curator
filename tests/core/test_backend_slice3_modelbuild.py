@@ -77,6 +77,10 @@ def _first_artifact_diff(go_path: Path, py_path: Path) -> str:
     go_rows, py_rows = rows(go_path), rows(py_path)
     for table in sorted(set(go_rows) | set(py_rows)):
         a, b = go_rows.get(table, []), py_rows.get(table, [])
+        # model_lane_order_state.created_at_ms is wall-clock in both
+        # implementations; ignore it like _artifact_tables_sha does.
+        norm = (lambda row: (row[0], 0)) if table == "model_lane_order_state" else (lambda row: row)
+        a, b = [norm(row) for row in a], [norm(row) for row in b]
         if a == b:
             continue
         for index, (go_row, py_row) in enumerate(zip(a, b, strict=False)):
