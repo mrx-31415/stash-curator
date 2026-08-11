@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.7.0](https://github.com/mrx-31415/stash-curator/compare/v0.6.0...v0.7.0) (2026-08-11)
+
+
+### Features
+
+* **backend:** port the frontend-parity ops and entity hook to the Go core (Slice 4) ([#114](https://github.com/mrx-31415/stash-curator/issues/114)) ([d6878c8](https://github.com/mrx-31415/stash-curator/commit/d6878c8fa0580d17aea8ca7eb9b04a1bbd413154))
+* **backend:** port the network-layer ops and write-path handover (Slices 2–3) ([#108](https://github.com/mrx-31415/stash-curator/issues/108)) ([7d629c3](https://github.com/mrx-31415/stash-curator/commit/7d629c38de7f3b7f21ba8486c15cabc8772052f2))
+* **backend:** port the write path, task modes, and model build to the Go core (Slice 3) ([#112](https://github.com/mrx-31415/stash-curator/issues/112)) ([24ca7b4](https://github.com/mrx-31415/stash-curator/commit/24ca7b42c2738dbabdd3b8e3ebcb78e8deecb778))
+* multi-hop pagerank in the compiled core ([5cc231f](https://github.com/mrx-31415/stash-curator/commit/5cc231faaf804f27c4c06e1b04825abadeab1973))
+* port raw transport and sidecar parity foundation to curator-core ([e2a0254](https://github.com/mrx-31415/stash-curator/commit/e2a0254f6e2c261e8412a3b64c7606f8f37fcfef))
+* port the read-path interactive ops to curator-core ([b974b25](https://github.com/mrx-31415/stash-curator/commit/b974b25555d3fe3d615b124f8d6840e7a95ffea2))
+* profile the compiled core stages inside the plugin trace ([e3a0d70](https://github.com/mrx-31415/stash-curator/commit/e3a0d70689b61084f2ea8c4e083a2d6a479550a5))
+* record operation profiles in the ported backend ops ([ccdb3b7](https://github.com/mrx-31415/stash-curator/commit/ccdb3b75073f87cd4e09711cebab51ae5e0384f3))
+* remove optional-deps venv — compiled core is now required ([031d16e](https://github.com/mrx-31415/stash-curator/commit/031d16e3f5bc6ef9d39786ffd5ddf5c56946edb8))
+* run the installed plugin through the curator-core exec launcher ([e7a034c](https://github.com/mrx-31415/stash-curator/commit/e7a034c9aa69276c8064085ce2fccc9b822c538e))
+
+
+### Bug Fixes
+
+* close attachBuildSources rows before creating the temp views ([b30790e](https://github.com/mrx-31415/stash-curator/commit/b30790eeadd23c34a679d798ac93c4386cf5b04d))
+* fall back to a plain-path attach when URI opens fail ([0ff1e04](https://github.com/mrx-31415/stash-curator/commit/0ff1e042488cf436568aa3882770aa14a8a248e0))
+* fall back to a shared-lock attach when the immutable open fails ([996f3ba](https://github.com/mrx-31415/stash-curator/commit/996f3bad9131ed303dff369aff0722732a3105bd))
+* pin backend connections to a single sqlite connection ([b172b56](https://github.com/mrx-31415/stash-curator/commit/b172b56d7ef9d2a271ff4fd079d6efba1f34ee69))
+
+
+### Documentation
+
+* add the Slice 4 handover (frontend parity and fallback removal) ([7fac931](https://github.com/mrx-31415/stash-curator/commit/7fac93128899e137f764d3d7b8f36dbb18796230))
+* hand over the Slice-1 read-path backend port ([8c6e35c](https://github.com/mrx-31415/stash-curator/commit/8c6e35ca8f26add362733c874ff44d62bee6cdbf))
+* mark the read-path backend port and exec launcher delivered ([ec8c766](https://github.com/mrx-31415/stash-curator/commit/ec8c76621ae296d13e4f4021d6b4ec713449a1a8))
+* plan the full Go backend as a slice sequence ([#102](https://github.com/mrx-31415/stash-curator/issues/102)) ([0a4ba1a](https://github.com/mrx-31415/stash-curator/commit/0a4ba1acb16aeecebdaca1e6dae79c2ce6c479cd))
+* reflect the merged Go backend and the tolerance-based differential gates ([190d206](https://github.com/mrx-31415/stash-curator/commit/190d2066cc51e6fd666965432151e913181acc42))
+
 ## [0.6.0](https://github.com/mrx-31415/stash-curator/compare/v0.5.1...v0.6.0) (2026-08-10)
 
 
