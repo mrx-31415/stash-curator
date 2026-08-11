@@ -57,6 +57,37 @@ def _artifact_tables_sha(path: Path) -> str:
         connection.close()
 
 
+def _first_artifact_diff(go_path: Path, py_path: Path) -> str:
+    """Return the first differing table+row (with the row index) between two
+    artifacts, for CI diagnostics when the byte-identity assertion fails."""
+    def rows(path: Path) -> dict[str, list[object]]:
+        connection = sqlite3.connect(path)
+        try:
+            tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+            ]
+            return {
+                table: list(connection.execute(f"SELECT * FROM {table}"))
+                for table in tables
+            }
+        finally:
+            connection.close()
+
+    go_rows, py_rows = rows(go_path), rows(py_path)
+    for table in sorted(set(go_rows) | set(py_rows)):
+        a, b = go_rows.get(table, []), py_rows.get(table, [])
+        if a == b:
+            continue
+        for index, (go_row, py_row) in enumerate(zip(a, b)):
+            if go_row != py_row:
+                return f"{table}[{index}]:\n  go:  {go_row}\n  py:  {py_row}"
+        return f"{table}: row count differs (go {len(a)} vs py {len(b)})"
+    return "no row differences (unexpected)"
+
+
 def _run_python_build(sidecar: Path) -> tuple[str, Path]:
     connection = connect_database(sidecar, attach_artifacts=False)
     try:
@@ -114,7 +145,8 @@ def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
     assert go_model == py_model
     assert go_artifact.name == py_artifact.name
     assert _artifact_tables_sha(go_artifact) == _artifact_tables_sha(py_artifact), (
-        f"artifact content differs: {go_artifact} vs {py_artifact}"
+        f"artifact content differs: {go_artifact} vs {py_artifact}\n"
+        f"{_first_artifact_diff(go_artifact, py_artifact)}"
     )
 
     py_conn = sqlite3.connect(py_db)
