@@ -139,6 +139,11 @@ func fileURI(path string, readonly bool) string {
 }
 
 // openSidecar mirrors backend.py's _open: connect, migrate, apply settings.
+// A SQLite busy failure can surface during the open/setup phase itself —
+// concurrent first opens of a WAL sidecar race on the -shm recovery lock,
+// which does not always invoke the busy handler. Migrations and plugin
+// settings are transactional/idempotent, so the whole open is retried with
+// backoff (the #109 mitigation), matching withTxn/execImmediate.
 func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool) (dbx, error) {
 	path := realpath(databasePath(pluginDir, payload, settings))
 	parent := filepath.Dir(path)
@@ -147,25 +152,49 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 			return nil, fmt.Errorf("could not create database directory: %v", err)
 		}
 	}
-	db, err := openDatabase(path, false, currentTrace())
-	if err != nil {
-		return nil, err
-	}
-	if err := migrate(db, nowMs()); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := applyPluginSettings(db, settings, nowMs()); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if attachArtifacts {
-		if err := attachActiveArtifacts(db); err != nil {
-			db.Close()
+	var lastErr error
+	for attempt := range busyRetryAttempts {
+		db, err := openDatabase(path, false, currentTrace())
+		if err != nil {
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
 			return nil, err
 		}
+		if err := migrate(db, nowMs()); err != nil {
+			db.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return nil, err
+		}
+		if err := applyPluginSettings(db, settings, nowMs()); err != nil {
+			db.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return nil, err
+		}
+		if attachArtifacts {
+			if err := attachActiveArtifacts(db); err != nil {
+				db.Close()
+				if isBusyError(err) && attempt < busyRetryAttempts-1 {
+					lastErr = err
+					time.Sleep(busyRetryBackoff(attempt))
+					continue
+				}
+				return nil, err
+			}
+		}
+		return db, nil
 	}
-	return db, nil
+	return nil, lastErr
 }
 
 func nowMs() int64 {

@@ -507,6 +507,12 @@ ORDER BY a.affinity * a.confidence DESC LIMIT 50`, modelID, featureVersion)
 func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int,
 	gender string, wildcard bool, nowMs int64, progress func(processed, total int)) (jVal, error) {
 	fetchedAtMs := nowMs
+	// The taxonomy check and seed load used to be markerless: on a large
+	// library the bar sat at 5% for the whole stretch. The 50/150 ticks
+	// bracket both phases (issue #110).
+	if progress != nil {
+		progress(50, 1000)
+	}
 	taxonomyRefreshed, err := refreshTaxonomy(db, clientURL, apiKey, fetchedAtMs)
 	if err != nil {
 		return jvNull(), err
@@ -526,6 +532,9 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 		return jvNull(), err
 	}
 	s := newExpandService(db)
+	if progress != nil {
+		progress(150, 1000)
+	}
 	seeds, err := refreshSeeds(s, modelID, featureVersion, links)
 	if err != nil {
 		return jvNull(), err

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const apiSchemaVersion = 1
@@ -66,24 +67,68 @@ ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1`); err != nil {
 	), nil
 }
 
+// isBusyError reports whether err is a SQLite busy failure: SQLITE_BUSY (5)
+// and the extended SQLITE_BUSY_RECOVERY (261), SQLITE_BUSY_SNAPSHOT (517),
+// and SQLITE_BUSY_TIMEOUT (773) codes. The busy_timeout handler retries only
+// the plain code in some SQLite versions (modernc ships 3.41.2), so the
+// extended codes get a bounded retry here — the #109 mitigation for
+// lock contention between concurrent plugin processes. The matcher follows
+// similar.go's casefold "locked" convention.
+func isBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "locked") || strings.Contains(message, "busy")
+}
+
+// busyRetryBackoff is the sleep between busy-retry attempts (150 ms, 300 ms).
+func busyRetryBackoff(attempt int) time.Duration {
+	return time.Duration(150*(attempt+1)) * time.Millisecond
+}
+
+const busyRetryAttempts = 3
+
 // execImmediate runs one statement in an explicit BEGIN IMMEDIATE transaction,
-// mirroring curator.storage.transaction (no nested transactions).
+// mirroring curator.storage.transaction (no nested transactions). Busy
+// failures before COMMIT are retried with backoff; a COMMIT failure is never
+// retried (its outcome is ambiguous and re-running the statement could
+// double-apply non-idempotent writes).
 func execImmediate(db dbx, statement string, args ...any) error {
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := range busyRetryAttempts {
+		conn, err := db.Conn(context.Background())
+		if err != nil {
+			return err
+		}
+		ctx := context.Background()
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			conn.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, statement, args...); err != nil {
+			conn.ExecContext(ctx, "ROLLBACK")
+			conn.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			conn.Close()
+			return err
+		}
+		conn.Close()
+		return nil
 	}
-	defer conn.Close()
-	ctx := context.Background()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, statement, args...); err != nil {
-		conn.ExecContext(ctx, "ROLLBACK")
-		return err
-	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
+	return lastErr
 }
 
 func opGetJobStatus(pluginDir string, payload jVal) (jVal, error) {

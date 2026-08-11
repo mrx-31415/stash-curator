@@ -81,6 +81,34 @@ def make_feature_sidecar(path: Path) -> None:
             "INSERT INTO application_meta(key, value)"
             " VALUES ('taxonomy_snapshot_id', 'tax-feature')"
         )
+        # Direct term preferences exercise the affinity blend in the model
+        # build: terms the feature builder emits (romantic/intense/adventure
+        # qualify from the seeded descriptions) get declared evidence blended
+        # with learned affinity, byte-identically in both implementations.
+        connection.executemany(
+            """
+            INSERT INTO direct_term_preference_history(
+                preference_id, term, value, occurred_at_ms, blocked
+            ) VALUES (?, ?, ?, ?, 0)
+            """,
+            [
+                ("term-pref-1", "romantic", 1.0, REFERENCE_MS - 1_000),
+                ("term-pref-2", "intense", -1.0, REFERENCE_MS - 2_000),
+                ("term-pref-3", "adventure", 0.5, REFERENCE_MS - 3_000),
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO direct_term_preference(
+                term, preference_id, value, occurred_at_ms, blocked
+            ) VALUES (?, ?, ?, ?, 0)
+            """,
+            [
+                ("romantic", "term-pref-1", 1.0, REFERENCE_MS - 1_000),
+                ("intense", "term-pref-2", -1.0, REFERENCE_MS - 2_000),
+                ("adventure", "term-pref-3", 0.5, REFERENCE_MS - 3_000),
+            ],
+        )
         connection.commit()
     finally:
         connection.close()

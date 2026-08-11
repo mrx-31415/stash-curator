@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -31,6 +32,10 @@ FEEDBACK_TYPES = {
 }
 TAG_SENTIMENT_VALUES = {-1.0, -0.5, 0.0, 0.5, 1.0}
 BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
+
+# Description-term preferences use the same five-point scale and blocked
+# convention as tags; only the key (a lowercase description token) differs.
+TERM_TOKEN_RE = re.compile(r"[a-zA-Z]{3,}")
 
 
 class InteractionStore:
@@ -333,6 +338,83 @@ class InteractionStore:
                 ModelUpdateCoordinator(self.connection).request("direct_tag_preference")
         return inserted
 
+    def submit_term_preferences(self, entries: list[dict[str, Any]]) -> int:
+        normalized = [self._term_preference_entry(entry) for entry in entries]
+        inserted = 0
+        with transaction(self.connection):
+            for entry in normalized:
+                current = self.connection.execute(
+                    """
+                    SELECT preference_id, occurred_at_ms FROM direct_term_preference
+                    WHERE term=?
+                    """,
+                    (entry["term"],),
+                ).fetchone()
+                cursor = self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO direct_term_preference_history(
+                        preference_id, term, value, blocked, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry["preference_id"],
+                        entry["term"],
+                        entry["value"],
+                        int(entry["blocked"]),
+                        entry["occurred_at_ms"],
+                    ),
+                )
+                if not cursor.rowcount:
+                    continue
+                inserted += 1
+                if current and (
+                    int(current["occurred_at_ms"]),
+                    str(current["preference_id"]),
+                ) >= (entry["occurred_at_ms"], entry["preference_id"]):
+                    self.connection.execute(
+                        """
+                        UPDATE direct_term_preference_history SET replaced_by_id=?
+                        WHERE preference_id=?
+                        """,
+                        (current["preference_id"], entry["preference_id"]),
+                    )
+                    continue
+                if current:
+                    self.connection.execute(
+                        """
+                        UPDATE direct_term_preference_history SET replaced_by_id=?
+                        WHERE preference_id=?
+                        """,
+                        (entry["preference_id"], current["preference_id"]),
+                    )
+                if entry["value"] is None:
+                    self.connection.execute(
+                        "DELETE FROM direct_term_preference WHERE term=?", (entry["term"],)
+                    )
+                else:
+                    self.connection.execute(
+                        """
+                        INSERT INTO direct_term_preference(
+                            term, preference_id, value, blocked, occurred_at_ms
+                        ) VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(term) DO UPDATE SET
+                            preference_id=excluded.preference_id,
+                            value=excluded.value,
+                            blocked=excluded.blocked,
+                            occurred_at_ms=excluded.occurred_at_ms
+                        """,
+                        (
+                            entry["term"],
+                            entry["preference_id"],
+                            entry["value"],
+                            int(entry["blocked"]),
+                            entry["occurred_at_ms"],
+                        ),
+                    )
+            if inserted:
+                ModelUpdateCoordinator(self.connection).request("direct_term_preference")
+        return inserted
+
     def submit_sessions(self, entries: list[dict[str, Any]]) -> int:
         sessions = [self._session(entry) for entry in entries]
         inserted = 0
@@ -552,6 +634,32 @@ class InteractionStore:
         return {
             "preference_id": preference_id,
             "tag_id": tag_id,
+            "value": value,
+            "blocked": blocked,
+            "occurred_at_ms": occurred_at_ms,
+        }
+
+    def _term_preference_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        preference_id = str(entry.get("preference_id") or "")
+        term = str(entry.get("term") or "").strip().lower()
+        occurred_at_ms = int(entry.get("occurred_at_ms", -1))
+        value = entry.get("value")
+        blocked = bool(entry.get("blocked", False))
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("term sentiment must be numeric or null")
+            value = float(value)
+            if value not in TAG_SENTIMENT_VALUES:
+                raise ValueError("term sentiment must use the fixed five-point scale")
+        if blocked:
+            value = BLOCKED_TAG_VALUE
+        if not preference_id or not term or occurred_at_ms < 0:
+            raise ValueError("preference_id, term, and occurred_at_ms are required")
+        if not TERM_TOKEN_RE.fullmatch(term):
+            raise ValueError("term must be a description token ([a-zA-Z]{3,})")
+        return {
+            "preference_id": preference_id,
+            "term": term,
             "value": value,
             "blocked": blocked,
             "occurred_at_ms": occurred_at_ms,

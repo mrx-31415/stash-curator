@@ -236,6 +236,22 @@ func finalizeProfileNorms(p *performerProfile) {
 	}
 }
 
+// descriptionTokenSet mirrors ExpandService._description_tokens: tokenize a
+// description with the model's tokenizer pipeline ([a-zA-Z]{3,}, lowercased,
+// stopword-filtered, deduped) — featurebuild.go's desc-term extraction
+// without the library-wide TF-IDF selection. Unmodeled tokens have no
+// affinity and simply contribute nothing.
+func descriptionTokenSet(details string) map[string]bool {
+	tokens := map[string]bool{}
+	for _, match := range descTokenRegex.FindAllString(details, -1) {
+		token := strings.ToLower(match)
+		if !descStopwords[token] {
+			tokens[token] = true
+		}
+	}
+	return tokens
+}
+
 // expandTagValue mirrors ExpandService._tag_value.
 func expandTagValue(tag jVal, affinities map[string]float64) float64 {
 	if value, ok := affinities["id:"+tag.get("id").asString()]; ok {
@@ -250,7 +266,7 @@ func expandCastWeight(count int) float64 {
 }
 
 // expandWhy mirrors ExpandService._why.
-func expandWhy(scene jVal, tagAffinity map[string]float64, identity, similarity float64, castCount int) jVal {
+func expandWhy(scene jVal, tagAffinity, termAffinity map[string]float64, identity, similarity float64, castCount int) jVal {
 	type tagPair struct {
 		value float64
 		name  string
@@ -266,9 +282,26 @@ func expandWhy(scene jVal, tagAffinity map[string]float64, identity, similarity 
 	if len(pairs) > 3 {
 		pairs = pairs[:3]
 	}
+	type termPair struct {
+		value float64
+		term  string
+	}
+	termPairs := make([]termPair, 0)
+	for token := range descriptionTokenSet(scene.get("details").asString()) {
+		if value := termAffinity[token]; value > 0 {
+			termPairs = append(termPairs, termPair{value: value, term: token})
+		}
+	}
+	sort.SliceStable(termPairs, func(i, j int) bool { return termPairs[i].value > termPairs[j].value })
+	if len(termPairs) > 2 {
+		termPairs = termPairs[:2]
+	}
 	reasons := jvArr()
 	for _, pair := range pairs {
 		reasons.arr = append(reasons.arr, jvStr(pair.name))
+	}
+	for _, pair := range termPairs {
+		reasons.arr = append(reasons.arr, jvStr(pair.term))
 	}
 	if identity > 0 {
 		reasons.arr = append(reasons.arr, jvStr("a performer you already enjoy"))
@@ -517,7 +550,8 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 
 // expandSceneMatches mirrors ExpandService._scene_matches.
 func expandSceneMatches(payload jVal, includeTags, excludeTags, performerNames, studioNames []string,
-	performerQuery, studioQuery string, includeGroups, excludeGroups, blockedGroups []map[string]bool) bool {
+	performerQuery, studioQuery string, includeGroups, excludeGroups, blockedGroups []map[string]bool,
+	blockedTerms map[string]bool) bool {
 	tags := map[string]bool{}
 	for _, item := range payload.get("tags").arr {
 		tags[strings.ToLower(pythonStrOrEmpty(item.get("name")))] = true
@@ -529,6 +563,13 @@ func expandSceneMatches(payload jVal, includeTags, excludeTags, performerNames, 
 	studio := strings.ToLower(pythonStrOrEmpty(payload.get("studio").get("name")))
 	if anyGroupIntersects(blockedGroups, tags) {
 		return false
+	}
+	if len(blockedTerms) > 0 {
+		for token := range descriptionTokenSet(payload.get("details").asString()) {
+			if blockedTerms[token] {
+				return false
+			}
+		}
 	}
 	if len(includeTags) > 0 && !allGroupsIntersect(includeGroups, tags) {
 		return false
@@ -624,6 +665,30 @@ func expandDiverseScenes(rows []jVal) []jVal {
 		remaining = append(remaining[:index], remaining[index+1:]...)
 	}
 	return selected
+}
+
+// blockedTermSet mirrors ExpandService._blocked_terms: every blocked
+// description term. Remote scenes whose description tokens include one are
+// excluded (tokenized with the model's pipeline; the term->scene mapping has
+// no SQL join for remote candidates).
+func (s *expandService) blockedTermSet() (map[string]bool, error) {
+	terms := map[string]bool{}
+	rows, err := s.db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var term string
+		if err := rows.Scan(&term); err != nil {
+			return nil, err
+		}
+		terms[term] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return terms, nil
 }
 
 // blockedTagNameGroups mirrors ExpandService._blocked_tag_name_groups.
@@ -1673,6 +1738,45 @@ LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
 	if err := prefRows.Err(); err != nil {
 		return nil, nil, err
 	}
+	termAffinity := map[string]float64{}
+	termRows, err := s.db.Query(`
+SELECT d.name, a.affinity * a.confidence AS value
+FROM feature_affinity a JOIN feature_definition d USING(feature_id)
+WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
+  AND d.name LIKE 'desc:%'`, modelID, featureVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	for termRows.Next() {
+		var name string
+		var value float64
+		if err := termRows.Scan(&name, &value); err != nil {
+			return nil, nil, err
+		}
+		termAffinity[strings.TrimPrefix(name, "desc:")] = value
+	}
+	termRows.Close()
+	if err := termRows.Err(); err != nil {
+		return nil, nil, err
+	}
+	directTermRows, err := s.db.Query(`SELECT term, value FROM direct_term_preference`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for directTermRows.Next() {
+		var term string
+		var value float64
+		if err := directTermRows.Scan(&term, &value); err != nil {
+			return nil, nil, err
+		}
+		if _, ok := termAffinity[term]; !ok {
+			termAffinity[term] = value
+		}
+	}
+	directTermRows.Close()
+	if err := directTermRows.Err(); err != nil {
+		return nil, nil, err
+	}
 	externalStudioAppeal := map[string]float64{}
 	appealRows, err := s.db.Query(`
 WITH appeal AS (
@@ -1801,6 +1905,17 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 					signals = signals[:5]
 				}
 				tagValue := math.Tanh(sumFloats(signals))
+				termSignals := make([]float64, 0, 8)
+				for token := range descriptionTokenSet(scene.get("details").asString()) {
+					if value, ok := termAffinity[token]; ok {
+						termSignals = append(termSignals, value)
+					}
+				}
+				sort.SliceStable(termSignals, func(i, j int) bool { return math.Abs(termSignals[i]) > math.Abs(termSignals[j]) })
+				if len(termSignals) > 5 {
+					termSignals = termSignals[:5]
+				}
+				termValue := math.Tanh(sumFloats(termSignals))
 				cast := make([]jVal, 0, len(scene.get("performers").arr))
 				for _, item := range scene.get("performers").arr {
 					cast = append(cast, item.get("performer"))
@@ -1898,10 +2013,10 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 						score:      performerScore,
 					})
 				}
-				score := 0.45*tagValue + 0.25*identity + 0.10*studioValue + 0.20*similarityValue
+				score := 0.40*tagValue + 0.10*termValue + 0.25*identity + 0.10*studioValue + 0.15*similarityValue
 				payload := cloneObj(scene)
 				payload.set("studio", studioPayload)
-				payload.set("why", expandWhy(scene, tagAffinity, identity, similarityValue, len(cast)))
+				payload.set("why", expandWhy(scene, tagAffinity, termAffinity, identity, similarityValue, len(cast)))
 				work[index] = sceneWork{
 					row: scoredScene{
 						id:      scene.get("id").asString(),

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	sqlite "modernc.org/sqlite"
 )
@@ -328,23 +329,46 @@ WHERE status='published'`); err != nil {
 
 // withTxn runs fn inside one BEGIN IMMEDIATE transaction on the pool's
 // single connection, committing on success and rolling back on error —
-// mirroring curator.storage.transaction (no nested transactions).
+// mirroring curator.storage.transaction (no nested transactions). Busy
+// failures before COMMIT are retried with backoff (the #109 mitigation for
+// extended SQLITE_BUSY codes the busy_timeout handler does not cover); a
+// COMMIT failure is never retried — its outcome is ambiguous and re-running
+// fn could double-apply writes.
 func withTxn(db dbx, fn func(conn *sql.Conn) error) error {
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := range busyRetryAttempts {
+		conn, err := db.Conn(context.Background())
+		if err != nil {
+			return err
+		}
+		ctx := context.Background()
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			conn.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return err
+		}
+		if err := fn(conn); err != nil {
+			conn.ExecContext(ctx, "ROLLBACK")
+			conn.Close()
+			if isBusyError(err) && attempt < busyRetryAttempts-1 {
+				lastErr = err
+				time.Sleep(busyRetryBackoff(attempt))
+				continue
+			}
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			conn.Close()
+			return err
+		}
+		conn.Close()
+		return nil
 	}
-	defer conn.Close()
-	ctx := context.Background()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	if err := fn(conn); err != nil {
-		conn.ExecContext(ctx, "ROLLBACK")
-		return err
-	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
+	return lastErr
 }
 
 // isRegularFile reports whether path names a regular, non-symlink file

@@ -1604,3 +1604,88 @@ def test_unused_local_tag_preference_scores_matching_external_scenes(tmp_path: P
 
     scores = {item["id"]: item["score"] for item in scenes}
     assert scores["tagged"] < scores["plain"]
+
+
+def test_description_term_preference_ranks_matching_external_scenes(
+    tmp_path: Path,
+) -> None:
+    """Remote scenes are ranked by description term affinity: with identical
+    tags/performers/studio, the scene whose description carries a positively
+    declared term scores higher, and the explanation names the term."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    model = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    InteractionStore(connection).submit_term_preferences(
+        [{"preference_id": "term-good", "term": "romantic", "value": 1, "occurred_at_ms": 10}]
+    )
+    scenes, _ = ExpandService(connection)._score(
+        [
+            {
+                "id": "described",
+                "details": "A romantic candlelight encounter with intense chemistry.",
+                "tags": [],
+                "performers": [],
+            },
+            {
+                "id": "plain",
+                "details": "An athletic outdoor adventure near the mountains.",
+                "tags": [],
+                "performers": [],
+            },
+        ],
+        {"described": {"wildcard"}, "plain": {"wildcard"}},
+        model.model_id,
+        model.feature_version,
+        {"scenes": {}, "performers": {}, "studios": {}},
+    )
+
+    scores = {item["id"]: item["score"] for item in scenes}
+    assert scores["described"] > scores["plain"]
+    why = {item["id"]: item["payload"]["why"] for item in scenes}
+    assert "romantic" in why["described"]
+    assert "romantic" not in why["plain"]
+
+
+class DescribedStashDB(FakeStashDB):
+    """FakeStashDB whose candidates carry a description mentioning 'romantic'."""
+
+    def execute(self, document: str, variables: dict[str, object]):
+        result = super().execute(document, variables)
+        for scene in result["queryScenes"]["scenes"]:
+            scene["details"] = "A romantic candlelight encounter with intense chemistry."
+        return result
+
+
+def test_blocked_term_excludes_remote_pool_scenes(tmp_path: Path) -> None:
+    """Blocking a description term removes every remote candidate whose
+    description tokens include it from the Expand results, even when the term
+    is not part of the built model (the remote mapping tokenizes the
+    description; it has no entity_feature join)."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    client = DescribedStashDB()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {"studio-1": "external-studio"},
+    }
+    ExpandService(connection).refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=10)
+    assert [item["id"] for item in ExpandService(connection).results("scene")["items"]] == [
+        "new-external-scene"
+    ]
+
+    connection.execute(
+        """
+        INSERT INTO direct_term_preference_history(
+            preference_id, term, value, occurred_at_ms, blocked
+        ) VALUES ('pref-block', 'romantic', 0, 1, 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO direct_term_preference(
+            term, preference_id, value, occurred_at_ms, blocked
+        ) VALUES ('romantic', 'pref-block', 0, 1, 1)
+        """
+    )
+    connection.commit()
+    assert ExpandService(connection).results("scene")["items"] == []
