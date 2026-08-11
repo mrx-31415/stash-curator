@@ -1,9 +1,10 @@
-"""Optional compiled-core acceleration (curator-core subprocess transport).
+"""Compiled-core transport (curator-core subprocess).
 
-The Go binary (built from `core/`) is optional acceleration exactly like numpy:
-when a compatible binary is available the model build uses it for the
-content-neighbor and performer-similarity stages; otherwise the numpy or
-pure-Python implementations run unchanged. Discovery order:
+The Go binary (built from `core/`) is the single runtime implementation of
+the model-build kernels (content-neighbor and performer-similarity stages)
+and of the whole raw-plugin backend. The model build always invokes it; a
+missing, mismatched, or broken binary fails the stage loudly (``CoreError``)
+rather than degrading to another implementation. Discovery order:
 
 1. ``CURATOR_CORE`` environment variable (CI, dev, benchmarks);
 2. the installed plugin layout: ``<plugin>/curator-core-<goos>-<goarch>`` (the
@@ -11,10 +12,10 @@ pure-Python implementations run unchanged. Discovery order:
 3. the repository dev layout: ``<repo>/core/bin/curator-core``.
 
 A candidate is accepted only when it answers the ``version`` probe with the
-matching protocol. Availability is probed once per process and cached. The
-binary is never a hard dependency: any probe failure degrades to the numpy /
-pure-Python fallback, while a failure during a real stage run propagates (an
-available-but-broken binary is a defect, mirroring how numpy errors surface).
+matching protocol. Availability is probed once per process and cached; the
+probe result is exposed (``core_available``/``core_binary``) so callers can
+skip or adapt, while a failure during a real stage run propagates as a
+``CoreError`` at the stage boundary.
 """
 
 from __future__ import annotations

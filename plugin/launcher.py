@@ -2,19 +2,19 @@
 """Resolve the platform's curator-core binary and exec it as the backend.
 
 Stash's plugin `exec` list is static and platform-agnostic (one yml per
-plugin), so the swap to the compiled backend goes through this tiny shim:
-it maps the running platform to the shipped per-arch binary name
+plugin), so the compiled backend goes through this tiny shim: it maps the
+running platform to the shipped per-arch binary name
 (curator-core-<goos>-<goarch>, built by scripts/build_plugin.py), then
-execs it with the same argv contract backend.py serves — argv[1] = plugin
+execs it with the same argv contract the binary serves — argv[1] = plugin
 dir, argv[2] = optional task/hook mode.
 
 The shim imports only the standard library and does no work beyond the
-exec, so its own spawn cost stays in the tens of milliseconds instead of
-backend.py's full import (~700 ms). When the binary is absent for this
-platform (never in the shipped zip, but possible for hand-installed
-plugins), the shim falls back to the bundled backend.py so unported ops,
-tasks, and hooks keep working. backend.py stays in the zip until Slice 4
-deletes Python; the exec line then points at the binary directly.
+exec, so its own spawn cost stays in the tens of milliseconds. Every
+operation, task mode, and the entity-sync hook mode is native in the
+binary; no Python runtime ships in the plugin. If the binary is absent for
+this platform (never in the shipped zip, but possible for hand-installed
+plugins), the shim fails with a clear reinstall message instead of
+half-running.
 """
 
 from __future__ import annotations
@@ -44,9 +44,11 @@ def main() -> None:
     args = [str(binary), str(PLUGIN_DIR), *sys.argv[2:]]
     if binary.is_file() and os.access(binary, os.X_OK):
         os.execv(str(binary), args)
-    # No binary for this platform: run the Python backend (unported ops,
-    # tasks, and hooks all still work through it).
-    os.execv(sys.executable, [sys.executable, str(PLUGIN_DIR / "backend.py"), *args[1:]])
+    sys.stderr.write(
+        f"stash-curator: no curator-core binary for this platform ({_binary_name()}); "
+        "reinstall the plugin from the index\n"
+    )
+    sys.exit(1)
 
 
 if __name__ == "__main__":
