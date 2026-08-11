@@ -4,11 +4,12 @@
 // the content-neighbor and performer-similarity kernels mirror the production
 // Python implementations in curator/model/builder.py with identical semantics,
 // reading feature rows directly from the SQLite feature artifact (see
-// content.go, performer.go, multi_hop.go). The backend mode (Slice 0 of the
-// full Go backend) implements the raw-plugin interface on stdin/stdout —
-// the same contract plugin/backend.py serves — for the ported ops
-// (round_trip, health, get_config, get_job_status), with a Python fallback
-// spawning backend.py for everything else (backend.go, ops.go, fallback.go).
+// content.go, performer.go, multi_hop.go). The backend mode (the full Go
+// backend port) implements the raw-plugin interface on stdin/stdout — the
+// same contract plugin/backend.py serves — for every operation, task mode,
+// and the entity-sync hook mode the frontend or Stash can invoke
+// (backend.go, ops.go, tasks.go, entity_hook.go, frontend.go). Unknown
+// operations and task modes error with the Python backend's exact messages.
 //
 // Kernel protocol: the payload is a single JSON object on stdin; stdout is
 // newline-delimited JSON with optional {"progress": fraction} lines followed by

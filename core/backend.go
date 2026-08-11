@@ -4,10 +4,9 @@
 // stdin, one {"output": ...} object on stdout on success, {"error": ...} on
 // failure with a non-zero exit status, and stderr progress markers of the
 // form \x01{level}\x02{message} (level "p" for progress, "i"/"w"/"e" for
-// log lines). The binary implements the ported Slice-0 operations itself;
-// every other operation, task mode, and the entity-sync hook mode is
-// delegated to the bundled backend.py with the same argv/stdin contract
-// (fallback.go).
+// log lines). Every operation, task mode, and the entity-sync hook mode runs
+// natively in the binary; unknown operations and task modes error with the
+// Python backend's exact messages.
 package main
 
 import (
@@ -71,29 +70,32 @@ func runBackend(pluginDir, mode string) {
 	}
 
 	if mode != "" {
-		// Task modes run under the _profiled "task" lifecycle. The
-		// entity-sync hook mode and unported task modes keep the Python
-		// fallback.
-		if mode == "entity-sync" || !taskModeNative(mode) {
-			fallbackToPython(pluginDir, mode, payloadBytes)
+		if mode == "entity-sync" {
+			// Stash entity hooks run inline in the mutation path and must
+			// never take the task path: no curator_job row, no
+			// single-running-job guard, no model build. The hook result is
+			// written like any other output.
+			writeOutput(runEntityHook(pluginDir, payload))
+			return
 		}
+		// Task modes run under the _profiled "task" lifecycle.
 		output, err := runTask(pluginDir, payload, mode)
 		if err != nil {
 			writeError(err.Error())
 		}
-		var b strings.Builder
-		b.WriteString(`{"output":`)
-		output.writeJSON(&b)
-		b.WriteString("}\n")
-		if _, err := os.Stdout.WriteString(b.String()); err != nil {
-			fail("write output: %v", err)
-		}
+		writeOutput(output)
 		return
 	}
-	output, err := dispatch(pluginDir, payload, payloadBytes)
+	output, err := dispatch(pluginDir, payload)
 	if err != nil {
 		writeError(err.Error())
 	}
+	writeOutput(output)
+}
+
+// writeOutput emits {"output": <value>}\n, matching backend.py's success
+// path (json.dumps({"output": output}, separators=(",", ":"))).
+func writeOutput(output jVal) {
 	var b strings.Builder
 	b.WriteString(`{"output":`)
 	output.writeJSON(&b)
@@ -103,8 +105,8 @@ func runBackend(pluginDir, mode string) {
 	}
 }
 
-// taskModeNative reports whether the binary serves a task mode natively; the
-// rest keep the Python fallback (backend.go's runBackend consults it).
+// taskModeNative reports whether the binary serves a task mode natively;
+// unknown modes error like Python's "unknown Curator task" (runTaskMode).
 func taskModeNative(mode string) bool {
 	switch mode {
 	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh",
@@ -114,10 +116,10 @@ func taskModeNative(mode string) bool {
 	return false
 }
 
-// dispatch implements backend.py's dispatch(): the ported operations run
-// natively; anything else falls back to the Python backend with the raw
-// payload bytes (fallbackToPython never returns).
-func dispatch(pluginDir string, payload jVal, raw []byte) (jVal, error) {
+// dispatch implements backend.py's dispatch(): every operation the frontend
+// or Stash can invoke runs natively; an unknown operation errors with
+// Python's exact message.
+func dispatch(pluginDir string, payload jVal) (jVal, error) {
 	args := payload.get("args")
 	operation := "health"
 	if args.kind == jObj {
@@ -195,8 +197,15 @@ func dispatch(pluginDir string, payload jVal, raw []byte) (jVal, error) {
 		return opGetProfile(pluginDir, payload)
 	case "clear_profiles":
 		return opClearProfiles(pluginDir, payload)
+	case "get_external_tag_choices":
+		return opGetExternalTagChoices(pluginDir, payload)
+	case "get_inspector_entity":
+		return opGetInspectorEntity(pluginDir, payload)
+	case "get_tag_sentiment_follow_up":
+		return opGetTagSentimentFollowUp(pluginDir, payload)
+	case "reset":
+		return opReset(pluginDir, payload)
 	default:
-		fallbackToPython(pluginDir, "", raw)
+		return jvNull(), fmt.Errorf("unknown Curator API operation: %s", operation)
 	}
-	return jvNull(), nil // unreachable; fallbackToPython exits
 }

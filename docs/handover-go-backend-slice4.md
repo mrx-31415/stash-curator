@@ -108,8 +108,10 @@ After items 1–2, every op in `_api` and every task mode is native. Then:
 - The `main.jVal` bind error from the live sync task: fixed (file durations /
   marker `end_seconds` now bind as floats) and reinstall superseded the stale
   binary; if it recurs, capture the op that triggered it.
-- The integration `get_similar` 1-ulp flake is tolerance-covered now; keep the
-  structural-exact assertions when touching `test_backend_swap.py`.
+- The integration `get_similar` 1-ulp flake is tolerance-covered now; the
+  installed-level oracle comparisons that used it (`test_backend_swap.py`'s
+  docker-exec parity tests) were retired in favor of the repo-level
+  differential harness.
 
 ## Acceptance criteria
 
@@ -133,3 +135,69 @@ After items 1–2, every op in `_api` and every task mode is native. Then:
   Stash logs, task progress, and desktop/mobile layouts. Live behavior on
   192.168.1.100 can only be verified after the user reloads plugins/restarts
   Stash — never claim an installed fix is verified until that retest happens.
+## Session 2026-08-11 — delivered (uncommitted)
+
+All four remaining ops and the entity-sync hook mode are native in
+`curator-core`; the in-binary Python fallback is retired.
+
+**Native in `curator-core`:**
+- `get_external_tag_choices` (`core/frontend.go`): the source_tag /
+  tag_role / direct_tag_preference / source_tag_stash_id read plus the
+  taxonomy alias → local tag fallback (same UNION query as Python).
+- `get_inspector_entity` (`core/frontend.go`): scene (full
+  `ModelSceneScore` asdict + explanation via the extracted
+  `renderExplanationForScene`, shared with `get_explanation`) and performer
+  (`source_performer` dict row + `similar_performers` via the existing
+  `performerProfilesAll`/`performerSimilarity` kernels).
+- `get_tag_sentiment_follow_up` (`core/frontend.go`): reuses the native
+  taste-profile output (`getTasteProfileBody`) and applies the Python
+  filter/sort/limit.
+- `reset` (`core/frontend.go`): confirmation gate, running-job guard,
+  removal of the database + WAL/SHM + `recognized_artifacts` (new
+  `recognizedArtifacts` port of `artifacts.recognized_artifacts`), then a
+  fresh migrated sidecar. Unprofiled like Python's dispatch branch.
+- `entity-sync` (`core/entity_hook.go`): the `_run_entity_hook` port —
+  hook-type map, upsert/delete by `.Destroy.Post` suffix, one bounded
+  `pending_entity_change` upsert + `coordinatorRequest("entity_hook")`
+  inside a transaction, **no `curator_job` row**, and a neutral
+  `{"handled": false, "reason": ...}` (truncated to 500) instead of raising.
+
+**Fallback retirement (decision recorded):** `core/fallback.go` is deleted;
+`dispatch`'s default and unknown task modes error with Python's exact
+messages (`unknown Curator API operation: ...`, `unknown Curator task: ...`).
+
+**Follow-up (same day, second commit):** the packaged Python backend is
+removed from the shipped zip. `scripts/build_plugin.py` no longer ships
+`backend.py` or the `curator` package — the only non-binary runtime resource
+is `curator/explanations/realizations.json`, which the explanation renderer
+reads from disk (`core/explanations_render.go`). `plugin/launcher.py` fails
+with a clear reinstall message when no per-arch binary exists instead of
+exec'ing `backend.py`; `scripts/install-local.sh` prunes stale Python from
+the install target. `backend.py` and the `curator` package remain in the
+repository as the differential-test oracle (repo-level `tests/core/`). The
+pre-push hook is now diff-scoped: code changes run `scripts/verify full`
+(single pytest pass, fresh-zip-first), docs-only pushes run the cheap
+checks; CI always runs the full suite.
+
+**Follow-up (same day, third commit):** the installed-level oracle
+comparisons are retired. `tests/integration/test_backend_swap.py` no longer
+docker-execs `backend.py` against the seeded sidecar — the same parity is
+already proven at the repo level (`tests/core/test_backend*.py`, which run
+both subprocesses directly), and the installed plugin is functionally
+verified by the rest of the integration suite (smoke, hooks, plays, similar).
+The file now covers the installed-binary checks that remain unique: the
+launcher exec chain, real model-backed output, and the unconfigured-StashDB
+failure path. `scripts/verify integration` no longer copies an oracle into
+the container.
+
+**Differential tests** (`tests/core/test_backend_slice4.py`, 26 tests):
+stdout byte-parity (tolerance comparator) for the four ops' success and
+error paths, reset's surviving-file/artifact/remake parity, and the hook's
+output + `pending_entity_change` + no-job-row + coordinator parity (modulo
+`created_at_ms`).
+
+**Verification:** `scripts/verify core`-equivalent gate (168 tests in
+`tests/core` + `tests/model/test_core.py` green), full non-integration
+suite (476 passed), `go vet` clean, static binary; `core/go.mod`
+unchanged. Live installed verification on 192.168.1.100 still requires a
+Stash reload/restart after the user installs the rebuilt plugin.
