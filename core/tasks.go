@@ -170,8 +170,10 @@ func runTaskMode(db dbx, pluginDir string, payload jVal, mode string, settings j
 		return taskSyncPlays(db, pluginDir, payload, settings)
 	case "expand-refresh":
 		return taskExpandRefresh(db, pluginDir, payload, settings)
-	case "build", "update-model", "sync-build", "full-sync-build":
-		return runTaskModePending(db, pluginDir, payload, mode, settings)
+	case "build", "update-model":
+		return taskBuild(db, pluginDir, payload, mode)
+	case "sync-build", "full-sync-build":
+		return taskSyncBuild(db, pluginDir, payload, mode, settings)
 	}
 	return jvNull(), fmt.Errorf("unknown Curator task: %s", mode)
 }
@@ -269,6 +271,314 @@ func taskExpandRefresh(db dbx, pluginDir string, payload jVal, settings jVal) (j
 	}
 	progressLog(0.98)
 	return summary, nil
+}
+
+// drainPendingEntityChanges mirrors backend.py's
+// _drain_pending_entity_changes: process the hook queue through the sync
+// service, dropping rows that complete or vanish.
+func drainPendingEntityChanges(db dbx, base string, headers map[string]string) (int64, error) {
+	rows, err := db.Query(`SELECT entity_type, entity_id, operation FROM pending_entity_change ORDER BY created_at_ms`)
+	if err != nil {
+		return 0, err
+	}
+	type pendingRow struct {
+		entityType string
+		entityID   string
+		operation  string
+	}
+	var pending []pendingRow
+	for rows.Next() {
+		var entityType, entityID, operation string
+		if err := rows.Scan(&entityType, &entityID, &operation); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, pendingRow{entityType, entityID, operation})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(pending) == 0 {
+		return 0, nil
+	}
+	service, err := newSyncService(base, headers, newSyncRepository(db), 250)
+	if err != nil {
+		return 0, err
+	}
+	var drained int64
+	var dropped []pendingRow
+	for _, row := range pending {
+		var opErr error
+		if row.operation == "delete" {
+			opErr = service.deleteEntity(row.entityType, row.entityID)
+		} else {
+			_, opErr = service.upsertEntity(row.entityType, row.entityID)
+		}
+		if opErr == nil {
+			dropped = append(dropped, row)
+			drained++
+		} else if strings.Contains(opErr.Error(), "did not return") {
+			dropped = append(dropped, row)
+			warnLog(fmt.Sprintf("pending entity change failed for %s %s: %s",
+				row.entityType, row.entityID, opErr.Error()))
+		} else {
+			warnLog(fmt.Sprintf("pending entity change failed for %s %s: %s",
+				row.entityType, row.entityID, opErr.Error()))
+		}
+	}
+	if len(dropped) > 0 {
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			for _, row := range dropped {
+				if _, err := conn.ExecContext(context.Background(),
+					`DELETE FROM pending_entity_change WHERE entity_type=? AND entity_id=?`,
+					row.entityType, row.entityID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return drained, nil
+}
+
+// syncEntityCounts serializes the count maps in the canonical entity order
+// (ENTITY_OPERATIONS order: tags, studios, performers, scenes, scene_plays).
+func syncEntityCounts(counts map[string]int64) jVal {
+	out := jvObj()
+	for _, entity := range []string{"tag", "studio", "performer", "scene", "scene_play"} {
+		if value, ok := counts[entity]; ok {
+			out.set(entity, jvInt(value))
+		}
+	}
+	return out
+}
+
+// taskBuild mirrors backend.py's build / update-model mode.
+func taskBuild(db dbx, pluginDir string, payload jVal, mode string) (jVal, error) {
+	progressLog(0.1)
+	infoLog("Building the recommendation model")
+	modelMilestone := -1
+	reportModel := func(processed, total int) {
+		fraction := 1.0
+		if total > 0 {
+			fraction = math.Min(float64(processed)/float64(total), 1.0)
+		}
+		progressLog(0.03 + 0.92*fraction)
+		milestone := int(fraction * 10)
+		if milestone > modelMilestone {
+			modelMilestone = milestone
+			infoLog(fmt.Sprintf("Building recommendation model: %d%%", milestone*10))
+		}
+	}
+	if mode == "build" {
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			return coordinatorRequest(conn, "manual_build", nowMs())
+		}); err != nil {
+			return jvNull(), err
+		}
+	}
+	base, headers := stashConnection(payload)
+	infoLog("Importing entity changes recorded by hooks")
+	var drained int64
+	err := pythonSpan("task.drain_entity_changes", func() error {
+		var err error
+		drained, err = drainPendingEntityChanges(db, base, headers)
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	if drained > 0 {
+		infoLog(fmt.Sprintf("Imported %d entity changes", drained))
+	}
+	var models []drainResult
+	err = pythonSpan("task.model_build", func() error {
+		var err error
+		models, err = coordinatorDrain(db, true, 1, reportModel)
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	if len(models) == 0 {
+		progressLog(0.98)
+		infoLog("No pending preference changes")
+		return jvObj(jvKey("updated", jvBool(false))), nil
+	}
+	model := models[0]
+	progressLog(0.95)
+	infoLog("Organizing scenes into recommendation lanes")
+	laneCount, err := classifyLanesTask(db, model.modelID, mappedProgress(0.95, 0.97))
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.97)
+	infoLog("Preparing recommendation pages")
+	laneCaches, err := prepareLanesTask(db, model.modelID, false, mappedProgress(0.97, 0.99))
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.99)
+	return jvObj(
+		jvKey("updated", jvBool(true)),
+		jvKey("model_id", jvStr(model.modelID)),
+		jvKey("lane_classifications", jvInt(laneCount)),
+		jvKey("lane_candidate_caches", laneCaches),
+		jvKey("stage_timings_ms", stageTimingsJVal(model.stageTimingsMs)),
+	), nil
+}
+
+// stageTimingsJVal serializes the stage timings dict in insertion order.
+func stageTimingsJVal(timings map[string]int64) jVal {
+	out := jvObj()
+	for _, key := range stageTimingOrder {
+		if value, ok := timings[key]; ok {
+			out.set(key, jvInt(value))
+		}
+	}
+	return out
+}
+
+// stageTimingOrder mirrors the model build's timings insertion order.
+var stageTimingOrder = []string{
+	"feature_lookup", "feature_build", "feature_database_writing", "feature_indexing",
+	"feature_validation", "feature_publication", "feature_total", "labels", "affinities",
+	"similarity", "scoring", "database_writing", "lane_classification",
+	"score_first_ordering", "varied_ordering", "reason_generation",
+	"sqlite_index_creation", "indexing", "validation", "publication", "cleanup", "total",
+}
+
+// taskSyncBuild mirrors backend.py's sync-build / full-sync-build mode.
+func taskSyncBuild(db dbx, pluginDir string, payload jVal, mode string, settings jVal) (jVal, error) {
+	config, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	cfg := config.get("config")
+	loggedMilestones := map[string]int{}
+	reportSync := func(entity string, processed, total int64, position, entityCount int) {
+		fraction := 1.0
+		if total > 0 {
+			fraction = math.Min(float64(processed)/float64(total), 1.0)
+		}
+		progressLog(0.03 + 0.52*(float64(position)+fraction)/float64(maxInt(1, entityCount)))
+		milestone := int(fraction * 10)
+		if milestone > loggedMilestones[entity] {
+			loggedMilestones[entity] = milestone
+			infoLog(fmt.Sprintf("Synchronizing %ss: %d/%d", entity, processed, total))
+		}
+	}
+	base, headers := stashConnection(payload)
+	infoLog("Synchronizing Stash metadata")
+	var synced syncResult
+	err = pythonSpan("task.sync", func() error {
+		service, err := newSyncService(base, headers, newSyncRepository(db),
+			pythonInt(cfg.get("sync_page_size")))
+		if err != nil {
+			return err
+		}
+		service.progress = reportSync
+		synced, err = service.sync(mode == "full-sync-build", false)
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	var pruneChanged bool
+	err = pythonSpan("task.reconcile_prune", func() error {
+		var err error
+		pruneChanged, err = reconcilePruneTag(db, cfg.get("prune_tag_name").asString())
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.58)
+	infoLog("Rebuilding historical preference signals")
+	historicalSceneIDs := []string(nil)
+	if mode != "full-sync-build" && !synced.resumed {
+		historicalSceneIDs = synced.sceneIDs
+	}
+	var historical historicalBuildResult
+	err = pythonSpan("task.historical_events", func() error {
+		var err error
+		historical, err = historicalRebuild(db, historicalSceneIDs, mappedProgress(0.58, 0.68))
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.68)
+	if err := withTxn(db, func(conn *sql.Conn) error {
+		_, err := conn.ExecContext(context.Background(), `DELETE FROM pending_entity_change`)
+		return err
+	}); err != nil {
+		return jvNull(), err
+	}
+	for _, entity := range sortedStringKeys(synced.deletedEntityCounts) {
+		infoLog(fmt.Sprintf("Removed %d %ss deleted from Stash", synced.deletedEntityCounts[entity], entity))
+	}
+	sourceChanged := mode == "full-sync-build" || synced.resumed ||
+		len(synced.changedEntityCounts) > 0 || len(synced.deletedEntityCounts) > 0 || pruneChanged
+	currentModelID, err := currentModelID(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	if sourceChanged || currentModelID == "" {
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			return coordinatorRequest(conn, "source_sync", nowMs())
+		}); err != nil {
+			return jvNull(), err
+		}
+	}
+	var modelID string
+	var stageTimings map[string]int64
+	if sourceChanged || currentModelID == "" {
+		infoLog("Building the recommendation model")
+		var models []drainResult
+		err = pythonSpan("task.model_build", func() error {
+			var err error
+			models, err = coordinatorDrain(db, true, 1, mappedProgress(0.68, 0.95))
+			return err
+		})
+		if err != nil {
+			return jvNull(), err
+		}
+		modelID = models[0].modelID
+		stageTimings = models[0].stageTimingsMs
+	} else {
+		progressLog(0.95)
+		infoLog("No Stash changes; keeping the current recommendation model")
+		modelID = currentModelID
+		stageTimings = map[string]int64{}
+	}
+	progressLog(0.95)
+	infoLog("Organizing scenes into recommendation lanes")
+	laneCount, err := classifyLanesTask(db, modelID, mappedProgress(0.95, 0.97))
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.97)
+	infoLog("Preparing recommendation pages")
+	laneCaches, err := prepareLanesTask(db, modelID, false, mappedProgress(0.97, 0.99))
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.99)
+	infoLog(fmt.Sprintf("Recommendation model ready: %s", modelID))
+	return jvObj(
+		jvKey("sync_run_id", jvStr(synced.runID)),
+		jvKey("entity_counts", syncEntityCounts(synced.entityCounts)),
+		jvKey("changed_entity_counts", syncEntityCounts(synced.changedEntityCounts)),
+		jvKey("historical_scenes", jvInt(historical.sceneCount)),
+		jvKey("model_id", jvStr(modelID)),
+		jvKey("lane_classifications", jvInt(laneCount)),
+		jvKey("lane_candidate_caches", laneCaches),
+		jvKey("stage_timings_ms", stageTimingsJVal(stageTimings)),
+	), nil
 }
 
 // runTaskModePending routes the modes whose dependency ports are still in

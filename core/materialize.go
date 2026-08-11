@@ -35,10 +35,18 @@ type heapEntry struct {
 
 type heapQueue []heapEntry
 
-func (h heapQueue) Len() int           { return len(h) }
-func (h heapQueue) Less(i, j int) bool { return h[i].negUtility < h[j].negUtility }
-func (h heapQueue) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *heapQueue) Push(x any)        { *h = append(*h, x.(heapEntry)) }
+func (h heapQueue) Len() int { return len(h) }
+func (h heapQueue) Less(i, j int) bool {
+	if h[i].negUtility != h[j].negUtility {
+		return h[i].negUtility < h[j].negUtility
+	}
+	if h[i].sceneID != h[j].sceneID {
+		return h[i].sceneID < h[j].sceneID
+	}
+	return h[i].lane < h[j].lane
+}
+func (h heapQueue) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *heapQueue) Push(x any)   { *h = append(*h, x.(heapEntry)) }
 func (h *heapQueue) Pop() any {
 	old := *h
 	n := len(old)
@@ -275,14 +283,27 @@ func materializeLanes(db dbx, modelID string, force bool, progress func(complete
 	var one int
 	err := db.QueryRow(`SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID).Scan(&one)
 	if err == nil && !force {
+		// Python's fast path builds the dict from "SELECT lane, count(*)
+		// ... GROUP BY lane" in the row order SQLite returns, so zero-count
+		// lanes are absent and the key order follows the scan.
+		rows, err := db.Query(`SELECT lane, count(*) FROM model_scene_lane
+WHERE model_id=? GROUP BY lane`, modelID)
+		if err != nil {
+			return jvNull(), err
+		}
 		counts := jvObj()
-		for _, lane := range lanes {
+		for rows.Next() {
+			var lane string
 			var count int64
-			if err := db.QueryRow(`SELECT count(*) FROM model_scene_lane WHERE model_id=? AND lane=?`,
-				modelID, lane).Scan(&count); err != nil {
+			if err := rows.Scan(&lane, &count); err != nil {
+				rows.Close()
 				return jvNull(), err
 			}
 			counts.set(lane, jvInt(count))
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return jvNull(), err
 		}
 		if progress != nil {
 			progress(1, 1)

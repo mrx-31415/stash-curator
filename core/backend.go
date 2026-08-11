@@ -107,7 +107,8 @@ func runBackend(pluginDir, mode string) {
 // rest keep the Python fallback (backend.go's runBackend consults it).
 func taskModeNative(mode string) bool {
 	switch mode {
-	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh":
+	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh",
+		"build", "update-model", "sync-build", "full-sync-build":
 		return true
 	}
 	return false

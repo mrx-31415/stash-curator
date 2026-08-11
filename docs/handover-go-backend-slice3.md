@@ -160,10 +160,28 @@ the artifact publication (create/publish/activate + `tag_role`/
 proves content-identical feature artifacts, matching `feature_version`, sidecar
 row parity, and cross-implementation reuse (132 tests in `tests/core/` green).
 
-**Still open in this slice (Python fallback active):** the `build`/`update-model`
-and `sync-build`/`full-sync-build` modes (the remaining model build stages:
-labels, affinities, scoring with the compiled-core kernels, lane
-classification, publication — `curator/model/builder.py` + `ranking/policy.py`
-oracles extracted), profile-trace parity tests for task modes, `scripts/verify
-full` + integration, and the live installed verification on 192.168.1.100
-after a Stash reload.
+Follow-up in the same session: the **model build is native and differentially
+verified** — labels, evidence fingerprint, model-id derivation with reuse,
+affinities (with the direct-tag-preference override), scoring (invoking the
+compiled-core kernels by re-exec of this binary), lane classification
+(percentiles + adventure context), and publication (artifact tables + lanes +
+materialize + validation + sidecar supersede + retention). The `build` /
+`update-model` / `sync-build` / `full-sync-build` task modes are wired
+(`core/modelbuild.go` / `modelbuild2.go` / `modelbuild3.go` /
+`laneclassify.go` / `tasks.go`), exposed as a `model-build` kernel command.
+`tests/core/test_backend_slice3_modelbuild.py` proves content-identical model
+artifacts (all tables, incl. the lanes/orderings), matching `model_id`, and
+cross-implementation reuse (134 tests in `tests/core/` green).
+
+Byte-parity bugs found and fixed while porting: the glibc-math gap
+(`math.Exp` → `pyExp` everywhere Python uses `math.exp`), Python 3.12's
+pairwise `sum()` (`neumaierSum` at every sum site — sequential Go addition
+drifted 1 ulp), map-iteration order for the label/component sums (Go maps are
+unordered; Python iterates dict insertion order), the performer-similarity
+item merge clobbering the novelty-weighted values (10×), the `asymmetric`
+sum-then-scale order, empty-component `raw`/`value` serializing as int `0`
+(not `0.0`), and the materialize heap's missing scene-id tie-break.
+
+**Still open in this slice:** profile-trace parity tests for task modes,
+`scripts/verify full` + integration reruns after the model-build landing, and
+the live installed verification on 192.168.1.100 after a Stash reload.

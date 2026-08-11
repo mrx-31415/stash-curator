@@ -193,6 +193,42 @@ func runFeatureBuild() {
 	}
 }
 
+// runModelBuild serves the "model-build" kernel command: run the full
+// PreferenceModelBuilder pipeline against a writable sidecar and emit the
+// model id as NDJSON.
+func runModelBuild() {
+	var payload featureBuildPayload
+	if err := json.NewDecoder(os.Stdin).Decode(&payload); err != nil {
+		fail("model-build: invalid payload: %v", err)
+	}
+	db, err := openDatabase(payload.DB, false, nil)
+	if err != nil {
+		fail("model-build: open %s: %v", payload.DB, err)
+	}
+	defer db.Close()
+	if err := migrate(db, payload.NowMs); err != nil {
+		fail("model-build: migrate: %v", err)
+	}
+	result, err := modelBuild(db, payload.NowMs, func(processed, total int) {
+		fraction := 1.0
+		if total > 0 {
+			fraction = float64(processed) / float64(total)
+		}
+		_ = writeJSONLine(map[string]any{"progress": fraction})
+	})
+	if err != nil {
+		fail("model-build: %v", err)
+	}
+	if err := writeJSONLine(map[string]any{"result": map[string]any{
+		"model_id":        result.modelID,
+		"feature_version": result.featureVersion,
+		"reused":          result.reused,
+		"scene_count":     result.sceneCount,
+	}}); err != nil {
+		fail("model-build: write result: %v", err)
+	}
+}
+
 // featureSourceFingerprint mirrors FeatureBuilder._source_fingerprint.
 func featureSourceFingerprint(db dbx) (string, error) {
 	digest := sha256.New()
