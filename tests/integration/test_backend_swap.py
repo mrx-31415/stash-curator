@@ -1,7 +1,9 @@
 """Exec-swap integration tests: every operation the frontend or Stash can
 invoke runs natively through the installed zip and stays byte-identical to
-the Python backend on the same sidecar (backend.py remains the direct
-comparison oracle in the container).
+the Python backend on the same sidecar. backend.py is the direct comparison
+oracle in the container: `scripts/verify integration` copies the repo copy
+(plugin/backend.py + the curator package) into the installed plugin dir
+after unzipping, since the zip itself no longer ships Python.
 
 These tests require a Stash instance with the plugin installed (the zip built
 with the launcher exec line). `scripts/verify integration` handles build,

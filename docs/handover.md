@@ -15,9 +15,9 @@ bit-exact CPython math ports that previously anchored byte-identity were
 removed (see `docs/decisions/002-runtime-swap-planning.md` §4 and issue
 #113). The installed plugin's exec line runs through a launcher that
 resolves the per-arch binary; the in-binary Python fallback is retired
-(unknown ops and task modes error with Python's exact messages), while
-`backend.py` stays in the zip as the launcher-level fallback for platforms
-without a shipped binary, pending the user's packaging decision (see
+(unknown ops and task modes error with Python's exact messages), and the
+packaged Python backend is removed from the zip — the launcher fails with a
+clear reinstall message when no binary exists for the platform (see
 `handover-go-backend-slice1.md` through `handover-go-backend-slice4.md`
 for the delivered ports). The
 resident RPC conversion is off the table (disproven — no residency in Stash's
@@ -66,12 +66,12 @@ Python `round()`, Neumaier sum) and their corpus fixtures were removed (issue
 #113) so the core uses plain Go stdlib math and stored floats may differ from
 Python by last bits. The in-binary Python fallback is retired: unknown
 operations and task modes error with Python's exact messages, and
-`core/fallback.go` is deleted. `backend.py` is **retained in the shipped zip**
-by decision — the launcher still falls back to it when no binary exists for
-the platform — pending the user's confirmation to remove the packaged Python
-(see `handover-go-backend-slice4.md`). The installed plugin's exec line runs
-through the arch-resolving launcher (`plugin/launcher.py`). Delivery details
-and verification:
+`core/fallback.go` is deleted. The packaged Python backend is also removed
+from the shipped zip (`scripts/build_plugin.py` ships only the binaries plus
+the explanation catalog resource; `plugin/launcher.py` fails with a clear
+reinstall message when no binary exists for the platform). The installed
+plugin's exec line runs through the arch-resolving launcher
+(`plugin/launcher.py`). Delivery details and verification:
 [`handover-go-backend-slice4.md`](handover-go-backend-slice4.md).
 
 Deferred UI follow-ups (retain as a separate coherent package):

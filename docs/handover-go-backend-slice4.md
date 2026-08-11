@@ -163,9 +163,21 @@ All four remaining ops and the entity-sync hook mode are native in
 **Fallback retirement (decision recorded):** `core/fallback.go` is deleted;
 `dispatch`'s default and unknown task modes error with Python's exact
 messages (`unknown Curator API operation: ...`, `unknown Curator task: ...`).
-`backend.py` stays in the shipped zip by decision — `plugin/launcher.py`
-still falls back to it when no per-arch binary exists — pending the user's
-confirmation to remove the packaged Python.
+
+**Follow-up (same day, second commit):** the packaged Python backend is
+removed from the shipped zip. `scripts/build_plugin.py` no longer ships
+`backend.py` or the `curator` package — the only non-binary runtime resource
+is `curator/explanations/realizations.json`, which the explanation renderer
+reads from disk (`core/explanations_render.go`). `plugin/launcher.py` fails
+with a clear reinstall message when no per-arch binary exists instead of
+exec'ing `backend.py`; `scripts/install-local.sh` prunes stale Python from
+the install target; `scripts/verify integration` copies the repo copy of the
+Python backend into the container as the differential oracle (the zip itself
+stays Python-free). `backend.py` and the `curator` package remain in the
+repository as the differential-test oracle. The pre-push hook is now
+diff-scoped: code changes run `scripts/verify full` (single pytest pass,
+fresh-zip-first), docs-only pushes run the cheap checks; CI always runs the
+full suite.
 
 **Differential tests** (`tests/core/test_backend_slice4.py`, 26 tests):
 stdout byte-parity (tolerance comparator) for the four ops' success and
