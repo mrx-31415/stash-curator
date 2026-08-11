@@ -14,9 +14,10 @@ fork), and `AGENTS.md`.
 
 Port the write-path interactive ops and task modes into the Go core so every
 backend mutation runs natively with Python fallback only for the frontend
-parity leftovers (Slice 4). Byte-identical JSON vs `backend.py` for the same
-payloads and sidecar state (write-path outputs are small: status dicts,
-backup listings, job ids). Task modes run to completion with the same
+parity leftovers (Slice 4). Differential outputs vs `backend.py` for the same
+payloads and sidecar state compare structure exactly and floats within rel
+1e-9 tolerance (write-path outputs are small: status dicts, backup listings,
+job ids). Task modes run to completion with the same
 sidecar state modulo run-varying timestamps and the same logs; the build
 stages reproduce the published model artifact (the artifact file is the
 oracle — byte-compare artifact tables, not just JSON).
@@ -31,8 +32,7 @@ oracle — byte-compare artifact tables, not just JSON).
   links, `taxonomyIndexResolve`, the `CURATOR_STASHDB_ENDPOINT` seam.
 - Performance notes that carry over: never nest DB queries inside a Rows
   loop (the pool has `SetMaxOpenConns(1)` — deadlock); taxonomy-style
-  indexes load once per call; the multi-hop walk is seed-only; the
-  glibc-math ports (`pyExp`/`pyLog`/`pyTanh`) are corpus-pinned.
+  indexes load once per call; the multi-hop walk is seed-only.
 
 ## The slice plan (from the planning doc §8)
 
@@ -71,9 +71,9 @@ play history) with `updated_at` values that exercise the cursor logic.
 
 ## Acceptance criteria
 
-Differential tests in `tests/core/` prove byte-identical stdout vs the
-Python backend on builder-seeded synthetic sidecars for every ported
-write-path op and task mode, with state parity (all mutated sidecar tables
+Differential tests in `tests/core/` prove structural + float-tolerant
+stdout vs the Python backend on builder-seeded synthetic sidecars for every
+ported write-path op and task mode, with state parity (all mutated sidecar tables
 modulo run-varying fields); the build stages reproduce the artifact tables;
 profile-trace parity extends to the task modes; unported ops still work via
 the fallback through the installed zip; `scripts/verify core` + `scripts/verify full`
@@ -110,8 +110,7 @@ mechanical task modes:
 - Interactive writes (`core/writes.go`, `core/prune.go`,
   `core/profile_traces.go`): `update_shortlist`, `submit_feedback`,
   `correct_feedback`, `submit_tag_preferences`, `submit_events` (incl. the
-  viewing/replacement signal curves using the glibc-faithful `pyExp` so
-  stored REAL outcomes are bit-identical), `update_config`,
+  viewing/replacement signal curves), `update_config`,
   `get_pruning_queue` / `get_prune_candidates` / `dismiss_prune_candidate` /
   `update_pruning` / `get_exclusions` / `reverse_exclusion` / `set_prune_tag`
   (Stash mutation) / `reconcile_prune_tag`, `list_profiles` / `get_profile` /
@@ -128,7 +127,7 @@ mechanical task modes:
 implementations produce valid same-size backups of identical logical
 content), compact/vacuum/backup task-mode byte-identity + state parity,
 interactive-write byte-identity incl. every error path, behavior_event
-outcome-float parity (pyExp), profile ops.
+outcome-float parity, profile ops.
 
 **Bugs found and fixed while porting:** the Go attach path failed on NULL
 `artifact_basename` (published rows without artifacts); the task runner
@@ -181,6 +180,11 @@ unordered; Python iterates dict insertion order), the performer-similarity
 item merge clobbering the novelty-weighted values (10×), the `asymmetric`
 sum-then-scale order, empty-component `raw`/`value` serializing as int `0`
 (not `0.0`), and the materialize heap's missing scene-id tie-break.
+These byte-parity fixes were the state of the art at delivery; a follow-up
+refactor (issue #113, commit `d84c2e6`) removed the bit-exact math ports and
+the corpus fixtures and moved the differential gates to float tolerance, so
+do not reintroduce `pyExp`/`neumaierSum`/`pyCube` or a byte-exact float gate.
+
 
 **Still open in this slice:** profile-trace parity tests for task modes,
 `scripts/verify full` + integration reruns after the model-build landing, and

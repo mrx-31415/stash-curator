@@ -170,9 +170,13 @@ fan-out must not change the output: results are merged deterministically
   "errgroup" is guidance for the fan-out shape — stdlib `sync.WaitGroup` +
   channel suffices. If you believe `golang.org/x/sync/errgroup` is justified,
   follow AGENTS.md: "do not introduce a dependency without a measured need".
-- Byte-exact helpers stay; never replace `pyRoundTo`/`neumaierSum`/`pyExp`/
-  `pyCube` with naive math — they are the differential corpus-tested anchors
-  (documented glibc-deviation edges live in their corpus tests).
+- Bit-exact CPython math helpers are gone (issue #113): `pyExp`/`pyLog`/
+  `pyTanh`, the correctly-rounded square/cube, Python `round()`, and the
+  Neumaier sum were removed for plain Go stdlib math (`math.Exp`/`Log`/
+  `Tanh`/`Expm1`, `x*x`, `math.Round`, plain accumulation) together with
+  their corpus fixtures. The differential gates compare structure exactly
+  and floats within rel 1e-9 tolerance; never reintroduce a bit-exact math
+  port or a byte-exact float gate.
 - Do not touch `core/jsonv.go`. Do not "fix" the masked-NaN performer kernel
   divergence (reviewed product decision).
 - Keep `SetMaxOpenConns(1)` and the attach fallback chain as shipped.

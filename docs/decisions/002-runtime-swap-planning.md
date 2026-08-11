@@ -175,12 +175,16 @@ corpus as the oracle (not ported — *driven*).
   (`curator/storage/sql/`) must be implemented with the same checksums so a
   sidecar built by either implementation is accepted by the other. Migration
   status and `PRAGMA integrity_check` must match.
-- **Published artifacts**: byte-identical (hash-equal) for the same input corpus —
-  the artifact model already checksums and validates generations.
-- **JSON API responses**: byte-identical (the frontend contract is the JSON
-  payloads; the JS does not change).
+- **Published artifacts**: same rows, structure, and schema for the same input
+  corpus — floats within 1e-9 relative tolerance (revised from hash-equal in
+  issue #113: glibc patch levels and FMA-capable CPUs shift last bits of
+  stored floats, and the bit-exact math ports that pinned them were removed).
+- **JSON API responses**: same structure and non-float values; floats within
+  1e-9 relative tolerance (the frontend contract is the JSON payloads; the JS
+  does not change).
 - **Floats**: exact for integer/hash/count domains (ids, shared counts, checksums,
-  hashes); 1e-9 relative tolerance for similarity/weight/affinity floats; selection
+  hashes); 1e-9 relative tolerance for similarity/weight/affinity floats and all
+  other stored floats; selection
   and ordering tie-breaking **identical by construction** — sort keys must match
   production exactly (e.g. `(-weight, id)`).
 - The float32 shared-count exactness trick (counts <= feature count, exact in
