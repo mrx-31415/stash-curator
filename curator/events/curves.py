@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import math
-
-from curator.deterministic import glibc_exp
 from collections.abc import Iterable
 
+from curator.deterministic import glibc_exp
 from curator.events.contracts import (
     DEFAULT_CALIBRATION,
     EventCalibration,

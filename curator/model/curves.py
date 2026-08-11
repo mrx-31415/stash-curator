@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import math
 
-from curator.deterministic import glibc_exp
-
 from curator.config import DEFAULT_CONFIG, ModelConfig
+from curator.deterministic import glibc_exp
 
 
 def direct_confidence(

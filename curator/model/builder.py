@@ -16,13 +16,13 @@ from typing import Any, cast
 
 from curator import core
 from curator.config import DEFAULT_CONFIG, CuratorConfig
+from curator.deterministic import glibc_exp
 from curator.events.contracts import DEFAULT_CALIBRATION
 from curator.features import FeatureBuilder, FeatureStore
 from curator.features.builder import _fingerprint_table
 from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
-from curator.deterministic import glibc_exp
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
 from curator.profiling import current_trace, record_duration, span
 from curator.storage import ModelStore, transaction
