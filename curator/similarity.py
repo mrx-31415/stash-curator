@@ -179,6 +179,12 @@ class SimilarityService:
                 "SELECT tag_id FROM direct_tag_preference WHERE blocked=1"
             )
         }
+        blocked_terms = sorted(
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT term FROM direct_term_preference WHERE blocked=1"
+            )
+        )
         blocked_scenes: set[str] = set()
         if blocked_tag_ids:
             for row in self.connection.execute(
@@ -187,6 +193,16 @@ class SimilarityService:
                 sorted(blocked_tag_ids),
             ):
                 blocked_scenes.add(str(row["scene_id"]))
+        if blocked_terms:
+            for row in self.connection.execute(
+                f"""SELECT DISTINCT ef.entity_id FROM entity_feature ef
+                JOIN feature_definition fd ON fd.feature_id=ef.feature_id
+                WHERE ef.feature_version=? AND ef.entity_type='scene'
+                AND fd.family='content'
+                AND fd.name IN ({",".join("?" for _ in blocked_terms)})""",
+                (self.feature_version, *[f"desc:{term}" for term in blocked_terms]),
+            ):
+                blocked_scenes.add(str(row["entity_id"]))
         results: list[SimilarityResult] = []
         for candidate_id in candidate_ids:
             candidate_appeal = self.appeals[candidate_id]

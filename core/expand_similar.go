@@ -215,7 +215,7 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 				}
 			}
 			if !expandSceneMatches(payload, includeTags, excludeTags, performerNames, studioNames,
-				"", "", includeGroups, excludeGroups, nil) {
+				"", "", includeGroups, excludeGroups, nil, nil) {
 				continue
 			}
 			if favoriteOnly {
@@ -724,6 +724,10 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	if err != nil {
 		return jvNull(), err
 	}
+	blockedTerms, err := service.blockedTermSet()
+	if err != nil {
+		return jvNull(), err
+	}
 	filtered := make([]jVal, 0, len(rawItems))
 	for _, item := range rawItems {
 		if gender != "" && !payloadMatchesGender(item.get("payload"), entityType, gender) {
@@ -735,7 +739,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		sceneFiltered := make([]jVal, 0, len(filtered))
 		for _, item := range filtered {
 			if expandSceneMatches(item.get("payload"), nil, nil, nil, nil, "", "",
-				nil, nil, blockedGroups) {
+				nil, nil, blockedGroups, blockedTerms) {
 				sceneFiltered = append(sceneFiltered, item)
 			}
 		}

@@ -38,9 +38,14 @@ entity IDs, and personal evaluation notes out of shared repositories.
 ## Backups, reset, and uninstall
 
 The default sidecar is `{pluginDir}/data/curator.sqlite3`. Configure another path
-before first use if plugin lifecycle operations may replace that directory. The
-**Backup Curator data** task creates a timestamped SQLite backup. Copy it somewhere
-safe before updates or uninstalling.
+before first use if plugin lifecycle operations may replace that directory. SQLite
+needs POSIX locking that network filesystems do not provide, so the working sidecar
+must stay on **local** storage; point the **Sidecar database path** at a local
+directory when the plugin data directory is on a share. The **Backup Curator data**
+task creates a timestamped SQLite backup via SQLite's backup API (a consistent
+snapshot even in WAL mode) — that copy is the right thing to keep on a network share,
+configured with the **Backup directory** setting. Copy it somewhere safe before
+updates or uninstalling.
 
 The Curator **Backups** view can restore a recognized backup. It first creates a
 safety copy of the current sidecar, then invalidates the current recommendation
