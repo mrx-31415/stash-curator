@@ -79,7 +79,7 @@ func numericSimilarity(left, right map[string]profileValue, leftKeys, rightKeys 
 		}
 		leftValue := left[key]
 		rightValue := right[key]
-		closeness := pyExp(-math.Abs(leftValue.value-rightValue.value) / scale)
+		closeness := math.Exp(-math.Abs(leftValue.value-rightValue.value) / scale)
 		confidence := leftValue.confidence
 		if rightValue.confidence < confidence {
 			confidence = rightValue.confidence
@@ -146,7 +146,7 @@ func similarityPenalty(left, right *performerProfile) float64 {
 	leftCup, leftOK := profileValueAt(left, "measurements", "cup_index")
 	rightCup, rightOK := profileValueAt(right, "measurements", "cup_index")
 	if leftOK && rightOK {
-		penalty *= pyExp(-0.18 * mathMax(0.0, math.Abs(leftCup.value-rightCup.value)-1))
+		penalty *= math.Exp(-0.18 * mathMax(0.0, math.Abs(leftCup.value-rightCup.value)-1))
 	}
 	leftAug, leftOK := left.blocks["augmentation"]
 	rightAug, rightOK := right.blocks["augmentation"]
@@ -213,14 +213,14 @@ func blockSimilaritiesAll(left, right *performerProfile, blockWeights map[string
 //go:noinline
 func performerSimilarity(left, right *performerProfile, blockWeights map[string]float64) (float64, map[string]float64, map[string]float64) {
 	similarities, usedWeights, ordered, weights := blockSimilaritiesAll(left, right, blockWeights)
-	denominator := neumaierSum(weights)
+	denominator := sumFloats(weights)
 	total := 0.0
 	if denominator > 0 {
 		products := make([]float64, 0, len(ordered))
 		for _, block := range ordered {
 			products = append(products, similarities[block]*usedWeights[block])
 		}
-		total = neumaierSum(products) / denominator
+		total = sumFloats(products) / denominator
 	}
 	return total * similarityPenalty(left, right), similarities, usedWeights
 }

@@ -199,7 +199,7 @@ func generationDiagnostics(db dbx) (jVal, error) {
 		}
 		var identifier, basename string
 		var schemaVersion, bytes, reuseCount int64
-		var validationStatus string
+		var validationStatus sql.NullString
 		var validationSummary, cleanupError sql.NullString
 		err = db.QueryRow(`SELECT `+kind.identifier+`, artifact_basename, artifact_schema_version, artifact_bytes,
 		       validation_status, validation_summary_json, cleanup_error, reuse_count
@@ -212,21 +212,27 @@ func generationDiagnostics(db dbx) (jVal, error) {
 		if err != nil {
 			return jvNull(), err
 		}
-		var validation jVal = jvNull()
+		// Python: json.loads(validation_summary_json or "{}") — a NULL or
+		// empty summary renders as {}.
+		var validation jVal = jvObj()
 		if validationSummary.Valid && validationSummary.String != "" {
-			validation, err = parseJSON([]byte(validationSummary.String))
-			if err != nil {
+			parsed, parseErr := parseJSON([]byte(validationSummary.String))
+			if parseErr != nil {
 				validation = jvNull()
+			} else {
+				validation = parsed
 			}
-		} else {
-			validation = jvNull()
+		}
+		var validationStatusVal jVal = jvNull()
+		if validationStatus.Valid {
+			validationStatusVal = jvStr(validationStatus.String)
 		}
 		result.set(kind.kind, jvObj(
 			jvKey(kind.identifier, jvStr(identifier)),
 			jvKey("artifact_basename", jvStr(basename)),
 			jvKey("schema_version", jvInt(schemaVersion)),
 			jvKey("bytes", jvInt(bytes)),
-			jvKey("validation_status", jvStr(validationStatus)),
+			jvKey("validation_status", validationStatusVal),
 			jvKey("validation", validation),
 			jvKey("reuse_count", jvInt(reuseCount)),
 			jvKey("cleanup_retry", jvBool(cleanupError.Valid)),

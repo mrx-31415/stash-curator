@@ -13,8 +13,10 @@ import (
 	"strings"
 )
 
-// taxonomyMatch mirrors TaxonomyMatch on the fields externalTagIDs needs.
+// taxonomyMatch mirrors TaxonomyMatch.
 type taxonomyMatch struct {
+	snapshotID         string
+	role               string
 	externalTagID      string
 	externalCategoryID string
 	confidence         float64
@@ -102,7 +104,7 @@ func newTaxonomyIndex(db dbx) (*taxonomyIndex, error) {
 // resolve mirrors TaxonomyIndex.resolve for a single local tag.
 func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch, error) {
 	if t.snapshotID == "" {
-		return taxonomyMatch{method: "unmapped"}, nil
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "unmapped"}, nil
 	}
 	// external_ids from source_tag_stash_id filtered to stashdb.org.
 	externalIDs := map[string]bool{}
@@ -132,10 +134,10 @@ func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch,
 	}
 	sort.Strings(known)
 	if len(known) == 1 {
-		return taxonomyMatchFor(t.tags, known[0], "stable_id", 1.0), nil
+		return taxonomyMatchFor(t, known[0], "stable_id", 1.0), nil
 	}
 	if len(known) > 1 {
-		return taxonomyMatch{method: "ambiguous_stable_id", ambiguityCount: len(known)}, nil
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_stable_id", ambiguityCount: len(known)}, nil
 	}
 	candidates := make([]string, 0)
 	for id := range t.names[normalizeTagName(name)] {
@@ -143,18 +145,24 @@ func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch,
 	}
 	sort.Strings(candidates)
 	if len(candidates) == 1 {
-		return taxonomyMatchFor(t.tags, candidates[0], "unique_name_or_alias", 0.9), nil
+		return taxonomyMatchFor(t, candidates[0], "unique_name_or_alias", 0.9), nil
 	}
 	if len(candidates) > 1 {
-		return taxonomyMatch{method: "ambiguous_name", ambiguityCount: len(candidates)}, nil
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_name", ambiguityCount: len(candidates)}, nil
 	}
-	return taxonomyMatch{method: "unmapped"}, nil
+	return taxonomyMatch{snapshotID: t.snapshotID, method: "unmapped"}, nil
 }
 
 // taxonomyMatchFor mirrors TaxonomyIndex._match.
-func taxonomyMatchFor(tagIDs map[string]string, tagID, method string, confidence float64) taxonomyMatch {
-	categoryID := tagIDs[tagID]
+func taxonomyMatchFor(index *taxonomyIndex, tagID, method string, confidence float64) taxonomyMatch {
+	categoryID := index.tags[tagID]
+	role := categoryRoles.defaultRole
+	if r, ok := categoryRoles.roles[categoryID]; ok {
+		role = r
+	}
 	return taxonomyMatch{
+		snapshotID:         index.snapshotID,
+		role:               role,
 		externalTagID:      tagID,
 		externalCategoryID: categoryID,
 		confidence:         confidence,

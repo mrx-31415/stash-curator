@@ -1628,7 +1628,7 @@ func jvOptionalFloatPtr(value jVal) any {
 	if value.kind == jNull {
 		return nil
 	}
-	return value
+	return numberValue(value)
 }
 
 func jvOptionalStringPtrOf(value jVal) any {

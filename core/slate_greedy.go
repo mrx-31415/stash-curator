@@ -401,7 +401,7 @@ func slateTarget(lane string, position int64, exploration float64) (string, stri
 		if exploration > 0 {
 			alternative = adventurousPattern
 		}
-		mixedSlots := int(pyRoundTo(math.Abs(float64(exploration))*float64(len(base)), 0))
+		mixedSlots := int(math.Round(math.Abs(float64(exploration))*float64(len(base))))
 		useAlternative := (position*7)%int64(len(base)) < int64(mixedSlots)
 		pattern := base
 		if useAlternative {
@@ -1060,7 +1060,7 @@ func greedyUtility(c *greedyCandidate, selected []*greedyCandidate, diversityEna
 		floatValue(penalties.get("history")),
 		floatValue(penalties.get("live_cooldown")),
 	}
-	final := c.laneValue + neumaierSum([]float64{floatValue(bonuses.get("uncovered_content"))}) - neumaierSum(penaltyValues)
+	final := c.laneValue + sumFloats([]float64{floatValue(bonuses.get("uncovered_content"))}) - sumFloats(penaltyValues)
 	return utility{final: final, penalties: penalties, bonuses: bonuses}, true
 }
 
@@ -1101,12 +1101,12 @@ func cosine(left, right map[string]float64) float64 {
 	for _, value := range left {
 		leftSquares = append(leftSquares, value*value)
 	}
-	leftNorm := math.Sqrt(neumaierSum(leftSquares))
+	leftNorm := math.Sqrt(sumFloats(leftSquares))
 	var rightSquares []float64
 	for _, value := range right {
 		rightSquares = append(rightSquares, value*value)
 	}
-	rightNorm := math.Sqrt(neumaierSum(rightSquares))
+	rightNorm := math.Sqrt(sumFloats(rightSquares))
 	if leftNorm == 0 || rightNorm == 0 {
 		return 0.0
 	}

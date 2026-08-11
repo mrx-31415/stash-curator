@@ -104,7 +104,7 @@ ORDER BY performer_id, rank`, args...)
 		if err := edgeRows.Scan(&performerID, &similarID, &similarity); err != nil {
 			return err
 		}
-		m.edges[performerID] = append(m.edges[performerID], edgeEntry{target: similarID, similarity: pyCube(similarity)})
+		m.edges[performerID] = append(m.edges[performerID], edgeEntry{target: similarID, similarity: (similarity * similarity * similarity)})
 	}
 	edgeRows.Close()
 	if err := edgeRows.Err(); err != nil {
@@ -418,7 +418,7 @@ func normalizeEdges(edges map[string]float64) map[string]float64 {
 	for _, key := range keys {
 		weights = append(weights, edges[key])
 	}
-	total := neumaierSum(weights)
+	total := sumFloats(weights)
 	if total <= 0 {
 		return map[string]float64{}
 	}
