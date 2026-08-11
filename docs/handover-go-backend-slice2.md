@@ -1,10 +1,22 @@
 # Handover: full Go backend (Phase 4, Slice 2)
 
-Updated: 2026-08-10. Slices 0 and 1 are merged to main (rebase-merge, `0ff1e04`
-is the tip). The plugin's exec line already runs the arch-resolving launcher
-(`plugin/launcher.py` → per-arch `curator-core`), so ops ported in this slice
-become native with **no packaging change** — the Python fallback covers
-everything not yet ported.
+Updated: 2026-08-10. **Delivered and merged.** The network-layer ops are
+native with byte-identical JSON (differential suite
+`tests/core/test_backend_slice2.py`: 21 tests — byte-identity, cache-write
+and merge-write state parity, profile-trace parity), the StashDB client and
+the Stash sync client surface (`core/syncclient.go`) landed, and a perf
+follow-up made the ops interactive on the live library: the hunt went
+43.8s → ~12s; external similar went from timing out to ~40s, of which ~28s
+is StashDB server latency on the tag probe (unchanged for Python); the
+glibc dbl-64 exp port (`core/pyexp.go` + `core/exp_data.go`), the parallel
+anchor-matcher precompute/scoring, the compact-term matcher, and the
+once-per-call taxonomy index are the anchors. `scripts/verify core` and
+`scripts/verify full` green; the swap integration tests cover the network
+ops through the installed zip. Slices 0 and 1 are merged to main (rebase-merge,
+`0ff1e04` is the tip). The plugin's exec line already runs the arch-resolving
+launcher (`plugin/launcher.py` → per-arch `curator-core`), so ops ported in
+this slice become native with **no packaging change** — the Python fallback
+covers everything not yet ported.
 
 ## Goal
 
