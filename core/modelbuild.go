@@ -477,7 +477,8 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 		outcome float64
 	}
 	accumulators := map[string][]accumulator{}
-	for sceneID, label := range labels {
+	for _, sceneID := range sortedStringKeys(labels) {
+		label := labels[sceneID]
 		for _, feature := range sceneFeatures[sceneID] {
 			weight := label.confidence * feature.confidence * math.Abs(feature.value)
 			accumulators[feature.featureID] = append(accumulators[feature.featureID], accumulator{
@@ -585,8 +586,8 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 func preferenceContentVectors(vectors map[string]map[string]float64,
 	sceneFeatures map[string][]storedFeature, affinities map[string]modelAffinity) (map[string]map[string]float64, int) {
 	strengths := map[string]float64{}
-	for _, features := range sceneFeatures {
-		for _, feature := range features {
+	for _, sceneID := range sortedStringKeys(sceneFeatures) {
+		for _, feature := range sceneFeatures[sceneID] {
 			if feature.family != "content" {
 				continue
 			}
