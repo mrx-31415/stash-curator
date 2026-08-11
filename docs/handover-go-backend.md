@@ -32,7 +32,8 @@ runtime.
   riskiest), trivial ops (round_trip, health, get_config, get_job_status),
   Python fallback dispatch for everything else.
 - Slice 1 — read-path interactive ops (slate, similar, explanation,
-  shortlist, history, taste profile, diagnostics) — byte-exact JSON, pure
+  shortlist, history, taste profile, diagnostics) — differential JSON
+  (structure exact, floats within rel 1e-9 tolerance), pure
   sidecar reads.
 - Slice 2 — network layer: GraphQL clients for Stash sync and StashDB
   expand/hunt (errgroup fan-out for the hunt; local Similar is sidecar-only).
@@ -67,7 +68,7 @@ Concretely:
    (ATTACH the published feature/model generations read-only + temp views
    shadowing the core tables).
 5. **Trivial ops first**: `round_trip`, `health`, `get_config`,
-   `get_job_status` — byte-identical outputs vs the Python backend on the same
+   `get_job_status` — differential outputs vs the Python backend on the same
    payloads.
 6. **Python fallback dispatch**: any op/task the binary does not implement yet
    is delegated to the bundled `backend.py` (the binary spawns it with the
@@ -77,7 +78,7 @@ Concretely:
 ### Acceptance criteria
 
 - The binary's `round_trip`/`health`/`get_config`/`get_job_status` outputs are
-  byte-identical to the Python backend's for the same payloads and sidecar
+  structurally identical (floats within tolerance) to the Python backend's for the same payloads and sidecar
   state (a differential test compares both on identical copies).
 - A sidecar migrated by the Go migration chain has the same
   `schema_migration` rows + checksums as one migrated by Python, and
@@ -119,12 +120,12 @@ Concretely:
 > backend.py's contract, including stderr progress markers; (2) settings
 > application; (3) the ordered migration chain with identical checksums and a
 > differential test proving Python↔Go sidecar interchange; (4) artifact
-> attach/views; (5) byte-identical `round_trip`, `health`, `get_config`,
+> attach/views; (5) differential `round_trip`, `health`, `get_config`,
 > `get_job_status`; (6) a Python fallback dispatch (binary spawns backend.py
 > for unported ops). Non-goals: the read-path ops, the network layer, write
 > tasks, the exec-line switch in stash-curator.yml.
 >
-> ACCEPTANCE: byte-identical trivial-op outputs vs the Python backend on the
+> ACCEPTANCE: differential trivial-op outputs vs the Python backend on the
 > same payloads; sidecar migration parity both directions (same checksums,
 > integrity_check ok); attached artifact views resolve identically; unported
 > ops work via fallback through the installed zip; `scripts/verify core` +
