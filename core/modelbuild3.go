@@ -442,11 +442,12 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical(),
 		performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs)))
 	modelID := fmt.Sprintf("model-%s", hexEncode(digest[:])[:20])
-	var status, validationStatus string
+	var status string
+	var validationStatus sql.NullString
 	var basename sql.NullString
 	err = db.QueryRow(`SELECT status, artifact_basename, validation_status FROM model_version WHERE model_id=?`,
 		modelID).Scan(&status, &basename, &validationStatus)
-	if err == nil && status == "published" && validationStatus == "valid" && basename.Valid {
+	if err == nil && status == "published" && validationStatus.Valid && validationStatus.String == "valid" && basename.Valid {
 		core, pathErr := coreDatabasePath(db)
 		if pathErr == nil {
 			path, pathErr := artifactPath(core, basename.String)

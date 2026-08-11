@@ -873,7 +873,8 @@ GROUP BY sp.performer_id HAVING count(DISTINCT sp.scene_id) >= 2`)
 	}
 	for rows.Next() {
 		var performerID string
-		if err := rows.Scan(&performerID); err != nil {
+		var support int64
+		if err := rows.Scan(&performerID, &support); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -1112,11 +1113,12 @@ func featureBuild(db dbx, nowMs int64, progress func(fraction float64)) (string,
 	}
 	versionHash := sha256.Sum256([]byte(sourceFingerprint + "\x00" + featureConfigCanonicalJSON()))
 	featureVersion := fmt.Sprintf("fv-%s", hex.EncodeToString(versionHash[:])[:20])
-	var status, validationStatus string
+	var status string
+	var validationStatus sql.NullString
 	var basename sql.NullString
 	err = db.QueryRow(`SELECT status, artifact_basename, validation_status FROM feature_build WHERE feature_version = ?`,
 		featureVersion).Scan(&status, &basename, &validationStatus)
-	if err == nil && status == "published" && validationStatus == "valid" && basename.Valid {
+	if err == nil && status == "published" && validationStatus.Valid && validationStatus.String == "valid" && basename.Valid {
 		corePath, pathErr := coreDatabasePath(db)
 		if pathErr == nil {
 			path, pathErr := artifactPath(corePath, basename.String)

@@ -127,6 +127,55 @@ def _run_go_build(binary: Path, sidecar: Path) -> tuple[str, Path]:
     return model_id, sidecar.parent / f"{sidecar.stem}-derived" / basename
 
 
+def test_model_build_recovers_from_building_row(binary: Path, tmp_path: Path) -> None:
+    """A leftover 'building' registry row (interrupted build) with the same
+    feature_version the next build is about to produce must not crash the
+    reuse check: validation_status is NULL on building rows, and both
+    backends fall through to a fresh build instead."""
+    results = []
+    for name in ("py", "go"):
+        db = tmp_path / name / "curator.sqlite3"
+        db.parent.mkdir()
+        make_feature_sidecar(db)
+        if name == "py":
+            model, _ = _run_python_build(db)
+        else:
+            model, _ = _run_go_build(binary, db)
+        connection = connect_database(db, attach_artifacts=False)
+        try:
+            feature_version = connection.execute(
+                "SELECT feature_version FROM model_version WHERE model_id=?", (model,)
+            ).fetchone()[0]
+            # Simulate an interrupted build of this exact version: keep the
+            # row, flip it back to 'building' with a NULL validation_status.
+            connection.execute(
+                "UPDATE feature_build SET status='building', validation_status=NULL, "
+                "artifact_basename=NULL, error='interrupted' WHERE feature_version=?",
+                (feature_version,),
+            )
+        finally:
+            connection.close()
+        if name == "py":
+            rebuilt_model, rebuilt_artifact = _run_python_build(db)
+        else:
+            rebuilt_model, rebuilt_artifact = _run_go_build(binary, db)
+        connection = sqlite3.connect(db)
+        try:
+            row = connection.execute(
+                "SELECT status, validation_status FROM feature_build WHERE feature_version=?",
+                (feature_version,),
+            ).fetchone()
+        finally:
+            connection.close()
+        assert rebuilt_model == model, (name, rebuilt_model, model)
+        assert row == ("published", "valid"), (name, row)
+        results.append((rebuilt_model, rebuilt_artifact))
+    assert _artifact_tables_sha(results[0][1]) == _artifact_tables_sha(results[1][1]), (
+        f"artifact content differs after recovery:\n"
+        f"{_first_artifact_diff(results[0][1], results[1][1])}"
+    )
+
+
 def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
     """Both implementations produce the same model_id and content-identical
     model artifacts; the sidecar model_version / current_model_id writes

@@ -726,6 +726,9 @@ func runCoreKernel(mode string, payload jVal) (jVal, error) {
 	stdin.Close()
 	var result jVal = jvNull()
 	scanner := bufio.NewScanner(stdout)
+	// The scoring kernel's result line holds per-scene payloads and can
+	// exceed the 64 KiB default token limit on large libraries.
+	scanner.Buffer(make([]byte, 0, 1<<20), 256<<20)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		parsed, err := parseJSON(line)

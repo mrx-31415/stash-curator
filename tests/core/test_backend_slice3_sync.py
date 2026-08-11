@@ -74,7 +74,7 @@ def _scene(sid: str, title: str) -> dict[str, object]:
             "updated_at": "2026-01-01T00:00:00Z",
             "parent_studio": None,
         },
-        "tags": [_tag("t1", "Familiar Scenario")],
+        "tags": [_tag("t1", "Familiar Scenario"), _tag("t2", "Augmentation")],
         "performers": [_performer("p1", "Performer One")],
         "files": [{"id": f"file-{sid}", "duration": 300}],
         "scene_markers": (
@@ -151,7 +151,7 @@ class _StubSync(BaseHTTPRequestHandler):
                 }
             }
         if op == "CuratorTags":
-            return {"data": {"findTags": {"count": 1, "tags": [_tag("t1", "Familiar Scenario")]}}}
+            return {"data": {"findTags": {"count": 2, "tags": [_tag("t1", "Familiar Scenario"), _tag("t2", "Augmentation")]}}}
         if op == "CuratorStudios":
             return {
                 "data": {
