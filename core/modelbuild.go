@@ -150,18 +150,18 @@ ORDER BY scene_id, occurred_at_ms`)
 			confidences = append(confidences, item.confidence)
 			products = append(products, item.value*item.confidence)
 		}
-		evidence := neumaierSum(confidences)
+		evidence := sumFloats(confidences)
 		if evidence <= 0 {
 			continue
 		}
-		weighted := neumaierSum(products)
+		weighted := sumFloats(products)
 		types := make([]string, 0, len(sceneSignals))
 		for _, item := range sceneSignals {
 			types = append(types, item.signalType)
 		}
 		labels[sceneID] = sceneLabel{
 			outcome:           clamp(weighted / evidence),
-			confidence:        1 - pyExp(-evidence),
+			confidence:        1 - math.Exp(-evidence),
 			effectiveEvidence: evidence,
 			signalTypes:       types,
 		}
@@ -208,11 +208,11 @@ func modelLabelMean(labels map[string]sceneLabel) float64 {
 		confidences = append(confidences, label.confidence)
 		products = append(products, label.outcome*label.confidence)
 	}
-	support := neumaierSum(confidences)
+	support := sumFloats(confidences)
 	if support <= 0 {
 		return 0.0
 	}
-	return neumaierSum(products) / support
+	return sumFloats(products) / support
 }
 
 // modelEvidenceFingerprint mirrors _evidence_fingerprint.
@@ -512,13 +512,13 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 				}
 			}
 		}
-		support := neumaierSum(weights)
-		numerator := neumaierSum(weightedOutcomes)
+		support := sumFloats(weights)
+		numerator := sumFloats(weightedOutcomes)
 		affinity := numerator / (1.0 + support)
 		result[featureID] = modelAffinity{
 			featureID:  featureID,
 			affinity:   clamp(affinity),
-			confidence: 1 - pyExp(-support/3.0),
+			confidence: 1 - math.Exp(-support/3.0),
 			support:    support,
 			sceneCount: int64(len(scenes)),
 			contexts: jvObj(
@@ -784,7 +784,7 @@ func deriveNeighborEvidence(selected []neighborTuple, labelMean, confidenceScale
 	}
 	confidence := 0.0
 	if denominator != 0 {
-		confidence = 1 - pyExp(-denominator/confidenceScale)
+		confidence = 1 - math.Exp(-denominator/confidenceScale)
 	}
 	var neighbors []jVal
 	for _, item := range selected {

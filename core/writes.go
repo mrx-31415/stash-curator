@@ -812,7 +812,7 @@ func viewingOutcome(activeSeconds float64, observedAtMs int64) (outcomeSignal, b
 	if activeSeconds < threshold {
 		value = -0.10 * (1 - activeSeconds/threshold)
 	} else {
-		value = 0.35 * (1 - pyExp(-(activeSeconds-threshold)/90.0))
+		value = 0.35 * (1 - math.Exp(-(activeSeconds-threshold)/90.0))
 	}
 	if mathAbs(value) < 1e-12 {
 		return outcomeSignal{}, false

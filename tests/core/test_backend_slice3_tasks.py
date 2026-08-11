@@ -24,6 +24,7 @@ import pytest
 from curator.core import core_binary
 from curator.storage import MigrationRunner, connect_database
 from curator.storage.artifacts import create_artifact, publish_file
+from tests.core.compare import assert_equivalent
 from tests.core.test_backend import (
     PLUGIN_DIR,
     _StubStash,
@@ -245,16 +246,19 @@ def assert_task_identical(
     py_out = json.loads(python_result.stdout)
     go_out = json.loads(go_result.stdout)
     if python_result.returncode != 0:
-        assert py_out == go_out
+        assert_equivalent(py_out, go_out)
         return outputs
     a, b = py_out["output"], go_out["output"]
     for field in normalize:
         _strip_key(a, field)
         _strip_key(b, field)
-    assert json.dumps(a, separators=(",", ":")) == json.dumps(b, separators=(",", ":")), (
-        "outputs differ:\n"
-        f"python: {json.dumps(a, separators=(',', ':'))}\n"
-        f"go:     {json.dumps(b, separators=(',', ':'))}"
+    (
+        assert_equivalent(a, b),
+        (
+            "outputs differ:\n"
+            f"python: {json.dumps(a, separators=(',', ':'))}\n"
+            f"go:     {json.dumps(b, separators=(',', ':'))}"
+        ),
     )
     return outputs
 
@@ -301,7 +305,7 @@ def test_compact_task_state_parity(compact_sidecar: Path, binary: Path, stub_sta
         finally:
             connection.close()
         shutil.rmtree(run_dir, ignore_errors=True)
-    assert states[0] == states[1]
+    assert_equivalent(states[0], states[1])
 
 
 def test_compact_task_no_artifacts_error(tmp_path: Path, binary: Path, stub_stash: str) -> None:

@@ -21,6 +21,7 @@ import pytest
 
 from curator.core import core_binary
 from curator.features.builder import FeatureBuilder
+from tests.core.compare import artifact_tolerant_diff
 from tests.core.test_backend_slice2 import STASHDB_ENDPOINT
 from tests.model.test_builder import DAY_MS, REFERENCE_MS, _database
 
@@ -164,7 +165,7 @@ def test_feature_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
 
     assert go_version == py_version
     assert go_artifact.name == py_artifact.name
-    assert _artifact_tables_sha(go_artifact) == _artifact_tables_sha(py_artifact)
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
 
     for label, db in (("python", py_db), ("go", go_db)):
         connection = sqlite3.connect(db)

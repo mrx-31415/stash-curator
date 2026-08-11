@@ -539,7 +539,7 @@ func supportingMatches(matches jVal, value float64) jVal {
 		}
 		affinity := number(raw.get("affinity"))
 		agrees := affinity*value > 0
-		impact := math.Abs(affinity) * pyCube(number(raw.get("similarity")))
+		impact := math.Abs(affinity) * (number(raw.get("similarity")) * number(raw.get("similarity")) * number(raw.get("similarity")))
 		valid = append(valid, rankedMatch{agrees: agrees, impact: impact, id: raw.get("performer_id").asString(), raw: raw})
 	}
 	sort.SliceStable(valid, func(i, j int) bool {

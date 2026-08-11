@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from curator.core import core_binary
+from tests.core.compare import assert_equivalent
 from tests.core.test_backend import (
     PLUGIN_DIR,
     _StubStash,
@@ -111,7 +112,7 @@ def assert_slice3_identical(
     py_out = json.loads(python_result.stdout)
     go_out = json.loads(go_result.stdout)
     if python_result.returncode != 0:
-        assert py_out == go_out
+        assert_equivalent(py_out, go_out)
         return
     a, b = py_out["output"], go_out["output"]
     for field in normalize:
@@ -130,10 +131,13 @@ def assert_slice3_identical(
         )
         assert a_text == b_text, f"outputs differ:\npython: {a_text}\ngo:     {b_text}"
         return
-    assert json.dumps(a, separators=(",", ":")) == json.dumps(b, separators=(",", ":")), (
-        "outputs differ:\n"
-        f"python: {json.dumps(a, separators=(',', ':'))}\n"
-        f"go:     {json.dumps(b, separators=(',', ':'))}"
+    (
+        assert_equivalent(a, b),
+        (
+            "outputs differ:\n"
+            f"python: {json.dumps(a, separators=(',', ':'))}\n"
+            f"go:     {json.dumps(b, separators=(',', ':'))}"
+        ),
     )
 
 
@@ -391,4 +395,4 @@ def test_restore_backup_state_parity(backup_sidecar: Path, binary: Path, stub_st
         finally:
             connection.close()
         shutil.rmtree(run_dir, ignore_errors=True)
-    assert states[0] == states[1]
+    assert_equivalent(states[0], states[1])

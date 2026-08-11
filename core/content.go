@@ -437,7 +437,7 @@ func contentKernel(
 					if stamps[pos] != stamp || pos == own {
 						continue
 					}
-					s := sims[pos] * (1 - pyExp(-float64(shared[pos])/4.0))
+					s := sims[pos] * (1 - math.Exp(-float64(shared[pos])/4.0))
 					if s < cfg.MinSimilarity {
 						continue
 					}

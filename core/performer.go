@@ -288,7 +288,7 @@ func performerPair(
 				if scale == 0 {
 					scale = 1.0
 				}
-				total += pyExp(-math.Abs(lv.value-rv.value)/scale) * min(lv.confidence, rv.confidence)
+				total += math.Exp(-math.Abs(lv.value-rv.value)/scale) * min(lv.confidence, rv.confidence)
 				count++
 			}
 			if count > 0 {
@@ -349,7 +349,7 @@ func performerPair(
 			cupLeft, okLeft := measurementsLeft["cup_index"]
 			cupRight, okRight := measurementsRight["cup_index"]
 			if okLeft && okRight && cupLeft.value != 0 && cupRight.value != 0 {
-				penalty *= pyExp(-0.18 * math.Max(0.0, math.Abs(cupLeft.value-cupRight.value)-1.0))
+				penalty *= math.Exp(-0.18 * math.Max(0.0, math.Abs(cupLeft.value-cupRight.value)-1.0))
 			}
 		}
 	}

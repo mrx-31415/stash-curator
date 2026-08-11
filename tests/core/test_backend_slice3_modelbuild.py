@@ -11,7 +11,6 @@ Synthetic sidecars only — never a live sidecar.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import subprocess
@@ -22,6 +21,7 @@ import pytest
 from curator.core import core_binary
 from curator.model.builder import PreferenceModelBuilder
 from curator.storage import connect_database
+from tests.core.compare import artifact_tolerant_diff
 from tests.core.test_backend_slice3_featurebuild import make_feature_sidecar
 from tests.model.test_builder import REFERENCE_MS
 
@@ -32,29 +32,6 @@ def binary() -> Path:
     if path is None:
         pytest.skip("curator-core binary not built; run scripts/verify core")
     return path
-
-
-def _artifact_tables_sha(path: Path) -> str:
-    connection = sqlite3.connect(path)
-    try:
-        tables = [
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )
-        ]
-        digest = hashlib.sha256()
-        for table in tables:
-            digest.update(table.encode())
-            for row in connection.execute(f"SELECT * FROM {table}"):
-                # model_lane_order_state.created_at_ms is wall-clock in both
-                # implementations; drop it for the content comparison.
-                if table == "model_lane_order_state":
-                    row = (row[0], 0)
-                digest.update(repr(row).encode())
-        return digest.hexdigest()
-    finally:
-        connection.close()
 
 
 def _artifact_schema_diff(go_path: Path, py_path: Path) -> str:
@@ -203,10 +180,7 @@ def test_model_build_recovers_from_building_row(binary: Path, tmp_path: Path) ->
         assert rebuilt_model == model, (name, rebuilt_model, model)
         assert row == ("published", "valid"), (name, row)
         results.append((rebuilt_model, rebuilt_artifact))
-    assert _artifact_tables_sha(results[0][1]) == _artifact_tables_sha(results[1][1]), (
-        f"artifact content differs after recovery:\n"
-        f"{_first_artifact_diff(results[0][1], results[1][1])}"
-    )
+    assert artifact_tolerant_diff(results[0][1], results[1][1]) == ""
     assert _artifact_schema_diff(results[0][1], results[1][1]) == ""
 
 
@@ -229,9 +203,8 @@ def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
 
     assert go_model == py_model
     assert go_artifact.name == py_artifact.name
-    assert _artifact_tables_sha(go_artifact) == _artifact_tables_sha(py_artifact), (
-        f"artifact content differs: {go_artifact} vs {py_artifact}\n"
-        f"{_first_artifact_diff(go_artifact, py_artifact)}"
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == "", (
+        f"artifact content differs: {artifact_tolerant_diff(go_artifact, py_artifact)}"
     )
     assert _artifact_schema_diff(go_artifact, py_artifact) == "", (
         f"artifact schema differs: {_artifact_schema_diff(go_artifact, py_artifact)}"

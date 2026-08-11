@@ -230,9 +230,9 @@ func finalizeProfileNorms(p *performerProfile) {
 		}
 		squares := make([]float64, 0, len(values))
 		for _, item := range values {
-			squares = append(squares, pySquare(item.value))
+			squares = append(squares, (item.value * item.value))
 		}
-		p.norms[block] = math.Sqrt(neumaierSum(squares))
+		p.norms[block] = math.Sqrt(sumFloats(squares))
 	}
 }
 
@@ -380,8 +380,8 @@ func (m *anchorMatcher) computeTerms(performer jVal) []compactTerm {
 		}
 		terms = append(terms, compactTerm{
 			anchorIndex: index,
-			numerator:   neumaierSum(products),
-			denominator: neumaierSum(weights),
+			numerator:   sumFloats(products),
+			denominator: sumFloats(weights),
 			penalty:     similarityPenalty(undated, a.profile),
 		})
 	}
@@ -495,10 +495,10 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 		products = append(products, similarities[block]*usedWeights[block])
 		weightValues = append(weightValues, usedWeights[block])
 	}
-	denominator := neumaierSum(weightValues)
+	denominator := sumFloats(weightValues)
 	total := 0.0
 	if denominator != 0 {
-		total = neumaierSum(products) / denominator
+		total = sumFloats(products) / denominator
 	}
 	total *= similarityPenalty(profile, anchor)
 	coverage := 0.0
@@ -921,7 +921,7 @@ WHERE d.feature_version=? AND d.family='content'`, featureVersion)
 	mappings := map[string][]string{}
 	weights := map[string]float64{}
 	for _, def := range defs {
-		rarity := math.Min(idfCap, 1+idfStrength*pyLog((float64(total)+1)/(def.frequency+1)))
+		rarity := math.Min(idfCap, 1+idfStrength*math.Log((float64(total)+1)/(def.frequency+1)))
 		weight := rarity * def.frequency / (def.frequency + oneOffPrior)
 		weights[def.name] = weight
 		nameKey := "name:" + strings.ToLower(def.tagName)
@@ -999,7 +999,7 @@ func externalCandidateContent(tags jVal, space *contentSpace) jVal {
 		order = append(order, name)
 		squares = append(squares, value*value)
 	}
-	norm := math.Sqrt(neumaierSum(squares))
+	norm := math.Sqrt(sumFloats(squares))
 	if norm == 0 {
 		norm = 1.0
 	}
@@ -1577,14 +1577,14 @@ func profileMatch(left, right *performerProfile, weights map[string]float64) (fl
 			relevantValues = append(relevantValues, weights[entry.block])
 		}
 	}
-	relevant := neumaierSum(relevantValues)
+	relevant := sumFloats(relevantValues)
 	coverage := 0.0
 	if relevant != 0 {
 		weightValues := make([]float64, 0, len(used))
 		for _, block := range sortedStringKeys(used) {
 			weightValues = append(weightValues, used[block])
 		}
-		coverage = math.Min(1.0, neumaierSum(weightValues)/relevant)
+		coverage = math.Min(1.0, sumFloats(weightValues)/relevant)
 	}
 	return total * math.Sqrt(coverage), coverage
 }
@@ -1800,7 +1800,7 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 				if len(signals) > 5 {
 					signals = signals[:5]
 				}
-				tagValue := pyTanh(neumaierSum(signals))
+				tagValue := math.Tanh(sumFloats(signals))
 				cast := make([]jVal, 0, len(scene.get("performers").arr))
 				for _, item := range scene.get("performers").arr {
 					cast = append(cast, item.get("performer"))

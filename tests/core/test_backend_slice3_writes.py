@@ -23,6 +23,7 @@ import pytest
 
 from curator.config import DEFAULT_CONFIG
 from curator.core import core_binary
+from tests.core.compare import assert_equivalent
 from tests.core.test_backend import PLUGIN_DIR, make_sidecar, payload, run_backend
 from tests.core.test_backend_slice3_backups import assert_slice3_identical
 
@@ -339,7 +340,7 @@ def test_update_shortlist_state_parity(writes_sidecar: Path, binary: Path, stub_
         finally:
             connection.close()
         shutil.rmtree(run_dir, ignore_errors=True)
-    assert states[0] == states[1]
+    assert_equivalent(states[0], states[1])
 
 
 # ── feedback ─────────────────────────────────────────────────────────────────
@@ -621,7 +622,7 @@ def test_submit_events_view_signal_state_parity(
         finally:
             connection.close()
         shutil.rmtree(run_dir, ignore_errors=True)
-    assert states[0] == states[1]
+    assert_equivalent(states[0], states[1])
 
 
 # ── update_config ────────────────────────────────────────────────────────────

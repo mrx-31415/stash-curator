@@ -48,7 +48,7 @@ func directConfidenceOf(effectiveEvidence float64) float64 {
 	if effectiveEvidence < 0 || math.IsInf(effectiveEvidence, 0) || math.IsNaN(effectiveEvidence) {
 		return 0
 	}
-	return 1 - pyExp(-effectiveEvidence/0.8)
+	return 1 - math.Exp(-effectiveEvidence/0.8)
 }
 
 // blendAppealOf mirrors curves.blend_appeal.
@@ -286,11 +286,11 @@ func asymmetric(values []float64) float64 {
 	positive := 0.0
 	if len(positives) > 0 {
 		positive = positives[0]
-		positive += 0.25 * neumaierSum(positives[1:])
+		positive += 0.25 * sumFloats(positives[1:])
 	}
 	friction := 0.0
 	if len(negatives) > 0 {
-		friction = 0.25 * neumaierSum(negatives) / float64(len(negatives))
+		friction = 0.25 * sumFloats(negatives) / float64(len(negatives))
 	}
 	return positive + friction
 }
@@ -441,7 +441,7 @@ func satiation(db dbx, sceneID string, appeal float64, context *recentContext) f
 	for _, performerID := range context.scenePerformers[sceneID] {
 		if timestamp, ok := context.performers[performerID]; ok {
 			days := math.Max(0, float64(reference-timestamp)/86_400_000)
-			if penalty := 0.06 * pyExp(-days/7); penalty > performerPenalty {
+			if penalty := 0.06 * math.Exp(-days/7); penalty > performerPenalty {
 				performerPenalty = penalty
 			}
 		}
@@ -450,7 +450,7 @@ func satiation(db dbx, sceneID string, appeal float64, context *recentContext) f
 	if studioID := context.sceneStudios[sceneID]; studioID != "" {
 		if timestamp, ok := context.studios[studioID]; ok {
 			days := math.Max(0, float64(reference-timestamp)/86_400_000)
-			studioPenalty = 0.03 * pyExp(-days/7)
+			studioPenalty = 0.03 * math.Exp(-days/7)
 		}
 	}
 	var contentPenalty float64
@@ -467,7 +467,7 @@ func satiation(db dbx, sceneID string, appeal float64, context *recentContext) f
 				continue
 			}
 			days := math.Max(0, float64(reference-context.recentPlayed[index])/86_400_000)
-			if penalty := 0.04 * cosine * pyExp(-days/7); penalty > contentPenalty {
+			if penalty := 0.04 * cosine * math.Exp(-days/7); penalty > contentPenalty {
 				contentPenalty = penalty
 			}
 		}
@@ -604,7 +604,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	for _, sceneID := range sortedStringKeys(trainingLabels) {
 		baselineConfidences = append(baselineConfidences, trainingLabels[sceneID].confidence)
 	}
-	baselineSupport := neumaierSum(baselineConfidences)
+	baselineSupport := sumFloats(baselineConfidences)
 	baseline := labelMean * baselineSupport / (1.0 + baselineSupport)
 	baseline = clampValue(baseline, -0.10, 0.10)
 	lastPlayed := map[string]int64{}
@@ -687,8 +687,8 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 				contributionValues = append(contributionValues, value)
 				absValues = append(absValues, math.Abs(value))
 			}
-			raw := neumaierSum(contributionValues)
-			contributionMass := neumaierSum(absValues)
+			raw := sumFloats(contributionValues)
+			contributionMass := sumFloats(absValues)
 			var evidenceConfidence float64
 			if contributionMass != 0 {
 				weightedValues := make([]float64, 0, len(contributions.arr))
@@ -696,7 +696,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 					value := numberValue(item.get("value"))
 					weightedValues = append(weightedValues, math.Abs(value)*numberValue(item.get("confidence")))
 				}
-				evidenceConfidence = neumaierSum(weightedValues) / contributionMass
+				evidenceConfidence = sumFloats(weightedValues) / contributionMass
 			}
 			familyConfidences[family.name] = evidenceConfidence
 			sorted := append([]jVal(nil), contributions.arr...)
@@ -824,7 +824,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 		for _, item := range studioItems.arr {
 			studioValues = append(studioValues, numberValue(item.get("value")))
 		}
-		studioRaw := neumaierSum(studioValues)
+		studioRaw := sumFloats(studioValues)
 		familyConfidences["studio"] = studioConfidence
 		if len(studioItems.arr) == 0 {
 			components.set("studio", jvObj(
@@ -873,7 +873,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 				}
 			}
 		}
-		componentTotal := neumaierSum(componentValues)
+		componentTotal := sumFloats(componentValues)
 		general := clamp(componentTotal)
 		direct := labels[sceneID]
 		exactConfidence := directConfidenceOf(direct.effectiveEvidence)
@@ -897,7 +897,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 				performerProfileCount++
 			}
 		}
-		metadataConfidence := 1 - pyExp(-(float64(contentCount)+performerProfileCount+float64(len(studioItems.arr)))/5)
+		metadataConfidence := 1 - math.Exp(-(float64(contentCount)+performerProfileCount+float64(len(studioItems.arr)))/5)
 		type activeEvidence struct {
 			value      float64
 			confidence float64
@@ -921,12 +921,12 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 			activeValues = append(activeValues, item.value)
 			activeWeighted = append(activeWeighted, item.value*item.confidence)
 		}
-		evidenceMass := neumaierSum(activeValues)
+		evidenceMass := sumFloats(activeValues)
 		var evidenceConfidence float64
 		if evidenceMass != 0 {
-			evidenceConfidence = neumaierSum(activeWeighted) / evidenceMass
+			evidenceConfidence = sumFloats(activeWeighted) / evidenceMass
 		}
-		breadth := 1 - pyExp(-float64(len(active))/2)
+		breadth := 1 - math.Exp(-float64(len(active))/2)
 		predictionConfidence := evidenceConfidence * (0.65 + 0.35*breadth)
 		confidence := clampValue(exactConfidence+(1-exactConfidence)*predictionConfidence, 0, 1)
 		directSignals := jvArr()

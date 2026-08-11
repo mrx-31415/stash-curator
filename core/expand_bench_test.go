@@ -97,7 +97,7 @@ func BenchmarkBest(b *testing.B) {
 
 func BenchmarkPyExpLocked(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		pyExp(-0.5 - float64(i%97)*0.001)
+		math.Exp(-0.5 - float64(i%97)*0.001)
 	}
 }
 

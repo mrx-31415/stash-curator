@@ -65,7 +65,7 @@ func oOutcome(observedAtMs int64) outcomeSignal {
 
 // repeatOutcome mirrors curves.repeat_outcome.
 func repeatOutcome(gapHours float64, observedAtMs int64) (outcomeSignal, bool) {
-	value := repeatBase * (1 - pyExp(-gapHours/repeatTauHours))
+	value := repeatBase * (1 - math.Exp(-gapHours/repeatTauHours))
 	if value <= 0 {
 		return outcomeSignal{}, false
 	}
@@ -81,7 +81,7 @@ func viewingOutcomeHistorical(activeSeconds float64, observedAtMs int64) (outcom
 	if activeSeconds < shortExitSeconds {
 		return outcomeSignal{}, false
 	}
-	value := viewPositiveMax * (1 - pyExp(-(activeSeconds-shortExitSeconds)/viewRiseSeconds))
+	value := viewPositiveMax * (1 - math.Exp(-(activeSeconds-shortExitSeconds)/viewRiseSeconds))
 	if mathAbs(value) < 1e-12 {
 		return outcomeSignal{}, false
 	}

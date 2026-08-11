@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from curator.deterministic import glibc_exp
 from curator.events.contracts import (
     DEFAULT_CALIBRATION,
     EventCalibration,
@@ -31,7 +30,7 @@ def viewing_outcome(
         value = calibration.direct_short_exit_min * (1 - active_seconds / threshold)
     else:
         value = calibration.view_positive_max * (
-            1 - glibc_exp(-(active_seconds - threshold) / calibration.view_rise_seconds)
+            1 - math.exp(-(active_seconds - threshold) / calibration.view_rise_seconds)
         )
     if abs(value) < 1e-12:
         return None
@@ -54,7 +53,7 @@ def repeat_independence(
     """Discount clustered returns smoothly without calendar boundaries."""
     if not math.isfinite(gap_hours) or gap_hours < 0:
         raise ValueError("gap_hours must be non-negative")
-    return 1 - glibc_exp(-gap_hours / calibration.repeat_tau_hours)
+    return 1 - math.exp(-gap_hours / calibration.repeat_tau_hours)
 
 
 def repeat_outcome(

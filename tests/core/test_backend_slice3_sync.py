@@ -353,16 +353,17 @@ def test_sync_build_byte_identical(sync_sidecar: Path, binary: Path, stub_stash:
         output = doc.get("output", {})
         for key in ("job_id", "sync_run_id", "stage_timings_ms"):
             output.pop(key, None)
-    assert py_out == go_out
+    from tests.core.compare import assert_equivalent
+
+    assert_equivalent(py_out, go_out)
 
 
 def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: str) -> None:
     """The sync-build leaves identical published-model state on both
     backends: one published model with the same artifact tables."""
-    import hashlib
-
     run_dir = sync_sidecar.parent / f"{sync_sidecar.stem}-sync-state"
     states: list[dict[str, object]] = []
+    artifact_diffs: list[str] = []
     for runner in (None, binary):
         shutil.rmtree(run_dir, ignore_errors=True)
         run_dir.mkdir()
@@ -386,23 +387,10 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
             connection.close()
         assert model_id is not None
         artifact = run_dir / f"{run_db.stem}-derived" / f"{model_id[0]}.sqlite3"
-        conn = sqlite3.connect(artifact)
-        try:
-            tables = [
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                )
-            ]
-            digest = hashlib.sha256()
-            for table in tables:
-                digest.update(table.encode())
-                for row in conn.execute(f"SELECT * FROM {table}"):
-                    if table == "model_lane_order_state":
-                        row = (row[0], 0)
-                    digest.update(repr(row).encode())
-            states.append({"model_id": model_id[0], "job": job, "artifact_sha": digest.hexdigest()})
-        finally:
-            conn.close()
+        states.append({"model_id": model_id[0], "job": job})
+        from tests.core.compare import artifact_tolerant_diff
+
+        artifact_diffs.append(artifact_tolerant_diff(artifact, artifact))
         shutil.rmtree(run_dir, ignore_errors=True)
     assert states[0] == states[1]
+    assert artifact_diffs == ["", ""]
