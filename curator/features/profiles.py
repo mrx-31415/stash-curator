@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 
 from curator.deterministic import glibc_exp
-from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
