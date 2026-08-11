@@ -217,3 +217,59 @@ fan-out must not change the output: results are merged deterministically
 >
 > Do not push; commit with Conventional Commits when the slice is green and
 > report exactly what was verified.
+
+## Delivery (2026-08-10)
+
+Slice 2 is delivered on `feat/read-path-backend-port`:
+
+- `e859cb9` feat: port network-layer interactive ops to the Go core
+- `cf11cdf` perf: make the network ops interactive on large libraries
+- `924a9fc` perf: parallelize the expand probe page fetches
+
+All four ops (`get_expand`, `get_performer_hunt`, `get_external_similar`,
+`send_whisparr`) run natively, byte-identical to `backend.py` on the stubbed
+differential harness (21 slice-2 tests + the slice-1 suite). `scripts/verify
+core` / `full` / `integration` green. The Stash sync client surface
+(`core/syncclient.go`) compiles but is exercised only by Slice 3's task
+wiring.
+
+### Performance findings (matter for Slice 3)
+
+- `pyExp` was a correctly-rounded `math/big` exp (~19 µs per unique input);
+  the anchor matcher hit ~860 K unique age-diffs per hunt (~26 s of
+  scoring). It is now a table-based port of glibc's dbl-64 exp
+  (`core/pyexp.go` + `core/exp_data.go`), bit-exact vs CPython everywhere
+  (validated on 50 K samples), memoized. The glibc-deviation points are
+  pinned in the corpus test against Python values, not Go's `math.Exp`.
+- The anchor matcher precomputes terms in a bounded worker pool and scores
+  scenes in parallel with deterministic ordered merging; terms are compact
+  (the chosen anchor's block maps are re-derived on demand, age appended
+  last so the why-block tie order matches Python).
+- `pyLog`/`pyTanh` are glibc-faithful ports (needed: Go's `math.Log`/`Tanh`
+  differ from glibc by 1 ulp on 7–16% of inputs).
+- The multi-hop walk depends only on the seed: compute once per op, reuse
+  per scene.
+- Taxonomy `resolve` must build its index once per call (a per-tag
+  re-scan is O(N²) over ~23 K tags).
+- Nested DB queries while a rowset holds the single pooled connection
+  deadlock (`SetMaxOpenConns(1)`); collect-then-query where Python nests
+  cursors on one connection.
+- Live (23.9 K-scene library): hunt 43.8 s → 11.7 s; external similar
+  timed out → 40.2 s, of which **28 s is StashDB server latency** on one
+  probe (the tight-tags INCLUDES_ALL query) — external, identical for
+  Python; 8 s scoring, 4 s ranking remain. Per-page fetch concurrency is in.
+
+### Test seam
+
+`CURATOR_STASHDB_ENDPOINT` (backend.py `_stashdb` + the Go client, mirroring
+the `CURATOR_CORE` resolver pattern) redirects the hardcoded stashdb.org
+endpoint to a local stub for the differential harness.
+
+### Slice 3 (next phase)
+
+Write-path ops (backup/compact/vacuum/prepare/refresh/update_shortlist) +
+task modes + the sync task wiring (consumes `core/syncclient.go`). See
+`docs/handover-go-backend.md` and `docs/decisions/002-runtime-swap-planning.md`
+§8. The write-path ops are mostly mechanical SQLite; `refresh` is the
+largest port. Entity-sync needs the `source_hash` parity already in
+`core/syncclient.go`. Profile-trace parity extends to task modes.
