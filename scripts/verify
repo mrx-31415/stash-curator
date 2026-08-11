@@ -70,13 +70,19 @@ case "${1:-}" in
     ;;
   full)
     core_build_and_check
-    core_gate
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
     uv run --frozen mypy curator plugin/backend.py
-    pytest_not_integration
-    node --check plugin/stash-curator.js
+    # Build the archive before pytest so the packaging/archive tests validate
+    # the zip this run produces, not a stale one.
     uv run --frozen python scripts/build_plugin.py
+    # One pytest pass with the built binary pinned. core_gate's test set
+    # (tests/core + tests/model/test_core.py) is a subset of the full
+    # non-integration suite, so running both doubled the core tests; the
+    # env-sensitive resolver tests shadow CURATOR_CORE per-test, so a global
+    # pin does not change their behavior.
+    CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest_not_integration
+    node --check plugin/stash-curator.js
     git diff --check
     ;;
   integration)
@@ -86,6 +92,12 @@ case "${1:-}" in
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
+    # The zip no longer ships the Python backend; the differential tests run
+    # backend.py inside the container as the comparison oracle, so copy the
+    # repo copy of the oracle into the installed plugin dir. It is inert at
+    # runtime: the launcher execs the binary and never consults it.
+    cp plugin/backend.py "$plugin_dir/backend.py"
+    cp -r curator "$plugin_dir/curator"
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
     # ── start stash ──
