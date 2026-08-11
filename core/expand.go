@@ -1566,17 +1566,23 @@ GROUP BY p.performer_id`, modelID)
 //go:noinline
 func profileMatch(left, right *performerProfile, weights map[string]float64) (float64, float64) {
 	total, _, used := performerSimilarity(left, right, weights)
-	relevant := 0.0
-	for key, value := range weights {
-		if key != "content" {
-			relevant += value
+	// Python sums the non-content block weights in the config's field order;
+	// summing the map would be nondeterministic (and drift an ulp).
+	relevantValues := make([]float64, 0, len(weights))
+	for _, entry := range performerBlockWeights {
+		if entry.block == "content" {
+			continue
+		}
+		if _, ok := weights[entry.block]; ok {
+			relevantValues = append(relevantValues, weights[entry.block])
 		}
 	}
+	relevant := neumaierSum(relevantValues)
 	coverage := 0.0
 	if relevant != 0 {
 		weightValues := make([]float64, 0, len(used))
-		for _, value := range used {
-			weightValues = append(weightValues, value)
+		for _, block := range sortedStringKeys(used) {
+			weightValues = append(weightValues, used[block])
 		}
 		coverage = math.Min(1.0, neumaierSum(weightValues)/relevant)
 	}
