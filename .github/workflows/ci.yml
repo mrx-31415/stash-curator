@@ -27,6 +27,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache-dependency-path: core/go.sum
       - name: Install zig (C cross-compiler for the sqlite driver)
         run: |
           curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
