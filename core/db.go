@@ -201,6 +201,42 @@ func nowMs() int64 {
 	return timeNowUnixMilli()
 }
 
+// openSidecarReadPool opens a read-only, pooled connection to the sidecar
+// for parallel bulk reads (the similar path's independent sidecar-table
+// loads). The main sidecar connection stays pinned to a single connection
+// (writes + artifact attaches); WAL allows unlimited concurrent readers, so
+// the pool's readers never contend with the writer. Artifact generations are
+// NOT attached here — those reads stay on the main connection, which is the
+// only one that carries the ATTACHes.
+func openSidecarReadPool(pluginDir string, payload, settings jVal) (dbx, error) {
+	path := realpath(databasePath(pluginDir, payload, settings))
+	db, err := sql.Open("sqlite3", fileURI(path, true))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	var out dbx = db
+	if t := currentTrace(); t != nil {
+		out = &tracedDB{db: db, t: t}
+	}
+	// sql.Open does not connect; force a real connection so open failures
+	// surface here rather than on the first read.
+	if _, err := out.Exec("SELECT 1"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := out.Exec("PRAGMA busy_timeout = 30000"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := out.Exec("PRAGMA cache_size = -131072"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return out, nil
+}
+
 // timeNowUnixMilli is injectable so Go tests can pin timestamps that the
 // byte-identical differential comparisons depend on.
 var timeNowUnixMilli = func() int64 { return time.Now().UnixMilli() }
