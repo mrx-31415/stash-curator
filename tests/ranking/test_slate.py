@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from curator.api import CuratorAPI
 from curator.cli import run
 from curator.ranking import LanePolicy, SlateBuilder
 from curator.storage import MigrationRunner, connect_database
@@ -915,3 +916,204 @@ def test_available_count_probes_are_batched_not_per_scene(tmp_path: Path) -> Non
     statements.clear()
     assert builder.available_count("model", "best_bets") == total
     assert not [statement for statement in statements if "FROM scene_tag" in statement]
+
+
+# ── get_score_review (score-first read path) ────────────────────────────────
+
+
+def _set_appeal(connection: sqlite3.Connection, scene_id: str, appeal: float) -> None:
+    """Pin a scene's appeal (and its general/direct mirrors) so the review
+    window is deterministic."""
+    connection.execute(
+        """
+        UPDATE model_scene_score SET appeal=?, general_appeal=?, direct_appeal=?
+        WHERE model_id='model' AND scene_id=?
+        """,
+        (appeal, appeal, appeal, scene_id),
+    )
+
+
+def _score_review_db(path: Path) -> sqlite3.Connection:
+    """A sidecar whose appeals cover the review window: x-excluded at the
+    bottom (built eligibility_json says ineligible — live eligibility is what
+    gates the review), then a-best/b-best/c-best/d-revisit/e-frontier."""
+    connection = _database(path)
+    _set_appeal(connection, "x-excluded", -0.9)
+    _set_appeal(connection, "a-best", -0.8)
+    _set_appeal(connection, "b-best", -0.5)
+    _set_appeal(connection, "c-best", -0.2)
+    _set_appeal(connection, "d-revisit", 0.0)
+    _set_appeal(connection, "e-frontier", 0.4)
+    _set_appeal(connection, "f-stretch", 0.3)
+    _set_appeal(connection, "g-combination", 0.2)
+    _set_appeal(connection, "h-probe", 0.1)
+    _set_appeal(connection, "i-island", 0.05)
+    connection.commit()
+    return connection
+
+
+def test_score_review_orders_by_appeal_ascending(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0)
+    scene_ids = [item["scene_id"] for item in result["items"]]
+    assert scene_ids == ["x-excluded", "a-best", "b-best", "c-best", "d-revisit"]
+    assert result["total"] == 5
+    assert result["page_size"] == 20
+    assert result["page"] == 1
+    assert result["has_more"] is False
+    assert result["model_version"] == "model"
+    assert set(result) == {"items", "total", "page_size", "has_more", "page", "model_version"}
+    # The built eligibility_json flag does not gate the review — live
+    # eligibility does (the slate path behaves the same way).
+    assert result["items"][0]["scene_id"] == "x-excluded"
+    assert result["items"][0]["eligibility"] == {"eligible": False, "reasons": ["excluded"]}
+    # Positions are page-relative to the full distribution.
+    assert [item["position"] for item in result["items"]] == [0, 1, 2, 3, 4]
+
+
+def test_score_review_items_mirror_slate_shape(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0)
+    item = result["items"][1]  # a-best at -0.8
+    assert item["scene_id"] == "a-best"
+    assert item["lane"] == "score_review"
+    assert item["source_lane"] == "score_review"
+    assert item["subtype"] is None
+    assert item["final_utility"] == item["appeal"] == -0.8
+    assert item["lane_value"] == -0.8
+    assert item["current_fit"] == pytest.approx(0.80)
+    assert item["confidence"] == 0.9
+    assert item["penalties"] == {
+        "performer": 0.0,
+        "studio": 0.0,
+        "content": 0.0,
+        "history": 0.0,
+        "live_cooldown": 0.0,
+    }
+    assert item["bonuses"] == {"uncovered_content": 0.0}
+    assert item["components"]["content"]["value"] == pytest.approx(0.20)
+    assert item["reason_ids"] == ("eligibility.lane",)
+    assert item["qualification"] == {}
+    assert isinstance(item["impression_id"], str) and item["impression_id"]
+    assert set(item) == {
+        "scene_id",
+        "lane",
+        "source_lane",
+        "subtype",
+        "position",
+        "appeal",
+        "current_fit",
+        "confidence",
+        "lane_value",
+        "final_utility",
+        "penalties",
+        "bonuses",
+        "components",
+        "neighbors",
+        "eligibility",
+        "qualification",
+        "reason_ids",
+        "impression_id",
+    }
+
+
+def test_score_review_max_appeal_cap(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+    result = api.get_score_review(page=1, count=20, max_appeal=-0.4)
+    assert [item["scene_id"] for item in result["items"]] == ["x-excluded", "a-best", "b-best"]
+    assert result["total"] == 3
+    # A cap below the whole window yields an empty page.
+    result = api.get_score_review(page=1, count=20, max_appeal=-1.0)
+    assert result["items"] == []
+    assert result["total"] == 0
+    assert result["has_more"] is False
+
+
+def test_score_review_paging_math(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+    first = api.get_score_review(page=1, count=2, max_appeal=0.0)
+    assert [item["scene_id"] for item in first["items"]] == ["x-excluded", "a-best"]
+    assert first["has_more"] is True
+    assert [item["position"] for item in first["items"]] == [0, 1]
+    second = api.get_score_review(page=2, count=2, max_appeal=0.0)
+    assert [item["scene_id"] for item in second["items"]] == ["b-best", "c-best"]
+    assert second["has_more"] is True
+    assert [item["position"] for item in second["items"]] == [2, 3]
+    third = api.get_score_review(page=3, count=2, max_appeal=0.0)
+    assert [item["scene_id"] for item in third["items"]] == ["d-revisit"]
+    assert third["has_more"] is False
+    assert [item["position"] for item in third["items"]] == [4]
+
+
+def test_score_review_applies_live_eligibility(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO exclusion(exclusion_id, entity_type, entity_id, exclusion_type,
+            created_at_ms, reversed_at_ms, expires_at_ms)
+        VALUES ('ex-c', 'scene', 'c-best', 'hard', 1, NULL, NULL)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO feedback(
+            feedback_id, scene_id, feedback_type, value, occurred_at_ms, payload_json
+        ) VALUES ('fb-b', 'b-best', 'thumb_down', NULL, 1, '{}')
+        """
+    )
+    connection.commit()
+    result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0)
+    assert [item["scene_id"] for item in result["items"]] == [
+        "x-excluded",
+        "a-best",
+        "d-revisit",
+    ]
+    assert result["total"] == 3
+
+
+def test_score_review_records_impression_like_get_slate(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    result = CuratorAPI(connection).get_score_review(
+        page=2, count=2, max_appeal=0.0, now_ms=1_700_000_000_000
+    )
+    impression_id = result["items"][0]["impression_id"]
+    lane, model_id, config_version = connection.execute(
+        "SELECT lane, model_id, config_version FROM impression WHERE impression_id=?",
+        (impression_id,),
+    ).fetchone()
+    assert (lane, model_id, config_version) == ("score_review", "model", "builtin")
+    rows = connection.execute(
+        """
+        SELECT scene_id, position, policy_score, reason_snapshot_json
+        FROM impression_item WHERE impression_id=? ORDER BY position
+        """,
+        (impression_id,),
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("b-best", 2, -0.5, '["eligibility.lane"]'),
+        ("c-best", 3, -0.2, '["eligibility.lane"]'),
+    ]
+    # A fresh request records a distinct impression (uuid4 per request).
+    second = CuratorAPI(connection).get_score_review(page=1, count=2, max_appeal=0.0)
+    assert second["items"][0]["impression_id"] != impression_id
+
+
+def test_score_review_validation_and_model_required(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+    for page, count in ((0, 20), (1, 0), (1, 501)):
+        with pytest.raises(ValueError, match="invalid score review page"):
+            api.get_score_review(page=page, count=count)
+    # The SlateBuilder mirror exposes the same count/eligibility semantics.
+    builder = SlateBuilder(connection)
+    assert builder.score_review_available_count("model", 0.0) == 5
+    assert builder.score_review_available_count("model", -0.4) == 3
+    assert builder.score_review("model", 2, max_appeal=0.0).items[0].scene_id == "x-excluded"
+    assert builder.score_review("model", 2, max_appeal=0.0).items[1].final_utility == -0.8
+    # No published model errors with the slate path's exact message.
+    bare = connect_database(tmp_path / "bare.sqlite3")
+    MigrationRunner(bare).migrate(applied_at_ms=1)
+    with pytest.raises(RuntimeError, match="no published model; run build-model first"):
+        CuratorAPI(bare).get_score_review()

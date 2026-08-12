@@ -904,6 +904,102 @@ class SlateBuilder:
         )
         return sum(1 for scene_id in excluded if eligibility.get(scene_id, {}).get("eligible"))
 
+    def score_review_available_count(self, model_id: str, max_appeal: float = 0.0) -> int:
+        """Count eligible scenes at the bottom of the appeal distribution
+        (appeal <= max_appeal) without hydrating items, applying the same
+        live eligibility as the slate path."""
+        scene_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id FROM model_scene_score
+                WHERE model_id=? AND appeal <= ?
+                """,
+                (model_id, max_appeal),
+            )
+        }
+        eligibility = scene_eligibility(
+            self.connection, time.time_ns() // 1_000_000, self.config, scene_ids=scene_ids
+        )
+        return sum(1 for scene_id in scene_ids if eligibility.get(scene_id, {}).get("eligible"))
+
+    def score_review(self, model_id: str, count: int, *, max_appeal: float = 0.0) -> Slate:
+        """The bottom of the appeal distribution: model_scene_score rows
+        ordered by appeal ASC (tie-break scene_id), filtered appeal <=
+        max_appeal, the same live eligibility applied as the slate path,
+        hydrated into recommendation items with score-first semantics
+        (final_utility = appeal, the score-first zero penalties/bonuses, lane
+        "score_review")."""
+        if model_id is None:
+            raise RuntimeError("no published model; run build-model first")
+        started = time.perf_counter()
+        now_ms = time.time_ns() // 1_000_000
+        selected_rows: list[sqlite3.Row] = []
+        offset = 0
+        chunk_size = max(100, count)
+        while len(selected_rows) < count:
+            rows = self.connection.execute(
+                """
+                SELECT scene_id FROM model_scene_score
+                WHERE model_id=? AND appeal <= ?
+                ORDER BY appeal ASC, scene_id
+                LIMIT ? OFFSET ?
+                """,
+                (model_id, max_appeal, chunk_size, offset),
+            ).fetchall()
+            if not rows:
+                break
+            offset += len(rows)
+            scene_ids = {str(row["scene_id"]) for row in rows}
+            eligibility = scene_eligibility(
+                self.connection, now_ms, self.config, scene_ids=scene_ids
+            )
+            selected_rows.extend(
+                row for row in rows if eligibility.get(str(row["scene_id"]), {}).get("eligible")
+            )
+            if len(rows) < chunk_size:
+                break
+        selected_rows = selected_rows[:count]
+        scene_ids = {str(row["scene_id"]) for row in selected_rows}
+        scores = RecommendationModelStore(self.connection).scores(model_id, scene_ids)
+        penalties = json.loads(SCORE_FIRST_RANKING_JSON)["penalties"]
+        penalties["live_cooldown"] = 0.0
+        bonuses = json.loads(SCORE_FIRST_RANKING_JSON)["bonuses"]
+        items = []
+        for position, row in enumerate(selected_rows):
+            scene_id = str(row["scene_id"])
+            score = scores[scene_id]
+            items.append(
+                RecommendationItem(
+                    scene_id,
+                    "score_review",
+                    "score_review",
+                    None,
+                    position,
+                    score.appeal,
+                    score.current_fit,
+                    score.confidence,
+                    score.appeal,
+                    score.appeal,
+                    dict(penalties),
+                    dict(bonuses),
+                    score.components,
+                    score.neighbors,
+                    score.eligibility,
+                    {},
+                    ("eligibility.lane",),
+                )
+            )
+        elapsed = round((time.perf_counter() - started) * 1_000)
+        record_duration("python", "ranking.score_review", elapsed)
+        return Slate(
+            model_id,
+            "score_review",
+            tuple(items),
+            (),
+            {"materialized": 1, "selection": elapsed, "total": elapsed},
+        )
+
     def _direct_play_filters(self, now_ms: int) -> tuple[dict[str, int], set[str]]:
         direct_plays = {
             str(row["scene_id"]): int(row["last_played"])
