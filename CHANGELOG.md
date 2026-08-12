@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/mrx-31415/stash-curator/compare/v0.8.0...v0.8.1) (2026-08-12)
+
+
+### Performance Improvements
+
+* parallelize lane classification, scoring, feature construction, and the links walk ([#125](https://github.com/mrx-31415/stash-curator/issues/125)) ([b90a52b](https://github.com/mrx-31415/stash-curator/commit/b90a52b9db36d9b5a6e336a758d60cec0c899b07))
+* switch SQLite to mattn/go-sqlite3 (cgo) and tune readonly artifact opens ([#127](https://github.com/mrx-31415/stash-curator/issues/127)) ([5b70838](https://github.com/mrx-31415/stash-curator/commit/5b70838c54f5f64526e367cb5bd453c83b92486d))
+
 ## [0.8.0](https://github.com/mrx-31415/stash-curator/compare/v0.7.0...v0.8.0) (2026-08-12)
 
 
