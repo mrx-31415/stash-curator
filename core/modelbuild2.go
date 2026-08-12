@@ -432,7 +432,7 @@ WHERE p.played_at_ms >= ? GROUP BY p.scene_id ORDER BY played_at DESC LIMIT 200`
 }
 
 // satiation mirrors _satiation.
-func satiation(db dbx, sceneID string, appeal float64, context *recentContext) float64 {
+func satiation(sceneID string, appeal float64, context *recentContext) float64 {
 	if appeal <= 0 {
 		return 0.0
 	}
@@ -563,6 +563,359 @@ func edgeMatches(entry jVal) ([]jVal, error) {
 	return matches.arr, nil
 }
 
+// scoringContext carries the row-independent precomputed inputs for the
+// per-scene scoring loop (affinities, kernels' outputs, priors, recency).
+type scoringContext struct {
+	sceneFeatures       map[string][]storedFeature
+	affinities          map[string]modelAffinity
+	performerPriors     map[string]modelPrior
+	studioPriors        map[string]modelPrior
+	performerSimilarity jVal
+	neighbors           map[string]neighborEvidence
+	labels              map[string]sceneLabel
+	lastPlayed          map[string]int64
+	recentContext       *recentContext
+	eligibility         map[string]jVal
+	profiles            map[string]bool
+	vectors             map[string]map[string]float64
+	baseline            float64
+	labelMean           float64
+	baselineSupport     float64
+	discriminative      int
+	referenceAtMs       int64
+}
+
+type activeEvidence struct {
+	value      float64
+	confidence float64
+}
+
+// scoreScene computes the components, appeal, fit, and confidence for one
+// scene (the _scores per-scene body). Every input is a precomputed read-only
+// map, so the loop is row-independent: fixed-chunk parallel processing
+// yields identical scores.
+func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
+	features := c.sceneFeatures[sceneID]
+	components := jvObj(jvKey("baseline", jvObj(
+		jvKey("raw", jvFloat(c.baseline)),
+		jvKey("value", jvFloat(c.baseline)),
+		jvKey("training_outcome_mean", jvFloat(c.labelMean)),
+		jvKey("effective_support", jvFloat(c.baselineSupport)),
+	)))
+	familyConfidences := map[string]float64{}
+	for _, family := range []struct {
+		name  string
+		bound float64
+	}{{"content", 0.35}, {"structure", 0.05}} {
+		var contributions jVal = jvArr()
+		for _, feature := range features {
+			if feature.family != family.name {
+				continue
+			}
+			affinity, ok := c.affinities[feature.featureID]
+			if !ok {
+				continue
+			}
+			value := feature.value * affinity.affinity * affinity.confidence
+			contributions.arr = append(contributions.arr, jvObj(
+				jvKey("feature_id", jvStr(feature.featureID)),
+				jvKey("name", jvStr(feature.name)),
+				jvKey("value", jvFloat(value)),
+				jvKey("affinity", jvFloat(affinity.affinity)),
+				jvKey("confidence", jvFloat(affinity.confidence)),
+				jvKey("metadata", feature.metadata),
+				jvKey("affinity_metadata", affinity.contexts),
+			))
+		}
+		contributionValues := make([]float64, 0, len(contributions.arr))
+		absValues := make([]float64, 0, len(contributions.arr))
+		for _, item := range contributions.arr {
+			value := numberValue(item.get("value"))
+			contributionValues = append(contributionValues, value)
+			absValues = append(absValues, math.Abs(value))
+		}
+		raw := sumFloats(contributionValues)
+		contributionMass := sumFloats(absValues)
+		var evidenceConfidence float64
+		if contributionMass != 0 {
+			weightedValues := make([]float64, 0, len(contributions.arr))
+			for _, item := range contributions.arr {
+				value := numberValue(item.get("value"))
+				weightedValues = append(weightedValues, math.Abs(value)*numberValue(item.get("confidence")))
+			}
+			evidenceConfidence = sumFloats(weightedValues) / contributionMass
+		}
+		familyConfidences[family.name] = evidenceConfidence
+		sorted := append([]jVal(nil), contributions.arr...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			a, b := sorted[i], sorted[j]
+			absA, absB := math.Abs(numberValue(a.get("value"))), math.Abs(numberValue(b.get("value")))
+			if absA != absB {
+				return absA > absB
+			}
+			return a.get("name").asString() < b.get("name").asString()
+		})
+		if len(sorted) > 5 {
+			sorted = sorted[:5]
+		}
+		top := jvArr(sorted...)
+		if len(contributionValues) == 0 {
+			components.set(family.name, jvObj(
+				jvKey("raw", jvInt(0)),
+				jvKey("value", jvInt(0)),
+				jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
+				jvKey("top", top),
+			))
+		} else {
+			components.set(family.name, jvObj(
+				jvKey("raw", jvFloat(raw)),
+				jvKey("value", jvFloat(clampValue(raw, -family.bound, family.bound))),
+				jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
+				jvKey("top", top),
+			))
+		}
+	}
+	var performerItems []storedFeature
+	for _, feature := range features {
+		if feature.family == "performer_identity" {
+			performerItems = append(performerItems, feature)
+		}
+	}
+	identityValues := jvArr()
+	similarityValues := jvArr()
+	var identityRaw, similarityRaw, identityConfidence, similarityConfidence float64
+	var identityValueList, similarityValueList []float64
+	for _, feature := range performerItems {
+		performerID := strings.TrimPrefix(feature.name, "performer:")
+		affinity, hasAffinity := c.affinities[feature.featureID]
+		learned := 0.0
+		affinityConfidence := 0.0
+		if hasAffinity {
+			learned = affinity.affinity * affinity.confidence
+			affinityConfidence = affinity.confidence
+		}
+		prior := c.performerPriors[performerID]
+		identityValues.arr = append(identityValues.arr, jvObj(
+			jvKey("performer_id", jvStr(performerID)),
+			jvKey("value", jvFloat(learned+prior.value)),
+			jvKey("learned", jvFloat(learned)),
+			jvKey("prior", jvFloat(prior.value)),
+			jvKey("confidence", jvFloat(math.Max(affinityConfidence, prior.confidence))),
+		))
+		identityConfidence = math.Max(identityConfidence, math.Max(affinityConfidence, prior.confidence))
+		identityValueList = append(identityValueList, learned+prior.value)
+		similarity := c.performerSimilarity.get(performerID)
+		var simValue, simConfidence float64
+		if similarity.kind == jObj {
+			simValue = numberValue(similarity.get("value"))
+			simConfidence = numberValue(similarity.get("confidence"))
+		}
+		noveltyWeight := math.Max(0.05, 1-identityConfidence)
+		similarityItem := jvObj()
+		for _, pair := range similarity.obj {
+			similarityItem.set(pair.key, pair.val)
+		}
+		similarityItem.set("performer_id", jvStr(performerID))
+		similarityItem.set("raw_value", jvFloat(simValue))
+		similarityItem.set("value", jvFloat(simValue*noveltyWeight))
+		similarityItem.set("confidence", jvFloat(simConfidence*noveltyWeight))
+		similarityItem.set("identity_confidence", jvFloat(identityConfidence))
+		similarityItem.set("novelty_weight", jvFloat(noveltyWeight))
+		similarityValues.arr = append(similarityValues.arr, similarityItem)
+		similarityValueList = append(similarityValueList, simValue*noveltyWeight)
+		similarityConfidence = math.Max(similarityConfidence, simConfidence*noveltyWeight)
+	}
+	identityRaw = asymmetric(identityValueList)
+	similarityRaw = asymmetric(similarityValueList)
+	familyConfidences["performer_identity"] = identityConfidence
+	familyConfidences["performer_similarity"] = similarityConfidence
+	components.set("performer_identity", jvObj(
+		jvKey("raw", jvFloat(identityRaw)),
+		jvKey("value", jvFloat(clampValue(identityRaw, -0.30, 0.30))),
+		jvKey("performers", identityValues),
+		jvKey("evidence_confidence", jvFloat(identityConfidence)),
+	))
+	components.set("performer_similarity", jvObj(
+		jvKey("raw", jvFloat(similarityRaw)),
+		jvKey("value", jvFloat(clampValue(similarityRaw, -0.16, 0.16))),
+		jvKey("performers", similarityValues),
+		jvKey("evidence_confidence", jvFloat(similarityConfidence)),
+	))
+	var studioItems jVal = jvArr()
+	var studioConfidence float64
+	for _, feature := range features {
+		if feature.family != "studio" {
+			continue
+		}
+		studioID := strings.TrimPrefix(feature.name, "studio:")
+		affinity, hasAffinity := c.affinities[feature.featureID]
+		learned := 0.0
+		affinityConfidence := 0.0
+		if hasAffinity {
+			learned = affinity.affinity * affinity.confidence
+			affinityConfidence = affinity.confidence
+		}
+		prior := c.studioPriors[studioID]
+		value := learned + prior.value
+		confidence := math.Max(affinityConfidence, prior.confidence)
+		studioItems.arr = append(studioItems.arr, jvObj(
+			jvKey("studio_id", jvStr(studioID)),
+			jvKey("value", jvFloat(value)),
+			jvKey("learned", jvFloat(learned)),
+			jvKey("prior", jvFloat(prior.value)),
+			jvKey("confidence", jvFloat(confidence)),
+		))
+		studioConfidence = math.Max(studioConfidence, confidence)
+	}
+	studioValues := make([]float64, 0, len(studioItems.arr))
+	for _, item := range studioItems.arr {
+		studioValues = append(studioValues, numberValue(item.get("value")))
+	}
+	studioRaw := sumFloats(studioValues)
+	familyConfidences["studio"] = studioConfidence
+	if len(studioItems.arr) == 0 {
+		components.set("studio", jvObj(
+			jvKey("raw", jvInt(0)),
+			jvKey("value", jvInt(0)),
+			jvKey("studios", studioItems),
+			jvKey("evidence_confidence", jvFloat(studioConfidence)),
+		))
+	} else {
+		components.set("studio", jvObj(
+			jvKey("raw", jvFloat(studioRaw)),
+			jvKey("value", jvFloat(clampValue(studioRaw, -0.12, 0.12))),
+			jvKey("studios", studioItems),
+			jvKey("evidence_confidence", jvFloat(studioConfidence)),
+		))
+	}
+	neighborData, hasNeighbors := c.neighbors[sceneID]
+	if !hasNeighbors {
+		neighborData = neighborEvidence{}
+	}
+	neighborValue := neighborData.value
+	neighborOutcomeMean := neighborData.outcomeMean
+	neighborLift := neighborData.lift
+	neighborConfidence := neighborData.confidence
+	neighborTotalWeight := neighborData.totalWeight
+	if !hasNeighbors {
+		neighborValue, neighborOutcomeMean, neighborLift, neighborConfidence, neighborTotalWeight = 0.0, c.labelMean, 0.0, 0.0, 0.0
+	}
+	familyConfidences["content_neighbor"] = neighborConfidence
+	components.set("content_neighbor", jvObj(
+		jvKey("raw", jvFloat(neighborValue)),
+		jvKey("value", jvFloat(clampValue(neighborValue, -0.20, 0.20))),
+		jvKey("outcome_mean", jvFloat(neighborOutcomeMean)),
+		jvKey("training_outcome_mean", jvFloat(c.labelMean)),
+		jvKey("lift", jvFloat(neighborLift)),
+		jvKey("evidence_confidence", jvFloat(neighborConfidence)),
+		jvKey("total_weight", jvFloat(neighborTotalWeight)),
+		jvKey("vector_mode", jvStr("preference_discriminative")),
+		jvKey("discriminative_tag_count", jvInt(int64(c.discriminative))),
+	))
+	var componentValues []float64
+	for _, pair := range components.obj {
+		if pair.val.kind == jObj {
+			if value := pair.val.get("value"); value.kind == jNum {
+				componentValues = append(componentValues, numberValue(value))
+			}
+		}
+	}
+	componentTotal := sumFloats(componentValues)
+	general := clamp(componentTotal)
+	direct := c.labels[sceneID]
+	exactConfidence := directConfidenceOf(direct.effectiveEvidence)
+	appeal := blendAppealOf(general, direct.outcome, exactConfidence)
+	last, played := c.lastPlayed[sceneID]
+	var recovery float64
+	if !played {
+		recovery = 1.0
+	} else {
+		days := math.Max(0, float64(c.referenceAtMs-last)/86_400_000)
+		recovery = sceneRecovery(days)
+	}
+	cooldown := math.Max(0, appeal) * (1 - recovery)
+	satiationValue := satiation(sceneID, appeal, c.recentContext)
+	notNow := notNowPenalty(sceneID, c.referenceAtMs, c.recentContext)
+	currentFit := clamp(appeal - cooldown - satiationValue - notNow)
+	contentCount := len(c.vectors[sceneID])
+	var performerProfileCount float64
+	for _, item := range identityValues.arr {
+		if c.profiles[item.get("performer_id").asString()] {
+			performerProfileCount++
+		}
+	}
+	metadataConfidence := 1 - math.Exp(-(float64(contentCount)+performerProfileCount+float64(len(studioItems.arr)))/5)
+	var active []activeEvidence
+	for _, family := range []string{"content", "structure", "performer_identity",
+		"performer_similarity", "studio", "content_neighbor"} {
+		familyConfidence := familyConfidences[family]
+		component := components.get(family)
+		if component.kind != jObj || familyConfidence <= 0 {
+			continue
+		}
+		componentValue := math.Abs(numberValue(component.get("value")))
+		if componentValue >= 0.005 {
+			active = append(active, activeEvidence{componentValue, familyConfidence})
+		}
+	}
+	activeValues := make([]float64, 0, len(active))
+	activeWeighted := make([]float64, 0, len(active))
+	for _, item := range active {
+		activeValues = append(activeValues, item.value)
+		activeWeighted = append(activeWeighted, item.value*item.confidence)
+	}
+	evidenceMass := sumFloats(activeValues)
+	var evidenceConfidence float64
+	if evidenceMass != 0 {
+		evidenceConfidence = sumFloats(activeWeighted) / evidenceMass
+	}
+	breadth := 1 - math.Exp(-float64(len(active))/2)
+	predictionConfidence := evidenceConfidence * (0.65 + 0.35*breadth)
+	confidence := clampValue(exactConfidence+(1-exactConfidence)*predictionConfidence, 0, 1)
+	directSignals := jvArr()
+	for _, signal := range direct.signalTypes {
+		directSignals.arr = append(directSignals.arr, jvStr(signal))
+	}
+	components.set("direct", jvObj(
+		jvKey("value", jvFloat(direct.outcome)),
+		jvKey("confidence", jvFloat(exactConfidence)),
+		jvKey("effective_evidence", jvFloat(direct.effectiveEvidence)),
+		jvKey("signals", directSignals),
+		jvKey("residual", jvFloat(clampValue(direct.outcome-general, -2, 2))),
+	))
+	components.set("fit", jvObj(
+		jvKey("cooldown", jvFloat(-cooldown)),
+		jvKey("satiation", jvFloat(-satiationValue)),
+		jvKey("not_now", jvFloat(-notNow)),
+		jvKey("recovery", jvFloat(recovery)),
+	))
+	eligibilityValue, ok := c.eligibility[sceneID]
+	if !ok {
+		eligibilityValue = jvObj(
+			jvKey("eligible", jvBool(false)),
+			jvKey("reasons", jvArr(jvStr("missing"))),
+		)
+	}
+	var neighborItems []jVal
+	if hasNeighbors {
+		neighborItems = neighborData.neighbors
+	}
+	return buildModelScore{
+		sceneID:            sceneID,
+		generalAppeal:      general,
+		directAppeal:       direct.outcome,
+		directConfidence:   exactConfidence,
+		appeal:             appeal,
+		currentFit:         currentFit,
+		confidence:         confidence,
+		metadataConfidence: metadataConfidence,
+		recovery:           recovery,
+		components:         components,
+		neighbors:          neighborItems,
+		eligibility:        eligibilityValue,
+	}
+}
+
 // modelScores runs the scoring stage (mirroring _scores).
 func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]storedFeature,
 	affinities map[string]modelAffinity, labels map[string]sceneLabel,
@@ -647,334 +1000,50 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	}
 	var scores []buildModelScore
 	totalScenes := len(allSceneIDs)
-	for sceneIndex, sceneID := range allSceneIDs {
-		features := sceneFeatures[sceneID]
-		components := jvObj(jvKey("baseline", jvObj(
-			jvKey("raw", jvFloat(baseline)),
-			jvKey("value", jvFloat(baseline)),
-			jvKey("training_outcome_mean", jvFloat(labelMean)),
-			jvKey("effective_support", jvFloat(baselineSupport)),
-		)))
-		familyConfidences := map[string]float64{}
-		for _, family := range []struct {
-			name  string
-			bound float64
-		}{{"content", 0.35}, {"structure", 0.05}} {
-			var contributions jVal = jvArr()
-			for _, feature := range features {
-				if feature.family != family.name {
-					continue
+	if totalScenes > 0 {
+		context := &scoringContext{
+			sceneFeatures:       sceneFeatures,
+			affinities:          affinities,
+			performerPriors:     performerPriors,
+			studioPriors:        studioPriors,
+			performerSimilarity: performerSimilarity,
+			neighbors:           neighbors,
+			labels:              labels,
+			lastPlayed:          lastPlayed,
+			recentContext:       recentContext,
+			eligibility:         eligibility,
+			profiles:            profiles,
+			vectors:             vectors,
+			baseline:            baseline,
+			labelMean:           labelMean,
+			baselineSupport:     baselineSupport,
+			discriminative:      discriminative,
+			referenceAtMs:       referenceAtMs,
+		}
+		// Each scene's score depends only on its own features and the
+		// precomputed affinities/kernel outputs, so the loop is
+		// row-independent: run it in fixed chunks (the kernel pattern) with
+		// progress ticks emitted in scene order.
+		progressReporter := newOrderedProgress()
+		reporterDone := make(chan struct{})
+		go func() {
+			defer close(reporterDone)
+			progressReporter.wait(reportPoints(totalScenes), func(completed int) {
+				if report != nil {
+					progressIndex := len(preferenceVectors) + completed
+					report(0.35 + 0.40*float64(progressIndex)/float64(maxInt(1, progressTotal)))
 				}
-				affinity, ok := affinities[feature.featureID]
-				if !ok {
-					continue
-				}
-				value := feature.value * affinity.affinity * affinity.confidence
-				contributions.arr = append(contributions.arr, jvObj(
-					jvKey("feature_id", jvStr(feature.featureID)),
-					jvKey("name", jvStr(feature.name)),
-					jvKey("value", jvFloat(value)),
-					jvKey("affinity", jvFloat(affinity.affinity)),
-					jvKey("confidence", jvFloat(affinity.confidence)),
-					jvKey("metadata", feature.metadata),
-					jvKey("affinity_metadata", affinity.contexts),
-				))
-			}
-			contributionValues := make([]float64, 0, len(contributions.arr))
-			absValues := make([]float64, 0, len(contributions.arr))
-			for _, item := range contributions.arr {
-				value := numberValue(item.get("value"))
-				contributionValues = append(contributionValues, value)
-				absValues = append(absValues, math.Abs(value))
-			}
-			raw := sumFloats(contributionValues)
-			contributionMass := sumFloats(absValues)
-			var evidenceConfidence float64
-			if contributionMass != 0 {
-				weightedValues := make([]float64, 0, len(contributions.arr))
-				for _, item := range contributions.arr {
-					value := numberValue(item.get("value"))
-					weightedValues = append(weightedValues, math.Abs(value)*numberValue(item.get("confidence")))
-				}
-				evidenceConfidence = sumFloats(weightedValues) / contributionMass
-			}
-			familyConfidences[family.name] = evidenceConfidence
-			sorted := append([]jVal(nil), contributions.arr...)
-			sort.SliceStable(sorted, func(i, j int) bool {
-				a, b := sorted[i], sorted[j]
-				absA, absB := math.Abs(numberValue(a.get("value"))), math.Abs(numberValue(b.get("value")))
-				if absA != absB {
-					return absA > absB
-				}
-				return a.get("name").asString() < b.get("name").asString()
 			})
-			if len(sorted) > 5 {
-				sorted = sorted[:5]
+		}()
+		scores = parallelChunks(totalScenes, nthreads(0), func(start, end int) []buildModelScore {
+			out := make([]buildModelScore, 0, end-start)
+			for _, sceneID := range allSceneIDs[start:end] {
+				out = append(out, context.scoreScene(sceneID))
+				progressReporter.done()
 			}
-			top := jvArr(sorted...)
-			if len(contributionValues) == 0 {
-				components.set(family.name, jvObj(
-					jvKey("raw", jvInt(0)),
-					jvKey("value", jvInt(0)),
-					jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
-					jvKey("top", top),
-				))
-			} else {
-				components.set(family.name, jvObj(
-					jvKey("raw", jvFloat(raw)),
-					jvKey("value", jvFloat(clampValue(raw, -family.bound, family.bound))),
-					jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
-					jvKey("top", top),
-				))
-			}
-		}
-		var performerItems []storedFeature
-		for _, feature := range features {
-			if feature.family == "performer_identity" {
-				performerItems = append(performerItems, feature)
-			}
-		}
-		identityValues := jvArr()
-		similarityValues := jvArr()
-		var identityRaw, similarityRaw, identityConfidence, similarityConfidence float64
-		var identityValueList, similarityValueList []float64
-		for _, feature := range performerItems {
-			performerID := strings.TrimPrefix(feature.name, "performer:")
-			affinity, hasAffinity := affinities[feature.featureID]
-			learned := 0.0
-			affinityConfidence := 0.0
-			if hasAffinity {
-				learned = affinity.affinity * affinity.confidence
-				affinityConfidence = affinity.confidence
-			}
-			prior := performerPriors[performerID]
-			identityValues.arr = append(identityValues.arr, jvObj(
-				jvKey("performer_id", jvStr(performerID)),
-				jvKey("value", jvFloat(learned+prior.value)),
-				jvKey("learned", jvFloat(learned)),
-				jvKey("prior", jvFloat(prior.value)),
-				jvKey("confidence", jvFloat(math.Max(affinityConfidence, prior.confidence))),
-			))
-			identityConfidence = math.Max(identityConfidence, math.Max(affinityConfidence, prior.confidence))
-			identityValueList = append(identityValueList, learned+prior.value)
-			similarity := performerSimilarity.get(performerID)
-			var simValue, simConfidence float64
-			if similarity.kind == jObj {
-				simValue = numberValue(similarity.get("value"))
-				simConfidence = numberValue(similarity.get("confidence"))
-			}
-			noveltyWeight := math.Max(0.05, 1-identityConfidence)
-			similarityItem := jvObj()
-			for _, pair := range similarity.obj {
-				similarityItem.set(pair.key, pair.val)
-			}
-			similarityItem.set("performer_id", jvStr(performerID))
-			similarityItem.set("raw_value", jvFloat(simValue))
-			similarityItem.set("value", jvFloat(simValue*noveltyWeight))
-			similarityItem.set("confidence", jvFloat(simConfidence*noveltyWeight))
-			similarityItem.set("identity_confidence", jvFloat(identityConfidence))
-			similarityItem.set("novelty_weight", jvFloat(noveltyWeight))
-			similarityValues.arr = append(similarityValues.arr, similarityItem)
-			similarityValueList = append(similarityValueList, simValue*noveltyWeight)
-			similarityConfidence = math.Max(similarityConfidence, simConfidence*noveltyWeight)
-		}
-		identityRaw = asymmetric(identityValueList)
-		similarityRaw = asymmetric(similarityValueList)
-		familyConfidences["performer_identity"] = identityConfidence
-		familyConfidences["performer_similarity"] = similarityConfidence
-		components.set("performer_identity", jvObj(
-			jvKey("raw", jvFloat(identityRaw)),
-			jvKey("value", jvFloat(clampValue(identityRaw, -0.30, 0.30))),
-			jvKey("performers", identityValues),
-			jvKey("evidence_confidence", jvFloat(identityConfidence)),
-		))
-		components.set("performer_similarity", jvObj(
-			jvKey("raw", jvFloat(similarityRaw)),
-			jvKey("value", jvFloat(clampValue(similarityRaw, -0.16, 0.16))),
-			jvKey("performers", similarityValues),
-			jvKey("evidence_confidence", jvFloat(similarityConfidence)),
-		))
-		var studioItems jVal = jvArr()
-		var studioConfidence float64
-		for _, feature := range features {
-			if feature.family != "studio" {
-				continue
-			}
-			studioID := strings.TrimPrefix(feature.name, "studio:")
-			affinity, hasAffinity := affinities[feature.featureID]
-			learned := 0.0
-			affinityConfidence := 0.0
-			if hasAffinity {
-				learned = affinity.affinity * affinity.confidence
-				affinityConfidence = affinity.confidence
-			}
-			prior := studioPriors[studioID]
-			value := learned + prior.value
-			confidence := math.Max(affinityConfidence, prior.confidence)
-			studioItems.arr = append(studioItems.arr, jvObj(
-				jvKey("studio_id", jvStr(studioID)),
-				jvKey("value", jvFloat(value)),
-				jvKey("learned", jvFloat(learned)),
-				jvKey("prior", jvFloat(prior.value)),
-				jvKey("confidence", jvFloat(confidence)),
-			))
-			studioConfidence = math.Max(studioConfidence, confidence)
-		}
-		studioValues := make([]float64, 0, len(studioItems.arr))
-		for _, item := range studioItems.arr {
-			studioValues = append(studioValues, numberValue(item.get("value")))
-		}
-		studioRaw := sumFloats(studioValues)
-		familyConfidences["studio"] = studioConfidence
-		if len(studioItems.arr) == 0 {
-			components.set("studio", jvObj(
-				jvKey("raw", jvInt(0)),
-				jvKey("value", jvInt(0)),
-				jvKey("studios", studioItems),
-				jvKey("evidence_confidence", jvFloat(studioConfidence)),
-			))
-		} else {
-			components.set("studio", jvObj(
-				jvKey("raw", jvFloat(studioRaw)),
-				jvKey("value", jvFloat(clampValue(studioRaw, -0.12, 0.12))),
-				jvKey("studios", studioItems),
-				jvKey("evidence_confidence", jvFloat(studioConfidence)),
-			))
-		}
-		neighborData, hasNeighbors := neighbors[sceneID]
-		if !hasNeighbors {
-			neighborData = neighborEvidence{}
-		}
-		neighborValue := neighborData.value
-		neighborOutcomeMean := neighborData.outcomeMean
-		neighborLift := neighborData.lift
-		neighborConfidence := neighborData.confidence
-		neighborTotalWeight := neighborData.totalWeight
-		if !hasNeighbors {
-			neighborValue, neighborOutcomeMean, neighborLift, neighborConfidence, neighborTotalWeight = 0.0, labelMean, 0.0, 0.0, 0.0
-		}
-		familyConfidences["content_neighbor"] = neighborConfidence
-		components.set("content_neighbor", jvObj(
-			jvKey("raw", jvFloat(neighborValue)),
-			jvKey("value", jvFloat(clampValue(neighborValue, -0.20, 0.20))),
-			jvKey("outcome_mean", jvFloat(neighborOutcomeMean)),
-			jvKey("training_outcome_mean", jvFloat(labelMean)),
-			jvKey("lift", jvFloat(neighborLift)),
-			jvKey("evidence_confidence", jvFloat(neighborConfidence)),
-			jvKey("total_weight", jvFloat(neighborTotalWeight)),
-			jvKey("vector_mode", jvStr("preference_discriminative")),
-			jvKey("discriminative_tag_count", jvInt(int64(discriminative))),
-		))
-		var componentValues []float64
-		for _, pair := range components.obj {
-			if pair.val.kind == jObj {
-				if value := pair.val.get("value"); value.kind == jNum {
-					componentValues = append(componentValues, numberValue(value))
-				}
-			}
-		}
-		componentTotal := sumFloats(componentValues)
-		general := clamp(componentTotal)
-		direct := labels[sceneID]
-		exactConfidence := directConfidenceOf(direct.effectiveEvidence)
-		appeal := blendAppealOf(general, direct.outcome, exactConfidence)
-		last, played := lastPlayed[sceneID]
-		var recovery float64
-		if !played {
-			recovery = 1.0
-		} else {
-			days := math.Max(0, float64(referenceAtMs-last)/86_400_000)
-			recovery = sceneRecovery(days)
-		}
-		cooldown := math.Max(0, appeal) * (1 - recovery)
-		satiationValue := satiation(db, sceneID, appeal, recentContext)
-		notNow := notNowPenalty(sceneID, referenceAtMs, recentContext)
-		currentFit := clamp(appeal - cooldown - satiationValue - notNow)
-		contentCount := len(vectors[sceneID])
-		var performerProfileCount float64
-		for _, item := range identityValues.arr {
-			if profiles[item.get("performer_id").asString()] {
-				performerProfileCount++
-			}
-		}
-		metadataConfidence := 1 - math.Exp(-(float64(contentCount)+performerProfileCount+float64(len(studioItems.arr)))/5)
-		type activeEvidence struct {
-			value      float64
-			confidence float64
-		}
-		var active []activeEvidence
-		for _, family := range []string{"content", "structure", "performer_identity",
-			"performer_similarity", "studio", "content_neighbor"} {
-			familyConfidence := familyConfidences[family]
-			component := components.get(family)
-			if component.kind != jObj || familyConfidence <= 0 {
-				continue
-			}
-			componentValue := math.Abs(numberValue(component.get("value")))
-			if componentValue >= 0.005 {
-				active = append(active, activeEvidence{componentValue, familyConfidence})
-			}
-		}
-		activeValues := make([]float64, 0, len(active))
-		activeWeighted := make([]float64, 0, len(active))
-		for _, item := range active {
-			activeValues = append(activeValues, item.value)
-			activeWeighted = append(activeWeighted, item.value*item.confidence)
-		}
-		evidenceMass := sumFloats(activeValues)
-		var evidenceConfidence float64
-		if evidenceMass != 0 {
-			evidenceConfidence = sumFloats(activeWeighted) / evidenceMass
-		}
-		breadth := 1 - math.Exp(-float64(len(active))/2)
-		predictionConfidence := evidenceConfidence * (0.65 + 0.35*breadth)
-		confidence := clampValue(exactConfidence+(1-exactConfidence)*predictionConfidence, 0, 1)
-		directSignals := jvArr()
-		for _, signal := range direct.signalTypes {
-			directSignals.arr = append(directSignals.arr, jvStr(signal))
-		}
-		components.set("direct", jvObj(
-			jvKey("value", jvFloat(direct.outcome)),
-			jvKey("confidence", jvFloat(exactConfidence)),
-			jvKey("effective_evidence", jvFloat(direct.effectiveEvidence)),
-			jvKey("signals", directSignals),
-			jvKey("residual", jvFloat(clampValue(direct.outcome-general, -2, 2))),
-		))
-		components.set("fit", jvObj(
-			jvKey("cooldown", jvFloat(-cooldown)),
-			jvKey("satiation", jvFloat(-satiationValue)),
-			jvKey("not_now", jvFloat(-notNow)),
-			jvKey("recovery", jvFloat(recovery)),
-		))
-		eligibilityValue, ok := eligibility[sceneID]
-		if !ok {
-			eligibilityValue = jvObj(
-				jvKey("eligible", jvBool(false)),
-				jvKey("reasons", jvArr(jvStr("missing"))),
-			)
-		}
-		var neighborItems []jVal
-		if hasNeighbors {
-			neighborItems = neighborData.neighbors
-		}
-		scores = append(scores, buildModelScore{
-			sceneID:            sceneID,
-			generalAppeal:      general,
-			directAppeal:       direct.outcome,
-			directConfidence:   exactConfidence,
-			appeal:             appeal,
-			currentFit:         currentFit,
-			confidence:         confidence,
-			metadataConfidence: metadataConfidence,
-			recovery:           recovery,
-			components:         components,
-			neighbors:          neighborItems,
-			eligibility:        eligibilityValue,
+			return out
 		})
-		progressIndex := len(preferenceVectors) + sceneIndex + 1
-		if report != nil && (sceneIndex+1 == totalScenes || (sceneIndex+1)%250 == 0) {
-			report(0.35 + 0.40*float64(progressIndex)/float64(maxInt(1, progressTotal)))
-		}
+		<-reporterDone
 	}
 	return scores, performerSimilarity, nil
 }

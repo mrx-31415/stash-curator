@@ -439,6 +439,99 @@ func presenceCategory(value string) string {
 }
 
 // sceneFeatures mirrors FeatureBuilder._scene_features.
+// sceneFeatureRows constructs the content-family feature rows for one scene
+// (the FeatureBuilder._scene_features per-scene body): weighted tag +
+// description-term values, normalized, with confidence from document
+// frequency. Every input is a precomputed read-only map, so the scene pass
+// is row-independent: fixed-chunk parallel processing yields identical rows.
+func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
+	documentFrequency map[string]int64, descByScene map[string][]string,
+	descIDF map[string]float64, descDocumentFrequency map[string]int64, tagNames map[string]string,
+	roles map[string]tagRoleResult, total int) []featureRow {
+	weighted := map[string]float64{}
+	for tagID, base := range baseVectors[sceneID] {
+		frequency := documentFrequency[tagID]
+		rarity := math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(frequency+1)))
+		shrinkage := float64(frequency) / (float64(frequency) + oneOffPrior)
+		weighted[tagID] = base * rarity * shrinkage
+	}
+	if terms, ok := descByScene[sceneID]; ok {
+		limit := descMaxTermsPerScene
+		if len(terms) < limit {
+			limit = len(terms)
+		}
+		for _, term := range terms[:limit] {
+			idf := descIDF[term]
+			if idf <= 0 {
+				continue
+			}
+			freq := descDocumentFrequency[term]
+			if freq == 0 {
+				freq = 1
+			}
+			weighted["desc:"+term] = descBoost * idf / (float64(freq) + oneOffPrior)
+		}
+	}
+	var normSquared float64
+	for _, value := range weighted {
+		normSquared += value * value
+	}
+	norm := math.Sqrt(normSquared)
+	if norm == 0 {
+		norm = 1.0
+	}
+	var features []featureRow
+	var tagKeys []string
+	for key := range weighted {
+		if !strings.HasPrefix(key, "desc:") {
+			tagKeys = append(tagKeys, key)
+		}
+	}
+	sort.Strings(tagKeys)
+	for _, tagID := range tagKeys {
+		frequency := documentFrequency[tagID]
+		confidence := math.Min(1.0, float64(frequency)/3)
+		features = append(features, featureRow{
+			entityType: "scene",
+			entityID:   sceneID,
+			family:     "content",
+			name:       "tag:" + tagID,
+			value:      weighted[tagID] / norm,
+			confidence: confidence,
+			metadata: jvObj(
+				jvKey("tag_id", jvStr(tagID)),
+				jvKey("tag_name", jvStr(tagNames[tagID])),
+				jvKey("document_frequency", jvInt(frequency)),
+				jvKey("role_reason", jvStr(roles[tagID].reason)),
+			),
+		})
+	}
+	var descKeys []string
+	for key := range weighted {
+		if strings.HasPrefix(key, "desc:") {
+			descKeys = append(descKeys, key)
+		}
+	}
+	sort.Strings(descKeys)
+	for _, key := range descKeys {
+		term := strings.TrimPrefix(key, "desc:")
+		frequency := descDocumentFrequency[term]
+		if frequency == 0 {
+			frequency = 1
+		}
+		features = append(features, featureRow{
+			entityType: "scene",
+			entityID:   sceneID,
+			family:     "content",
+			name:       key,
+			value:      weighted[key] / norm,
+			confidence: math.Min(1.0, float64(frequency)/3),
+			metadata:   jvObj(jvKey("document_frequency", jvInt(frequency))),
+		})
+	}
+	return features
+}
+
 func sceneFeatures(db dbx, roles map[string]tagRoleResult, progress func(fraction float64)) ([]featureRow, error) {
 	sceneRows, err := db.Query(`SELECT scene_id FROM source_scene ORDER BY scene_id`)
 	if err != nil {
@@ -615,92 +708,32 @@ ORDER BY scene_id, tag_id`)
 		}
 		descIDF[term] = math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(freq+1)))
 	}
+	// Each scene's content rows depend only on its own vector and the
+	// precomputed frequency maps, so the pass is row-independent: run it in
+	// fixed chunks (the kernel pattern) with progress ticks emitted in scene
+	// order.
 	var features []featureRow
-	for position, sceneID := range sceneIDs {
-		weighted := map[string]float64{}
-		for tagID, base := range baseVectors[sceneID] {
-			frequency := documentFrequency[tagID]
-			rarity := math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(frequency+1)))
-			shrinkage := float64(frequency) / (float64(frequency) + oneOffPrior)
-			weighted[tagID] = base * rarity * shrinkage
-		}
-		if terms, ok := descByScene[sceneID]; ok {
-			limit := descMaxTermsPerScene
-			if len(terms) < limit {
-				limit = len(terms)
+	sceneCount := len(sceneIDs)
+	progressReporter := newOrderedProgress()
+	reporterDone := make(chan struct{})
+	go func() {
+		defer close(reporterDone)
+		progressReporter.wait(reportPoints(sceneCount), func(completed int) {
+			if progress != nil {
+				progress(0.10 + 0.30*float64(completed)/float64(maxInt(1, sceneCount)))
 			}
-			for _, term := range terms[:limit] {
-				idf := descIDF[term]
-				if idf <= 0 {
-					continue
-				}
-				freq := descDocumentFrequency[term]
-				if freq == 0 {
-					freq = 1
-				}
-				weighted["desc:"+term] = descBoost * idf / (float64(freq) + oneOffPrior)
-			}
+		})
+	}()
+	features = parallelChunks(sceneCount, nthreads(0), func(start, end int) []featureRow {
+		var out []featureRow
+		for _, sceneID := range sceneIDs[start:end] {
+			out = append(out, sceneFeatureRows(sceneID, baseVectors, documentFrequency,
+				descByScene, descIDF, descDocumentFrequency, tagNames, roles, total)...)
+			progressReporter.done()
 		}
-		var normSquared float64
-		for _, value := range weighted {
-			normSquared += value * value
-		}
-		norm := math.Sqrt(normSquared)
-		if norm == 0 {
-			norm = 1.0
-		}
-		var tagKeys []string
-		for key := range weighted {
-			if !strings.HasPrefix(key, "desc:") {
-				tagKeys = append(tagKeys, key)
-			}
-		}
-		sort.Strings(tagKeys)
-		for _, tagID := range tagKeys {
-			frequency := documentFrequency[tagID]
-			confidence := math.Min(1.0, float64(frequency)/3)
-			features = append(features, featureRow{
-				entityType: "scene",
-				entityID:   sceneID,
-				family:     "content",
-				name:       "tag:" + tagID,
-				value:      weighted[tagID] / norm,
-				confidence: confidence,
-				metadata: jvObj(
-					jvKey("tag_id", jvStr(tagID)),
-					jvKey("tag_name", jvStr(tagNames[tagID])),
-					jvKey("document_frequency", jvInt(frequency)),
-					jvKey("role_reason", jvStr(roles[tagID].reason)),
-				),
-			})
-		}
-		var descKeys []string
-		for key := range weighted {
-			if strings.HasPrefix(key, "desc:") {
-				descKeys = append(descKeys, key)
-			}
-		}
-		sort.Strings(descKeys)
-		for _, key := range descKeys {
-			term := strings.TrimPrefix(key, "desc:")
-			frequency := descDocumentFrequency[term]
-			if frequency == 0 {
-				frequency = 1
-			}
-			features = append(features, featureRow{
-				entityType: "scene",
-				entityID:   sceneID,
-				family:     "content",
-				name:       key,
-				value:      weighted[key] / norm,
-				confidence: math.Min(1.0, float64(frequency)/3),
-				metadata:   jvObj(jvKey("document_frequency", jvInt(frequency))),
-			})
-		}
-		if progress != nil && (position+1 == len(sceneIDs) || (position+1)%250 == 0) {
-			progress(0.10 + 0.30*float64(position+1)/float64(maxInt(1, len(sceneIDs))))
-		}
-	}
+		return out
+	})
+	<-reporterDone
 	rows, err = db.Query(`SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id`)
 	if err != nil {
 		return nil, err
