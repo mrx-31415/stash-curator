@@ -26,7 +26,7 @@ import (
 	"sort"
 	"sync"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type affinityEntry struct {

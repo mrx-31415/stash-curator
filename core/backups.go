@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	sqlite "modernc.org/sqlite"
+	sqlite "github.com/mattn/go-sqlite3"
 )
 
 // backupName mirrors backend.py's BACKUP_NAME.
@@ -109,12 +109,6 @@ func validateBackup(path string) error {
 	return nil
 }
 
-// backupConn is the driver-level surface the modernc sqlite driver exposes
-// for the online-backup API (method on its unexported *conn type).
-type backupConn interface {
-	NewBackup(dstURI string) (*sqlite.Backup, error)
-}
-
 // backupDatabase mirrors curator.storage.database.backup_database: an
 // online backup of the source's main database into a temp file (256 pages
 // per step, like Python's pages=256), then an atomic rename to the
@@ -143,16 +137,41 @@ func backupDatabase(db dbx, dst string, overwrite bool, progress func(done, tota
 	}
 	defer conn.Close()
 	backupErr := conn.Raw(func(driverConn any) error {
-		api, ok := driverConn.(backupConn)
+		src, ok := driverConn.(*sqlite.SQLiteConn)
 		if !ok {
 			return errors.New("sqlite driver does not expose the backup API")
 		}
-		backup, err := api.NewBackup(temporary)
+		// The mattn backup API backs up into a *connection* opened on the
+		// destination; open the temp destination and back the source's main
+		// database into it (the same sqlite3_backup_init Python uses).
+		destDB, err := sql.Open("sqlite3", "file:"+temporary+"?mode=rwc")
 		if err != nil {
 			return err
 		}
+		defer destDB.Close()
+		destConn, err := destDB.Conn(context.Background())
+		if err != nil {
+			return err
+		}
+		defer destConn.Close()
+		var backup *sqlite.SQLiteBackup
+		destErr := destConn.Raw(func(destConn any) error {
+			dest, ok := destConn.(*sqlite.SQLiteConn)
+			if !ok {
+				return errors.New("sqlite driver does not expose the backup API")
+			}
+			var err error
+			backup, err = dest.Backup("main", src, "main")
+			return err
+		})
+		if destErr != nil {
+			return destErr
+		}
 		for {
-			more, err := backup.Step(256)
+			// mattn's Step returns (done, err): true once sqlite3_backup_step
+			// reports SQLITE_DONE (modernc's returns more-remaining; the loop
+			// breaks on the done signal).
+			done, err := backup.Step(256)
 			if progress != nil {
 				progress(backup.PageCount()-backup.Remaining(), backup.PageCount())
 			}
@@ -160,7 +179,7 @@ func backupDatabase(db dbx, dst string, overwrite bool, progress func(done, tota
 				backup.Finish()
 				return err
 			}
-			if !more {
+			if done {
 				break
 			}
 		}

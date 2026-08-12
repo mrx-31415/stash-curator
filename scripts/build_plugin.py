@@ -6,9 +6,10 @@ binaries — the binary serves the whole raw-plugin interface (every operation,
 task mode, and the entity-sync hook) and the model-build kernels, so no
 Python runtime ships. The only non-binary runtime resource is the explanation
 catalog (`curator/explanations/realizations.json`, read from disk by the
-binary). Go is a build-time dependency for packaging; the binaries are static
-(CGO_ENABLED=0, modernc sqlite), so a single machine cross-compiles every
-shipped platform.
+binary). Go is a build-time dependency for packaging; the binaries use the
+native mattn/go-sqlite3 driver (CGO_ENABLED=1, SQLite amalgamation compiled
+in), and cross-compile through `zig cc`, so a single machine (with Go +
+zig on PATH) cross-compiles every shipped platform.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import subprocess
 import tempfile
 import tomllib
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -37,6 +39,24 @@ SHIPPED_PLATFORMS = (
     ("darwin", "amd64"),
     ("darwin", "arm64"),
 )
+
+# C cross-compiler per target: zig cc with the target triple. Linux builds
+# against musl for fully static binaries (no glibc floor); darwin uses zig's
+# bundled libSystem plus the tbd stubs under scripts/zig/ (Go's darwin cgo
+# runtime links -lresolv and the CoreFoundation/Security frameworks for the
+# TLS root store; the stubs satisfy the link, dyld resolves them on the
+# user's Mac); windows links mingw statically.
+ZIG_CC = {
+    ("linux", "amd64"): "zig cc -target x86_64-linux-musl",
+    ("linux", "arm64"): "zig cc -target aarch64-linux-musl",
+    ("windows", "amd64"): "zig cc -target x86_64-windows-gnu",
+    ("darwin", "amd64"): "zig cc -target x86_64-macos",
+    ("darwin", "arm64"): "zig cc -target aarch64-macos",
+}
+
+# The darwin link shims: -lresolv plus the CoreFoundation/Security framework
+# stubs, satisfied from scripts/zig/.
+ZIG_SHIM_DIR = ROOT / "scripts" / "zig"
 
 
 def version() -> str:
@@ -58,47 +78,75 @@ def _core_binary_fresh(path: Path) -> bool:
         ROOT / "core" / "go.mod",
         ROOT / "core" / "go.sum",
         *sorted((ROOT / "core").glob("*.go")),
+        *sorted((ROOT / "scripts" / "zig").rglob("*")),
     ]
     newest = max(source.stat().st_mtime for source in sources)
     return path.stat().st_mtime >= newest
 
 
 def core_binaries() -> list[Path]:
-    """Build (or reuse) the shipped curator-core binaries under core/bin/."""
+    """Build (or reuse) the shipped curator-core binaries under core/bin/.
+
+    The five targets are independent cgo builds (each compiles the SQLite
+    amalgamation for its own target triple), so they run concurrently on a
+    small thread pool; the Go build cache is concurrency-safe and dedupes
+    the per-target C compile across runs.
+    """
     if shutil.which("go") is None:
         raise RuntimeError(
             "packaging the plugin requires the Go toolchain (install Go, then see core/README.md)"
         )
+    if shutil.which("zig") is None:
+        raise RuntimeError(
+            "packaging the plugin requires zig (ziglang.org) as the C cross-compiler "
+            "for the mattn sqlite driver (CGO_ENABLED=1); install it and put it on PATH"
+        )
     plugin_version = version()
-    binaries: list[Path] = []
+    pending: list[tuple[tuple[str, str], Path, dict[str, str]]] = []
     for goos, goarch in SHIPPED_PLATFORMS:
         target = ROOT / "core" / "bin" / core_binary_name(goos, goarch)
-        if not _core_binary_fresh(target):
-            env = dict(
-                os.environ,
-                CGO_ENABLED="0",
-                GOOS=goos,
-                GOARCH=goarch,
-            )
-            subprocess.run(
-                [
-                    "go",
-                    "build",
-                    "-trimpath",
-                    "-ldflags",
-                    f"-s -w -X main.coreVersion={plugin_version}",
-                    "-o",
-                    str(target),
-                    ".",
-                ],
-                cwd=ROOT / "core",
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        binaries.append(target)
-    return binaries
+        if _core_binary_fresh(target):
+            continue
+        env = dict(
+            os.environ,
+            CGO_ENABLED="1",
+            GOOS=goos,
+            GOARCH=goarch,
+            CC=ZIG_CC[(goos, goarch)],
+        )
+        if goos == "darwin":
+            env["CGO_LDFLAGS"] = f"-L{ZIG_SHIM_DIR} -F{ZIG_SHIM_DIR}"
+        pending.append((target, env))
+
+    def build_one(item: tuple[Path, dict[str, str]]) -> None:
+        target, env = item
+        subprocess.run(
+            [
+                "go",
+                "build",
+                "-tags",
+                "sqlite_dbstat",
+                "-trimpath",
+                "-ldflags",
+                f"-s -w -X main.coreVersion={plugin_version}",
+                "-o",
+                str(target),
+                ".",
+            ],
+            cwd=ROOT / "core",
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(len(pending), os.cpu_count() or 2)) as pool:
+            list(pool.map(build_one, pending))
+
+    return [
+        ROOT / "core" / "bin" / core_binary_name(goos, goarch) for goos, goarch in SHIPPED_PLATFORMS
+    ]
 
 
 def build(output: Path = OUTPUT) -> Path:

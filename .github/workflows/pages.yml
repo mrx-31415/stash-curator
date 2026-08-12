@@ -31,6 +31,20 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: core/go.sum
+      - name: Install zig (C cross-compiler for the sqlite driver)
+        run: |
+          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          tar -C "$HOME" -xf /tmp/zig.tar.xz
+          echo "$HOME/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
+      - name: Cache Go and zig build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/zig
+          key: build-${{ runner.os }}-${{ hashFiles('core/go.mod', 'core/go.sum') }}-${{ hashFiles('core/*.go') }}
+          restore-keys: |
+            build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
       - run: uv run --frozen python scripts/build_plugin.py
       - run: cp dist/stash-curator.zip dist/index.yml docs/
