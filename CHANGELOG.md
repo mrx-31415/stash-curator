@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/mrx-31415/stash-curator/compare/v0.9.1...v0.9.2) (2026-08-12)
+
+
+### Performance Improvements
+
+* batch artifact inserts into multi-row statements ([#132](https://github.com/mrx-31415/stash-curator/issues/132)) ([9821904](https://github.com/mrx-31415/stash-curator/commit/9821904174b7e8e243409c3fc7c3f803af08b13b))
+
 ## [0.9.1](https://github.com/mrx-31415/stash-curator/compare/v0.9.0...v0.9.1) (2026-08-12)
 
 
