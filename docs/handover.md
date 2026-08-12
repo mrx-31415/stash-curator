@@ -157,9 +157,38 @@ cold build on a copy of the live sidecar (23 860 scenes, 895 labeled) with the
 core in the plugin zip showed the similarity stage at 119.3s vs the 132s numpy
 baseline (~10%) — the real library's low label count makes the content kernel's
 O(N²) selection scan the shared floor; the 15.6x holds where L·d is large. The
-container's content-stage span (75.7s) needs a follow-up (the container's
+container's content-stage span (75.7s) needed a follow-up (the container's
 feature-build shape was not captured before teardown; see the planning doc
 section 8).
+
+Measured 2026-08-12 (issue #124) — full stage timings, memory, and
+cold-cache tooling are now built in (`stage_timings_ms` restored to the full
+22-key Python-era set with per-stage memory, trace spans with memory details,
+`core.*` kernel spans folded into the task trace, on-demand pprof via
+`CURATOR_CORE_*_PROFILE_DIR`, `scripts/synthetic_corpus.py`,
+`scripts/benchmark.py core-sweep` (GOMAXPROCS 1/2/4/8), the CI perf gate
+`scripts/perf_gate.py`, and the `--cold-cache` flag):
+
+- **Container build on a copy of the live sidecar (23 860 scenes, 895
+  labeled), compiled core in the plugin zip: 150.2 s wall** (repeat 154.2 s;
+  both warm — the host runs the benchmark as non-root, so `--cold-cache`
+  warns and continues warm). The 409 s numpy-era total is ~2.7x faster.
+- Per-stage (warm run, ms): feature_total 55 497 (roles 97, tfidf 1 521,
+  scene_features 5 495, performer_features 1 807, publish_write 37 493,
+  publish_index 4 197 — the artifact write dominates, closing the 75.7 s
+  content-stage question), labels 12, affinities 13 057, similarity 14 633
+  (the two kernel subprocesses run ~2.8 s each of kernel time), scoring
+  8 119, database_writing 11 447, lane_classification 10 576,
+  varied_ordering 36 225, sqlite_index_creation 269, indexing 47 071,
+  validation 4, publication 60, cleanup 0.
+- Peak RSS ~3.5 GB for the build process; the artifact writers dominate
+  (feature.publish_write peaks 1.86 GB, model.varied_ordering 3.56 GB).
+- GOMAXPROCS sweep on the synthetic production shape (24 k scenes, 13.2 k
+  labeled, 200 known performers — the known-performer pool keeps the
+  performer kernel at its real O(performers x known) cost): wall 302 s (1
+  thread) -> 210 s (2) -> 201 s (4) -> 196 s (8), with byte-identical model
+  outputs across thread counts. CI perf gate baseline (6 k scenes): 41.3 s
+  total, budget 2.5x, checked into `benchmarks/baseline.json`.
 
 ## Compiled core (Phase 2) — what shipped
 
