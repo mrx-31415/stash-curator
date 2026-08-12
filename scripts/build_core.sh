@@ -2,8 +2,10 @@
 # Build the compiled core (curator-core) for the current GOOS/GOARCH.
 #
 # The version is read from pyproject.toml (the single version source) and
-# injected into the binary at build time. CGO is disabled so the binary runs
-# anywhere; SQLite reads use the pure-Go modernc driver. Output:
+# injected into the binary at build time. CGO is enabled: SQLite reads use
+# the native mattn/go-sqlite3 driver (the amalgamation is compiled in, no
+# system SQLite needed), so the build host needs a C compiler for the local
+# GOOS/GOARCH. Output:
 #   core/bin/curator-core   (curator-core.exe on Windows)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,7 +25,8 @@ fi
 
 (
   cd core
-  CGO_ENABLED=0 go build \
+  CGO_ENABLED=1 go build \
+    -tags sqlite_dbstat \
     -trimpath \
     -ldflags "-s -w -X main.coreVersion=${version}" \
     -o "../${binary}" \

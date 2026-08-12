@@ -51,7 +51,7 @@ func validatedArtifact(path, kind, generationID string) error {
 		}
 		return fmt.Errorf("invalid %s artifact: %s", kind, filepath.Base(path))
 	}
-	db, err := sql.Open("sqlite", readonlyArtifactURI(path, true))
+	db, err := sql.Open("sqlite3", readonlyArtifactURI(path, true))
 	if err != nil {
 		return fail(err)
 	}
