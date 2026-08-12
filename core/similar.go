@@ -12,6 +12,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // multiHopBlendWeight mirrors similarity.MULTI_HOP_BLEND_WEIGHT.
@@ -55,6 +56,7 @@ func similarityResultJSON(r *similarityResult) jVal {
 // similarityService mirrors SimilarityService.
 type similarityService struct {
 	db             dbx
+	read           dbx // read-only pooled connection for parallel bulk reads
 	modelID        string
 	featureVersion string
 	appeals        map[string]float64
@@ -62,7 +64,7 @@ type similarityService struct {
 	timingsMs      jVal
 }
 
-func newSimilarityService(db dbx) (*similarityService, error) {
+func newSimilarityService(db, read dbx) (*similarityService, error) {
 	modelID, err := currentModelID(db)
 	if err != nil {
 		return nil, err
@@ -113,6 +115,7 @@ WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1`, modelID)
 	}
 	return &similarityService{
 		db:             db,
+		read:           read,
 		modelID:        modelID,
 		featureVersion: featureVersion,
 		appeals:        appeals,
@@ -176,11 +179,16 @@ func getSimilarBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	if v := args.get("minimum_similarity"); v.kind != jNull {
 		minimumSimilarity, _ = pythonFloat(v)
 	}
-	return similarCore(db, entityType, entityID, count, page, impressionID, gender, includeTags, excludeTags, performerIDs, studioIDs, favoriteOnly, minimumSimilarity, excludedSet)
+	readDB, err := openSidecarReadPool(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer readDB.Close()
+	return similarCore(db, readDB, entityType, entityID, count, page, impressionID, gender, includeTags, excludeTags, performerIDs, studioIDs, favoriteOnly, minimumSimilarity, excludedSet)
 }
 
 // similarCore mirrors CuratorAPI.similar after arg coercion.
-func similarCore(db dbx, entityType, entityID string, count, page int64, impressionID jVal,
+func similarCore(db, read dbx, entityType, entityID string, count, page int64, impressionID jVal,
 	gender string, includeTags, excludeTags, performerIDs, studioIDs []string,
 	favoriteOnly bool, minimumSimilarity float64, excluded map[string]bool) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
@@ -192,7 +200,7 @@ func similarCore(db dbx, entityType, entityID string, count, page int64, impress
 	start := (page - 1) * count
 	end := page * count
 	requested := end + 1 + int64(len(excluded))
-	service, err := newSimilarityService(db)
+	service, err := newSimilarityService(db, read)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -387,27 +395,109 @@ func (s *similarityService) scenes(sceneID string, count int64, gender string,
 	for sceneID := range s.appeals {
 		candidateIDs[sceneID] = true
 	}
-	targetContent, _, err := sceneContentVectors(s.db, s.featureVersion, map[string]bool{sceneID: true})
-	if err != nil {
-		return nil, err
+	// The similar reads split into artifact reads (the feature/model
+	// generations are ATTACHed only on the main connection) and sidecar-table
+	// reads. The sidecar reads run concurrently on the read-only pool (the
+	// main connection stays pinned for writes + attaches; WAL permits
+	// concurrent readers). All merges are deterministic, so the op output is
+	// identical regardless of completion order.
+	type similarReads struct {
+		targetContent   map[string]map[string]float64
+		contentOverlaps map[string]float64
+		performers      map[string][]string
+		genders         map[string]string
+		studios         map[string]string
+		names           map[string]string
+		included        []map[string]bool
+		excluded        []map[string]bool
+		favorites       map[string]bool
+		blockedScenes   map[string]bool
+		blockedTerms    []string
 	}
-	targetVector := targetContent[sceneID]
+	var loads similarReads
+	var readWG sync.WaitGroup
+	var readMu sync.Mutex
+	var readErr error
+	runLoad := func(fn func() error) {
+		readWG.Add(1)
+		go func() {
+			defer readWG.Done()
+			if err := fn(); err != nil {
+				readMu.Lock()
+				if readErr == nil {
+					readErr = err
+				}
+				readMu.Unlock()
+			}
+		}()
+	}
+	runLoad(func() error {
+		var err error
+		loads.targetContent, _, err = sceneContentVectors(s.db, s.featureVersion, map[string]bool{sceneID: true})
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.contentOverlaps, err = sceneContentOverlaps(s.db, s.featureVersion, sceneID)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.performers, err = scenePerformers(s.read)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.genders, err = performerGenders(s.read)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.studios, err = studios(s.read)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.names, err = loadTagNames(s.read)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.included, err = equivalentTagNames(s.read, includeTags)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.excluded, err = equivalentTagNames(s.read, excludeTags)
+		return err
+	})
+	runLoad(func() error {
+		if favoriteOnly {
+			var err error
+			loads.favorites, err = loadFavoritePerformers(s.read)
+			return err
+		}
+		return nil
+	})
+	runLoad(func() error {
+		var err error
+		loads.blockedScenes, err = loadBlockedScenes(s.read)
+		return err
+	})
+	runLoad(func() error {
+		var err error
+		loads.blockedTerms, err = loadBlockedTerms(s.read)
+		return err
+	})
+	readWG.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	targetVector := loads.targetContent[sceneID]
 	if targetVector == nil {
 		targetVector = map[string]float64{}
 	}
-	contentOverlaps, err := sceneContentOverlaps(s.db, s.featureVersion, sceneID)
-	if err != nil {
-		return nil, err
-	}
-	performers, err := s.scenePerformers()
-	if err != nil {
-		return nil, err
-	}
-	genders, err := s.performerGenders()
-	if err != nil {
-		return nil, err
-	}
-	targetPerformers := performers[sceneID]
+	targetPerformers := loads.performers[sceneID]
 	performerScores := make(map[string]float64)
 	for _, targetID := range targetPerformers {
 		edgeRows, err := s.db.Query(`SELECT similar_performer_id, similarity FROM model_performer_edge
@@ -430,134 +520,32 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			return nil, err
 		}
 	}
-	studios, err := s.studios()
-	if err != nil {
-		return nil, err
-	}
-	targetStudio := studios[sceneID]
+	targetStudio := loads.studios[sceneID]
 	targetStructure := minFloat64(1.0, mathMax(0.0, float64(len(targetPerformers)-1))/3.0)
-	names := make(map[string]string)
-	tagRows, err := s.db.Query(`SELECT tag_id, name FROM source_tag`)
-	if err != nil {
-		return nil, err
-	}
-	for tagRows.Next() {
-		var tagID, name string
-		if err := tagRows.Scan(&tagID, &name); err != nil {
-			return nil, err
-		}
-		names["tag:"+tagID] = name
-	}
-	tagRows.Close()
-	if err := tagRows.Err(); err != nil {
-		return nil, err
-	}
-	included, err := equivalentTagNames(s.db, includeTags)
-	if err != nil {
-		return nil, err
-	}
-	excluded, err := equivalentTagNames(s.db, excludeTags)
-	if err != nil {
-		return nil, err
-	}
 	filterNames := make(map[string]bool)
-	for _, group := range included {
+	for _, group := range loads.included {
 		for name := range group {
 			filterNames[name] = true
 		}
 	}
-	for _, group := range excluded {
+	for _, group := range loads.excluded {
 		for name := range group {
 			filterNames[name] = true
 		}
 	}
 	var sceneTags map[string]map[string]bool
 	if len(filterNames) > 0 {
-		sceneTags, err = s.sceneTagNames(filterNames)
+		var err error
+		sceneTags, err = sceneTagNames(s.read, filterNames)
 		if err != nil {
 			return nil, err
 		}
 	}
-	favorites := map[string]bool{}
-	if favoriteOnly {
-		rows, err := s.db.Query(`SELECT performer_id FROM source_performer WHERE favorite=1`)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var performerID string
-			if err := rows.Scan(&performerID); err != nil {
-				return nil, err
-			}
-			favorites[performerID] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	blockedTagIDs := make([]string, 0)
-	rows, err := s.db.Query(`SELECT tag_id FROM direct_tag_preference WHERE blocked=1`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var tagID string
-		if err := rows.Scan(&tagID); err != nil {
-			return nil, err
-		}
-		blockedTagIDs = append(blockedTagIDs, tagID)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sort.Strings(blockedTagIDs)
-	blockedScenes := make(map[string]bool)
-	if len(blockedTagIDs) > 0 {
-		placeholders := inClause(len(blockedTagIDs))
-		args := make([]any, len(blockedTagIDs))
-		for i, tagID := range blockedTagIDs {
-			args[i] = tagID
-		}
-		rows, err := s.db.Query(`SELECT scene_id FROM scene_tag WHERE tag_id IN (`+placeholders+`)`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var sceneID string
-			if err := rows.Scan(&sceneID); err != nil {
-				return nil, err
-			}
-			blockedScenes[sceneID] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	blockedTerms := make([]string, 0)
-	rows, err = s.db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var term string
-		if err := rows.Scan(&term); err != nil {
-			return nil, err
-		}
-		blockedTerms = append(blockedTerms, term)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sort.Strings(blockedTerms)
-	if len(blockedTerms) > 0 {
-		placeholders := inClause(len(blockedTerms))
-		args := make([]any, 0, len(blockedTerms)+1)
+	if len(loads.blockedTerms) > 0 {
+		placeholders := inClause(len(loads.blockedTerms))
+		args := make([]any, 0, len(loads.blockedTerms)+1)
 		args = append(args, s.featureVersion)
-		for _, term := range blockedTerms {
+		for _, term := range loads.blockedTerms {
 			args = append(args, "desc:"+term)
 		}
 		rows, err := s.db.Query(`SELECT DISTINCT ef.entity_id FROM entity_feature ef
@@ -569,11 +557,12 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 			return nil, err
 		}
 		for rows.Next() {
-			var sceneID string
-			if err := rows.Scan(&sceneID); err != nil {
+			var blockedSceneID string
+			if err := rows.Scan(&blockedSceneID); err != nil {
+				rows.Close()
 				return nil, err
 			}
-			blockedScenes[sceneID] = true
+			loads.blockedScenes[blockedSceneID] = true
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -594,14 +583,14 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		if candidateID == sceneID {
 			continue
 		}
-		if blockedScenes[candidateID] {
+		if loads.blockedScenes[candidateID] {
 			continue
 		}
-		candidatePerformers := performers[candidateID]
+		candidatePerformers := loads.performers[candidateID]
 		if gender != "" {
 			matched := false
 			for _, value := range candidatePerformers {
-				if genders[value] == gender {
+				if loads.genders[value] == gender {
 					matched = true
 					break
 				}
@@ -631,7 +620,7 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		}
 		candidateTags := sceneTags[candidateID]
 		skip := false
-		for _, group := range included {
+		for _, group := range loads.included {
 			has := false
 			for name := range group {
 				if candidateTags[name] {
@@ -647,7 +636,7 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		if skip {
 			continue
 		}
-		for _, group := range excluded {
+		for _, group := range loads.excluded {
 			has := false
 			for name := range group {
 				if candidateTags[name] {
@@ -663,21 +652,21 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		if skip {
 			continue
 		}
-		if favoriteOnly && !anyIntersects(favorites, candidatePerformers) {
+		if favoriteOnly && !anyIntersects(loads.favorites, candidatePerformers) {
 			continue
 		}
 		if len(performerIDSet) > 0 && !containsAll(candidatePerformers, performerIDSet) {
 			continue
 		}
 		if len(studioIDSet) > 0 {
-			candidateStudio, ok := studios[candidateID]
+			candidateStudio, ok := loads.studios[candidateID]
 			if !ok || !studioIDSet[candidateStudio] {
 				continue
 			}
 		}
-		contentValue := contentOverlaps[candidateID]
+		contentValue := loads.contentOverlaps[candidateID]
 		structure := 1 - mathAbs(targetStructure-minFloat64(1.0, mathMax(0.0, float64(len(candidatePerformers)-1))/3.0))
-		sameStudio := targetStudio != "" && studios[candidateID] == targetStudio
+		sameStudio := targetStudio != "" && loads.studios[candidateID] == targetStudio
 		similarity := 0.5*contentValue + 0.3*performerValue + 0.1*structure
 		if sameStudio {
 			similarity += 0.1
@@ -781,7 +770,7 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		}
 		results = blended
 	}
-	selected := diverseScenes(results, performers, count)
+	selected := diverseScenes(results, loads.performers, count)
 	s.setTimingKeys("initialization", "content", "profiles", "performer_similarity", "multi_hop", "ranking", "details", "total")
 	selectedIDs := make(map[string]bool, len(selected))
 	for _, item := range selected {
@@ -807,7 +796,7 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		}
 		tags := jvArr()
 		for _, key := range shared {
-			tagName, ok := names[key]
+			tagName, ok := loads.names[key]
 			if !ok {
 				tagName = strings.TrimPrefix(key, "tag:")
 			}
@@ -819,6 +808,8 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 }
 
 // sceneContentOverlaps mirrors FeatureStore.scene_content_overlaps.
+// sceneContentOverlaps mirrors SimilarityService._content_overlaps: the
+// per-candidate dot products over the target's own features only.
 func sceneContentOverlaps(db dbx, featureVersion, sceneID string) (map[string]float64, error) {
 	result := make(map[string]float64)
 	rows, err := db.Query(`WITH target AS (
@@ -844,9 +835,114 @@ GROUP BY other.scene_id`, featureVersion, sceneID, sceneID)
 	return result, rows.Err()
 }
 
+// loadTagNames mirrors the source_tag read of SimilarityService.scenes.
+func loadTagNames(db dbx) (map[string]string, error) {
+	names := map[string]string{}
+	rows, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tagID, name string
+		if err := rows.Scan(&tagID, &name); err != nil {
+			return nil, err
+		}
+		names["tag:"+tagID] = name
+	}
+	return names, rows.Err()
+}
+
+// loadFavoritePerformers mirrors the favorite-performer read of
+// SimilarityService.scenes.
+func loadFavoritePerformers(db dbx) (map[string]bool, error) {
+	favorites := map[string]bool{}
+	rows, err := db.Query(`SELECT performer_id FROM source_performer WHERE favorite=1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var performerID string
+		if err := rows.Scan(&performerID); err != nil {
+			return nil, err
+		}
+		favorites[performerID] = true
+	}
+	return favorites, rows.Err()
+}
+
+// loadBlockedScenes mirrors the blocked-tag preference read of
+// SimilarityService.scenes: the blocked tags, then the scenes carrying them.
+func loadBlockedScenes(db dbx) (map[string]bool, error) {
+	blockedScenes := map[string]bool{}
+	rows, err := db.Query(`SELECT tag_id FROM direct_tag_preference WHERE blocked=1`)
+	if err != nil {
+		return nil, err
+	}
+	var blockedTagIDs []string
+	for rows.Next() {
+		var tagID string
+		if err := rows.Scan(&tagID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		blockedTagIDs = append(blockedTagIDs, tagID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(blockedTagIDs) == 0 {
+		return blockedScenes, nil
+	}
+	sort.Strings(blockedTagIDs)
+	placeholders := inClause(len(blockedTagIDs))
+	args := make([]any, len(blockedTagIDs))
+	for i, tagID := range blockedTagIDs {
+		args[i] = tagID
+	}
+	rows, err = db.Query(`SELECT scene_id FROM scene_tag WHERE tag_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sceneID string
+		if err := rows.Scan(&sceneID); err != nil {
+			return nil, err
+		}
+		blockedScenes[sceneID] = true
+	}
+	return blockedScenes, rows.Err()
+}
+
+// loadBlockedTerms mirrors the blocked-term preference read of
+// SimilarityService.scenes.
+func loadBlockedTerms(db dbx) ([]string, error) {
+	rows, err := db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blockedTerms []string
+	for rows.Next() {
+		var term string
+		if err := rows.Scan(&term); err != nil {
+			return nil, err
+		}
+		blockedTerms = append(blockedTerms, term)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(blockedTerms)
+	return blockedTerms, nil
+}
+
 // scenePerformers mirrors SimilarityService._scene_performers.
-func (s *similarityService) scenePerformers() (map[string][]string, error) {
-	rows, err := s.db.Query(`SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id`)
+func scenePerformers(db dbx) (map[string][]string, error) {
+	rows, err := db.Query(`SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -872,8 +968,8 @@ func (s *similarityService) scenePerformers() (map[string][]string, error) {
 }
 
 // performerGenders mirrors SimilarityService._performer_genders.
-func (s *similarityService) performerGenders() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT performer_id, gender FROM source_performer`)
+func performerGenders(db dbx) (map[string]string, error) {
+	rows, err := db.Query(`SELECT performer_id, gender FROM source_performer`)
 	if err != nil {
 		return nil, err
 	}
@@ -895,8 +991,8 @@ func (s *similarityService) performerGenders() (map[string]string, error) {
 }
 
 // studios mirrors SimilarityService._studios.
-func (s *similarityService) studios() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL`)
+func studios(db dbx) (map[string]string, error) {
+	rows, err := db.Query(`SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -913,7 +1009,7 @@ func (s *similarityService) studios() (map[string]string, error) {
 }
 
 // sceneTagNames mirrors SimilarityService._scene_tags: tag names casefolded.
-func (s *similarityService) sceneTagNames(names map[string]bool) (map[string]map[string]bool, error) {
+func sceneTagNames(db dbx, names map[string]bool) (map[string]map[string]bool, error) {
 	sortedNames := make([]string, 0, len(names))
 	for name := range names {
 		sortedNames = append(sortedNames, name)
@@ -924,7 +1020,7 @@ func (s *similarityService) sceneTagNames(names map[string]bool) (map[string]map
 	for i, name := range sortedNames {
 		args[i] = name
 	}
-	rows, err := s.db.Query(`SELECT st.scene_id, t.name FROM scene_tag st
+	rows, err := db.Query(`SELECT st.scene_id, t.name FROM scene_tag st
 JOIN source_tag t USING(tag_id) WHERE lower(t.name) IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -1022,7 +1118,7 @@ func (s *similarityService) performers(performerID string, count int64, gender s
 			return nil, err
 		}
 	}
-	scenePerformers, err := s.scenePerformers()
+	scenePerformers, err := scenePerformers(s.read)
 	if err != nil {
 		return nil, err
 	}
@@ -1037,7 +1133,7 @@ func (s *similarityService) performers(performerID string, count int64, gender s
 			scenesByPerformer[candidateID] = append(scenesByPerformer[candidateID], value)
 		}
 	}
-	genders, err := s.performerGenders()
+	genders, err := performerGenders(s.read)
 	if err != nil {
 		return nil, err
 	}

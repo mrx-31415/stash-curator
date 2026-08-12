@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,7 @@ type traceEvent struct {
 }
 
 type trace struct {
+	mu          sync.Mutex // guards events/dropped (parallel read paths record spans concurrently)
 	name        string
 	kind        string
 	traceID     string
@@ -93,6 +95,8 @@ func (t *trace) record(category, name string, startedNs, durationNs int64, detai
 	if t == nil {
 		return
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if len(t.events) >= maxTraceEvents {
 		t.dropped++
 		return
