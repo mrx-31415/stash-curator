@@ -129,7 +129,8 @@ sweep (`scripts/benchmark.py core-sweep`) and the CI perf budget
 Beyond the span stream, the binary can capture Go runtime profiles at runtime
 — no rebuild or flags, switched on either by the plugin's **Capture CPU
 profiles** setting (`pprofEnabled`; profiles land in `<sidecar dir>/profiles`,
-browsable and downloadable from the Profiling page) or by environment
+browsable, downloadable, and viewable as an in-page flame graph and top
+table from the Profiling page) or by environment
 variables:
 
 ```

@@ -201,6 +201,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opListPprofFiles(pluginDir, payload)
 	case "get_pprof_file":
 		return opGetPprofFile(pluginDir, payload)
+	case "get_pprof_summary":
+		return opGetPprofSummary(pluginDir, payload)
 	case "clear_pprof_files":
 		return opClearPprofFiles(pluginDir, payload)
 	case "get_external_tag_choices":
