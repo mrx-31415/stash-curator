@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/mrx-31415/stash-curator/compare/v0.9.0...v0.9.1) (2026-08-12)
+
+
+### Performance Improvements
+
+* parallelize the similar op's independent reads on a read-only pool ([#130](https://github.com/mrx-31415/stash-curator/issues/130)) ([3e03ba8](https://github.com/mrx-31415/stash-curator/commit/3e03ba861e71954e87e9467adb90cb4a7f572df9))
+
 ## [0.9.0](https://github.com/mrx-31415/stash-curator/compare/v0.8.1...v0.9.0) (2026-08-12)
 
 
