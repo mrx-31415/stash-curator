@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/mrx-31415/stash-curator/compare/v0.7.0...v0.8.0) (2026-08-12)
+
+
+### Features
+
+* description-term ratings, remote term ranking, busy-lock retry, and task progress fixes ([45d48a8](https://github.com/mrx-31415/stash-curator/commit/45d48a8bacb3bcb7a564d8354cf8e9112c897482))
+
 ## [0.7.0](https://github.com/mrx-31415/stash-curator/compare/v0.6.0...v0.7.0) (2026-08-11)
 
 
