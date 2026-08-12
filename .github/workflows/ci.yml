@@ -27,6 +27,19 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+      - name: Install zig (C cross-compiler for the sqlite driver)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
+      - name: Cache Go and zig build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/zig
+          key: build-${{ runner.os }}-${{ hashFiles('core/go.mod', 'core/go.sum') }}-${{ hashFiles('core/*.go') }}
+          restore-keys: |
+            build-${{ runner.os }}-
       - name: Install locked dependencies
         run: uv sync --locked
       - name: Verify
@@ -82,6 +95,19 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: core/go.sum
+      - name: Install zig (C cross-compiler for the sqlite driver)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
+      - name: Cache Go and zig build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/zig
+          key: build-${{ runner.os }}-${{ hashFiles('core/go.mod', 'core/go.sum') }}-${{ hashFiles('core/*.go') }}
+          restore-keys: |
+            build-${{ runner.os }}-
       - name: Install dependencies
         run: uv sync --locked --group integration
       - name: Install Playwright browsers

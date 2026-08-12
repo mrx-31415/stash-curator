@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // dbx is the SQLite surface the backend ops use. *sql.DB satisfies it;
@@ -71,7 +71,7 @@ func expandUser(path string) string {
 // path.expanduser().resolve().
 func openDatabase(path string, readonly bool, trace *trace) (dbx, error) {
 	uri := fileURI(path, readonly)
-	db, err := sql.Open("sqlite", uri)
+	db, err := sql.Open("sqlite3", uri)
 	if err != nil {
 		return nil, err
 	}
