@@ -603,7 +603,7 @@ wheels = [
 
 [[package]]
 name = "stash-curator"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "." }
 
 [package.dev-dependencies]
