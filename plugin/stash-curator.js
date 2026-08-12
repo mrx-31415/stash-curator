@@ -1968,6 +1968,8 @@
     const [selected, setSelected] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
+    const [pprofs, setPprof] = React.useState(null);
+    const [pprofError, setPprofError] = React.useState("");
     useCuratorActivity("profiling", loading, "Loading profiles…");
 
     async function load() {
@@ -1987,6 +1989,73 @@
     }
 
     React.useEffect(() => { load(); }, []);
+
+    async function loadPprof() {
+      setPprofError("");
+      try {
+        setPprof(await operation({ operation: "list_pprof_files" }));
+      } catch (failure) {
+        setPprofError(failure.message);
+      }
+    }
+
+    React.useEffect(() => { loadPprof(); }, []);
+
+    async function downloadPprof(name) {
+      setPprofError("");
+      try {
+        const data = await operation({ operation: "get_pprof_file", name });
+        const bytes = Uint8Array.from(atob(data.content_base64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      } catch (failure) {
+        setPprofError(failure.message);
+      }
+    }
+
+    async function clearPprof() {
+      if (!window.confirm("Delete all captured CPU profiles?")) return;
+      setPprofError("");
+      try {
+        await operation({ operation: "clear_pprof_files" });
+        await loadPprof();
+      } catch (failure) {
+        setPprofError(failure.message);
+      }
+    }
+
+    function formatSize(bytes) {
+      if (bytes >= 1024 * 1024) {
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+      }
+      return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+    }
+
+    const pprofSection = React.createElement("div", { className: "curator-pprof" },
+      React.createElement("div", { className: "curator-profiling-toolbar" },
+        React.createElement("h3", null, "CPU profiles"),
+        React.createElement(Button, { size: "sm", onClick: loadPprof }, "Refresh"),
+        React.createElement(Button, { size: "sm", variant: "danger", onClick: clearPprof, disabled: !pprofs?.items?.length }, "Clear"),
+      ),
+      !pprofs?.enabled && React.createElement("div", { className: "alert alert-info" }, "Capture is off. Enable \u201cCapture CPU profiles\u201d in the plugin settings, then run the operation to profile it."),
+      pprofError && React.createElement("div", { className: "alert alert-danger" }, pprofError),
+      pprofs && !pprofs.items.length && React.createElement("div", { className: "alert alert-info" }, "No CPU profiles captured yet."),
+      pprofs?.items?.length > 0 && React.createElement("table", { className: "table table-sm" },
+        React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "File"), React.createElement("th", null, "Size"), React.createElement("th", null, "Captured"), React.createElement("th", null, ""))),
+        React.createElement("tbody", null, pprofs.items.map((item) => React.createElement("tr", { key: item.name },
+          React.createElement("td", null, item.name),
+          React.createElement("td", null, formatSize(item.size_bytes)),
+          React.createElement("td", null, new Date(item.modified_ms).toLocaleString()),
+          React.createElement("td", null, React.createElement(Button, { size: "sm", onClick: () => downloadPprof(item.name) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download")),
+        ))),
+      ),
+    );
+
 
     async function inspect(traceId) {
       setError("");
@@ -2045,7 +2114,8 @@
           React.createElement("div", { className: "curator-profile-timeline", "aria-label": "Trace timeline" }, spans.slice(0, 100).map((event, index) => React.createElement("div", { key: `${event.name}-${index}`, title: `${event.cat}: ${event.name} (${formatDuration(event.dur)})` }, React.createElement("span", { className: `curator-profile-${event.cat}`, style: { marginLeft: `${Math.max(0, ((event.ts - root.ts) / total) * 100)}%`, width: `${Math.max(0.4, (event.dur / total) * 100)}%` } })))),
           spans.length > visibleSpans.length && React.createElement("small", null, `Showing the 500 longest of ${spans.length} spans; export contains all spans.`),
           React.createElement("div", { className: "curator-profile-table-wrap" }, React.createElement("table", { className: "table table-sm curator-profile-table" }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Category"), React.createElement("th", null, "Span"), React.createElement("th", null, "Duration"), React.createElement("th", null, "Details"))), React.createElement("tbody", null, visibleSpans.map((event, index) => React.createElement("tr", { key: `${event.name}-${index}` }, React.createElement("td", null, event.cat), React.createElement("td", null, event.name), React.createElement("td", null, formatDuration(event.dur)), React.createElement("td", null, [event.args?.statement, event.args?.peak_rss_kb && `peak ${event.args.peak_rss_kb} kB`, event.args?.heap_alloc_kb && `heap ${event.args.heap_alloc_kb} kB`].filter(Boolean).join(" · ")))))))
-        )
+        ),
+      pprofSection
       )
     );
   }

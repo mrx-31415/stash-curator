@@ -12,7 +12,7 @@ func TestStartProfilingWritesProfiles(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CURATOR_CORE_CPU_PROFILE_DIR", dir)
 	t.Setenv("CURATOR_CORE_MEM_PROFILE_DIR", dir)
-	stopCPU, dumpMem := startProfiling("model-build")
+	stopCPU, dumpMem := startProfiling("model-build", "", "")
 	// A little allocation work so the heap profile has content.
 	work := make([]byte, 1<<20)
 	for i := range work {
@@ -36,7 +36,7 @@ func TestStartProfilingWritesProfiles(t *testing.T) {
 func TestStartProfilingNoopWithoutEnv(t *testing.T) {
 	t.Setenv("CURATOR_CORE_CPU_PROFILE_DIR", "")
 	t.Setenv("CURATOR_CORE_MEM_PROFILE_DIR", "")
-	stopCPU, dumpMem := startProfiling("model-build")
+	stopCPU, dumpMem := startProfiling("model-build", "", "")
 	stopCPU()
 	dumpMem()
 	dir := t.TempDir()

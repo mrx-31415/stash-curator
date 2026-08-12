@@ -71,7 +71,7 @@ func main() {
 			mode = "backend-" + args[1]
 		}
 	}
-	stopCPU, dumpMem := startProfiling(mode)
+	stopCPU, dumpMem := startProfiling(mode, "", "")
 	defer stopCPU()
 	defer dumpMem()
 	if kernelCommands[args[0]] {

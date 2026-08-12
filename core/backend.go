@@ -197,6 +197,12 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetProfile(pluginDir, payload)
 	case "clear_profiles":
 		return opClearProfiles(pluginDir, payload)
+	case "list_pprof_files":
+		return opListPprofFiles(pluginDir, payload)
+	case "get_pprof_file":
+		return opGetPprofFile(pluginDir, payload)
+	case "clear_pprof_files":
+		return opClearPprofFiles(pluginDir, payload)
 	case "get_external_tag_choices":
 		return opGetExternalTagChoices(pluginDir, payload)
 	case "get_scene_tag_choices":

@@ -127,7 +127,10 @@ sweep (`scripts/benchmark.py core-sweep`) and the CI perf budget
 ## On-demand profiling (pprof)
 
 Beyond the span stream, the binary can capture Go runtime profiles at runtime
-— no rebuild or flags, switched on by environment variables:
+— no rebuild or flags, switched on either by the plugin's **Capture CPU
+profiles** setting (`pprofEnabled`; profiles land in `<sidecar dir>/profiles`,
+browsable and downloadable from the Profiling page) or by environment
+variables:
 
 ```
 CURATOR_CORE_CPU_PROFILE_DIR=<dir>   CPU profile per process on exit
@@ -140,7 +143,9 @@ Each process writes its own file (`cpu-<mode>-<pid>.pprof` /
 performer-similarity kernels as subprocesses — yields one profile per
 process. Analyze with `go tool pprof <file>` (heap: `-alloc_space` /
 `-inuse_space`). The mode is the kernel command, `backend`, or
-`backend-<task-mode>`.
+`backend-<task-mode>`; with the plugin toggle it is the operation name
+(`get_similar`, `build`, …). Oldest profiles are pruned to the newest 20 when
+the toggle is active.
 
 ## Determinism
 
