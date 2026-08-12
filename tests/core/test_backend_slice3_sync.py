@@ -342,6 +342,34 @@ def _run_backend(runner: Path | None, raw: bytes, mode: str) -> subprocess.Compl
     return subprocess.run(argv, input=raw, capture_output=True, timeout=600)
 
 
+# The Go build task output's stage_timings_ms (stageTimingOrder in
+# core/tasks.go): the Python-era 22-key set, emitted in that order.
+STAGE_TIMING_KEYS = (
+    "feature_lookup",
+    "feature_build",
+    "feature_database_writing",
+    "feature_indexing",
+    "feature_validation",
+    "feature_publication",
+    "feature_total",
+    "labels",
+    "affinities",
+    "similarity",
+    "scoring",
+    "database_writing",
+    "lane_classification",
+    "score_first_ordering",
+    "varied_ordering",
+    "reason_generation",
+    "sqlite_index_creation",
+    "indexing",
+    "validation",
+    "publication",
+    "cleanup",
+    "total",
+)
+
+
 def test_sync_build_byte_identical(sync_sidecar: Path, binary: Path, stub_stash: str) -> None:
     python_result, go_result = _run_sync_both(binary, sync_sidecar, stub_stash, "sync-build")
     assert go_result.returncode == python_result.returncode, (
@@ -351,7 +379,9 @@ def test_sync_build_byte_identical(sync_sidecar: Path, binary: Path, stub_stash:
     go_out = json.loads(go_result.stdout)
     for doc in (py_out, go_out):
         output = doc.get("output", {})
-        for key in ("job_id", "sync_run_id", "stage_timings_ms"):
+        # peak_rss_kb is a Go-build-only field (issue #124 memory capture);
+        # the Python backend does not emit it.
+        for key in ("job_id", "sync_run_id", "stage_timings_ms", "peak_rss_kb"):
             output.pop(key, None)
     from tests.core.compare import assert_equivalent
 
@@ -394,3 +424,27 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
         shutil.rmtree(run_dir, ignore_errors=True)
     assert states[0] == states[1]
     assert artifact_diffs == ["", ""]
+
+
+def test_go_build_task_stage_timings_and_peak_rss(
+    sync_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    """The Go build task output carries the full 22-key Python-era
+    stage_timings_ms set (issue #124) and the final peak RSS."""
+    run_dir = sync_sidecar.parent / f"{sync_sidecar.stem}-stage-keys"
+    run_dir.mkdir()
+    run_db = run_dir / sync_sidecar.name
+    shutil.copy2(sync_sidecar, run_db)
+    try:
+        result = _run_backend(
+            binary,
+            _with_db(_task_payload(sync_sidecar, stub_stash), run_db),
+            "sync-build",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        output = json.loads(result.stdout).get("output", {})
+        assert set(output.get("stage_timings_ms", {})) == set(STAGE_TIMING_KEYS)
+        assert output["stage_timings_ms"]["total"] > 0
+        assert output["peak_rss_kb"] > 0
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)

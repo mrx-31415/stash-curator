@@ -409,6 +409,8 @@ func taskBuild(db dbx, pluginDir string, payload jVal, mode string) (jVal, error
 		return jvObj(jvKey("updated", jvBool(false))), nil
 	}
 	model := models[0]
+	infoLog(fmt.Sprintf("Model build: %d ms, peak RSS %d kB",
+		model.stageTimingsMs["total"], peakRSSKB()))
 	progressLog(0.95)
 	infoLog("Organizing scenes into recommendation lanes")
 	laneCount, err := classifyLanesTask(db, model.modelID, mappedProgress(0.95, 0.97))
@@ -428,6 +430,7 @@ func taskBuild(db dbx, pluginDir string, payload jVal, mode string) (jVal, error
 		jvKey("lane_classifications", jvInt(laneCount)),
 		jvKey("lane_candidate_caches", laneCaches),
 		jvKey("stage_timings_ms", stageTimingsJVal(model.stageTimingsMs)),
+		jvKey("peak_rss_kb", jvInt(peakRSSKB())),
 	), nil
 }
 
@@ -549,6 +552,8 @@ func taskSyncBuild(db dbx, pluginDir string, payload jVal, mode string, settings
 		}
 		modelID = models[0].modelID
 		stageTimings = models[0].stageTimingsMs
+		infoLog(fmt.Sprintf("Model build: %d ms, peak RSS %d kB",
+			stageTimings["total"], peakRSSKB()))
 	} else {
 		progressLog(0.95)
 		infoLog("No Stash changes; keeping the current recommendation model")
@@ -578,6 +583,7 @@ func taskSyncBuild(db dbx, pluginDir string, payload jVal, mode string, settings
 		jvKey("lane_classifications", jvInt(laneCount)),
 		jvKey("lane_candidate_caches", laneCaches),
 		jvKey("stage_timings_ms", stageTimingsJVal(stageTimings)),
+		jvKey("peak_rss_kb", jvInt(peakRSSKB())),
 	), nil
 }
 

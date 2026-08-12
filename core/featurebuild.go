@@ -165,7 +165,9 @@ type featureBuildPayload struct {
 
 // runFeatureBuild serves the "feature-build" kernel command: run the
 // FeatureBuilder pipeline against a writable sidecar and emit the resulting
-// feature version as NDJSON.
+// feature version as NDJSON, with the per-stage timings, per-stage memory,
+// and final peak RSS on the result line (the sweep and CI budget gate read
+// them without the profile flag).
 func runFeatureBuild() {
 	var payload featureBuildPayload
 	if err := json.NewDecoder(os.Stdin).Decode(&payload); err != nil {
@@ -179,15 +181,20 @@ func runFeatureBuild() {
 	if err := migrate(db, payload.NowMs); err != nil {
 		fail("feature-build: migrate: %v", err)
 	}
-	version, reused, err := featureBuild(db, payload.NowMs, func(fraction float64) {
+	rec := newStageRecorder()
+	version, reused, err := featureBuild(db, payload.NowMs, rec, func(fraction float64) {
 		_ = writeJSONLine(map[string]any{"progress": fraction})
 	})
 	if err != nil {
 		fail("feature-build: %v", err)
 	}
+	peak := memSnapshot()
 	if err := writeJSONLine(map[string]any{"result": map[string]any{
-		"feature_version": version,
-		"reused":          reused,
+		"feature_version":  version,
+		"reused":           reused,
+		"stage_timings_ms": rec.timingsMap(),
+		"stage_memory":     rec.stageMemoryPlain(),
+		"peak_rss_kb":      jvPlain(peak.get("peak_rss_kb")),
 	}}); err != nil {
 		fail("feature-build: write result: %v", err)
 	}
@@ -195,7 +202,9 @@ func runFeatureBuild() {
 
 // runModelBuild serves the "model-build" kernel command: run the full
 // PreferenceModelBuilder pipeline against a writable sidecar and emit the
-// model id as NDJSON.
+// model id as NDJSON, with the per-stage timings, per-stage memory, and
+// final peak RSS on the result line (the sweep and CI budget gate read them
+// without the profile flag).
 func runModelBuild() {
 	var payload featureBuildPayload
 	if err := json.NewDecoder(os.Stdin).Decode(&payload); err != nil {
@@ -219,11 +228,15 @@ func runModelBuild() {
 	if err != nil {
 		fail("model-build: %v", err)
 	}
+	peak := memSnapshot()
 	if err := writeJSONLine(map[string]any{"result": map[string]any{
-		"model_id":        result.modelID,
-		"feature_version": result.featureVersion,
-		"reused":          result.reused,
-		"scene_count":     result.sceneCount,
+		"model_id":         result.modelID,
+		"feature_version":  result.featureVersion,
+		"reused":           result.reused,
+		"scene_count":      result.sceneCount,
+		"stage_timings_ms": result.stageTimingsMs,
+		"stage_memory":     stageMemoryPlain(result.stageMemory),
+		"peak_rss_kb":      jvPlain(peak.get("peak_rss_kb")),
 	}}); err != nil {
 		fail("model-build: write result: %v", err)
 	}
@@ -532,7 +545,7 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 	return features
 }
 
-func sceneFeatures(db dbx, roles map[string]tagRoleResult, progress func(fraction float64)) ([]featureRow, error) {
+func sceneFeatures(db dbx, roles map[string]tagRoleResult, rec *stageRecorder, progress func(fraction float64)) ([]featureRow, error) {
 	sceneRows, err := db.Query(`SELECT scene_id FROM source_scene ORDER BY scene_id`)
 	if err != nil {
 		return nil, err
@@ -672,41 +685,50 @@ ORDER BY scene_id, tag_id`)
 	total := maxInt(1, len(sceneIDs))
 	descDocumentFrequency := map[string]int64{}
 	descByScene := map[string][]string{}
-	rows, err = db.Query(`SELECT scene_id, details FROM source_scene WHERE details IS NOT NULL AND details != ''`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var sceneID string
-		var details string
-		if err := rows.Scan(&sceneID, &details); err != nil {
-			rows.Close()
-			return nil, err
+	descIDF := map[string]float64{}
+	// The description-term TF-IDF precompute drives the desc: rows of the
+	// content pass; record it as a finer span (no stage key) so the feature
+	// build's description share is visible in the trace.
+	err = rec.stage("", "feature.tfidf", func() error {
+		rows, err := db.Query(`SELECT scene_id, details FROM source_scene WHERE details IS NOT NULL AND details != ''`)
+		if err != nil {
+			return err
 		}
-		var terms []string
-		seen := map[string]bool{}
-		for _, token := range descTokenRegex.FindAllString(details, -1) {
-			token = strings.ToLower(token)
-			if !descStopwords[token] && !seen[token] {
-				seen[token] = true
-				terms = append(terms, token)
-				descDocumentFrequency[token]++
+		for rows.Next() {
+			var sceneID string
+			var details string
+			if err := rows.Scan(&sceneID, &details); err != nil {
+				rows.Close()
+				return err
+			}
+			var terms []string
+			seen := map[string]bool{}
+			for _, token := range descTokenRegex.FindAllString(details, -1) {
+				token = strings.ToLower(token)
+				if !descStopwords[token] && !seen[token] {
+					seen[token] = true
+					terms = append(terms, token)
+					descDocumentFrequency[token]++
+				}
+			}
+			if len(terms) > 0 {
+				descByScene[sceneID] = terms
 			}
 		}
-		if len(terms) > 0 {
-			descByScene[sceneID] = terms
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+		for term, freq := range descDocumentFrequency {
+			if freq < descMinDF || float64(freq) > float64(total)*descMaxDFFraction {
+				continue
+			}
+			descIDF[term] = math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(freq+1)))
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	descIDF := map[string]float64{}
-	for term, freq := range descDocumentFrequency {
-		if freq < descMinDF || float64(freq) > float64(total)*descMaxDFFraction {
-			continue
-		}
-		descIDF[term] = math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(freq+1)))
 	}
 	// Each scene's content rows depend only on its own vector and the
 	// precomputed frequency maps, so the pass is row-independent: run it in
@@ -1135,8 +1157,11 @@ func featureID(featureVersion, entityType, family, name string) string {
 }
 
 // featureBuild runs the FeatureBuilder pipeline and returns the feature
-// version plus whether the published feature was reused.
-func featureBuild(db dbx, nowMs int64, progress func(fraction float64)) (string, bool, error) {
+// version plus whether the published feature was reused, recording the
+// feature_* stage timings, spans, and per-stage memory into rec (mirroring
+// FeatureBuilder.build's lookup/build/publish/total keys).
+func featureBuild(db dbx, nowMs int64, rec *stageRecorder, progress func(fraction float64)) (string, bool, error) {
+	started := time.Now()
 	sourceFingerprint, err := featureSourceFingerprint(db)
 	if err != nil {
 		return "", false, err
@@ -1168,6 +1193,8 @@ func featureBuild(db dbx, nowMs int64, progress func(fraction float64)) (string,
 					if progress != nil {
 						progress(1.0)
 					}
+					rec.set("feature_lookup", elapsedMs(started))
+					rec.set("feature_total", elapsedMs(started))
 					return featureVersion, true, nil
 				}
 			}
@@ -1175,6 +1202,7 @@ func featureBuild(db dbx, nowMs int64, progress func(fraction float64)) (string,
 	} else if err != nil && err != sql.ErrNoRows {
 		return "", false, err
 	}
+	rec.set("feature_lookup", elapsedMs(started))
 	insertErr := withTxn(db, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(context.Background(), `
 INSERT INTO feature_build(
@@ -1187,29 +1215,47 @@ ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL`,
 	if insertErr != nil {
 		return "", false, insertErr
 	}
-	roles, err := resolveTagRoles(db)
-	if err != nil {
-		return "", false, err
-	}
-	if progress != nil {
-		progress(0.10)
-	}
-	sceneFeatures, err := sceneFeatures(db, roles, progress)
-	if err != nil {
-		return "", false, err
-	}
-	if progress != nil {
-		progress(0.45)
-	}
-	performerFeatures, err := performerFeatures(db, sceneFeatures, progress)
+	var roles map[string]tagRoleResult
+	var sceneRows []featureRow
+	var performerRows []featureRow
+	err = rec.stage("feature_build", "", func() error {
+		if err := rec.stage("", "feature.roles", func() error {
+			var err error
+			roles, err = resolveTagRoles(db)
+			return err
+		}); err != nil {
+			return err
+		}
+		if progress != nil {
+			progress(0.10)
+		}
+		if err := rec.stage("", "feature.scene_features", func() error {
+			var err error
+			sceneRows, err = sceneFeatures(db, roles, rec, progress)
+			return err
+		}); err != nil {
+			return err
+		}
+		if progress != nil {
+			progress(0.45)
+		}
+		if err := rec.stage("", "feature.performer_features", func() error {
+			var err error
+			performerRows, err = performerFeatures(db, sceneRows, progress)
+			return err
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return "", false, err
 	}
 	if progress != nil {
 		progress(0.60)
 	}
-	allFeatures := append(append([]featureRow(nil), sceneFeatures...), performerFeatures...)
-	if err := featurePublish(db, featureVersion, sourceFingerprint, roles, allFeatures, nowMs, progress); err != nil {
+	allFeatures := append(append([]featureRow(nil), sceneRows...), performerRows...)
+	if err := featurePublish(db, featureVersion, sourceFingerprint, roles, allFeatures, nowMs, progress, rec); err != nil {
 		failErr := withTxn(db, func(conn *sql.Conn) error {
 			_, err := conn.ExecContext(context.Background(),
 				`UPDATE feature_build SET status='failed', error=? WHERE feature_version=?`,
@@ -1221,15 +1267,18 @@ ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL`,
 		}
 		return "", false, err
 	}
+	rec.set("feature_total", elapsedMs(started))
 	if progress != nil {
 		progress(1.0)
 	}
 	return featureVersion, false, nil
 }
 
-// featurePublish mirrors FeatureBuilder._publish.
+// featurePublish mirrors FeatureBuilder._publish, recording the publish
+// stages (feature_database_writing / feature_indexing / feature_validation /
+// feature_publication) into rec.
 func featurePublish(db dbx, featureVersion, sourceFingerprint string, roles map[string]tagRoleResult,
-	features []featureRow, nowMs int64, progress func(fraction float64)) error {
+	features []featureRow, nowMs int64, progress func(fraction float64), rec *stageRecorder) error {
 	configVersion := "cfg-" + featureFingerprint()[:20]
 	type definition struct {
 		featureID string
@@ -1260,10 +1309,8 @@ func featurePublish(db dbx, featureVersion, sourceFingerprint string, roles map[
 	if err != nil {
 		return err
 	}
-	artifact, temporary, final, err := createArtifact(corePath, "feature", featureVersion)
-	if err != nil {
-		return err
-	}
+	var artifact dbx
+	var temporary, final string
 	published := false
 	fail := func(err error) error {
 		if !published {
@@ -1274,39 +1321,48 @@ func featurePublish(db dbx, featureVersion, sourceFingerprint string, roles map[
 		}
 		return err
 	}
-	if err := withTxn(db, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		if _, err := conn.ExecContext(ctx,
-			`DELETE FROM tag_role WHERE config_version = ?`, configVersion); err != nil {
+	// database_writing: create_artifact + the sidecar tag_role writes + the
+	// artifact definition/entity_feature writes (Python's writing_started
+	// boundary, before create_artifact).
+	err = rec.stage("feature_database_writing", "feature.publish_write", func() error {
+		var err error
+		artifact, temporary, final, err = createArtifact(corePath, "feature", featureVersion)
+		if err != nil {
 			return err
 		}
-		sortedRoleIDs := make([]string, 0, len(roles))
-		for tagID := range roles {
-			sortedRoleIDs = append(sortedRoleIDs, tagID)
-		}
-		sort.Strings(sortedRoleIDs)
-		for _, tagID := range sortedRoleIDs {
-			result := roles[tagID]
-			if _, err := conn.ExecContext(ctx, `
-INSERT INTO tag_role(tag_id, config_version, role, resolution_reason)
-VALUES (?, ?, ?, ?)`, tagID, configVersion, result.role, result.reason); err != nil {
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			ctx := context.Background()
+			if _, err := conn.ExecContext(ctx,
+				`DELETE FROM tag_role WHERE config_version = ?`, configVersion); err != nil {
 				return err
 			}
-		}
-		for _, tagID := range sortedRoleIDs {
-			taxonomy := roles[tagID].taxonomy
-			if taxonomy.snapshotID == "" {
-				continue
+			sortedRoleIDs := make([]string, 0, len(roles))
+			for tagID := range roles {
+				sortedRoleIDs = append(sortedRoleIDs, tagID)
 			}
-			externalTagID := any(nil)
-			if taxonomy.externalTagID != "" {
-				externalTagID = taxonomy.externalTagID
+			sort.Strings(sortedRoleIDs)
+			for _, tagID := range sortedRoleIDs {
+				result := roles[tagID]
+				if _, err := conn.ExecContext(ctx, `
+INSERT INTO tag_role(tag_id, config_version, role, resolution_reason)
+VALUES (?, ?, ?, ?)`, tagID, configVersion, result.role, result.reason); err != nil {
+					return err
+				}
 			}
-			externalCategoryID := any(nil)
-			if taxonomy.externalCategoryID != "" {
-				externalCategoryID = taxonomy.externalCategoryID
-			}
-			if _, err := conn.ExecContext(ctx, `
+			for _, tagID := range sortedRoleIDs {
+				taxonomy := roles[tagID].taxonomy
+				if taxonomy.snapshotID == "" {
+					continue
+				}
+				externalTagID := any(nil)
+				if taxonomy.externalTagID != "" {
+					externalTagID = taxonomy.externalTagID
+				}
+				externalCategoryID := any(nil)
+				if taxonomy.externalCategoryID != "" {
+					externalCategoryID = taxonomy.externalCategoryID
+				}
+				if _, err := conn.ExecContext(ctx, `
 INSERT INTO tag_taxonomy_match(
     local_tag_id, snapshot_id, external_tag_id, external_category_id,
     match_method, confidence, ambiguity_count
@@ -1317,137 +1373,147 @@ ON CONFLICT(local_tag_id, snapshot_id) DO UPDATE SET
     match_method=excluded.match_method,
     confidence=excluded.confidence,
     ambiguity_count=excluded.ambiguity_count`,
-				tagID, taxonomy.snapshotID, externalTagID, externalCategoryID,
-				taxonomy.method, taxonomy.confidence, taxonomy.ambiguityCount); err != nil {
-				return err
+					tagID, taxonomy.snapshotID, externalTagID, externalCategoryID,
+					taxonomy.method, taxonomy.confidence, taxonomy.ambiguityCount); err != nil {
+					return err
+				}
 			}
+			return nil
+		}); err != nil {
+			return err
 		}
-		return nil
-	}); err != nil {
-		return fail(err)
-	}
-	if err := withTxn(artifact, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		definitionKeys := make([]string, 0, len(definitions))
-		for key := range definitions {
-			definitionKeys = append(definitionKeys, key)
-		}
-		sort.Strings(definitionKeys)
-		for _, key := range definitionKeys {
-			parts := strings.SplitN(key, "\x00", 3)
-			definition := definitions[key]
-			if _, err := conn.ExecContext(ctx, `
+		return withTxn(artifact, func(conn *sql.Conn) error {
+			ctx := context.Background()
+			definitionKeys := make([]string, 0, len(definitions))
+			for key := range definitions {
+				definitionKeys = append(definitionKeys, key)
+			}
+			sort.Strings(definitionKeys)
+			for _, key := range definitionKeys {
+				parts := strings.SplitN(key, "\x00", 3)
+				definition := definitions[key]
+				if _, err := conn.ExecContext(ctx, `
 INSERT INTO feature_definition(
     feature_id, feature_version, family, name, provenance, metadata_json
 ) VALUES (?, ?, ?, ?, 'feature_builder', ?)`,
-				definition.featureID, featureVersion, parts[1], parts[2],
-				definition.metadata.marshalSortedKeys()); err != nil {
-				return err
+					definition.featureID, featureVersion, parts[1], parts[2],
+					definition.metadata.marshalSortedKeys()); err != nil {
+					return err
+				}
 			}
-		}
-		sortedFeatures := append([]featureRow(nil), features...)
-		sort.SliceStable(sortedFeatures, func(i, j int) bool {
-			a, b := sortedFeatures[i], sortedFeatures[j]
-			if a.entityType != b.entityType {
-				return a.entityType < b.entityType
-			}
-			if a.entityID != b.entityID {
-				return a.entityID < b.entityID
-			}
-			if a.family != b.family {
-				return a.family < b.family
-			}
-			return a.name < b.name
-		})
-		for _, feature := range sortedFeatures {
-			key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
-			if _, err := conn.ExecContext(ctx, `
+			sortedFeatures := append([]featureRow(nil), features...)
+			sort.SliceStable(sortedFeatures, func(i, j int) bool {
+				a, b := sortedFeatures[i], sortedFeatures[j]
+				if a.entityType != b.entityType {
+					return a.entityType < b.entityType
+				}
+				if a.entityID != b.entityID {
+					return a.entityID < b.entityID
+				}
+				if a.family != b.family {
+					return a.family < b.family
+				}
+				return a.name < b.name
+			})
+			for _, feature := range sortedFeatures {
+				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
+				if _, err := conn.ExecContext(ctx, `
 INSERT INTO entity_feature(
     feature_version, entity_type, entity_id, feature_id, value, confidence
 ) VALUES (?, ?, ?, ?, ?, ?)`,
-				featureVersion, feature.entityType, feature.entityID, definitions[key].featureID,
-				feature.value, feature.confidence); err != nil {
-				return err
+					featureVersion, feature.entityType, feature.entityID, definitions[key].featureID,
+					feature.value, feature.confidence); err != nil {
+					return err
+				}
 			}
-		}
-		for _, feature := range sortedFeatures {
-			if feature.entityType != "scene" || feature.family != "content" {
-				continue
-			}
-			key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
-			if _, err := conn.ExecContext(ctx, `
+			for _, feature := range sortedFeatures {
+				if feature.entityType != "scene" || feature.family != "content" {
+					continue
+				}
+				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
+				if _, err := conn.ExecContext(ctx, `
 INSERT INTO scene_content_search(
     feature_version, feature_id, scene_id, value
 ) VALUES (?, ?, ?, ?)`,
-				featureVersion, definitions[key].featureID, feature.entityID, feature.value); err != nil {
-				return err
+					featureVersion, definitions[key].featureID, feature.entityID, feature.value); err != nil {
+					return err
+				}
 			}
-		}
-		return nil
-	}); err != nil {
+			return nil
+		})
+	})
+	if err != nil {
 		return fail(err)
 	}
 	if progress != nil {
 		progress(0.75)
 	}
-	if err := artifactCreateIndexes(artifact, "feature"); err != nil {
+	if err := rec.stage("feature_indexing", "feature.publish_index", func() error {
+		return artifactCreateIndexes(artifact, "feature")
+	}); err != nil {
 		return fail(err)
 	}
 	if progress != nil {
 		progress(0.85)
 	}
-	var storedScene, storedPerformer, storedFeatures int64
-	err = artifact.QueryRow(`
+	var summary jVal
+	if err := rec.stage("feature_validation", "", func() error {
+		var storedScene, storedPerformer, storedFeatures int64
+		err := artifact.QueryRow(`
 SELECT
     (SELECT count(DISTINCT entity_id) FROM entity_feature
      WHERE feature_version=? AND entity_type='scene'),
     (SELECT count(DISTINCT entity_id) FROM entity_feature
      WHERE feature_version=? AND entity_type='performer'),
     (SELECT count(*) FROM feature_definition WHERE feature_version=?)`,
-		featureVersion, featureVersion, featureVersion).Scan(&storedScene, &storedPerformer, &storedFeatures)
-	if err != nil {
-		return fail(err)
-	}
-	if storedScene != sceneCount || storedPerformer != performerCount || storedFeatures != int64(len(definitions)) {
-		return fail(fmt.Errorf("feature validation failed: expected (%d, %d, %d), stored (%d, %d, %d)",
-			sceneCount, performerCount, len(definitions), storedScene, storedPerformer, storedFeatures))
-	}
-	summary, err := artifactValidate(artifact, "feature", map[string]int64{
-		"scenes": sceneCount, "performers": performerCount, "features": int64(len(definitions)),
-	}, true)
-	if err != nil {
+			featureVersion, featureVersion, featureVersion).Scan(&storedScene, &storedPerformer, &storedFeatures)
+		if err != nil {
+			return err
+		}
+		if storedScene != sceneCount || storedPerformer != performerCount || storedFeatures != int64(len(definitions)) {
+			return fmt.Errorf("feature validation failed: expected (%d, %d, %d), stored (%d, %d, %d)",
+				sceneCount, performerCount, len(definitions), storedScene, storedPerformer, storedFeatures)
+		}
+		var vErr error
+		summary, vErr = artifactValidate(artifact, "feature", map[string]int64{
+			"scenes": sceneCount, "performers": performerCount, "features": int64(len(definitions)),
+		}, true)
+		return vErr
+	}); err != nil {
 		return fail(err)
 	}
 	if progress != nil {
 		progress(0.93)
 	}
-	size, err := publishArtifactFile(artifact, temporary, final)
-	if err != nil {
-		return fail(err)
-	}
-	artifact = nil
-	if err := withTxn(db, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		if _, err := conn.ExecContext(ctx,
-			`UPDATE feature_build SET status='superseded' WHERE status='published'`); err != nil {
+	if err := rec.stage("feature_publication", "", func() error {
+		size, err := publishArtifactFile(artifact, temporary, final)
+		if err != nil {
 			return err
 		}
-		_, err := conn.ExecContext(ctx, `
+		artifact = nil
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			ctx := context.Background()
+			if _, err := conn.ExecContext(ctx,
+				`UPDATE feature_build SET status='superseded' WHERE status='published'`); err != nil {
+				return err
+			}
+			_, err := conn.ExecContext(ctx, `
 UPDATE feature_build SET status='published', source_fingerprint=?,
     published_at_ms=?, error=NULL, scene_count=?, performer_count=?,
     feature_count=?, artifact_basename=?, artifact_schema_version=?,
     artifact_bytes=?, validation_status='valid',
     validation_summary_json=?, cleanup_error=NULL
 WHERE feature_version=?`,
-			sourceFingerprint, nowMs, sceneCount, performerCount, int64(len(definitions)),
-			filepath.Base(final), artifactSchemaVersion, size,
-			summary.marshalSortedKeys(), featureVersion)
-		return err
+				sourceFingerprint, nowMs, sceneCount, performerCount, int64(len(definitions)),
+				filepath.Base(final), artifactSchemaVersion, size,
+				summary.marshalSortedKeys(), featureVersion)
+			return err
+		}); err != nil {
+			return err
+		}
+		published = true
+		return activateArtifact(db, "feature", final)
 	}); err != nil {
-		return fail(err)
-	}
-	published = true
-	if err := activateArtifact(db, "feature", final); err != nil {
 		return err
 	}
 	if progress != nil {

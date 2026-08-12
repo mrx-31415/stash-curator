@@ -64,6 +64,16 @@ func main() {
 	if len(args) == 0 {
 		fail("usage: curator-core {version|content-neighbors|performer-similarity|multi-hop} | {pluginDir} [task-mode]")
 	}
+	mode := args[0]
+	if !kernelCommands[mode] {
+		mode = "backend"
+		if len(args) > 1 && args[1] != "" {
+			mode = "backend-" + args[1]
+		}
+	}
+	stopCPU, dumpMem := startProfiling(mode, "", "")
+	defer stopCPU()
+	defer dumpMem()
 	if kernelCommands[args[0]] {
 		switch args[0] {
 		case "version":
@@ -88,9 +98,9 @@ func main() {
 	}
 	// Raw-plugin backend mode: argv[1] = plugin dir, argv[2] = task/hook mode.
 	pluginDir := args[0]
-	mode := ""
+	taskMode := ""
 	if len(args) > 1 {
-		mode = args[1]
+		taskMode = args[1]
 	}
-	runBackend(pluginDir, mode)
+	runBackend(pluginDir, taskMode)
 }

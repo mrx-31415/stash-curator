@@ -112,6 +112,42 @@ mass returned to the seed, converging when `sum(|x - xlast|) < N * tolerance`
 (max 100 iterations). Nodes and per-node targets iterate in sorted order,
 matching the pure-Python recurrence. Output: `{"result": {node: score}}`.
 
+### feature-build / model-build
+
+The pipeline commands against a writable sidecar (`{"db": path,
+"now_ms": fixed_ms}`): `feature-build` runs FeatureBuilder, `model-build`
+runs the full PreferenceModelBuilder (migrate -> feature build -> labels ->
+affinities -> scoring with the kernels above -> publication). Their result
+lines always carry `stage_timings_ms` (the 22-key Python-era set),
+`stage_memory` (per-stage `{peak_rss_kb, heap_alloc_kb, heap_sys_kb,
+total_alloc_kb, num_gc}` snapshots), and `peak_rss_kb` — the GOMAXPROCS
+sweep (`scripts/benchmark.py core-sweep`) and the CI perf budget
+(`scripts/perf_gate.py`) read them without the profile flag.
+
+## On-demand profiling (pprof)
+
+Beyond the span stream, the binary can capture Go runtime profiles at runtime
+— no rebuild or flags, switched on either by the plugin's **Capture CPU
+profiles** setting (`pprofEnabled`; profiles land in `<sidecar dir>/profiles`,
+browsable, downloadable, and viewable as an in-page flame graph and top
+table from the Profiling page) or by environment
+variables:
+
+```
+CURATOR_CORE_CPU_PROFILE_DIR=<dir>   CPU profile per process on exit
+CURATOR_CORE_MEM_PROFILE_DIR=<dir>   heap profile per process on exit
+```
+
+Each process writes its own file (`cpu-<mode>-<pid>.pprof` /
+`mem-<mode>-<pid>.pprof`) into the directory (created if missing), so a
+`model-build` run — which re-executes the content-neighbors and
+performer-similarity kernels as subprocesses — yields one profile per
+process. Analyze with `go tool pprof <file>` (heap: `-alloc_space` /
+`-inuse_space`). The mode is the kernel command, `backend`, or
+`backend-<task-mode>`; with the plugin toggle it is the operation name
+(`get_similar`, `build`, …). Oldest profiles are pruned to the newest 20 when
+the toggle is active.
+
 ## Determinism
 
 Both kernels are deterministic: fixed chunking across goroutines, no

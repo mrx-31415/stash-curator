@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // buildModelScore mirrors _Score.
@@ -916,43 +917,49 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	}
 }
 
-// modelScores runs the scoring stage (mirroring _scores).
+// modelScores runs the scoring stage (mirroring _scores). The returned
+// timings carry "similarity" = the elapsed of the two kernel subprocess
+// calls (content neighbors + performer similarity), which the caller
+// combines with the stage total into the scoring key.
 func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]storedFeature,
 	affinities map[string]modelAffinity, labels map[string]sceneLabel,
 	trainingLabels map[string]sceneLabel, labelMean float64, referenceAtMs int64,
-	report func(fraction float64)) ([]buildModelScore, jVal, error) {
+	report func(fraction float64)) ([]buildModelScore, jVal, map[string]int64, error) {
+	timings := map[string]int64{}
 	vectors, err := sceneContentVectorsAll(db, featureVersion)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	allSceneRows, err := db.Query(`SELECT scene_id FROM source_scene ORDER BY scene_id`)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	var allSceneIDs []string
 	for allSceneRows.Next() {
 		var sceneID string
 		if err := allSceneRows.Scan(&sceneID); err != nil {
 			allSceneRows.Close()
-			return nil, jvNull(), err
+			return nil, jvNull(), nil, err
 		}
 		allSceneIDs = append(allSceneIDs, sceneID)
 	}
 	allSceneRows.Close()
 	if err := allSceneRows.Err(); err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	preferenceVectors, discriminative := preferenceContentVectors(vectors, sceneFeatures, affinities)
 	progressTotal := len(preferenceVectors) + len(allSceneIDs)
+	similarityStarted := time.Now()
 	neighbors, err := contentNeighbors(db, featureVersion, affinities, trainingLabels,
 		labelMean, progressTotal, report)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	performerSimilarity, err := modelPerformerSimilarityScores(db, featureVersion, sceneFeatures, affinities)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
+	timings["similarity"] = elapsedMs(similarityStarted)
 	baselineConfidences := make([]float64, 0, len(trainingLabels))
 	for _, sceneID := range sortedStringKeys(trainingLabels) {
 		baselineConfidences = append(baselineConfidences, trainingLabels[sceneID].confidence)
@@ -963,40 +970,40 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	lastPlayed := map[string]int64{}
 	rows, err := db.Query(`SELECT scene_id, max(played_at_ms) AS last_played FROM source_play GROUP BY scene_id`)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	for rows.Next() {
 		var sceneID string
 		var lastPlayedMs int64
 		if err := rows.Scan(&sceneID, &lastPlayedMs); err != nil {
 			rows.Close()
-			return nil, jvNull(), err
+			return nil, jvNull(), nil, err
 		}
 		lastPlayed[sceneID] = lastPlayedMs
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	recentContext, err := buildRecentContext(db, referenceAtMs, vectors)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	eligibility, err := sceneEligibilityBuild(db, referenceAtMs)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	performerPriors, err := performerPriors(db)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	studioPriors, err := studioPriors(db)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	profiles, err := performerProfileIDs(db, featureVersion)
 	if err != nil {
-		return nil, jvNull(), err
+		return nil, jvNull(), nil, err
 	}
 	var scores []buildModelScore
 	totalScenes := len(allSceneIDs)
@@ -1045,5 +1052,5 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 		})
 		<-reporterDone
 	}
-	return scores, performerSimilarity, nil
+	return scores, performerSimilarity, timings, nil
 }

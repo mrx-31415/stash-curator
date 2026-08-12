@@ -10,6 +10,8 @@ boundary, and a broken binary fails the stage loudly.
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,33 @@ from curator.core import CoreError
 from curator.model import PreferenceModelBuilder
 from curator.model import builder as builder_module
 from tests.model.test_builder import REFERENCE_MS, _database
+
+# The Python-era stage key set (stageTimingOrder in core/tasks.go): the
+# model-build kernel result must report all 22 keys.
+STAGE_TIMING_KEYS = (
+    "feature_lookup",
+    "feature_build",
+    "feature_database_writing",
+    "feature_indexing",
+    "feature_validation",
+    "feature_publication",
+    "feature_total",
+    "labels",
+    "affinities",
+    "similarity",
+    "scoring",
+    "database_writing",
+    "lane_classification",
+    "score_first_ordering",
+    "varied_ordering",
+    "reason_generation",
+    "sqlite_index_creation",
+    "indexing",
+    "validation",
+    "publication",
+    "cleanup",
+    "total",
+)
 
 
 def _built_context(tmp_path: Path) -> tuple[builder_module.PreferenceModelBuilder, object]:
@@ -188,3 +217,38 @@ else:
 def test_core_available_flag_matches_resolver(tmp_path: Path) -> None:
     assert core_module.core_available() is (core_module.core_binary() is not None)
     assert builder_module.core.core_binary() is core_module.core_binary()
+
+
+def test_model_build_kernel_result_surface(tmp_path: Path) -> None:
+    """curator-core model-build reports the full 22-key stage_timings_ms,
+    per-stage memory snapshots, and final peak RSS on its result line — the
+    GOMAXPROCS sweep and the CI perf budget read them without the profile
+    flag."""
+    binary = core_module.core_binary()
+    if binary is None:
+        pytest.skip("curator-core binary is not built")
+    sidecar = tmp_path / "curator.sqlite3"
+    _database(sidecar)
+    payload = json.dumps(
+        {"db": str(sidecar), "now_ms": REFERENCE_MS}, separators=(",", ":")
+    ).encode()
+    result = subprocess.run(
+        [str(binary), "model-build"], input=payload, capture_output=True, timeout=600
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    output = None
+    for line in result.stdout.decode().splitlines():
+        parsed = json.loads(line)
+        if "result" in parsed:
+            output = parsed["result"]
+    assert output is not None
+    assert output["reused"] is False
+    assert output["scene_count"] == 6
+    assert set(output["stage_timings_ms"]) == set(STAGE_TIMING_KEYS)
+    assert output["stage_timings_ms"]["total"] > 0
+    for key in STAGE_TIMING_KEYS:
+        memory = output["stage_memory"][key]
+        assert memory["peak_rss_kb"] > 0, f"stage {key} lacks peak_rss_kb"
+        for field in ("heap_alloc_kb", "heap_sys_kb", "total_alloc_kb", "num_gc"):
+            assert field in memory, f"stage {key} memory lacks {field}"
+    assert output["peak_rss_kb"] > 0

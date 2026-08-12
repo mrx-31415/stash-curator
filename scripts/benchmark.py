@@ -13,6 +13,7 @@ library data.
 
 Usage:
   python scripts/benchmark.py --db /path/to/curator.sqlite3 [--url URL] [--ops ...]
+  python scripts/benchmark.py core-sweep [--reps N]   # GOMAXPROCS sweep (1/2/4/8)
 
 Options:
   --db PATH        Sidecar to benchmark against (copied before use). Default:
@@ -38,6 +39,7 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import statistics
 import subprocess
@@ -131,6 +133,26 @@ def _wait_for_stash(url: str, timeout: float = 180) -> None:
 
 
 # --------------------------------------------------------------------------- sidecar
+
+
+_cold_cache_warned = False
+
+
+def _drop_caches() -> None:
+    """Drop the OS page cache (root only) for cold-cache measurement; warn
+    once and continue warm otherwise."""
+    global _cold_cache_warned
+    if os.geteuid() != 0:
+        if not _cold_cache_warned:
+            _cold_cache_warned = True
+            print("[benchmark] WARNING: not root; --cold-cache ignored (warm cache)")
+        return
+    subprocess.run(["sync"], check=True)
+    try:
+        with open("/proc/sys/vm/drop_caches", "w", encoding="utf-8") as handle:
+            handle.write("3\n")
+    except OSError as error:
+        print(f"[benchmark] WARNING: drop_caches failed: {error}")
 
 
 def _find_sidecar() -> Path | None:
@@ -292,6 +314,10 @@ def _install_plugin(workspace: Path) -> None:
     plugin_dir.mkdir(parents=True)
     with zipfile.ZipFile(PLUGIN_ZIP) as archive:
         archive.extractall(plugin_dir)
+    # Python's zipfile does not restore the executable bit from the archive
+    # entries; the launcher requires the per-arch binaries to be executable.
+    for binary in plugin_dir.glob("curator-core*"):
+        binary.chmod(binary.stat().st_mode | 0o111)
     data_dir = plugin_dir / "data"
     shutil.rmtree(data_dir, ignore_errors=True)
     data_dir.mkdir()
@@ -504,6 +530,7 @@ def _pull_traces(sidecar: Path, after_ms: int) -> list[dict]:
                         "category": str(event.get("cat", "")),
                         "name": str(event.get("name", "")),
                         "duration_us": int(event.get("dur", 0)),
+                        "args": event.get("args") if isinstance(event.get("args"), dict) else None,
                     }
                     for event in (events or [])
                     if isinstance(event, dict)
@@ -515,10 +542,15 @@ def _pull_traces(sidecar: Path, after_ms: int) -> list[dict]:
 
 def _span_aggregate(traces: list[dict]) -> list[dict[str, object]]:
     buckets: dict[tuple[str, str], list[int]] = {}
+    peaks: dict[tuple[str, str], list[float]] = {}
     for trace in traces:
         for span in trace["spans"]:
             key = (span["category"], span["name"])
             buckets.setdefault(key, []).append(span["duration_us"])
+            args = span.get("args") or {}
+            peak = args.get("peak_rss_kb") if isinstance(args, dict) else None
+            if isinstance(peak, (int, float)) and peak > 0:
+                peaks.setdefault(key, []).append(float(peak))
     rows = [
         {
             "category": cat,
@@ -529,6 +561,10 @@ def _span_aggregate(traces: list[dict]) -> list[dict[str, object]]:
         }
         for (cat, name), values in sorted(buckets.items(), key=lambda item: -sum(item[1]))
     ]
+    for row in rows:
+        key = (row["category"], row["name"])
+        if key in peaks:
+            row["max_peak_rss_kb"] = round(max(peaks[key]))
     return rows
 
 
@@ -616,11 +652,16 @@ def _write_report(report_dir: Path, report: dict[str, object]) -> Path:
                 lines.append("- model stages (ms):")
                 for stage, ms in sorted(stages.items()):
                     lines.append(f"  - {stage}: {ms}")
+            if data["job_summary"].get("peak_rss_kb"):
+                lines.append(f"- peak RSS: {data['job_summary']['peak_rss_kb']} kB")
         lines.append("- spans:")
         for span in data["spans"]:
+            memory = (
+                f" max_peak={span['max_peak_rss_kb']} kB" if span.get("max_peak_rss_kb") else ""
+            )
             lines.append(
                 f"  - {span['category']}.{span['name']}: count={span['count']} "
-                f"median={span['median_ms']} ms total={span['total_ms']} ms"
+                f"median={span['median_ms']} ms total={span['total_ms']} ms{memory}"
             )
         lines.append("")
     markdown = report_dir / "benchmark-report.md"
@@ -654,25 +695,223 @@ def _select_tasks(names: str) -> list[str]:
     return chosen
 
 
+# --------------------------------------------------------------------------- core sweep
+
+
+def _write_core_sweep_report(report: dict[str, object]) -> Path:
+    out_dir = ROOT / "benchmarks"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / "core-sweep-report.json"
+    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    runs = report["runs"]
+    threads_order = (1, 2, 4, 8)
+    stage_order = sorted({key for run in runs for key in run["stage_timings_ms"]})
+    # Determinism: the model id and scene count must be identical across
+    # thread counts (the kernel is cross-thread deterministic).
+    outputs = {
+        (run["gomaxprocs"], run["rep"]): (run["model_id"], run["scene_count"]) for run in runs
+    }
+    distinct = {value for value in outputs.values()}
+    determinism = (
+        f"OK ({len(distinct)} identical build outputs)"
+        if len(distinct) == 1
+        else f"MISMATCH: {distinct}"
+    )
+    lines = [
+        "# Core GOMAXPROCS sweep",
+        "",
+        f"- date: {report['generated_at']}",
+        f"- host: {report['hostname']}",
+        f"- corpus: {report['corpus']}",
+        f"- determinism: {determinism}",
+        "",
+        "## Wall time scaling",
+        "",
+        "| GOMAXPROCS | reps | median wall (ms) | min | max | median peak RSS (kB) |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for threads in threads_order:
+        rows = [run for run in runs if run["gomaxprocs"] == threads]
+        if not rows:
+            continue
+        walls = [run["wall_ms"] for run in rows]
+        peaks = [run["peak_rss_kb"] for run in rows]
+        wall_line = (
+            f"| {threads} | {len(rows)} | "
+            f"{round(statistics.median(walls), 1)} | {round(min(walls), 1)} | "
+            f"{round(max(walls), 1)} | {round(statistics.median(peaks), 1)} |"
+        )
+        lines.append(wall_line)
+    lines.append("")
+    lines.append("## Per-stage timings (median ms by GOMAXPROCS)")
+    lines.append("")
+    lines.append("| stage | 1 | 2 | 4 | 8 |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for stage in stage_order:
+        cells = []
+        for threads in threads_order:
+            values = [
+                run["stage_timings_ms"][stage]
+                for run in runs
+                if run["gomaxprocs"] == threads and stage in run["stage_timings_ms"]
+            ]
+            cells.append(str(round(statistics.median(values), 1)) if values else "-")
+        lines.append("| {} | {} |".format(stage, " | ".join(cells)))
+    lines.append("")
+    lines.append("## Per-stage peak RSS (median kB by GOMAXPROCS)")
+    lines.append("")
+    lines.append("| stage | 1 | 2 | 4 | 8 |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for stage in stage_order:
+        cells = []
+        for threads in threads_order:
+            values = [
+                run["stage_memory"][stage]["peak_rss_kb"]
+                for run in runs
+                if run["gomaxprocs"] == threads
+                and stage in run["stage_memory"]
+                and run["stage_memory"][stage].get("peak_rss_kb")
+            ]
+            cells.append(str(round(statistics.median(values), 1)) if values else "-")
+        lines.append("| {} | {} |".format(stage, " | ".join(cells)))
+    lines.append("")
+    lines.append("## Build outputs (determinism check)")
+    lines.append("")
+    lines.append("| GOMAXPROCS | rep | model_id | scene_count | peak RSS (kB) |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for run in sorted(runs, key=lambda item: (item["gomaxprocs"], item["rep"])):
+        lines.append(
+            "| {} | {} | {} | {} | {} |".format(
+                run["gomaxprocs"],
+                run["rep"],
+                run["model_id"],
+                run["scene_count"],
+                run["peak_rss_kb"],
+            )
+        )
+    lines.append("")
+    (out_dir / "core-sweep-report.md").write_text("\n".join(lines), encoding="utf-8")
+    return json_path
+
+
+def _run_core_sweep(args: argparse.Namespace) -> Path:
+    """GOMAXPROCS sweep over the model-build kernel on a synthetic
+    production-shape sidecar. Each rep gets a fresh copy (the kernel reuses
+    the published model on a second run against the same sidecar and returns
+    near-zero timings); stage timings + memory come from the result line."""
+    import synthetic_corpus
+
+    binary = ROOT / "core" / "bin" / "curator-core"
+    if not binary.is_file():
+        raise SystemExit("core/bin/curator-core missing; run scripts/build_core.sh first")
+    reps = args.reps if args.reps is not None else 3
+    workspace = Path(args.workspace).resolve() / "core-sweep"
+    workspace.mkdir(parents=True, exist_ok=True)
+    base = workspace / "base.sqlite3"
+    if not base.is_file():
+        print("[benchmark] building production-shape synthetic sidecar ...")
+        synthetic_corpus.build_sidecar(base, **synthetic_corpus.PRODUCTION)
+    counts = {
+        **synthetic_corpus.PRODUCTION,
+        "known_performers": max(20, round(synthetic_corpus.PRODUCTION["n_performers"] * 0.02)),
+    }
+    runs: list[dict[str, object]] = []
+    for threads in (1, 2, 4, 8):
+        for rep in range(reps):
+            run_db = workspace / f"run-{threads}-{rep}.sqlite3"
+            print(f"[benchmark] GOMAXPROCS={threads} rep {rep + 1}/{reps} ...")
+            synthetic_corpus.copy_sidecar(base, run_db)
+            payload = json.dumps(
+                {"db": str(run_db), "now_ms": synthetic_corpus.REFERENCE_MS},
+                separators=(",", ":"),
+            ).encode()
+            started = time.perf_counter()
+            env = dict(os.environ, GOMAXPROCS=str(threads))
+            proc = subprocess.run(
+                [str(binary), "model-build"],
+                input=payload,
+                capture_output=True,
+                env=env,
+                timeout=7200,
+            )
+            wall_ms = (time.perf_counter() - started) * 1000
+            derived = run_db.resolve().with_name(f"{run_db.stem}-derived")
+            shutil.rmtree(derived, ignore_errors=True)
+            run_db.unlink(missing_ok=True)
+            if proc.returncode != 0:
+                detail = proc.stderr.decode()[-400:]
+                print(f"[benchmark] GOMAXPROCS={threads} rep {rep} failed: {detail}")
+                continue
+            output = None
+            for line in proc.stdout.decode().splitlines():
+                parsed = json.loads(line)
+                if "result" in parsed:
+                    output = parsed["result"]
+            if output is None:
+                print(f"[benchmark] GOMAXPROCS={threads} rep {rep}: no result line")
+                continue
+            print(
+                f"[benchmark] GOMAXPROCS={threads} rep {rep}: {wall_ms:.0f} ms wall, "
+                f"model {output['model_id'][:24]}, scenes {output['scene_count']}, "
+                f"reused {output['reused']}"
+            )
+            runs.append(
+                {
+                    "gomaxprocs": threads,
+                    "rep": rep,
+                    "wall_ms": round(wall_ms, 1),
+                    "model_id": output["model_id"],
+                    "scene_count": output["scene_count"],
+                    "stage_timings_ms": output["stage_timings_ms"],
+                    "stage_memory": output["stage_memory"],
+                    "peak_rss_kb": output["peak_rss_kb"],
+                }
+            )
+    if not runs:
+        raise SystemExit("core-sweep: no successful runs")
+    report = {
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+        "hostname": socket.gethostname(),
+        "corpus": counts,
+        "runs": runs,
+    }
+    return _write_core_sweep_report(report)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", nargs="?", default=None, help="core-sweep")
     parser.add_argument("--db", help="sidecar to benchmark (copied first)")
     parser.add_argument("--url", help="Stash base URL")
     parser.add_argument("--port", type=int, default=9998, help="host port (default 9998)")
     parser.add_argument("--ops", default="all")
     parser.add_argument("--tasks", default="all")
-    parser.add_argument("--reps", type=int, default=4)
+    parser.add_argument("--reps", type=int, default=None)
     parser.add_argument("--workspace", default=str(ROOT / ".tmp" / "benchmark"))
     parser.add_argument("--report-dir", default=str(ROOT / ".tmp" / "benchmark-report"))
     parser.add_argument("--keep-stash", action="store_true")
     parser.add_argument("--no-stash", action="store_true")
     parser.add_argument("--cold-build", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--cold-cache",
+        action="store_true",
+        help="drop the OS page cache before each op rep and task run (root)",
+    )
+    parser.add_argument(
         "--skip-install-deps",
         action="store_true",
         help="skip the optional-deps (numpy/networkx) venv task; cold builds then run pure Python",
     )
     args = parser.parse_args()
+
+    if args.mode == "core-sweep":
+        report_path = _run_core_sweep(args)
+        print(f"[benchmark] core-sweep report: {report_path}")
+        return
+    if args.mode is not None:
+        parser.error(f"unknown mode: {args.mode}")
+    if args.reps is None:
+        args.reps = 4
 
     source: Path | None = None
     if args.db:
@@ -766,6 +1005,8 @@ def _run(
         wall: list[float] = []
         traces: list[dict] = []
         for rep in range(args.reps):
+            if args.cold_cache:
+                _drop_caches()
             before = int(time.time() * 1000)
             try:
                 elapsed, output = _run_operation(url, base)
@@ -806,6 +1047,8 @@ def _run(
     task_results: dict[str, dict[str, object]] = {}
     for name in tasks:
         before = int(time.time() * 1000)
+        if args.cold_cache:
+            _drop_caches()
         if args.cold_build and name == "build":
             print("[benchmark] invalidating published model for a cold rebuild ...")
             _invalidate_model(sidecar)
@@ -837,6 +1080,7 @@ def _run(
         "stash_version": stash_version,
         "plugin_version": plugin_version,
         "cold_build": bool(args.cold_build),
+        "cold_cache": bool(args.cold_cache),
         "optional_deps_installed": not args.skip_install_deps,
         "sidecar_state": state,
         "operations": op_results,

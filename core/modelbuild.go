@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -752,7 +753,11 @@ ORDER BY ef.entity_id, fd.name`, featureVersion)
 }
 
 // runCoreKernel invokes this binary's kernel stage with the payload JSON and
-// returns the {"result": ...} value (mirroring curator.core.run_core).
+// returns the {"result": ...} value (mirroring curator.core.run_core). When a
+// trace is active the payload already carries profile: true (modelbuild2.go),
+// so the kernel emits {"span": ...} NDJSON lines; fold them into the trace as
+// "core"-category spans, converting the kernel's process-relative offsets
+// back from the spawn point (curator/core.py parity).
 func runCoreKernel(mode string, payload jVal) (jVal, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -768,6 +773,7 @@ func runCoreKernel(mode string, payload jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	cmd.Stderr = os.Stderr
+	spawnStartedNs := time.Now().UnixNano()
 	if err := cmd.Start(); err != nil {
 		return jvNull(), err
 	}
@@ -788,6 +794,14 @@ func runCoreKernel(mode string, payload jVal) (jVal, error) {
 		}
 		if v := parsed.get("result"); v.kind != jNull {
 			result = v
+		}
+		if v := parsed.get("span"); v.kind != jNull {
+			if t := currentTrace(); t != nil {
+				name := v.get("name").asString()
+				offsetUs := numberValue(v.get("offset_us"))
+				durUs := numberValue(v.get("dur_us"))
+				t.record("core", name, spawnStartedNs+int64(offsetUs)*1000, int64(durUs)*1000, jvNull())
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
