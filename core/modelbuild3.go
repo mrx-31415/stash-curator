@@ -22,6 +22,7 @@ type drainResult struct {
 	labeledCount   int64
 	reused         bool
 	stageTimingsMs map[string]int64
+	stageMemory    map[string]jVal
 }
 
 // modelStoreStartBuild mirrors ModelStore.start_build.
@@ -80,11 +81,32 @@ func insertArtifactRows(artifact dbx, statement string, rows [][]any) error {
 	return nil
 }
 
-// modelPublish mirrors PreferenceModelBuilder._publish.
+// modelPublish mirrors PreferenceModelBuilder._publish, recording the
+// database_writing / lane_classification / varied_ordering / indexing /
+// validation / publication stage timings into rec (the caller's build
+// recorder) and returning them as the stage map.
 func modelPublish(db dbx, modelID, featureVersion string, affinities map[string]modelAffinity,
 	labels map[string]sceneLabel, scores []buildModelScore, performerSimilarity jVal,
-	nowMs int64, report func(fraction float64)) (map[string]int64, error) {
-	scoresByScene := map[string]buildModelScore{}
+	nowMs int64, report func(fraction float64), rec *stageRecorder) (map[string]int64, error) {
+	var scoresByScene map[string]buildModelScore
+	var artifact dbx
+	var temporary, final string
+	published := false
+	fail := func(err error) (map[string]int64, error) {
+		if !published {
+			discardArtifact(artifact, temporary)
+			if _, statErr := os.Stat(temporary); os.IsNotExist(statErr) {
+				os.Remove(final)
+			}
+		}
+		return nil, err
+	}
+	// database_writing: Python's writing_started boundary — scores_by_scene
+	// through the five insert batches (including create_artifact and
+	// attach_build_sources, which sit between writing_started and the first
+	// insert in Python too).
+	databaseWritingStarted := time.Now()
+	scoresByScene = map[string]buildModelScore{}
 	for _, score := range scores {
 		scoresByScene[score.sceneID] = score
 	}
@@ -96,7 +118,7 @@ func modelPublish(db dbx, modelID, featureVersion string, affinities map[string]
 	if err != nil {
 		return nil, err
 	}
-	artifact, temporary, final, err := createArtifact(corePath, "model", modelID)
+	artifact, temporary, final, err = createArtifact(corePath, "model", modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -104,17 +126,6 @@ func modelPublish(db dbx, modelID, featureVersion string, affinities map[string]
 		discardArtifact(artifact, temporary)
 		return nil, err
 	}
-	published := false
-	fail := func(err error) (map[string]int64, error) {
-		if !published {
-			discardArtifact(artifact, temporary)
-			if _, statErr := os.Stat(temporary); os.IsNotExist(statErr) {
-				os.Remove(final)
-			}
-		}
-		return nil, err
-	}
-	timings := map[string]int64{}
 	// feature_affinity
 	affinityRows := make([][]any, 0, len(affinities))
 	for _, featureID := range sortedStringKeys(affinities) {
@@ -217,99 +228,111 @@ INSERT INTO model_performer_edge(
 ) VALUES (?, ?, ?, ?, ?, ?, ?)`, edgeRows); err != nil {
 		return fail(err)
 	}
-	// Lanes + slate inside the artifact.
-	classifyStarted := time.Now().UnixNano()
-	if _, err := laneClassify(artifact, modelID, featureVersion, func(processed, total int) {
-		if report != nil {
-			report(0.85 + 0.02*float64(processed)/float64(maxInt(1, total)))
-		}
+	rec.set("database_writing", elapsedMs(databaseWritingStarted))
+	// Lanes + slate inside the artifact. indexing spans from just before lane
+	// classification through index creation (Python's indexing_started).
+	indexingStarted := time.Now()
+	if err := rec.stage("lane_classification", "model.lane_classification", func() error {
+		_, err := laneClassify(artifact, modelID, featureVersion, func(processed, total int) {
+			if report != nil {
+				report(0.85 + 0.02*float64(processed)/float64(maxInt(1, total)))
+			}
+		})
+		return err
 	}); err != nil {
 		return fail(err)
 	}
-	timings["lane_classification"] = (time.Now().UnixNano() - classifyStarted) / 1_000_000
-	slateStarted := time.Now().UnixNano()
-	if _, err := materializeLanes(artifact, modelID, true, func(processed, total int) {
-		if report != nil {
-			report(0.87 + 0.04*float64(processed)/float64(maxInt(1, total)))
-		}
+	rec.set("score_first_ordering", 0)
+	recordDurationMs(currentTrace(), "python", "model.score_first_ordering", 0)
+	if err := rec.stage("varied_ordering", "model.varied_ordering", func() error {
+		_, err := materializeLanes(artifact, modelID, true, func(processed, total int) {
+			if report != nil {
+				report(0.87 + 0.04*float64(processed)/float64(maxInt(1, total)))
+			}
+		})
+		return err
 	}); err != nil {
 		return fail(err)
 	}
-	timings["score_first_ordering"] = 0
-	timings["varied_ordering"] = (time.Now().UnixNano() - slateStarted) / 1_000_000
-	timings["reason_generation"] = 0
+	rec.set("reason_generation", 0)
+	recordDurationMs(currentTrace(), "python", "model.reason_generation", 0)
 	if report != nil {
 		report(0.94)
 	}
-	indexStarted := time.Now().UnixNano()
-	if err := artifactCreateIndexes(artifact, "model"); err != nil {
+	if err := rec.stage("sqlite_index_creation", "model.sqlite_index_creation", func() error {
+		return artifactCreateIndexes(artifact, "model")
+	}); err != nil {
 		return fail(err)
 	}
-	timings["sqlite_index_creation"] = (time.Now().UnixNano() - indexStarted) / 1_000_000
-	timings["indexing"] = timings["sqlite_index_creation"]
+	rec.set("indexing", elapsedMs(indexingStarted))
 	if report != nil {
 		report(0.96)
 	}
 	var storedCount, laneCount int64
-	if err := artifact.QueryRow(`SELECT count(*) FROM model_scene_score WHERE model_id=?`, modelID).Scan(&storedCount); err != nil {
-		return fail(err)
-	}
-	if err := artifact.QueryRow(`SELECT count(*) FROM model_scene_lane WHERE model_id=?`, modelID).Scan(&laneCount); err != nil {
-		return fail(err)
-	}
-	var laneState int
-	err = artifact.QueryRow(`SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID).Scan(&laneState)
-	if storedCount != int64(len(scores)) || (err != nil && err != sql.ErrNoRows) {
-		return fail(fmt.Errorf("model validation failed: scores=%d/%d, lane state=%v",
-			storedCount, len(scores), err == nil))
-	}
-	summary, err := artifactValidate(artifact, "model", map[string]int64{
-		"scenes": storedCount, "lanes": laneCount, "reason_scenes": 0, "reasons": 0,
-	}, false)
-	if err != nil {
+	var summary jVal
+	if err := rec.stage("validation", "", func() error {
+		if err := artifact.QueryRow(`SELECT count(*) FROM model_scene_score WHERE model_id=?`, modelID).Scan(&storedCount); err != nil {
+			return err
+		}
+		if err := artifact.QueryRow(`SELECT count(*) FROM model_scene_lane WHERE model_id=?`, modelID).Scan(&laneCount); err != nil {
+			return err
+		}
+		var laneState int
+		err := artifact.QueryRow(`SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID).Scan(&laneState)
+		if storedCount != int64(len(scores)) || (err != nil && err != sql.ErrNoRows) {
+			return fmt.Errorf("model validation failed: scores=%d/%d, lane state=%v",
+				storedCount, len(scores), err == nil)
+		}
+		var vErr error
+		summary, vErr = artifactValidate(artifact, "model", map[string]int64{
+			"scenes": storedCount, "lanes": laneCount, "reason_scenes": 0, "reasons": 0,
+		}, false)
+		return vErr
+	}); err != nil {
 		return fail(err)
 	}
 	if report != nil {
 		report(0.97)
 	}
-	size, err := publishArtifactFile(artifact, temporary, final)
-	if err != nil {
-		return fail(err)
-	}
-	artifact = nil
-	if err := withTxn(db, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		if _, err := conn.ExecContext(ctx,
-			`UPDATE model_version SET status='superseded' WHERE status='published'`); err != nil {
+	if err := rec.stage("publication", "", func() error {
+		size, err := publishArtifactFile(artifact, temporary, final)
+		if err != nil {
 			return err
 		}
-		if _, err := conn.ExecContext(ctx, `
+		artifact = nil
+		if err := withTxn(db, func(conn *sql.Conn) error {
+			ctx := context.Background()
+			if _, err := conn.ExecContext(ctx,
+				`UPDATE model_version SET status='superseded' WHERE status='published'`); err != nil {
+				return err
+			}
+			if _, err := conn.ExecContext(ctx, `
 UPDATE model_version SET status='published', published_at_ms=?,
     artifact_basename=?, artifact_schema_version=?, artifact_bytes=?,
     scene_count=?, lane_count=?, reason_scene_count=?, reason_count=?,
     validation_status='valid', validation_summary_json=?,
     cleanup_error=NULL
 WHERE model_id=?`,
-			nowMs, filepath.Base(final), artifactSchemaVersion, size,
-			storedCount, laneCount, 0, 0, summary.marshalSortedKeys(), modelID); err != nil {
-			return err
-		}
-		_, err := conn.ExecContext(ctx, `
+				nowMs, filepath.Base(final), artifactSchemaVersion, size,
+				storedCount, laneCount, 0, 0, summary.marshalSortedKeys(), modelID); err != nil {
+				return err
+			}
+			_, err := conn.ExecContext(ctx, `
 INSERT INTO application_meta(key, value) VALUES ('current_model_id', ?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, modelID)
-		return err
+			return err
+		}); err != nil {
+			return err
+		}
+		published = true
+		return activateArtifact(db, "model", final)
 	}); err != nil {
-		return fail(err)
-	}
-	published = true
-	if err := activateArtifact(db, "model", final); err != nil {
 		return nil, err
 	}
-	timings["publication"] = 0
 	if report != nil {
 		report(0.98)
 	}
-	return timings, nil
+	return rec.timingsMap(), nil
 }
 
 // modelConfigCanonical mirrors json.dumps(asdict(CuratorConfig),
@@ -398,29 +421,43 @@ func rankingSubConfig() jVal {
 	)
 }
 
-// modelBuild runs the full PreferenceModelBuilder pipeline.
+// modelBuild runs the full PreferenceModelBuilder pipeline, recording the
+// Python-era stage timings (feature_* merged from the shared recorder, plus
+// labels/affinities/similarity/scoring, the modelPublish map, cleanup, and
+// total) and the per-stage memory snapshots into the drain result.
 func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drainResult, error) {
 	report := func(fraction float64) {
 		if progress != nil {
 			progress(int(pyRound(fraction*1000)), 1000)
 		}
 	}
+	rec := newStageRecorder()
 	timings := map[string]int64{}
-	stageStarted := time.Now()
-	featureVersion, _, err := featureBuild(db, nowMs, func(fraction float64) {
-		report(0.25 * fraction)
+	started := time.Now()
+	var featureVersion string
+	err := rec.stage("", "model.features", func() error {
+		var err error
+		featureVersion, _, err = featureBuild(db, nowMs, rec, func(fraction float64) {
+			report(0.25 * fraction)
+		})
+		return err
 	})
-	timings["features"] = elapsedMs(stageStarted)
 	if err != nil {
 		return drainResult{}, err
 	}
 	report(0.25)
 	referenceAtMs := (nowMs / 86_400_000) * 86_400_000
-	labels, err := modelSceneLabels(db)
-	if err != nil {
-		return drainResult{}, err
-	}
-	trainingLabels, err := modelTrainingLabels(db, labels)
+	var labels map[string]sceneLabel
+	var trainingLabels map[string]sceneLabel
+	err = rec.stage("labels", "model.labels", func() error {
+		var err error
+		labels, err = modelSceneLabels(db)
+		if err != nil {
+			return err
+		}
+		trainingLabels, err = modelTrainingLabels(db, labels)
+		return err
+	})
 	if err != nil {
 		return drainResult{}, err
 	}
@@ -461,9 +498,13 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 						return drainResult{}, err
 					}
 					report(1.0)
+					rec.set("total", elapsedMs(started))
 					return drainResult{
-						modelID: modelID, featureVersion: featureVersion, reused: true,
-						stageTimingsMs: map[string]int64{},
+						modelID:        modelID,
+						featureVersion: featureVersion,
+						reused:         true,
+						stageTimingsMs: rec.timingsMap(),
+						stageMemory:    rec.stageMemory(),
 					}, nil
 				}
 			}
@@ -491,38 +532,54 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		modelSyncWatermark(db), nowMs); err != nil {
 		return drainResult{}, err
 	}
-	sceneFeatures, err := modelStoredFeatures(db, featureVersion, "scene")
+	var sceneFeatures map[string][]storedFeature
+	var affinities map[string]modelAffinity
+	var labelMean float64
+	err = rec.stage("affinities", "model.affinities", func() error {
+		var err error
+		sceneFeatures, err = modelStoredFeatures(db, featureVersion, "scene")
+		if err != nil {
+			return err
+		}
+		labelMean = modelLabelMean(trainingLabels)
+		affinities, err = modelAffinities(db, sceneFeatures, trainingLabels, labelMean)
+		return err
+	})
 	if err != nil {
 		modelStoreFail(db, modelID)
 		return drainResult{}, err
 	}
-	labelMean := modelLabelMean(trainingLabels)
-	stageStarted = time.Now()
-	affinities, err := modelAffinities(db, sceneFeatures, trainingLabels, labelMean)
-	if err != nil {
-		modelStoreFail(db, modelID)
-		return drainResult{}, err
-	}
-	timings["affinities"] = elapsedMs(stageStarted)
 	report(0.35)
-	stageStarted = time.Now()
-	scores, performerSimilarity, err := buildModelScores(db, featureVersion, sceneFeatures,
+	stageStarted := time.Now()
+	scores, performerSimilarity, scoreTimings, err := buildModelScores(db, featureVersion, sceneFeatures,
 		affinities, labels, trainingLabels, labelMean, referenceAtMs, report)
 	if err != nil {
 		modelStoreFail(db, modelID)
 		return drainResult{}, err
 	}
-	timings["scoring"] = elapsedMs(stageStarted)
+	scoreTotal := elapsedMs(stageStarted)
+	scoring := maxInt64(0, scoreTotal-scoreTimings["similarity"])
+	rec.set("similarity", scoreTimings["similarity"])
+	rec.set("scoring", scoring)
+	timings["similarity"] = scoreTimings["similarity"]
+	timings["scoring"] = scoring
+	recordStageSpan("model.scores", stageStarted)
 	report(0.35)
-	stageStarted = time.Now()
-	if _, err := modelPublish(db, modelID, featureVersion, affinities, labels,
-		scores, performerSimilarity, nowMs, report); err != nil {
+	var publishTimings map[string]int64
+	err = rec.stage("", "model.publish", func() error {
+		var err error
+		publishTimings, err = modelPublish(db, modelID, featureVersion, affinities, labels,
+			scores, performerSimilarity, nowMs, report, rec)
+		return err
+	})
+	if err != nil {
 		modelStoreFail(db, modelID)
 		return drainResult{}, err
 	}
-	timings["publication"] = elapsedMs(stageStarted)
 	report(0.98)
-	if err := pruneSnapshots(db); err != nil {
+	if err := rec.stage("cleanup", "", func() error {
+		return pruneSnapshots(db)
+	}); err != nil {
 		return drainResult{}, err
 	}
 	report(1.0)
@@ -530,6 +587,14 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	if err := db.QueryRow(`SELECT count(*) FROM model_scene_score WHERE model_id=?`, modelID).Scan(&sceneCount); err != nil {
 		return drainResult{}, err
 	}
+	for key, value := range publishTimings {
+		timings[key] = value
+	}
+	for key, value := range rec.timingsMap() {
+		timings[key] = value
+	}
+	rec.set("total", elapsedMs(started))
+	timings["total"] = elapsedMs(started)
 	return drainResult{
 		modelID:        modelID,
 		featureVersion: featureVersion,
@@ -537,6 +602,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		labeledCount:   int64(len(labels)),
 		reused:         false,
 		stageTimingsMs: timings,
+		stageMemory:    rec.stageMemory(),
 	}, nil
 }
 
