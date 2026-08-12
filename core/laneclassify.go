@@ -324,6 +324,173 @@ type builtLaneClassification struct {
 	qualification jVal
 }
 
+// laneContext carries the row-independent precomputed inputs for the
+// per-scene classification loop (ranks, adventure context, played set).
+type laneContext struct {
+	contentRanks      map[string]float64
+	neighborRanks     map[string]float64
+	similarityRanks   map[string]float64
+	performerRanks    map[string]float64
+	studioRanks       map[string]float64
+	fitRanks          map[string]float64
+	coverageRanks     map[string]float64
+	unknownPerformers map[string]float64
+	unknownStudios    map[string]float64
+	played            map[string]bool
+}
+
+// classifyScene computes the best_bets / revisit / discover / adventure
+// rows for one eligible scene (the LanePolicy.classify per-scene body). The
+// loop is row-independent: every input is a precomputed read-only map, so
+// fixed-chunk parallel processing yields identical rows.
+func (c *laneContext) classifyScene(sceneID string, score classificationScore) []builtLaneClassification {
+	var classifications []builtLaneClassification
+	reusable := map[string]float64{
+		"content":              componentValue(score.components, "content"),
+		"content_neighbor":     componentValue(score.components, "content_neighbor"),
+		"performer_identity":   componentValue(score.components, "performer_identity"),
+		"performer_similarity": componentValue(score.components, "performer_similarity"),
+		"studio":               componentValue(score.components, "studio"),
+		"structure":            componentValue(score.components, "structure"),
+	}
+	positives := map[string]float64{}
+	negatives := map[string]float64{}
+	for family, value := range reusable {
+		if value >= 0.025 {
+			positives[family] = value
+		} else if value <= -0.025 {
+			negatives[family] = value
+		}
+	}
+	strongestAnchor := 0.0
+	for _, value := range positives {
+		if value > strongestAnchor {
+			strongestAnchor = value
+		}
+	}
+	contentRank := c.contentRanks[sceneID]
+	neighborRank := c.neighborRanks[sceneID]
+	similarityRank := c.similarityRanks[sceneID]
+	performerRank := c.performerRanks[sceneID]
+	studioRank := c.studioRanks[sceneID]
+	relevance := (0.32*neighborRank + 0.10*similarityRank + 0.28*performerRank +
+		0.20*contentRank + 0.10*studioRank) * (0.90 + 0.10*score.metadataConfidence)
+	corroborated := neighborRank >= 0.60 && math.Max(performerRank, contentRank) >= 0.60
+	directReliable := score.directAppeal > 0.10 && score.directConfidence >= 0.50
+	bestBet := score.currentFit >= 0.18 && score.confidence >= 0.30 &&
+		score.metadataConfidence >= 0.35 && relevance >= 0.60 &&
+		(corroborated || directReliable) && !c.played[sceneID]
+	if bestBet {
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "best_bets",
+			laneValue: 0.55*relevance + 0.25*c.fitRanks[sceneID] + 0.20*score.confidence,
+			qualification: jvObj(
+				jvKey("current_fit", jvFloat(score.currentFit)),
+				jvKey("confidence", jvFloat(score.confidence)),
+				jvKey("metadata_confidence", jvFloat(score.metadataConfidence)),
+				jvKey("relevance", jvFloat(relevance)),
+				jvKey("content_percentile", jvFloat(contentRank)),
+				jvKey("neighbor_percentile", jvFloat(neighborRank)),
+				jvKey("neighbor_similarity_percentile", jvFloat(similarityRank)),
+				jvKey("performer_percentile", jvFloat(performerRank)),
+				jvKey("studio_percentile", jvFloat(studioRank)),
+				jvKey("corroborated", jvBool(corroborated)),
+				jvKey("direct_reliable", jvBool(directReliable)),
+				jvKey("unseen", jvBool(true)),
+			),
+		})
+	}
+	signals := []string{}
+	direct := score.components.get("direct")
+	if direct.kind == jObj {
+		for _, item := range direct.get("signals").arr {
+			signals = append(signals, item.asString())
+		}
+	}
+	durable := false
+	for _, signal := range signals {
+		if signal == "o" || signal == "thumb_up" || signal == "repeat" || signal == "scene_rating" {
+			durable = true
+			break
+		}
+	}
+	if score.directAppeal > 0.10 && score.directConfidence >= 0.35 &&
+		score.recovery >= 0.10 && durable && c.played[sceneID] {
+		durableSignals := jvArr()
+		seen := map[string]bool{}
+		for _, signal := range signals {
+			if !seen[signal] {
+				seen[signal] = true
+				durableSignals.arr = append(durableSignals.arr, jvStr(signal))
+			}
+		}
+		sort.SliceStable(durableSignals.arr, func(i, j int) bool {
+			return durableSignals.arr[i].asString() < durableSignals.arr[j].asString()
+		})
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "revisit",
+			laneValue: score.directAppeal*score.directConfidence*score.recovery +
+				0.25*score.currentFit,
+			qualification: jvObj(
+				jvKey("direct_appeal", jvFloat(score.directAppeal)),
+				jvKey("direct_confidence", jvFloat(score.directConfidence)),
+				jvKey("recovery", jvFloat(score.recovery)),
+				jvKey("durable_signals", durableSignals),
+			),
+		})
+	}
+	if !bestBet && score.directConfidence < 0.35 && strongestAnchor >= 0.08 {
+		subtype := "adjacent"
+		if len(negatives) == 1 {
+			subtype = "stretch"
+		} else if score.confidence < 0.35 || score.metadataConfidence < 0.30 {
+			subtype = "frontier"
+		}
+		var challenged jVal = jvNull()
+		if len(negatives) > 0 {
+			bestKey := ""
+			bestValue := 0.0
+			for family, value := range negatives {
+				if bestKey == "" || value < bestValue {
+					bestKey = family
+					bestValue = value
+				}
+			}
+			challenged = jvStr(bestKey)
+		}
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "discover", subtype: subtype,
+			laneValue: score.currentFit + 0.12*(1-score.confidence) + 0.5*strongestAnchor,
+			qualification: jvObj(
+				jvKey("positive_anchors", floatMapJVal(positives)),
+				jvKey("negative_assumptions", floatMapJVal(negatives)),
+				jvKey("challenged_assumption", challenged),
+				jvKey("uncertainty", jvFloat(1-score.confidence)),
+			),
+		})
+	}
+	subtype := adventureSubtype(score, positives, negatives,
+		reusable["structure"], c.coverageRanks[sceneID])
+	distanceRank := 1 - similarityRank
+	adventureValue := 0.38*c.coverageRanks[sceneID] + 0.25*distanceRank +
+		0.17*c.unknownPerformers[sceneID] + 0.08*c.unknownStudios[sceneID] +
+		0.12*score.metadataConfidence
+	classifications = append(classifications, builtLaneClassification{
+		sceneID: sceneID, lane: "adventure", subtype: subtype,
+		laneValue: adventureValue,
+		qualification: jvObj(
+			jvKey("positive_anchors", floatMapJVal(positives)),
+			jvKey("component_disagreement", floatMapJVal(negatives)),
+			jvKey("uncertainty", jvFloat(1-score.confidence)),
+			jvKey("coverage_gap_percentile", jvFloat(c.coverageRanks[sceneID])),
+			jvKey("content_distance_percentile", jvFloat(distanceRank)),
+			jvKey("unknown_performer_share", jvFloat(c.unknownPerformers[sceneID])),
+			jvKey("unknown_studio", jvFloat(c.unknownStudios[sceneID])),
+		),
+	})
+	return classifications
+}
+
 // laneClassify mirrors LanePolicy.classify and persists the rows.
 func laneClassify(db dbx, modelID string, featureVersion string, progress func(processed, total int)) ([]builtLaneClassification, error) {
 	scores, err := classificationData(db, modelID)
@@ -368,158 +535,45 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 	if err != nil {
 		return nil, err
 	}
+	sceneIDs := sortedStringKeys(eligibleScores)
+	total := len(sceneIDs)
 	var classifications []builtLaneClassification
-	total := len(eligibleScores)
-	position := 0
-	for _, sceneID := range sortedStringKeys(eligibleScores) {
-		position++
-		score := eligibleScores[sceneID]
-		reusable := map[string]float64{
-			"content":              componentValue(score.components, "content"),
-			"content_neighbor":     componentValue(score.components, "content_neighbor"),
-			"performer_identity":   componentValue(score.components, "performer_identity"),
-			"performer_similarity": componentValue(score.components, "performer_similarity"),
-			"studio":               componentValue(score.components, "studio"),
-			"structure":            componentValue(score.components, "structure"),
+	if total > 0 {
+		context := &laneContext{
+			contentRanks:      contentRanks,
+			neighborRanks:     neighborRanks,
+			similarityRanks:   similarityRanks,
+			performerRanks:    performerRanks,
+			studioRanks:       studioRanks,
+			fitRanks:          fitRanks,
+			coverageRanks:     coverageRanks,
+			unknownPerformers: unknownPerformers,
+			unknownStudios:    unknownStudios,
+			played:            played,
 		}
-		positives := map[string]float64{}
-		negatives := map[string]float64{}
-		for family, value := range reusable {
-			if value >= 0.025 {
-				positives[family] = value
-			} else if value <= -0.025 {
-				negatives[family] = value
-			}
-		}
-		strongestAnchor := 0.0
-		for _, value := range positives {
-			if value > strongestAnchor {
-				strongestAnchor = value
-			}
-		}
-		contentRank := contentRanks[sceneID]
-		neighborRank := neighborRanks[sceneID]
-		similarityRank := similarityRanks[sceneID]
-		performerRank := performerRanks[sceneID]
-		studioRank := studioRanks[sceneID]
-		relevance := (0.32*neighborRank + 0.10*similarityRank + 0.28*performerRank +
-			0.20*contentRank + 0.10*studioRank) * (0.90 + 0.10*score.metadataConfidence)
-		corroborated := neighborRank >= 0.60 && math.Max(performerRank, contentRank) >= 0.60
-		directReliable := score.directAppeal > 0.10 && score.directConfidence >= 0.50
-		bestBet := score.currentFit >= 0.18 && score.confidence >= 0.30 &&
-			score.metadataConfidence >= 0.35 && relevance >= 0.60 &&
-			(corroborated || directReliable) && !played[sceneID]
-		if bestBet {
-			classifications = append(classifications, builtLaneClassification{
-				sceneID: sceneID, lane: "best_bets",
-				laneValue: 0.55*relevance + 0.25*fitRanks[sceneID] + 0.20*score.confidence,
-				qualification: jvObj(
-					jvKey("current_fit", jvFloat(score.currentFit)),
-					jvKey("confidence", jvFloat(score.confidence)),
-					jvKey("metadata_confidence", jvFloat(score.metadataConfidence)),
-					jvKey("relevance", jvFloat(relevance)),
-					jvKey("content_percentile", jvFloat(contentRank)),
-					jvKey("neighbor_percentile", jvFloat(neighborRank)),
-					jvKey("neighbor_similarity_percentile", jvFloat(similarityRank)),
-					jvKey("performer_percentile", jvFloat(performerRank)),
-					jvKey("studio_percentile", jvFloat(studioRank)),
-					jvKey("corroborated", jvBool(corroborated)),
-					jvKey("direct_reliable", jvBool(directReliable)),
-					jvKey("unseen", jvBool(true)),
-				),
-			})
-		}
-		signals := []string{}
-		direct := score.components.get("direct")
-		if direct.kind == jObj {
-			for _, item := range direct.get("signals").arr {
-				signals = append(signals, item.asString())
-			}
-		}
-		durable := false
-		for _, signal := range signals {
-			if signal == "o" || signal == "thumb_up" || signal == "repeat" || signal == "scene_rating" {
-				durable = true
-				break
-			}
-		}
-		if score.directAppeal > 0.10 && score.directConfidence >= 0.35 &&
-			score.recovery >= 0.10 && durable && played[sceneID] {
-			durableSignals := jvArr()
-			seen := map[string]bool{}
-			for _, signal := range signals {
-				if !seen[signal] {
-					seen[signal] = true
-					durableSignals.arr = append(durableSignals.arr, jvStr(signal))
+		// Each scene's classification depends only on its own score and the
+		// precomputed ranks, so the loop is row-independent: run it in fixed
+		// chunks (the kernel pattern) with progress ticks emitted in scene
+		// order regardless of worker interleaving.
+		progressReporter := newOrderedProgress()
+		reporterDone := make(chan struct{})
+		go func() {
+			defer close(reporterDone)
+			progressReporter.wait(reportPoints(total), func(completed int) {
+				if progress != nil {
+					progress(completed, maxInt(1, total))
 				}
-			}
-			sort.SliceStable(durableSignals.arr, func(i, j int) bool {
-				return durableSignals.arr[i].asString() < durableSignals.arr[j].asString()
 			})
-			classifications = append(classifications, builtLaneClassification{
-				sceneID: sceneID, lane: "revisit",
-				laneValue: score.directAppeal*score.directConfidence*score.recovery +
-					0.25*score.currentFit,
-				qualification: jvObj(
-					jvKey("direct_appeal", jvFloat(score.directAppeal)),
-					jvKey("direct_confidence", jvFloat(score.directConfidence)),
-					jvKey("recovery", jvFloat(score.recovery)),
-					jvKey("durable_signals", durableSignals),
-				),
-			})
-		}
-		if !bestBet && score.directConfidence < 0.35 && strongestAnchor >= 0.08 {
-			subtype := "adjacent"
-			if len(negatives) == 1 {
-				subtype = "stretch"
-			} else if score.confidence < 0.35 || score.metadataConfidence < 0.30 {
-				subtype = "frontier"
+		}()
+		classifications = parallelChunks(total, nthreads(0), func(start, end int) []builtLaneClassification {
+			var out []builtLaneClassification
+			for _, sceneID := range sceneIDs[start:end] {
+				out = append(out, context.classifyScene(sceneID, eligibleScores[sceneID])...)
+				progressReporter.done()
 			}
-			var challenged jVal = jvNull()
-			if len(negatives) > 0 {
-				bestKey := ""
-				bestValue := 0.0
-				for family, value := range negatives {
-					if bestKey == "" || value < bestValue {
-						bestKey = family
-						bestValue = value
-					}
-				}
-				challenged = jvStr(bestKey)
-			}
-			classifications = append(classifications, builtLaneClassification{
-				sceneID: sceneID, lane: "discover", subtype: subtype,
-				laneValue: score.currentFit + 0.12*(1-score.confidence) + 0.5*strongestAnchor,
-				qualification: jvObj(
-					jvKey("positive_anchors", floatMapJVal(positives)),
-					jvKey("negative_assumptions", floatMapJVal(negatives)),
-					jvKey("challenged_assumption", challenged),
-					jvKey("uncertainty", jvFloat(1-score.confidence)),
-				),
-			})
-		}
-		subtype := adventureSubtype(score, positives, negatives,
-			reusable["structure"], coverageRanks[sceneID])
-		distanceRank := 1 - similarityRank
-		adventureValue := 0.38*coverageRanks[sceneID] + 0.25*distanceRank +
-			0.17*unknownPerformers[sceneID] + 0.08*unknownStudios[sceneID] +
-			0.12*score.metadataConfidence
-		classifications = append(classifications, builtLaneClassification{
-			sceneID: sceneID, lane: "adventure", subtype: subtype,
-			laneValue: adventureValue,
-			qualification: jvObj(
-				jvKey("positive_anchors", floatMapJVal(positives)),
-				jvKey("component_disagreement", floatMapJVal(negatives)),
-				jvKey("uncertainty", jvFloat(1-score.confidence)),
-				jvKey("coverage_gap_percentile", jvFloat(coverageRanks[sceneID])),
-				jvKey("content_distance_percentile", jvFloat(distanceRank)),
-				jvKey("unknown_performer_share", jvFloat(unknownPerformers[sceneID])),
-				jvKey("unknown_studio", jvFloat(unknownStudios[sceneID])),
-			),
+			return out
 		})
-		if progress != nil && (position == total || position%250 == 0) {
-			progress(position, maxInt(1, total))
-		}
+		<-reporterDone
 	}
 	if progress != nil && total == 0 {
 		progress(1, 1)
