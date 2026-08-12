@@ -57,30 +57,6 @@ func modelStoreFail(db dbx, modelID string) error {
 	})
 }
 
-// insertArtifactRows batches rows into the artifact with one transaction per
-// batch of 1000 (mirroring _publish's insert_rows).
-func insertArtifactRows(artifact dbx, statement string, rows [][]any) error {
-	for start := 0; start < len(rows); start += 1000 {
-		end := start + 1000
-		if end > len(rows) {
-			end = len(rows)
-		}
-		batch := rows[start:end]
-		if err := withTxn(artifact, func(conn *sql.Conn) error {
-			ctx := context.Background()
-			for _, args := range batch {
-				if _, err := conn.ExecContext(ctx, statement, args...); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // modelPublish mirrors PreferenceModelBuilder._publish, recording the
 // database_writing / lane_classification / varied_ordering / indexing /
 // validation / publication stage timings into rec (the caller's build

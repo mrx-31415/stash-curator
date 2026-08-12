@@ -1383,23 +1383,25 @@ ON CONFLICT(local_tag_id, snapshot_id) DO UPDATE SET
 			return err
 		}
 		return withTxn(artifact, func(conn *sql.Conn) error {
-			ctx := context.Background()
 			definitionKeys := make([]string, 0, len(definitions))
 			for key := range definitions {
 				definitionKeys = append(definitionKeys, key)
 			}
 			sort.Strings(definitionKeys)
+			definitionRows := make([][]any, 0, len(definitionKeys))
 			for _, key := range definitionKeys {
 				parts := strings.SplitN(key, "\x00", 3)
 				definition := definitions[key]
-				if _, err := conn.ExecContext(ctx, `
+				definitionRows = append(definitionRows, []any{
+					definition.featureID, featureVersion, parts[1], parts[2],
+					definition.metadata.marshalSortedKeys(),
+				})
+			}
+			if err := execMultiRow(conn, `
 INSERT INTO feature_definition(
     feature_id, feature_version, family, name, provenance, metadata_json
-) VALUES (?, ?, ?, ?, 'feature_builder', ?)`,
-					definition.featureID, featureVersion, parts[1], parts[2],
-					definition.metadata.marshalSortedKeys()); err != nil {
-					return err
-				}
+) VALUES (?, ?, ?, ?, 'feature_builder', ?)`, definitionRows); err != nil {
+				return err
 			}
 			sortedFeatures := append([]featureRow(nil), features...)
 			sort.SliceStable(sortedFeatures, func(i, j int) bool {
@@ -1415,29 +1417,35 @@ INSERT INTO feature_definition(
 				}
 				return a.name < b.name
 			})
+			featureRows := make([][]any, 0, len(sortedFeatures))
 			for _, feature := range sortedFeatures {
 				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
-				if _, err := conn.ExecContext(ctx, `
+				featureRows = append(featureRows, []any{
+					featureVersion, feature.entityType, feature.entityID, definitions[key].featureID,
+					feature.value, feature.confidence,
+				})
+			}
+			if err := execMultiRow(conn, `
 INSERT INTO entity_feature(
     feature_version, entity_type, entity_id, feature_id, value, confidence
-) VALUES (?, ?, ?, ?, ?, ?)`,
-					featureVersion, feature.entityType, feature.entityID, definitions[key].featureID,
-					feature.value, feature.confidence); err != nil {
-					return err
-				}
+) VALUES (?, ?, ?, ?, ?, ?)`, featureRows); err != nil {
+				return err
 			}
+			searchRows := make([][]any, 0, len(sortedFeatures))
 			for _, feature := range sortedFeatures {
 				if feature.entityType != "scene" || feature.family != "content" {
 					continue
 				}
 				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
-				if _, err := conn.ExecContext(ctx, `
+				searchRows = append(searchRows, []any{
+					featureVersion, definitions[key].featureID, feature.entityID, feature.value,
+				})
+			}
+			if err := execMultiRow(conn, `
 INSERT INTO scene_content_search(
     feature_version, feature_id, scene_id, value
-) VALUES (?, ?, ?, ?)`,
-					featureVersion, definitions[key].featureID, feature.entityID, feature.value); err != nil {
-					return err
-				}
+) VALUES (?, ?, ?, ?)`, searchRows); err != nil {
+				return err
 			}
 			return nil
 		})
