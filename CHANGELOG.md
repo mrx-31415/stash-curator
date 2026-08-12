@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/mrx-31415/stash-curator/compare/v0.8.1...v0.9.0) (2026-08-12)
+
+
+### Features
+
+* instrument build stages with timings, memory, and a perf budget gate ([#128](https://github.com/mrx-31415/stash-curator/issues/128)) ([c9c2b5e](https://github.com/mrx-31415/stash-curator/commit/c9c2b5e9f7db60eff082c6558b02bc6f376d2a78))
+
 ## [0.8.1](https://github.com/mrx-31415/stash-curator/compare/v0.8.0...v0.8.1) (2026-08-12)
 
 
