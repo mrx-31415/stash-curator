@@ -116,7 +116,7 @@ def core_binaries() -> list[Path]:
         )
         if goos == "darwin":
             env["CGO_LDFLAGS"] = f"-L{ZIG_SHIM_DIR} -F{ZIG_SHIM_DIR}"
-        pending.append(((goos, goarch), target, env))
+        pending.append((target, env))
 
     def build_one(item: tuple[Path, dict[str, str]]) -> None:
         target, env = item
