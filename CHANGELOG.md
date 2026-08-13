@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/mrx-31415/stash-curator/compare/v0.9.2...v0.10.0) (2026-08-13)
+
+
+### Features
+
+* mirror derived artifact cache into backup storage ([#136](https://github.com/mrx-31415/stash-curator/issues/136)) ([2dcf5b2](https://github.com/mrx-31415/stash-curator/commit/2dcf5b218c2d2491497bb336a7261d4c9a499fd2))
+* score-review op sorted by model appeal ([#138](https://github.com/mrx-31415/stash-curator/issues/138)) ([cbb1bfb](https://github.com/mrx-31415/stash-curator/commit/cbb1bfbcdf868a162d35ae1aa19204fc731070bd))
+
+
+### Bug Fixes
+
+* re-annotate expand candidates against current links at serve time ([#137](https://github.com/mrx-31415/stash-curator/issues/137)) ([2695973](https://github.com/mrx-31415/stash-curator/commit/26959733b66a89f316a20cb294b0478855de4296))
+* URL carries full view state for expand/similar/history/prune; add score-review view ([#139](https://github.com/mrx-31415/stash-curator/issues/139)) ([9b5399e](https://github.com/mrx-31415/stash-curator/commit/9b5399efaf4398f74a350be308f91019832deaf0))
+
 ## [0.9.2](https://github.com/mrx-31415/stash-curator/compare/v0.9.1...v0.9.2) (2026-08-12)
 
 
