@@ -15,6 +15,35 @@ import "fmt"
 // scoreReviewLane is the item lane and impression lane for this op.
 const scoreReviewLane = "score_review"
 
+// scoreReviewEligibility is sceneEligibility for the review surface: the
+// current_thumb_down reason does NOT exclude. Recommendation lanes hide
+// thumb-downed scenes so they are never re-recommended; the score-review
+// surface exists to inspect the bottom of the appeal distribution, and the
+// scenes the user explicitly disliked are exactly the ones it must show.
+// Every other reason (file_unavailable, hard_exclusion, pruning_*,
+// not_now, blocked_tag) still excludes.
+func scoreReviewEligibility(db dbx, referenceAtMs int64, sceneIDs map[string]bool) (map[string]eligibilityResult, error) {
+	eligibility, err := sceneEligibility(db, referenceAtMs, sceneIDs)
+	if err != nil {
+		return nil, err
+	}
+	for sceneID, state := range eligibility {
+		if state.eligible {
+			continue
+		}
+		reasons := state.reasons[:0]
+		for _, reason := range state.reasons {
+			if reason != "current_thumb_down" {
+				reasons = append(reasons, reason)
+			}
+		}
+		state.reasons = reasons
+		state.eligible = len(reasons) == 0
+		eligibility[sceneID] = state
+	}
+	return eligibility, nil
+}
+
 func opGetScoreReview(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_score_review",
 		func(settings jVal) (jVal, error) { return getScoreReviewBody(pluginDir, payload, settings) })
@@ -112,7 +141,7 @@ WHERE model_id=? AND appeal <= ?`, modelID, maxAppeal)
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	eligibility, err := sceneEligibility(db, nowMs(), sceneIDs)
+	eligibility, err := scoreReviewEligibility(db, nowMs(), sceneIDs)
 	if err != nil {
 		return 0, err
 	}
@@ -170,7 +199,7 @@ LIMIT ? OFFSET ?`, modelID, maxAppeal, chunkSize, offset)
 		for _, row := range chunk {
 			sceneIDs[row.sceneID] = true
 		}
-		eligibility, err := sceneEligibility(db, now, sceneIDs)
+		eligibility, err := scoreReviewEligibility(db, now, sceneIDs)
 		if err != nil {
 			return builtSlate{}, err
 		}

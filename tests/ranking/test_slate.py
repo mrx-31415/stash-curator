@@ -1065,12 +1065,40 @@ def test_score_review_applies_live_eligibility(tmp_path: Path) -> None:
     )
     connection.commit()
     result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0)
+    # c-best hard-excluded stays out; b-best's current thumb_down does NOT
+    # exclude on the review surface.
     assert [item["scene_id"] for item in result["items"]] == [
         "x-excluded",
         "a-best",
+        "b-best",
         "d-revisit",
     ]
-    assert result["total"] == 3
+    assert result["total"] == 4
+
+
+def test_score_review_thumb_down_does_not_exclude(tmp_path: Path) -> None:
+    """The review surface drops the current_thumb_down reason: scenes the
+    user disliked are exactly what the bottom-of-distribution review must
+    show. Other reasons (file_unavailable, hard exclusion) still exclude."""
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    for scene_id in ("a-best", "x-excluded"):
+        connection.execute(
+            """
+            INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+                                 occurred_at_ms, payload_json)
+            VALUES (?, ?, 'thumb_down', NULL, 1, '{}')
+            """,
+            (f"fb-{scene_id}", scene_id),
+        )
+    connection.commit()
+    result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0)
+    scene_ids = [item["scene_id"] for item in result["items"]]
+    # a-best (thumb_down only) stays; x-excluded (thumb_down on top of a
+    # built ineligible row) stays out.
+    assert scene_ids == ["x-excluded", "a-best", "b-best", "c-best", "d-revisit"]
+    assert result["total"] == 5
+    builder = SlateBuilder(connection)
+    assert builder.score_review_available_count("model", 0.0) == 5
 
 
 def test_score_review_records_impression_like_get_slate(tmp_path: Path) -> None:

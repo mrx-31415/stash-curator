@@ -11,8 +11,9 @@ import (
 
 // scoreReviewSeed seeds a published model with score rows covering the
 // review window, plus the rows sceneEligibility reads. s3 is hard-excluded,
-// s4 carries a current thumb_down, and s8 has no available file — all three
-// must be filtered from items and total.
+// s4 carries a current thumb_down, and s8 has no available file. The review
+// surface drops only current_thumb_down from eligibility: s4 is shown, s3
+// and s8 are filtered from items and total.
 func scoreReviewSeed(t *testing.T) dbx {
 	t.Helper()
 	db, _ := openTempDB(t)
@@ -79,13 +80,15 @@ func TestScoreReviewOrdersByAppealAscendingWithEligibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
-	// s3 hard-excluded, s4 thumb_down, s8 no file; the eligible tail is
-	// s1 (-0.9), s2 (-0.6), s5 (0.0) in appeal-ascending order.
-	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s1,s2,s5" {
-		t.Fatalf("items = %v, want [s1 s2 s5]", got)
+	// s3 hard-excluded, s8 no file; s4's current thumb_down does NOT exclude
+	// on the review surface (it is exactly what the review is for). The
+	// eligible tail is s1 (-0.9), s2 (-0.6), s4 (-0.2), s5 (0.0) in
+	// appeal-ascending order.
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s1,s2,s4,s5" {
+		t.Fatalf("items = %v, want [s1 s2 s4 s5]", got)
 	}
-	if out.get("total").asString() != "3" {
-		t.Fatalf("total = %s, want 3", out.get("total").asString())
+	if out.get("total").asString() != "4" {
+		t.Fatalf("total = %s, want 4", out.get("total").asString())
 	}
 	if out.get("page_size").asString() != "20" || out.get("page").asString() != "1" {
 		t.Fatalf("page_size/page = %s/%s", out.get("page_size").asString(), out.get("page").asString())
@@ -105,6 +108,33 @@ func TestScoreReviewOrdersByAppealAscendingWithEligibility(t *testing.T) {
 	}
 	if len(out.obj) != len(wantKeys) {
 		t.Errorf("response has %d keys, want %d", len(out.obj), len(wantKeys))
+	}
+}
+
+func TestScoreReviewThumbDownDoesNotExcludeButOtherReasonsDo(t *testing.T) {
+	db := scoreReviewSeed(t)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	// s8 has no available file; adding a thumb_down on top must not make it
+	// eligible — the wrapper drops current_thumb_down only, never the other
+	// exclusion reasons.
+	exec(`INSERT INTO feedback(feedback_id, scene_id, feedback_type, value, occurred_at_ms, payload_json)
+VALUES ('fb-2', 's8', 'thumb_down', NULL, 1, '{}')`)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0)
+	if err != nil {
+		t.Fatalf("getScoreReviewCore: %v", err)
+	}
+	// s4 (thumb_down only) is shown; s8 (thumb_down + file_unavailable) and
+	// s3 (hard exclusion) stay hidden.
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s1,s2,s4,s5" {
+		t.Fatalf("items = %v, want [s1 s2 s4 s5]", got)
+	}
+	if out.get("total").asString() != "4" {
+		t.Fatalf("total = %s, want 4", out.get("total").asString())
 	}
 }
 
@@ -186,16 +216,17 @@ func TestScoreReviewMaxAppealCap(t *testing.T) {
 	if out.get("total").asString() != "2" {
 		t.Fatalf("total = %s, want 2", out.get("total").asString())
 	}
-	// A cap that admits s6 (0.1) but not s7 (0.3).
+	// A cap that admits s6 (0.1) but not s7 (0.3); s4 (thumb_down) is
+	// eligible on the review surface.
 	out, err = getScoreReviewCore(db, jvObj(), 1, 20, 0.1)
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
-	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s1,s2,s5,s6" {
-		t.Fatalf("items = %v, want [s1 s2 s5 s6]", got)
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s1,s2,s4,s5,s6" {
+		t.Fatalf("items = %v, want [s1 s2 s4 s5 s6]", got)
 	}
-	if out.get("total").asString() != "4" {
-		t.Fatalf("total = %s, want 4", out.get("total").asString())
+	if out.get("total").asString() != "5" {
+		t.Fatalf("total = %s, want 5", out.get("total").asString())
 	}
 	// A cap below every appeal yields an empty page.
 	out, err = getScoreReviewCore(db, jvObj(), 1, 20, -1.0)
@@ -213,7 +244,7 @@ func TestScoreReviewMaxAppealCap(t *testing.T) {
 
 func TestScoreReviewPagingMath(t *testing.T) {
 	db := scoreReviewSeed(t)
-	// page 1, count 2: s1, s2, has_more (3 > 2).
+	// page 1, count 2: s1, s2, has_more (4 > 2).
 	out, err := getScoreReviewCore(db, jvObj(), 1, 2, 0)
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
@@ -227,16 +258,17 @@ func TestScoreReviewPagingMath(t *testing.T) {
 	if got := out.get("items").arr[1].get("position").asString(); got != "1" {
 		t.Fatalf("page 1 second position = %s, want 1", got)
 	}
-	// page 2, count 2: s5 (position 2), has_more false (3 > 4 is false).
+	// page 2, count 2: s4, s5 (positions 2 and 3), has_more false (4 > 4 is
+	// false).
 	out, err = getScoreReviewCore(db, jvObj(), 2, 2, 0)
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
-	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s5" {
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s4,s5" {
 		t.Fatalf("page 2 items = %v", got)
 	}
 	if got := out.get("items").arr[0].get("position").asString(); got != "2" {
-		t.Fatalf("page 2 position = %s, want 2", got)
+		t.Fatalf("page 2 first position = %s, want 2", got)
 	}
 	if out.get("has_more").b {
 		t.Fatalf("page 2 has_more = %s, want false", out.get("has_more").asString())
@@ -249,8 +281,8 @@ func TestScoreReviewPagingMath(t *testing.T) {
 	if len(out.get("items").arr) != 0 {
 		t.Fatalf("page 3 items = %v, want empty", scoreReviewIDs(t, out))
 	}
-	if out.get("total").asString() != "3" {
-		t.Fatalf("page 3 total = %s, want 3", out.get("total").asString())
+	if out.get("total").asString() != "4" {
+		t.Fatalf("page 3 total = %s, want 4", out.get("total").asString())
 	}
 }
 

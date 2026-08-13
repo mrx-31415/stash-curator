@@ -71,8 +71,8 @@ def stub_stash() -> str:
 def make_score_review_sidecar(path: Path) -> None:
     """A migrated sidecar exercising get_score_review: a published model whose
     score rows cover the review window (s3 hard-excluded, s4 carries a
-    current thumb_down, s8 has no available file), with a neighbor row for
-    s1."""
+    current thumb_down — shown on the review surface, s8 has no available
+    file), with a neighbor row for s1."""
     make_sidecar(path, with_jobs=True)
     connection = sqlite3.connect(path)
     try:
@@ -177,7 +177,8 @@ def test_score_review_default_byte_identical(
     tmp_path: Path, binary: Path, stub_stash: str, score_review_sidecar: Path
 ) -> None:
     # Defaults: page 1, count 20, max_appeal 0. Eligible tail is s1 (-0.9),
-    # s2 (-0.6), s5 (0.0) — s3 hard-excluded, s4 thumb_down, s8 no file.
+    # s2 (-0.6), s4 (-0.2), s5 (0.0) — s3 hard-excluded, s8 no file; s4's
+    # current thumb_down does NOT exclude on the review surface.
     raw = payload("get_score_review", score_review_sidecar, stub_stash)
     assert_score_review_identical(binary, raw, score_review_sidecar, normalize=("impression_id",))
 

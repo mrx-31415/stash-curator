@@ -904,6 +904,28 @@ class SlateBuilder:
         )
         return sum(1 for scene_id in excluded if eligibility.get(scene_id, {}).get("eligible"))
 
+    def _score_review_eligibility(
+        self, now_ms: int, scene_ids: set[str]
+    ) -> dict[str, dict[str, object]]:
+        """scene_eligibility for the review surface: the current_thumb_down
+        reason does NOT exclude. Recommendation lanes hide thumb-downed
+        scenes so they are never re-recommended; the score-review surface
+        exists to inspect the bottom of the appeal distribution, and the
+        scenes the user explicitly disliked are exactly the ones it must
+        show. Every other reason (file_unavailable, hard_exclusion,
+        pruning_*, not_now, blocked_tag) still excludes. Mirrors the Go
+        core's scoreReviewEligibility exactly."""
+        eligibility = scene_eligibility(self.connection, now_ms, self.config, scene_ids=scene_ids)
+        for state in eligibility.values():
+            if state.get("eligible"):
+                continue
+            reasons = state.get("reasons", [])
+            if not isinstance(reasons, list):
+                continue
+            state["reasons"] = [r for r in reasons if r != "current_thumb_down"]
+            state["eligible"] = not state["reasons"]
+        return eligibility
+
     def score_review_available_count(self, model_id: str, max_appeal: float = 0.0) -> int:
         """Count eligible scenes at the bottom of the appeal distribution
         (appeal <= max_appeal) without hydrating items, applying the same
@@ -918,9 +940,7 @@ class SlateBuilder:
                 (model_id, max_appeal),
             )
         }
-        eligibility = scene_eligibility(
-            self.connection, time.time_ns() // 1_000_000, self.config, scene_ids=scene_ids
-        )
+        eligibility = self._score_review_eligibility(time.time_ns() // 1_000_000, scene_ids)
         return sum(1 for scene_id in scene_ids if eligibility.get(scene_id, {}).get("eligible"))
 
     def score_review(self, model_id: str, count: int, *, max_appeal: float = 0.0) -> Slate:
@@ -951,9 +971,7 @@ class SlateBuilder:
                 break
             offset += len(rows)
             scene_ids = {str(row["scene_id"]) for row in rows}
-            eligibility = scene_eligibility(
-                self.connection, now_ms, self.config, scene_ids=scene_ids
-            )
+            eligibility = self._score_review_eligibility(now_ms, scene_ids)
             selected_rows.extend(
                 row for row in rows if eligibility.get(str(row["scene_id"]), {}).get("eligible")
             )
