@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -196,6 +197,122 @@ func backupDatabase(db dbx, dst string, overwrite bool, progress func(done, tota
 	return dst, nil
 }
 
+// mirrorDerivedArtifacts copies every immutable final artifact in the live
+// derived cache (<stem>-derived beside the core database) into
+// <backup-dir>/derived/, so a backup directory carries both the database
+// snapshot and the artifact generations its published rows reference. The
+// sidecar itself is never copied here: the WAL database is only ever
+// snapshotted through the SQLite backup API (backupDatabase), and only the
+// immutable final artifact files are file-copied. Artifact basenames embed
+// the generation version, so the mirror is idempotent and additive: a
+// re-run never rewrites an unchanged artifact (target exists with the same
+// size) and never deletes older copies, keeping every historical backup
+// restorable against the artifacts its snapshot references. Symlinked or
+// non-regular entries in the cache are skipped; a symlinked cache directory
+// is rejected outright (the same guard artifactPath applies).
+func mirrorDerivedArtifacts(db dbx, directory string) error {
+	corePath, err := coreDatabasePath(db)
+	if err != nil {
+		return err
+	}
+	cache := cacheDirectory(corePath)
+	info, err := os.Lstat(cache)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no derived cache yet — nothing to mirror
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("unsafe derived-cache directory: %s", cache)
+	}
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		return err
+	}
+	targetDir := filepath.Join(directory, "derived")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		if !finalArtifactName.MatchString(entry.Name()) {
+			continue
+		}
+		source := filepath.Join(cache, entry.Name())
+		target := filepath.Join(targetDir, entry.Name())
+		if err := mirrorArtifactFile(source, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mirrorArtifactFile copies source to target unless a regular target of the
+// same size already exists — artifact filenames embed the generation
+// version, so an existing same-size target is already the mirrored artifact
+// and copying again would be pure waste (no hashing of the large files). A
+// size mismatch means the target is stale or truncated; it is replaced. The
+// copy lands in a temp file in the target directory and is renamed into
+// place, so a partially written mirror is never visible; the temp is removed
+// on any failure.
+func mirrorArtifactFile(source, target string) error {
+	srcInfo, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Stat(target); err == nil {
+		if info.Size() == srcInfo.Size() {
+			return nil // already mirrored
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to replace non-regular mirror target: %s", target)
+		}
+		// Stale/truncated target: drop it so the rename below is a clean
+		// replace (also required on Windows, where os.Rename cannot replace
+		// an existing file).
+		if err := os.Remove(target); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	temporary := filepath.Join(
+		filepath.Dir(target),
+		fmt.Sprintf(".%s.%s.tmp", filepath.Base(target), strings.ReplaceAll(uuid4(), "-", "")),
+	)
+	cleanup := func() {
+		if err := os.Remove(temporary); err != nil && !os.IsNotExist(err) {
+			warnLog("could not remove derived mirror temp: " + err.Error())
+		}
+	}
+	src, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	dst, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		src.Close()
+		return err
+	}
+	_, copyErr := io.Copy(dst, src)
+	src.Close()
+	if err := dst.Close(); err != nil && copyErr == nil {
+		copyErr = err
+	}
+	if copyErr != nil {
+		cleanup()
+		return copyErr
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
+}
+
 // opBackupControl mirrors backend.py's _backup_control dispatch. It is not
 // _profiled (matching the Python dispatch).
 func opBackupControl(pluginDir string, payload jVal) (jVal, error) {
@@ -238,6 +355,12 @@ func opBackupControl(pluginDir string, payload jVal) (jVal, error) {
 		)
 		if err != nil {
 			return jvNull(), err
+		}
+		if err := mirrorDerivedArtifacts(db, directory); err != nil {
+			// The database backup is the contract; the artifact mirror is
+			// best-effort additive recovery data, so a mirror failure warns
+			// (plugin logs) instead of failing the backup.
+			warnLog("derived artifact mirror failed: " + err.Error())
 		}
 		items, err := listBackups(directory)
 		if err != nil {
