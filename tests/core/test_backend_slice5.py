@@ -243,6 +243,23 @@ def test_score_review_zero_args_coerced_byte_identical(
     assert_score_review_identical(binary, raw, score_review_sidecar, normalize=("impression_id",))
 
 
+def test_score_review_desc_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, score_review_sidecar: Path
+) -> None:
+    # order=desc: the same window (appeal <= 0) ranked most-appealing first.
+    raw = payload("get_score_review", score_review_sidecar, stub_stash, order="desc")
+    assert_score_review_identical(binary, raw, score_review_sidecar, normalize=("impression_id",))
+
+
+def test_score_review_invalid_order_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str, score_review_sidecar: Path
+) -> None:
+    # Any order other than asc/desc errors identically on both backends
+    # (no impression is recorded on the error path).
+    raw = payload("get_score_review", score_review_sidecar, stub_stash, order="sideways")
+    assert_score_review_identical(binary, raw, score_review_sidecar)
+
+
 def test_score_review_requires_model_byte_identical(
     tmp_path: Path, binary: Path, stub_stash: str
 ) -> None:
