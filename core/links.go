@@ -87,9 +87,10 @@ func externalLinks(payload jVal, db dbx) (jVal, error) {
 }
 
 // externalLinksRefresh mirrors _external_links with refresh=True: skip the
-// cache read but still write the cache row. progress, when non-nil, receives
-// (processed, total) page ticks over the paginated walk (issue #110: the
-// expand-refresh bar used to sit at 5% for the whole library walk).
+// cache read but still compute the state and write the cache row. progress,
+// when non-nil, receives (processed, total) page ticks over the paginated
+// walk (issue #110: the expand-refresh bar used to sit at 5% for the whole
+// library walk).
 func externalLinksRefresh(payload jVal, db dbx, progress func(processed, total int)) (jVal, error) {
 	return externalLinksImpl(payload, db, true, progress)
 }
@@ -174,17 +175,23 @@ func fetchLinksPage(base string, headers map[string]string, page int64) linksPag
 }
 
 func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(processed, total int)) (jVal, error) {
+	// The state hash is computed whenever a cache row can be written — also
+	// on refresh — so the cache never stores an empty state and the next
+	// non-refresh op can reuse the row (mirrors _external_links, which
+	// computes the state whenever connection is not None).
 	state := ""
 	var err error
-	if db != nil && !refresh {
+	if db != nil {
 		state, err = externalLinksState(payload)
 		if err != nil {
 			return jvNull(), err
 		}
-		if cached, ok, err := cachedExternalLinks(db, state); err != nil {
-			return jvNull(), err
-		} else if ok {
-			return cached, nil
+		if !refresh {
+			if cached, ok, err := cachedExternalLinks(db, state); err != nil {
+				return jvNull(), err
+			} else if ok {
+				return cached, nil
+			}
 		}
 	}
 	base, headers := stashConnection(payload)
