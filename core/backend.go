@@ -141,6 +141,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetSlate(pluginDir, payload)
 	case "replace_item":
 		return opReplaceItem(pluginDir, payload)
+	case "get_score_review":
+		return opGetScoreReview(pluginDir, payload)
 	case "get_similar":
 		return opGetSimilar(pluginDir, payload)
 	case "get_explanation":

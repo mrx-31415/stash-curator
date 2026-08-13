@@ -713,6 +713,17 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
             )
+        if operation == "get_score_review":
+            config = api.config()["config"]
+            count = int(
+                args.get("count")
+                or (config.get("page_size", 20) if isinstance(config, dict) else 20)
+            )
+            return api.get_score_review(
+                page=int(args.get("page") or 1),
+                count=count,
+                max_appeal=float(args.get("max_appeal") or 0),
+            )
         if operation == "replace_item":
             excluded = args.get("exclude_scene_ids")
             if not isinstance(excluded, list):
