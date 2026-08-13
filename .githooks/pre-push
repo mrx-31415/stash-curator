@@ -1,26 +1,20 @@
 #!/bin/sh
-# Pre-push verification, scoped to what this push actually changes.
+# Pre-push hygiene, not a test gate.
 #
-# Code, packaging, or infra changes run `scripts/verify full` (the same gate
-# CI runs). Docs-only pushes run the cheap checks — the full matrix still
-# runs in CI on the pushed refs. Without an origin/main to diff against
-# (fresh clone, first push) the full gate always runs.
+# Verification intentionally does NOT run here. The full gate in the push
+# path caused more friction than it caught — multi-minute pushes, SSH
+# connection timeouts, and host-contention perf-gate noise — while CI runs
+# the identical matrix on every pushed ref. This hook only checks the diff
+# for whitespace errors; the full gate runs in CI and locally via
+# `scripts/verify full`.
 set -eu
 
 root="$(git rev-parse --show-toplevel)"
 
-if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-  exec "$root/scripts/verify" full
-fi
 base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
 if [ -z "$base" ]; then
-  exec "$root/scripts/verify" full
-fi
-
-if [ "$(git diff --name-only "$base"...HEAD -- . ':(exclude)docs/**' ':(exclude)*.md' | wc -l)" -eq 0 ]; then
-  git diff --check "$base"...HEAD
-  echo "[pre-push] docs-only change; the full suite runs in CI"
   exit 0
 fi
 
-exec "$root/scripts/verify" full
+git diff --check "$base"...HEAD
+echo "[pre-push] diff check clean; full verification runs in CI and via scripts/verify full"
