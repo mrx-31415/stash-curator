@@ -76,7 +76,7 @@ func scoreReviewIDs(t *testing.T, out jVal) []string {
 
 func TestScoreReviewOrdersByAppealAscendingWithEligibility(t *testing.T) {
 	db := scoreReviewSeed(t)
-	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestScoreReviewThumbDownDoesNotExcludeButOtherReasonsDo(t *testing.T) {
 	// exclusion reasons.
 	exec(`INSERT INTO feedback(feedback_id, scene_id, feedback_type, value, occurred_at_ms, payload_json)
 VALUES ('fb-2', 's8', 'thumb_down', NULL, 1, '{}')`)
-	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -138,9 +138,36 @@ VALUES ('fb-2', 's8', 'thumb_down', NULL, 1, '{}')`)
 	}
 }
 
+func TestScoreReviewOrdersDescending(t *testing.T) {
+	db := scoreReviewSeed(t)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0, "desc")
+	if err != nil {
+		t.Fatalf("getScoreReviewCore: %v", err)
+	}
+	// Descending within the window (appeal <= 0): s5 (0.0), s4 (-0.2),
+	// s2 (-0.6), s1 (-0.9). s3 hard-excluded, s8 no file.
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s5,s4,s2,s1" {
+		t.Fatalf("items = %v, want [s5 s4 s2 s1]", got)
+	}
+	if out.get("total").asString() != "4" {
+		t.Fatalf("total = %s, want 4", out.get("total").asString())
+	}
+	// Descending paging: page 1 count 2 = s5, s4 (positions 0, 1).
+	out, err = getScoreReviewCore(db, jvObj(), 1, 2, 0, "desc")
+	if err != nil {
+		t.Fatalf("getScoreReviewCore: %v", err)
+	}
+	if got := scoreReviewIDs(t, out); strings.Join(got, ",") != "s5,s4" {
+		t.Fatalf("desc page 1 items = %v, want [s5 s4]", got)
+	}
+	if got := out.get("items").arr[1].get("position").asString(); got != "1" {
+		t.Fatalf("desc page 1 second position = %s, want 1", got)
+	}
+}
+
 func TestScoreReviewItemsMirrorSlateShape(t *testing.T) {
 	db := scoreReviewSeed(t)
-	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -205,7 +232,7 @@ func TestScoreReviewItemsMirrorSlateShape(t *testing.T) {
 
 func TestScoreReviewMaxAppealCap(t *testing.T) {
 	db := scoreReviewSeed(t)
-	out, err := getScoreReviewCore(db, jvObj(), 1, 20, -0.4)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 20, -0.4, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -218,7 +245,7 @@ func TestScoreReviewMaxAppealCap(t *testing.T) {
 	}
 	// A cap that admits s6 (0.1) but not s7 (0.3); s4 (thumb_down) is
 	// eligible on the review surface.
-	out, err = getScoreReviewCore(db, jvObj(), 1, 20, 0.1)
+	out, err = getScoreReviewCore(db, jvObj(), 1, 20, 0.1, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -229,7 +256,7 @@ func TestScoreReviewMaxAppealCap(t *testing.T) {
 		t.Fatalf("total = %s, want 5", out.get("total").asString())
 	}
 	// A cap below every appeal yields an empty page.
-	out, err = getScoreReviewCore(db, jvObj(), 1, 20, -1.0)
+	out, err = getScoreReviewCore(db, jvObj(), 1, 20, -1.0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -245,7 +272,7 @@ func TestScoreReviewMaxAppealCap(t *testing.T) {
 func TestScoreReviewPagingMath(t *testing.T) {
 	db := scoreReviewSeed(t)
 	// page 1, count 2: s1, s2, has_more (4 > 2).
-	out, err := getScoreReviewCore(db, jvObj(), 1, 2, 0)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 2, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -260,7 +287,7 @@ func TestScoreReviewPagingMath(t *testing.T) {
 	}
 	// page 2, count 2: s4, s5 (positions 2 and 3), has_more false (4 > 4 is
 	// false).
-	out, err = getScoreReviewCore(db, jvObj(), 2, 2, 0)
+	out, err = getScoreReviewCore(db, jvObj(), 2, 2, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -274,7 +301,7 @@ func TestScoreReviewPagingMath(t *testing.T) {
 		t.Fatalf("page 2 has_more = %s, want false", out.get("has_more").asString())
 	}
 	// page 3, count 2: past the end -> empty items.
-	out, err = getScoreReviewCore(db, jvObj(), 3, 2, 0)
+	out, err = getScoreReviewCore(db, jvObj(), 3, 2, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -288,7 +315,7 @@ func TestScoreReviewPagingMath(t *testing.T) {
 
 func TestScoreReviewRecordsImpression(t *testing.T) {
 	db := scoreReviewSeed(t)
-	out, err := getScoreReviewCore(db, jvObj(), 1, 2, 0)
+	out, err := getScoreReviewCore(db, jvObj(), 1, 2, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -341,7 +368,7 @@ FROM impression_item WHERE impression_id=? ORDER BY position`, impressionID)
 	}
 	// A second request with the same page records a distinct impression
 	// (uuid4 per request, INSERT OR IGNORE keyed by impression_id).
-	second, err := getScoreReviewCore(db, jvObj(), 1, 2, 0)
+	second, err := getScoreReviewCore(db, jvObj(), 1, 2, 0, "asc")
 	if err != nil {
 		t.Fatalf("getScoreReviewCore: %v", err)
 	}
@@ -365,7 +392,7 @@ func TestScoreReviewValidationAndModelRequired(t *testing.T) {
 	}{
 		{0, 20}, {1, 0}, {1, 501},
 	} {
-		if _, err := getScoreReviewCore(db, jvObj(), tc.page, tc.count, 0); err == nil ||
+		if _, err := getScoreReviewCore(db, jvObj(), tc.page, tc.count, 0, "asc"); err == nil ||
 			err.Error() != "invalid score review page" {
 			t.Fatalf("page=%d count=%d: err = %v, want invalid score review page", tc.page, tc.count, err)
 		}
@@ -375,7 +402,7 @@ func TestScoreReviewValidationAndModelRequired(t *testing.T) {
 	if err := migrate(db2, 1_700_000_000_000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := getScoreReviewCore(db2, jvObj(), 1, 20, 0); err == nil ||
+	if _, err := getScoreReviewCore(db2, jvObj(), 1, 20, 0, "asc"); err == nil ||
 		err.Error() != "no published model; run build-model first" {
 		t.Fatalf("err = %v, want no published model", err)
 	}

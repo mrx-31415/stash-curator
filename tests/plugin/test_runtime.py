@@ -555,7 +555,7 @@ def test_plugin_pages_generated_results_without_repeating_external_searches() ->
         "page_prune_",
         "page_expand_",
         "page_hunt",
-        "page_scores",
+        "page_sentiment",
     ):
         assert param in source
     # The URL-backed page keys stay canonical: prune/expand derive theirs from
@@ -660,16 +660,17 @@ def test_panels_serialize_full_view_state_to_the_url() -> None:
     assert 'history[options.replace ? "replace" : "push"]' in source
 
 
-def test_score_review_view_is_a_nav_item_and_uses_the_slate_card() -> None:
+def test_score_review_view_is_a_maintenance_nav_item_and_uses_the_slate_card() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
 
-    assert 'value: "scores"' in source
-    assert 'label: "Score review"' in source
-    assert "icon: faCheckCircle" in source
+    assert 'value: "sentiment"' in source
+    assert 'label: "Sentiment review"' in source
+    assert "icon: faBalanceScale" in source
+    assert "maintenance: true" in source
     assert "function ScoreReviewPanel" in source
     assert 'operation: "get_score_review"' in source
-    assert 'useUrlPage("page_scores")' in source
-    assert 'lane === "scores" && React.createElement(ScoreReviewPanel)' in source
+    assert 'urlPageSpec("page_sentiment")' in source
+    assert 'lane === "sentiment" && React.createElement(ScoreReviewPanel)' in source
     # The review surface reuses the slate card (Score, Why this?, thumbs) and
     # the pager, mirroring CuratorPage's slate rendering.
     assert (
@@ -678,8 +679,12 @@ def test_score_review_view_is_a_nav_item_and_uses_the_slate_card() -> None:
     )
     assert "source_lane: item.lane || item.source_lane" in source
     assert "model_id: data.model_version" in source
-    assert "max_appeal: 0" in source
-    assert 'label: "Score review pages"' in source
+    # The review direction and the appeal threshold are URL-backed state and
+    # flow into the op.
+    assert 'urlStringField("sent_order", "asc"' in source
+    assert 'urlNumberField("sent_max", 0)' in source
+    assert "max_appeal: threshold, order" in source
+    assert 'label: "Sentiment review pages"' in source
 
 
 def test_plugin_reads_local_file_phashes_for_external_matching() -> None:

@@ -155,10 +155,13 @@ class CuratorAPI:
         count: int = 20,
         *,
         max_appeal: float = 0.0,
+        order: str = "asc",
         now_ms: int | None = None,
     ) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
             raise ValueError("invalid score review page")
+        if order not in ("asc", "desc"):
+            raise ValueError("invalid score review order")
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
@@ -166,7 +169,7 @@ class CuratorAPI:
         end = page * count
         builder = SlateBuilder(self.connection)
         total = builder.score_review_available_count(model_id, max_appeal)
-        built = builder.score_review(model_id, end, max_appeal=max_appeal)
+        built = builder.score_review(model_id, end, max_appeal=max_appeal, order=order)
         selected = built.items[start:end]
         slate = Slate(
             built.model_id,

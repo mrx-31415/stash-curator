@@ -723,6 +723,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 page=int(args.get("page") or 1),
                 count=count,
                 max_appeal=float(args.get("max_appeal") or 0),
+                order=args.get("order") or "asc",
             )
         if operation == "replace_item":
             excluded = args.get("exclude_scene_ids")

@@ -943,26 +943,30 @@ class SlateBuilder:
         eligibility = self._score_review_eligibility(time.time_ns() // 1_000_000, scene_ids)
         return sum(1 for scene_id in scene_ids if eligibility.get(scene_id, {}).get("eligible"))
 
-    def score_review(self, model_id: str, count: int, *, max_appeal: float = 0.0) -> Slate:
+    def score_review(
+        self, model_id: str, count: int, *, max_appeal: float = 0.0, order: str = "asc"
+    ) -> Slate:
         """The bottom of the appeal distribution: model_scene_score rows
-        ordered by appeal ASC (tie-break scene_id), filtered appeal <=
-        max_appeal, the same live eligibility applied as the slate path,
-        hydrated into recommendation items with score-first semantics
+        ordered by appeal (ASC = least-appealing first, the default review
+        direction; DESC = most-appealing within the window first), filtered
+        appeal <= max_appeal, the same live eligibility applied as the slate
+        path, hydrated into recommendation items with score-first semantics
         (final_utility = appeal, the score-first zero penalties/bonuses, lane
         "score_review")."""
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
         started = time.perf_counter()
         now_ms = time.time_ns() // 1_000_000
+        direction = "ASC" if order == "asc" else "DESC"
         selected_rows: list[sqlite3.Row] = []
         offset = 0
         chunk_size = max(100, count)
         while len(selected_rows) < count:
             rows = self.connection.execute(
-                """
+                f"""
                 SELECT scene_id FROM model_scene_score
                 WHERE model_id=? AND appeal <= ?
-                ORDER BY appeal ASC, scene_id
+                ORDER BY appeal {direction}, scene_id
                 LIMIT ? OFFSET ?
                 """,
                 (model_id, max_appeal, chunk_size, offset),
