@@ -381,6 +381,7 @@ class CuratorAPI:
         hide_phash_matches: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
+        links: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
             entity_type,
@@ -398,6 +399,7 @@ class CuratorAPI:
             hide_phash_matches=hide_phash_matches,
             minimum_score=minimum_score,
             count=count,
+            links=links,
         )
 
     def expand_shortlist(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
