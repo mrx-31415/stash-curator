@@ -753,6 +753,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
                 count=int(args.get("count") or config["page_size"]),
+                links=_external_links(payload, connection),
             )
         if operation == "get_performer_hunt":
             return ExpandService(connection).performer_hunt(

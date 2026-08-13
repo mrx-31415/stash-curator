@@ -395,6 +395,103 @@ def test_expand_hides_exact_local_phash_matches_by_default(tmp_path: Path) -> No
     }
 
 
+def test_results_reannotates_candidates_against_current_links(tmp_path: Path) -> None:
+    """Issue #118: a candidate fetched while the local scene had no StashDB
+    id keeps its missing curator_local_match annotation, so results() must
+    re-derive the exclusion against the current links map at serve time."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    service = ExpandService(connection)
+    candidates = [
+        {
+            "id": "ext-owned-now",
+            "title": "Candidate one",
+            "release_date": "2026-01-01",
+            "studio": {"id": "ext-studio-1", "name": "Studio One"},
+            "tags": [],
+            "performers": [],
+            "fingerprints": [],
+        },
+        {
+            "id": "ext-phash-owned",
+            "title": "Candidate two",
+            "release_date": "2026-01-01",
+            "studio": {"id": "ext-studio-1", "name": "Studio One"},
+            "tags": [],
+            "performers": [],
+            "fingerprints": [{"algorithm": "phash", "hash": "0123456789abcdef"}],
+        },
+        {
+            "id": "ext-unrelated",
+            "title": "Candidate three",
+            "release_date": "2026-01-01",
+            "studio": {"id": "ext-studio-1", "name": "Studio One"},
+            "tags": [],
+            "performers": [],
+            "fingerprints": [],
+        },
+    ]
+    for index, payload in enumerate(candidates):
+        connection.execute(
+            """
+            INSERT INTO external_entity(
+                entity_type, external_id, payload_json, score, sources_json,
+                fetched_at_ms, pool
+            ) VALUES ('scene', ?, ?, ?, '[]', ?, 'candidate')
+            """,
+            (
+                payload["id"],
+                json.dumps(payload, separators=(",", ":")),
+                0.5,
+                REFERENCE_MS - index,
+            ),
+        )
+    connection.execute(
+        """
+        INSERT INTO expand_cache(
+            singleton, model_id, fetched_at_ms, expires_at_ms, scene_count, performer_count
+        ) VALUES (1, 'model', ?, ?, 3, 0)
+        """,
+        (REFERENCE_MS, REFERENCE_MS + 10 * 86_400_000),
+    )
+    connection.commit()
+
+    def ids(links, hide_phash_matches=True):
+        return [
+            item["id"]
+            for item in service.results(
+                "scene",
+                gender="",
+                hide_phash_matches=hide_phash_matches,
+                links=links,
+            )["items"]
+        ]
+
+    unlinked = {
+        "scenes": {},
+        "scene_ids": {},
+        "scene_phashes": {},
+        "performers": {},
+        "studios": {},
+    }
+    # Fetch time: no local scene carries a StashDB id, all candidates show.
+    assert ids(unlinked) == ["ext-owned-now", "ext-phash-owned", "ext-unrelated"]
+    # The user adds the stash_id to the local scene (and a second local
+    # scene gains the exact phash); browse must now hide both matches.
+    linked = {
+        "scenes": {"local-1": "ext-owned-now"},
+        "scene_ids": {"ext-owned-now": "local-1"},
+        "scene_phashes": {"0123456789abcdef": "local-2"},
+        "performers": {},
+        "studios": {},
+    }
+    assert ids(linked) == ["ext-unrelated"]
+    # hide_phash_matches=False keeps the phash match but not the stash_id one.
+    assert ids(linked, hide_phash_matches=False) == ["ext-phash-owned", "ext-unrelated"]
+    # Without links (legacy direct callers) the stored annotation applies:
+    # nothing is excluded because nothing was annotated at fetch time.
+    assert ids(None) == ["ext-owned-now", "ext-phash-owned", "ext-unrelated"]
+
+
 def test_expand_wildcard_is_opt_in_and_bad_queries_are_rejected(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
