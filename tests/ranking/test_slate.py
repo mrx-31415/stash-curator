@@ -1101,6 +1101,23 @@ def test_score_review_thumb_down_does_not_exclude(tmp_path: Path) -> None:
     assert builder.score_review_available_count("model", 0.0) == 5
 
 
+def test_score_review_orders_descending(tmp_path: Path) -> None:
+    connection = _score_review_db(tmp_path / "curator.sqlite3")
+    result = CuratorAPI(connection).get_score_review(page=1, count=20, max_appeal=0.0, order="desc")
+    scene_ids = [item["scene_id"] for item in result["items"]]
+    assert scene_ids == ["d-revisit", "c-best", "b-best", "a-best", "x-excluded"]
+    assert result["total"] == 5
+    assert [item["position"] for item in result["items"]] == [0, 1, 2, 3, 4]
+    # The builder mirror exposes the same direction.
+    builder = SlateBuilder(connection)
+    assert (
+        builder.score_review("model", 3, max_appeal=0.0, order="desc").items[0].scene_id
+        == "d-revisit"
+    )
+    with pytest.raises(ValueError, match="invalid score review order"):
+        CuratorAPI(connection).get_score_review(order="sideways")
+
+
 def test_score_review_records_impression_like_get_slate(tmp_path: Path) -> None:
     connection = _score_review_db(tmp_path / "curator.sqlite3")
     result = CuratorAPI(connection).get_score_review(

@@ -65,10 +65,11 @@
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
     },
     {
-      value: "scores",
-      label: "Score review",
-      icon: faCheckCircle,
-      description: "Inspect the bottom of the model's score distribution: every scored scene ranked least-appealing first, with reasons and feedback on each card.",
+      value: "sentiment",
+      label: "Sentiment review",
+      icon: faBalanceScale,
+      maintenance: true,
+      description: "Review the model's sentiment estimates: least-appealing scenes first, with reasons and feedback on each card.",
     },
     {
       value: "history",
@@ -2765,28 +2766,42 @@
   // pages through the bottom of the model's score distribution (least
   // appealing first) and reuses the slate card, so reasons, "Why this?", and
   // feedback work unchanged. Items mirror get_slate items; the backend op
-  // get_score_review is the score-review half of issue #120.
+  // get_score_review is the score-review half of issue #120. The surface
+  // reviews the model's sentiment estimates (appeal, -1..1): least-appealing
+  // scenes first by default, with a sort direction and an appeal threshold
+  // control. URL state (sent_order / sent_max / page_sentiment) is the full
+  // source of truth, per the URL-as-truth convention.
   function ScoreReviewPanel() {
-    const [page, setPage] = useUrlPage("page_scores");
+    const sentimentSpec = React.useMemo(() => ({
+      defaults: { order: "asc", maxAppeal: 0, page: 1 },
+      fields: {
+        order: urlStringField("sent_order", "asc", (value) => value === "asc" || value === "desc"),
+        maxAppeal: urlNumberField("sent_max", 0),
+      },
+      page: urlPageSpec("page_sentiment"),
+    }), []);
+    const [urlState, updateUrl] = useUrlState(sentimentSpec);
+    const { order, maxAppeal, page } = urlState;
+    const threshold = Math.min(1, Math.max(-1, maxAppeal));
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [followUps, setFollowUps] = React.useState([]);
-    useCuratorActivity("score-review", loading, "Loading score review…");
+    useCuratorActivity("score-review", loading, "Loading sentiment review…");
     React.useEffect(() => {
       let active = true;
       setLoading(true);
       setError("");
-      operation({ operation: "get_score_review", page, count: 20, max_appeal: 0 }).then(
+      operation({ operation: "get_score_review", page, count: 20, max_appeal: threshold, order }).then(
         (result) => active && (setData(result), setLoading(false)),
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [page]);
+    }, [page, order, threshold]);
     React.useEffect(() => {
       if (data?.page === page) {
         const last = Math.max(1, Math.ceil(data.total / data.page_size));
-        if (page > last) setPage(last, { replace: true });
+        if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, page]);
     const ids = data?.items.map((item) => item.scene_id) || [];
@@ -2810,16 +2825,22 @@
     return React.createElement(
       "section",
       { className: "curator-score-review" },
-      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading score review…")),
+      React.createElement(
+        "div",
+        { className: "curator-expand-toolbar" },
+        React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: order, onChange: (event) => updateUrl((s) => ({ ...s, order: event.target.value, page: 1 })), "aria-label": "Sort sentiment review" }, React.createElement("option", { value: "asc" }, "Least appealing first"), React.createElement("option", { value: "desc" }, "Most appealing first"))),
+        React.createElement("label", { className: "curator-prune-aggressiveness", title: "Show scenes at or below this appeal threshold." }, React.createElement("span", null, `Appeal ≤ ${threshold.toFixed(2)}`), React.createElement("input", { type: "range", min: -1, max: 1, step: 0.05, value: threshold, onChange: (event) => updateUrl((s) => ({ ...s, maxAppeal: Number(event.target.value), page: 1 })), "aria-label": "Maximum appeal threshold" }))
+      ),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading sentiment review…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes scored below the current threshold."),
+      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes below the current appeal threshold."),
       data && !loading && React.createElement(
         "section",
         { className: "curator-grid", "aria-live": "polite" },
         visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
       ),
-      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: setPage, label: "Score review pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Sentiment review pages" })
     );
   }
 
@@ -3034,7 +3055,7 @@
       lane === "history" && React.createElement(RecommendationHistoryPanel),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),
-      lane === "scores" && React.createElement(ScoreReviewPanel),
+      lane === "sentiment" && React.createElement(ScoreReviewPanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
