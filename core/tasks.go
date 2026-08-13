@@ -609,6 +609,12 @@ func taskBackup(db dbx, pluginDir string, payload jVal, settings jVal, startedAt
 	if err != nil {
 		return jvNull(), err
 	}
+	if err := mirrorDerivedArtifacts(db, directory); err != nil {
+		// The database backup is the contract; the artifact mirror is
+		// best-effort additive recovery data, so a mirror failure warns
+		// (plugin logs) instead of failing the backup task.
+		warnLog("derived artifact mirror failed: " + err.Error())
+	}
 	progressLog(0.98)
 	return jvObj(jvKey("backup", jvStr(backup))), nil
 }
