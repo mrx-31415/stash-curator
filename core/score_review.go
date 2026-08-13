@@ -66,11 +66,18 @@ func getScoreReviewBody(pluginDir string, payload, settings jVal) (jVal, error) 
 	page := argsInt(args, "page", 1)
 	count := argsInt(args, "count", pythonInt(cfg.get("page_size")))
 	maxAppeal := argsFloat(args, "max_appeal", 0)
-	return getScoreReviewCore(db, config, page, count, maxAppeal)
+	order := pythonStrOrEmpty(args.get("order"))
+	if order == "" {
+		order = "asc"
+	}
+	if order != "asc" && order != "desc" {
+		return jvNull(), fmt.Errorf("invalid score review order")
+	}
+	return getScoreReviewCore(db, config, page, count, maxAppeal, order)
 }
 
 // getScoreReviewCore mirrors CuratorAPI.get_score_review after arg coercion.
-func getScoreReviewCore(db dbx, config jVal, page, count int64, maxAppeal float64) (jVal, error) {
+func getScoreReviewCore(db dbx, config jVal, page, count int64, maxAppeal float64, order string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid score review page")
 	}
@@ -88,7 +95,7 @@ func getScoreReviewCore(db dbx, config jVal, page, count int64, maxAppeal float6
 	if err != nil {
 		return jvNull(), err
 	}
-	built, err := scoreReviewLoad(db, modelID, end, maxAppeal)
+	built, err := scoreReviewLoad(db, modelID, end, maxAppeal, order)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -165,15 +172,19 @@ type scoreReviewRow struct {
 // hydrated into recommendation items with score-first semantics
 // (final_utility = appeal, the score-first zero penalties/bonuses, lane
 // "score_review").
-func scoreReviewLoad(db dbx, modelID string, count int64, maxAppeal float64) (builtSlate, error) {
+func scoreReviewLoad(db dbx, modelID string, count int64, maxAppeal float64, order string) (builtSlate, error) {
 	now := nowMs()
 	var selectedRows []scoreReviewRow
 	offset := int64(0)
 	chunkSize := maxInt64(100, count)
+	direction := "ASC"
+	if order == "desc" {
+		direction = "DESC"
+	}
 	for int64(len(selectedRows)) < count {
 		rows, err := db.Query(`SELECT scene_id FROM model_scene_score
 WHERE model_id=? AND appeal <= ?
-ORDER BY appeal ASC, scene_id
+ORDER BY appeal `+direction+`, scene_id
 LIMIT ? OFFSET ?`, modelID, maxAppeal, chunkSize, offset)
 		if err != nil {
 			return builtSlate{}, err
