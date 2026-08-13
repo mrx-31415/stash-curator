@@ -65,6 +65,12 @@
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
     },
     {
+      value: "scores",
+      label: "Score review",
+      icon: faCheckCircle,
+      description: "Inspect the bottom of the model's score distribution: every scored scene ranked least-appealing first, with reasons and feedback on each card.",
+    },
+    {
       value: "history",
       label: "Recently recommended",
       icon: faHistory,
@@ -272,6 +278,148 @@
         writePage(history, routeLocation, param, next, options.replace);
       }
     }];
+  }
+
+  // ── URL-backed view state (issue #134) ────────────────────────────────
+  // useUrlState makes the URL the full source of truth for a panel's visible
+  // result set: every result-affecting field is serialized to query params,
+  // re-parsed on back/forward navigation, and re-seeded on remount. Fields
+  // absent from the URL fall back to the panel's saved presets / defaults
+  // (spec.defaults), exactly as before. User-initiated changes push (so
+  // back/forward works); pure recovery writes (clamping, config-derived
+  // defaults) use replace() to avoid history spam.
+  // spec: {
+  //   defaults: { field: value },
+  //   fields: { field: { param, parse(search) -> value,
+  //                      serialize(value) -> string | "" | {param: string} } },
+  //   page: { param(state) -> paramName, parse(raw|null) -> value, serialize(value) -> string|"" },
+  //   prune?(route, state),   // optional cleanup of stale params after serialization
+  // }
+  function parseUrlState(search, spec) {
+    const state = { ...spec.defaults };
+    for (const [key, field] of Object.entries(spec.fields)) {
+      state[key] = field.parse(search);
+    }
+    if (spec.page) state.page = spec.page.parse(search.get(spec.page.param(state)));
+    return state;
+  }
+
+  function urlStringField(param, defaultValue, validate = null) {
+    return {
+      param,
+      parse: (search) => {
+        const raw = search.get(param);
+        if (raw === null || raw === "") return defaultValue;
+        return validate && !validate(raw) ? defaultValue : raw;
+      },
+      serialize: (value) => (value === defaultValue ? "" : String(value)),
+    };
+  }
+
+  function urlBoolField(param, defaultValue) {
+    return {
+      param,
+      parse: (search) => {
+        const raw = search.get(param);
+        if (raw === null || raw === "") return defaultValue;
+        return raw !== "0";
+      },
+      serialize: (value) => (value === defaultValue ? "" : value ? "1" : "0"),
+    };
+  }
+
+  function urlNumberField(param, defaultValue) {
+    return {
+      param,
+      parse: (search) => {
+        const raw = search.get(param);
+        if (raw === null || raw === "") return defaultValue;
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : defaultValue;
+      },
+      serialize: (value) => (value === defaultValue ? "" : String(value)),
+    };
+  }
+
+  function urlListField(param, defaultValue) {
+    return {
+      param,
+      parse: (search) => {
+        const raw = search.get(param);
+        if (raw === null || raw === "") return defaultValue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return defaultValue;
+          return parsed.filter((item) => item && (item.id !== undefined || item.name !== undefined));
+        } catch (_) {
+          return defaultValue;
+        }
+      },
+      serialize: (value) => (value && value.length ? JSON.stringify(value.map((item) => ({ id: item.id, name: item.name }))) : ""),
+    };
+  }
+
+  function urlPageSpec(param) {
+    return {
+      param: typeof param === "function" ? param : () => param,
+      parse: (raw) => {
+        const parsed = Number(raw);
+        return Number.isInteger(parsed) && parsed >= 1 ? parsed : 1;
+      },
+      serialize: (value) => (value === 1 ? "" : String(Math.max(1, Math.floor(Number(value) || 1)))),
+    };
+  }
+
+  function useUrlState(spec) {
+    const history = useHistory();
+    const routeLocation = useLocation();
+    const locationRef = React.useRef(routeLocation);
+    React.useEffect(() => {
+      locationRef.current = routeLocation;
+    }, [routeLocation]);
+    const [state, setState] = React.useState(() => parseUrlState(new URLSearchParams(routeLocation.search), spec));
+    const stateRef = React.useRef(state);
+    stateRef.current = state;
+    const appliedSearchRef = React.useRef(routeLocation.search.replace(/^\?/, ""));
+    // Re-seed from the URL on back/forward or any external navigation; our own
+    // writes stamp appliedSearchRef first, so they are not re-applied here.
+    React.useEffect(() => {
+      const search = routeLocation.search.replace(/^\?/, "");
+      if (search === appliedSearchRef.current) return;
+      appliedSearchRef.current = search;
+      setState(parseUrlState(new URLSearchParams(search), spec));
+    }, [routeLocation.search]);
+    function update(updater, options = {}) {
+      const next = typeof updater === "function" ? updater(stateRef.current) : updater;
+      const location = locationRef.current;
+      const route = new URLSearchParams(appliedSearchRef.current);
+      for (const [key, field] of Object.entries(spec.fields)) {
+        const serialized = field.serialize(next[key]);
+        if (serialized === null || serialized === undefined || serialized === "") {
+          route.delete(field.param);
+        } else if (typeof serialized === "object") {
+          for (const [param, value] of Object.entries(serialized)) {
+            if (value === null || value === undefined || value === "") route.delete(param);
+            else route.set(param, value);
+          }
+        } else {
+          route.set(field.param, serialized);
+        }
+      }
+      const pageValue = spec.page.serialize(next.page);
+      if (pageValue === null || pageValue === undefined || pageValue === "") route.delete(spec.page.param(next));
+      else route.set(spec.page.param(next), pageValue);
+      spec.prune?.(route, next);
+      const search = route.toString();
+      if (search === appliedSearchRef.current) {
+        setState(next);
+        return;
+      }
+      appliedSearchRef.current = search;
+      setState(next);
+      history[options.replace ? "replace" : "push"]({ pathname: location.pathname, search });
+    }
+    return [state, update];
   }
 
   function pagerPages(page, totalPages) {
@@ -1266,8 +1414,13 @@
   }
 
   function RecommendationHistoryPanel() {
-    const [page, setPage] = useUrlPage("page_history");
-    const [laneFilter, setLaneFilter] = React.useState("");
+    const historySpec = React.useMemo(() => ({
+      defaults: { laneFilter: "", page: 1 },
+      fields: { laneFilter: urlStringField("hist_lane", "", (value) => LANES.some((lane) => lane.value === value)) },
+      page: urlPageSpec("page_history"),
+    }), []);
+    const [urlState, updateUrl] = useUrlState(historySpec);
+    const { laneFilter, page } = urlState;
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
@@ -1285,7 +1438,7 @@
     React.useEffect(() => {
       if (data?.page === page) {
         const last = Math.max(1, Math.ceil(data.total / data.page_size));
-        if (page > last) setPage(last, { replace: true });
+        if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, page]);
     const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
@@ -1308,7 +1461,7 @@
         "Lane ",
         React.createElement(
           "select",
-          { className: "form-control form-control-sm", value: laneFilter, onChange: (event) => (setLaneFilter(event.target.value), setPage(1)), "aria-label": "Filter recommendation history by lane" },
+          { className: "form-control form-control-sm", value: laneFilter, onChange: (event) => updateUrl((s) => ({ ...s, laneFilter: event.target.value, page: 1 })), "aria-label": "Filter recommendation history by lane" },
           React.createElement("option", { value: "" }, "All lanes"),
           LANES.map((lane) => React.createElement("option", { key: lane.value, value: lane.value }, lane.label))
         )
@@ -1331,7 +1484,7 @@
           )
         )
       )),
-      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Recommendation history pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Recommendation history pages" })
     );
   }
 
@@ -1383,33 +1536,71 @@
     );
   }
 
-  function SimilarityPanel({ initialType = "scene", initialId = null, initialLabel = null }) {
+  function SimilarityPanel() {
     const { SceneCard, PerformerCard } = Api.components;
     const initialFilters = React.useMemo(() => defaultFilters("similar"), []);
-    const [entityType, setEntityType] = React.useState(initialType);
-    const [source, setSource] = React.useState("library");
+    const similarSpec = React.useMemo(() => ({
+      defaults: {
+        entityType: "scene",
+        source: "library",
+        selected: null,
+        gender: initialFilters.gender ?? "FEMALE",
+        favoriteOnly: Boolean(initialFilters.favoriteOnly),
+        includeTags: initialFilters.includeTags || [],
+        excludeTags: initialFilters.excludeTags || [],
+        filterPerformers: initialFilters.performers || [],
+        filterStudios: initialFilters.studios || [],
+        minimumSimilarity: initialFilters.minimum ?? 0.18,
+        hidePhashMatches: initialFilters.hidePhashMatches !== false,
+        includeOwned: true,
+        excludedIds: [],
+        fetchTick: 0,
+        page: 1,
+      },
+      fields: {
+        entityType: urlStringField("type", "scene", (value) => ["scene", "performer"].includes(value)),
+        selected: {
+          param: "id",
+          parse: (search) => {
+            const id = search.get("id");
+            return id ? { id, label: search.get("label") || `#${id}` } : null;
+          },
+          serialize: (value) => value ? { id: String(value.id), label: value.label && value.label !== String(value.id) ? value.label : "" } : { id: "", label: "" },
+        },
+        source: urlStringField("sim_source", "library", (value) => ["library", "stashdb"].includes(value)),
+        gender: urlStringField("sim_gender", initialFilters.gender ?? "FEMALE"),
+        favoriteOnly: urlBoolField("sim_favorite", Boolean(initialFilters.favoriteOnly)),
+        includeTags: urlListField("sim_include_tags", initialFilters.includeTags || []),
+        excludeTags: urlListField("sim_exclude_tags", initialFilters.excludeTags || []),
+        filterPerformers: urlListField("sim_performers", initialFilters.performers || []),
+        filterStudios: urlListField("sim_studios", initialFilters.studios || []),
+        minimumSimilarity: urlNumberField("sim_min_sim", initialFilters.minimum ?? 0.18),
+        hidePhashMatches: urlBoolField("sim_hide_phash", initialFilters.hidePhashMatches !== false),
+        includeOwned: urlBoolField("sim_include_owned", true),
+        excludedIds: {
+          param: "sim_excluded",
+          parse: (search) => {
+            const raw = search.get("sim_excluded");
+            return raw ? raw.split(",").map((id) => id.trim()).filter(Boolean) : [];
+          },
+          serialize: (value) => (value && value.length ? value.join(",") : ""),
+        },
+        fetchTick: { param: "sim_fetch_tick", parse: () => 0, serialize: () => "" },
+      },
+      page: urlPageSpec("page_similar"),
+    }), [initialFilters]);
+    const [urlState, updateUrl] = useUrlState(similarSpec);
+    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity, hidePhashMatches, includeOwned, fetchTick } = urlState;
     const [query, setQuery] = React.useState("");
     const [search, setSearch] = React.useState("");
-    const [selected, setSelected] = React.useState(null);
     const [result, setResult] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(false);
-    const [page, setPage] = useUrlPage("page_similar");
     const [pageSize, setPageSize] = React.useState(20);
-    const [excludedIds, setExcludedIds] = React.useState([]);
-    const [gender, setGender] = React.useState(initialFilters.gender ?? "FEMALE");
-    const [favoriteOnly, setFavoriteOnly] = React.useState(Boolean(initialFilters.favoriteOnly));
-    const [includeTags, setIncludeTags] = React.useState(initialFilters.includeTags || []);
-    const [excludeTags, setExcludeTags] = React.useState(initialFilters.excludeTags || []);
-    const [filterPerformers, setFilterPerformers] = React.useState(initialFilters.performers || []);
-    const [filterStudios, setFilterStudios] = React.useState(initialFilters.studios || []);
-    const [minimumSimilarity, setMinimumSimilarity] = React.useState(initialFilters.minimum ?? 0.18);
-    const [hidePhashMatches, setHidePhashMatches] = React.useState(initialFilters.hidePhashMatches !== false);
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const [followUps, setFollowUps] = React.useState([]);
     const codeVersionRef = React.useRef("");
-    const [includeOwned, setIncludeOwned] = React.useState(true);
     useCuratorActivity("similar", loading, "Finding close matches…");
     const sceneSearch = GQL.useFindScenesQuery({
       variables: { filter: { q: search, per_page: 8 } },
@@ -1445,77 +1636,100 @@
     const sourcePerformer = GQL.useFindPerformerQuery({ variables: { id: selected?.id || "0" }, skip: entityType !== "performer" || !selected });
     const sourceEntity = entityType === "scene" ? sourceScene.data?.findScene : sourcePerformer.data?.findPerformer;
 
-    function load(id, label, type = entityType, nextSource = source, nextGender = gender, nextPage = 1, nextExcluded = excludedIds, nextIncludeOwned = includeOwned) {
-      setSelected({ id: String(id), label: label || `#${id}` });
-      setError("");
-      const request = { operation: nextSource === "library" ? "get_similar" : "get_external_similar", entity_type: type, entity_id: String(id), gender: nextGender, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_ids: filterPerformers.map((item) => String(item.id)), performer_names: filterPerformers.map((item) => item.name), studio_ids: filterStudios.map((item) => String(item.id)), studio_names: filterStudios.map((item) => item.name), minimum_similarity: minimumSimilarity };
-      if (nextSource === "stashdb") request.include_owned = nextIncludeOwned;
-      if (nextSource === "library") {
-        request.page = nextPage;
-        request.exclude_scene_ids = nextExcluded;
+    // The fetch effect is the single driver for similarity requests: it runs
+    // whenever the URL-backed selection/source/page/exclusions change (including
+    // back/forward restores) and reads current filter values through
+    // filterStateRef, so filters stay lazy (applied on the next fetch) exactly
+    // as before.
+    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity });
+    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity };
+    const requestKey = selected
+      ? [source, entityType, String(selected.id), selected.label || "", source === "stashdb" ? "s" : String(page), excludedIds.join(","), source === "stashdb" ? (includeOwned ? "1" : "0") : "s", fetchTick].join("|")
+      : null;
+    React.useEffect(() => {
+      if (!requestKey) {
+        setResult(null);
+        setLoading(false);
+        return undefined;
       }
+      const filters = filterStateRef.current;
+      const request = {
+        operation: source === "library" ? "get_similar" : "get_external_similar",
+        entity_type: entityType,
+        entity_id: String(selected.id),
+        gender: filters.gender,
+        favorite_only: filters.favoriteOnly,
+        hide_phash_matches: filters.hidePhashMatches,
+        include_tags: filters.includeTags.map((item) => item.name),
+        exclude_tags: filters.excludeTags.map((item) => item.name),
+        performer_ids: filters.filterPerformers.map((item) => String(item.id)),
+        performer_names: filters.filterPerformers.map((item) => item.name),
+        studio_ids: filters.filterStudios.map((item) => String(item.id)),
+        studio_names: filters.filterStudios.map((item) => item.name),
+        minimum_similarity: filters.minimumSimilarity,
+      };
+      if (source === "stashdb") request.include_owned = includeOwned;
+      if (source === "library") {
+        request.page = page;
+        request.exclude_scene_ids = excludedIds;
+      }
+      let active = true;
       const cacheKey = JSON.stringify(request) + ":" + (codeVersionRef.current || "");
       const cached = similarityCache.get(cacheKey);
-      if (cached && Date.now() - cached.ts < SIMILARITY_CACHE_TTL_MS) { setResult(cached.data); setPage(nextPage); setLoading(false); return; }
+      if (cached && Date.now() - cached.ts < SIMILARITY_CACHE_TTL_MS) {
+        setResult(cached.data);
+        setLoading(false);
+        return () => { active = false; };
+      }
       if (cached) similarityCache.delete(cacheKey);
+      setError("");
       setLoading(true);
-      operation(request, nextSource === "stashdb" ? 60000 : 30000).then(
-        (data) => { similarityCache.set(cacheKey, { ts: Date.now(), data }); if (similarityCache.size > 10) similarityCache.delete(similarityCache.keys().next().value); setResult(data); setPage(nextPage); setLoading(false); },
-        (failure) => (setError(failure.message), setLoading(false))
+      operation(request, source === "stashdb" ? 60000 : 30000).then(
+        (data) => {
+          similarityCache.set(cacheKey, { ts: Date.now(), data });
+          if (similarityCache.size > 10) similarityCache.delete(similarityCache.keys().next().value);
+          if (active) {
+            setResult(data);
+            setLoading(false);
+          }
+        },
+        (failure) => active && (setError(failure.message), setLoading(false))
       );
-    }
+      return () => { active = false; };
+    }, [requestKey]);
     function applySaved(value) {
-      setGender(value.gender ?? "FEMALE");
-      setFavoriteOnly(Boolean(value.favoriteOnly));
-      setIncludeTags(value.includeTags || []);
-      setExcludeTags(value.excludeTags || []);
-      setFilterPerformers(value.performers || []);
-      setFilterStudios(value.studios || []);
-      setHidePhashMatches(value.hidePhashMatches !== false);
-      setMinimumSimilarity(value.minimum ?? 0.18);
+      updateUrl((s) => ({ ...s, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], filterPerformers: value.performers || [], filterStudios: value.studios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumSimilarity: value.minimum ?? 0.18 }));
     }
     function choose(entity) {
       setFollowUps([]);
-      setExcludedIds([]);
-      load(entity.id, entity.title || entity.name || `#${entity.id}`, entityType, source, gender, 1, []);
+      setResult(null);
+      updateUrl((s) => ({ ...s, selected: { id: String(entity.id), label: entity.title || entity.name || `#${entity.id}` }, page: 1, excludedIds: [] }));
     }
-    React.useEffect(() => {
-      if (initialId) load(initialId, initialLabel, initialType, "library", gender, page);
-    }, []);
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
         codeVersionRef.current = data.code_version || "";
-        if (initialFilters.gender === undefined) setGender(data.config.expand_gender || "");
+        if (initialFilters.gender === undefined) updateUrl((s) => ({ ...s, gender: data.config.expand_gender || "" }), { replace: true });
         setPageSize(data.config.page_size || 20);
         setWhisparrEnabled(data.whisparr_enabled);
       }, () => {});
     }, []);
     function switchType(value) {
       setFollowUps([]);
-      setEntityType(value);
       setSearch("");
-      setSelected(null);
       setResult(null);
-      setPage(1);
-      setExcludedIds([]);
+      updateUrl((s) => ({ ...s, entityType: value, selected: null, page: 1, excludedIds: [] }));
     }
     function switchSource(value) {
       setFollowUps([]);
-      setSource(value);
       setResult(null);
-      setPage(1);
-      setExcludedIds([]);
-      if (selected) load(selected.id, selected.label, entityType, value, gender, 1, []);
+      updateUrl((s) => ({ ...s, source: value, page: 1, excludedIds: [] }));
     }
     function changePage(nextPage) {
-      if (source === "stashdb") return setPage(nextPage);
-      load(selected.id, selected.label, entityType, source, gender, nextPage);
+      updateUrl((s) => ({ ...s, page: nextPage }));
     }
     function removeSimilar(sceneId) {
-      const nextExcluded = [...new Set([...excludedIds, sceneId])];
-      setExcludedIds(nextExcluded);
       similarityCache.clear();
-      load(selected.id, selected.label, entityType, source, gender, page, nextExcluded);
+      updateUrl((s) => ({ ...s, excludedIds: [...new Set([...s.excludedIds, sceneId])] }));
     }
     function showFollowUp(followUp) {
       setFollowUps((current) => [...current.filter((item) => item.scene_id !== followUp.scene_id), followUp]);
@@ -1524,7 +1738,7 @@
       if (!result) return;
       const total = source === "stashdb" ? externalItems.length : result.total;
       const last = Math.max(1, Math.ceil(total / (source === "stashdb" ? pageSize : result.page_size)));
-      if (page > last) setPage(last, { replace: true });
+      if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
     }, [result, source, externalItems.length, page, pageSize]);
     async function shortlistExternal(item, kind) {
       try {
@@ -1566,14 +1780,14 @@
         React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "StashDB", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         React.createElement(
           "form",
-          { onSubmit: (event) => (event.preventDefault(), setSelected(null), setResult(null), setSearch(query.trim())) },
+          { onSubmit: (event) => (event.preventDefault(), updateUrl((s) => ({ ...s, selected: null })), setResult(null), setSearch(query.trim())) },
           React.createElement("input", { className: "form-control form-control-sm", value: query, onChange: (event) => setQuery(event.target.value), placeholder: `Search for a ${entityType}…`, "aria-label": `Search for a ${entityType}` }),
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
-        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => { const next = !includeOwned; setIncludeOwned(next); if (selected) load(selected.id, selected.label, entityType, source, gender, 1, [], next); } }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
+        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
       ),
-      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: setFilterPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: setFilterStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => setFavoriteOnly((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => setGender(event.target.value), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => setMinimumSimilarity(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setExcludedIds([]), load(selected.id, selected.label, entityType, source, gender, 1, [])) }, "Apply"))),
+      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })) }, "Apply"))),
       search && !selected && React.createElement(
         "div",
         { className: "curator-similar-candidates" },
@@ -1611,9 +1825,21 @@
 
   function PrunePanel() {
     const { SceneCard } = Api.components;
-    const [view, setView] = React.useState("candidates");
-    const [aggressiveness, setAggressiveness] = React.useState(0);
-    const [page, setPage] = useUrlPage(`page_prune_${view}`);
+    const pruneSpec = React.useMemo(() => ({
+      defaults: { view: "candidates", aggressiveness: 0, page: 1 },
+      fields: {
+        view: urlStringField("prn_view", "candidates", (value) => ["candidates", "tagged", "explicit", "suspects"].includes(value)),
+        aggressiveness: urlNumberField("prn_aggr", 0),
+      },
+      page: urlPageSpec((state) => `page_prune_${state.view}`),
+      prune(route, state) {
+        for (const value of ["candidates", "tagged", "explicit", "suspects"]) {
+          if (value !== state.view) route.delete(`page_prune_${value}`);
+        }
+      },
+    }), []);
+    const [urlState, updateUrl] = useUrlState(pruneSpec);
+    const { view, aggressiveness, page } = urlState;
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
@@ -1631,7 +1857,7 @@
     React.useEffect(() => {
       if (data?.page === page) {
         const last = Math.max(1, Math.ceil(data.total / data.page_size));
-        if (page > last) setPage(last, { replace: true });
+        if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, page]);
     const ids = data?.items.map((item) => item.scene_id) || [];
@@ -1666,9 +1892,9 @@
         React.createElement(
           "div",
           { className: "btn-group", role: "group", "aria-label": "Prune view" },
-          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => setView(value) }, label))
+          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, view: value, page: 1 })) }, label))
         ),
-        view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => (setAggressiveness(Number(event.target.value)), setPage(1)), "aria-label": "Prune prediction aggressiveness" })),
+        view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
         view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…")),
@@ -1690,36 +1916,92 @@
           );
         })
       ),
-      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: setPage, label: "Prune pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Prune pages" })
     );
   }
 
-  function ExpandPanel({ initialPerformerId = null, initialPerformerLabel = null, initialType = "scene", huntOnly = false }) {
+  function ExpandPanel({ initialType = "scene", huntOnly = false }) {
     const initialFilters = React.useMemo(() => defaultFilters(huntOnly ? "hunt" : "expand"), []);
-    const [entityType, setEntityType] = React.useState(initialType);
-    const [sort, setSort] = React.useState("match");
-    const [performerId, setPerformerId] = React.useState(initialPerformerId);
-    const [favoriteOnly, setFavoriteOnly] = React.useState(Boolean(initialFilters.favoriteOnly));
-    const [gender, setGender] = React.useState(initialFilters.gender ?? "FEMALE");
-    const [includeTags, setIncludeTags] = React.useState(initialFilters.includeTags || []);
-    const [excludeTags, setExcludeTags] = React.useState(initialFilters.excludeTags || []);
-    const [performers, setPerformers] = React.useState(initialFilters.performers || []);
-    const [studios, setStudios] = React.useState(initialFilters.studios || []);
-    const [minimumScore, setMinimumScore] = React.useState(initialFilters.minimum ?? 0);
-    const [hidePhashMatches, setHidePhashMatches] = React.useState(initialFilters.hidePhashMatches !== false);
+    const expandSpec = React.useMemo(() => huntOnly ? {
+      defaults: {
+        entityType: "hunt",
+        sort: "match",
+        performerId: null,
+        favoriteOnly: false,
+        gender: initialFilters.gender ?? "FEMALE",
+        performers: [],
+        studios: [],
+        minimumScore: 0,
+        performer: null,
+        huntView: "unlinked",
+        huntSort: "date",
+        includeTags: initialFilters.includeTags || [],
+        excludeTags: initialFilters.excludeTags || [],
+        hidePhashMatches: initialFilters.hidePhashMatches !== false,
+        page: 1,
+      },
+      fields: {
+        performer: {
+          param: "performer",
+          parse: (search) => {
+            const id = search.get("performer");
+            return id ? { id, name: search.get("label") || id, external: true } : null;
+          },
+          serialize: (value) => value ? { performer: String(value.id), label: value.name && value.name !== String(value.id) ? value.name : "" } : { performer: "", label: "" },
+        },
+        huntView: urlStringField("hunt_view", "unlinked", (value) => ["all", "linked", "unlinked"].includes(value)),
+        huntSort: urlStringField("hunt_sort", "date", (value) => ["date", "score"].includes(value)),
+        includeTags: urlListField("hunt_include_tags", initialFilters.includeTags || []),
+        excludeTags: urlListField("hunt_exclude_tags", initialFilters.excludeTags || []),
+        hidePhashMatches: urlBoolField("hunt_hide_phash", initialFilters.hidePhashMatches !== false),
+      },
+      page: urlPageSpec("page_hunt"),
+    } : {
+      defaults: {
+        entityType: "scene",
+        sort: "match",
+        performerId: null,
+        gender: initialFilters.gender ?? "FEMALE",
+        favoriteOnly: Boolean(initialFilters.favoriteOnly),
+        includeTags: initialFilters.includeTags || [],
+        excludeTags: initialFilters.excludeTags || [],
+        performers: initialFilters.performers || [],
+        studios: initialFilters.studios || [],
+        minimumScore: initialFilters.minimum ?? 0,
+        hidePhashMatches: initialFilters.hidePhashMatches !== false,
+        page: 1,
+      },
+      fields: {
+        entityType: urlStringField("exp_type", "scene", (value) => ["scene", "performer", "shortlist"].includes(value)),
+        sort: urlStringField("exp_sort", "match", (value) => ["match", "newest"].includes(value)),
+        performerId: urlStringField("exp_performer", null),
+        gender: urlStringField("exp_gender", initialFilters.gender ?? "FEMALE"),
+        favoriteOnly: urlBoolField("exp_favorite", Boolean(initialFilters.favoriteOnly)),
+        includeTags: urlListField("exp_include_tags", initialFilters.includeTags || []),
+        excludeTags: urlListField("exp_exclude_tags", initialFilters.excludeTags || []),
+        performers: urlListField("exp_performers", initialFilters.performers || []),
+        studios: urlListField("exp_studios", initialFilters.studios || []),
+        minimumScore: urlNumberField("exp_min_score", initialFilters.minimum ?? 0),
+        hidePhashMatches: urlBoolField("exp_hide_phash", initialFilters.hidePhashMatches !== false),
+      },
+      page: urlPageSpec((state) => `page_expand_${state.entityType}`),
+      prune(route, state) {
+        for (const type of ["scene", "performer", "shortlist"]) {
+          if (type !== state.entityType) route.delete(`page_expand_${type}`);
+        }
+      },
+    }, [huntOnly, initialFilters]);
+    const [urlState, updateUrl] = useUrlState(expandSpec);
+    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, page, performer: huntPerformer, huntView, huntSort } = urlState;
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
-    const [page, setPage] = useUrlPage(entityType === "hunt" ? "page_hunt" : `page_expand_${entityType}`);
     const [error, setError] = React.useState("");
     const [message, setMessage] = React.useState("");
     const [version, setVersion] = React.useState(0);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const [pageSize, setPageSize] = React.useState(20);
-    const [huntPerformer, setHuntPerformer] = React.useState(() => huntOnly && initialPerformerId ? { id: initialPerformerId, name: initialPerformerLabel || initialPerformerId, external: true } : null);
-    const [huntView, setHuntView] = React.useState("unlinked");
-    const [huntSort, setHuntSort] = React.useState("date");
     useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, "Working");
     React.useEffect(() => {
       let active = true;
@@ -1742,7 +2024,7 @@
           setData(result);
           setLoading(false);
           if (entityType === "hunt" && result?.performer_name) {
-            setHuntPerformer((current) => current && (current.name === current.id || !current.name) ? { ...current, name: result.performer_name } : current);
+            updateUrl((current) => current.performer && (current.performer.name === current.performer.id || !current.performer.name) ? { ...current, performer: { ...current.performer, name: result.performer_name } } : current);
           }
         },
         (failure) => active && (setError(failure.message), setLoading(false))
@@ -1751,21 +2033,13 @@
     }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
-        if (initialFilters.gender === undefined) setGender(data.config.expand_gender || "");
+        if (initialFilters.gender === undefined) updateUrl((s) => ({ ...s, gender: data.config.expand_gender || "" }), { replace: true });
         setWhisparrEnabled(data.whisparr_enabled);
         setPageSize(data.config.page_size || 20);
       }, () => {});
     }, []);
     function applySaved(value) {
-      setPage(1);
-      setGender(value.gender ?? "FEMALE");
-      setFavoriteOnly(Boolean(value.favoriteOnly));
-      setIncludeTags(value.includeTags || []);
-      setExcludeTags(value.excludeTags || []);
-      setPerformers(value.performers || []);
-      setStudios(value.studios || []);
-      setHidePhashMatches(value.hidePhashMatches !== false);
-      setMinimumScore(value.minimum ?? 0);
+      updateUrl((s) => ({ ...s, page: 1, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], performers: value.performers || [], studios: value.studios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumScore: value.minimum ?? 0 }));
     }
     async function refresh() {
       if (entityType === "hunt") {
@@ -1778,13 +2052,11 @@
       } catch (failure) { setError(failure.message); }
     }
     function selectHuntPerformer(values) {
-      setPage(1);
       setData(null);
-      setHuntPerformer(values.at(-1) || null);
+      updateUrl((s) => ({ ...s, performer: values.at(-1) || null, page: 1 }));
     }
     function showPerformerScenes(item) {
-      setEntityType("scene");
-      setPerformerId(item.id);
+      updateUrl((s) => ({ ...s, entityType: "scene", performerId: item.id }));
     }
     async function shortlist(item, kind) {
       try {
@@ -1822,7 +2094,7 @@
       const size = entityType === "hunt" ? pageSize : data.page_size;
       if (entityType === "hunt" || data.page === page) {
         const last = Math.max(1, Math.ceil(total / Math.max(1, size)));
-        if (page > last) setPage(last, { replace: true });
+        if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
     return React.createElement(
@@ -1831,11 +2103,11 @@
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
-        !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => (setEntityType(value), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
-        !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => (setEntityType("shortlist"), setPerformerId(null)) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
-        entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => (setPage(1), setSort(event.target.value)), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
+        !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
+        !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
+        entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
-        performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => (setPage(1), setPerformerId(null)) }, "Clear performer filter"),
+        performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
@@ -1843,12 +2115,12 @@
         "div",
         { className: "curator-hunt-controls" },
         React.createElement(FilterTokens, { kind: "performer", label: huntPerformer?.external ? "External performer on StashDB" : "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external) }),
-        data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => (setPage(1), setHuntView(value)) }, label))),
-        data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => (setPage(1), setHuntSort(event.target.value)), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
+        data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, page: 1, huntView: value })) }, label))),
+        data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, huntSort: event.target.value })), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
       entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
-      entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => setHidePhashMatches((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => (setPage(1), setHidePhashMatches(value.hidePhashMatches !== false), setIncludeTags(value.includeTags || []), setExcludeTags(value.excludeTags || [])) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFiltersOpen(false)) }, "Apply"))),
-      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: setIncludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: setExcludeTags }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: setPerformers }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: setStudios }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => (setPage(1), setFavoriteOnly((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => (setPage(1), setHidePhashMatches((value) => !value)) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => (setPage(1), setGender(event.target.value)), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => setMinimumScore(Number(event.target.value)) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (setPage(1), setFilterVersion((value) => value + 1)) }, "Apply"))),
+      entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)) }, "Apply"))),
+      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: (value) => updateUrl((s) => ({ ...s, performers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: (value) => updateUrl((s) => ({ ...s, studios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)) }, "Apply"))),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
@@ -1862,7 +2134,7 @@
           return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
         })
       ),
-      data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: setPage, label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" })
+      data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" })
     );
   }
 
@@ -2489,6 +2761,68 @@
     );
   }
 
+  // Score Review is an inspection surface (not a recommendation lane): it
+  // pages through the bottom of the model's score distribution (least
+  // appealing first) and reuses the slate card, so reasons, "Why this?", and
+  // feedback work unchanged. Items mirror get_slate items; the backend op
+  // get_score_review is the score-review half of issue #120.
+  function ScoreReviewPanel() {
+    const [page, setPage] = useUrlPage("page_scores");
+    const [data, setData] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState("");
+    const [followUps, setFollowUps] = React.useState([]);
+    useCuratorActivity("score-review", loading, "Loading score review…");
+    React.useEffect(() => {
+      let active = true;
+      setLoading(true);
+      setError("");
+      operation({ operation: "get_score_review", page, count: 20, max_appeal: 0 }).then(
+        (result) => active && (setData(result), setLoading(false)),
+        (failure) => active && (setError(failure.message), setLoading(false))
+      );
+      return () => { active = false; };
+    }, [page]);
+    React.useEffect(() => {
+      if (data?.page === page) {
+        const last = Math.max(1, Math.ceil(data.total / data.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, page]);
+    const ids = data?.items.map((item) => item.scene_id) || [];
+    const scenesQuery = GQL.useFindScenesQuery({
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      skip: ids.length === 0,
+    });
+    const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    // The card renders its source badge from item.source_lane; the review
+    // contract names the field "lane" (score_review), so normalize it here.
+    const items = (data?.items || []).map((item) => ({ ...item, source_lane: item.lane || item.source_lane }));
+    const resolved = !scenesQuery.loading && !scenesQuery.error && Boolean(scenesQuery.data);
+    const visibleItems = resolved ? items.filter((item) => scenes.has(String(item.scene_id))) : items;
+    const slate = data ? { lane: "score_review", model_id: data.model_version } : null;
+    function showFollowUp(followUp) {
+      setFollowUps((current) => [...current.filter((item) => item.scene_id !== followUp.scene_id), followUp]);
+    }
+    function remove(sceneId) {
+      setData((current) => current && { ...current, items: current.items.filter((item) => item.scene_id !== sceneId) });
+    }
+    return React.createElement(
+      "section",
+      { className: "curator-score-review" },
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading score review…")),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes scored below the current threshold."),
+      data && !loading && React.createElement(
+        "section",
+        { className: "curator-grid", "aria-live": "polite" },
+        visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+      ),
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: setPage, label: "Score review pages" })
+    );
+  }
+
   function CuratorPage() {
     const history = useHistory();
     const routeLocation = useLocation();
@@ -2696,13 +3030,14 @@
       ),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       lane === "feedback" && React.createElement(FeedbackHistoryPanel),
-      lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
+      lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
       lane === "history" && React.createElement(RecommendationHistoryPanel),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "taste" && React.createElement(TasteProfilePanel),
+      lane === "scores" && React.createElement(ScoreReviewPanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "backups" && React.createElement(BackupPanel),
-      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, initialPerformerId: route.get("performer"), initialPerformerLabel: route.get("label") }),
+      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       lane === "diagnostics" && React.createElement(DiagnosticsPanel),
       lane === "profiling" && React.createElement(ProfilingPanel),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
