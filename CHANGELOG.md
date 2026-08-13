@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/mrx-31415/stash-curator/compare/v0.10.0...v0.11.0) (2026-08-13)
+
+
+### Features
+
+* sentiment-review surface with sort direction and appeal threshold ([#141](https://github.com/mrx-31415/stash-curator/issues/141)) ([79602bf](https://github.com/mrx-31415/stash-curator/commit/79602bf07c89c1ed4fd6ff415b4c24a4bb5faecc))
+
 ## [0.10.0](https://github.com/mrx-31415/stash-curator/compare/v0.9.2...v0.10.0) (2026-08-13)
 
 
