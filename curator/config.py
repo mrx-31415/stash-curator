@@ -93,6 +93,10 @@ class ModelConfig:
     performer_rating_bound: float = 0.10
     studio_favorite_prior: float = 0.04
     scene_rating_confidence: float = 0.90
+    curation_rating_confidence: float = 0.80
+    curation_pair_confidence: float = 0.50
+    curation_pair_surprise_bonus: float = 2.0
+    curation_pair_ips_cap: float = 4.0
     not_now_days: float = 30.0
     not_now_penalty: float = 0.50
     neighbor_count: int = 12

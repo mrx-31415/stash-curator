@@ -127,6 +127,94 @@ def _database(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def test_curation_rating_feeds_scene_labels(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cur-1', 'unseen-good', 'curation_rating', '9', 1, '{}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    label = labels["unseen-good"]
+    assert label.signal_types == ("curation_rating",)
+    assert label.outcome == pytest.approx(0.8)
+    assert label.confidence == pytest.approx(1 - math.exp(-0.8))
+    # A rating outside the 0..10 bounds is defensively skipped.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cur-2', 'unusual', 'curation_rating', '42', 1, '{}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    assert "unusual" not in labels
+
+
+def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    # 'unseen-good' beats 'unlabeled'; both carry tag 'good' (the shared-tag
+    # cancellation precondition: +1 and -1 with equal confidence net to zero
+    # in the affinity accumulation). The pick contradicts the model ordering
+    # (pred_loser 0.3 > pred_winner 0.1), so surprise = 0.2.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cpw-1', 'unseen-good', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "p1", "round_id": "r1", "dimension": "tag",
+                  "predicted_winner": 0.1, "predicted_loser": 0.3,
+                  "selection_probability": 1.0}'),
+               ('cpl-1', 'unlabeled', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "p1", "round_id": "r1", "dimension": "tag",
+                  "predicted_winner": 0.1, "predicted_loser": 0.3,
+                  "selection_probability": 1.0}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    winner, loser = labels["unseen-good"], labels["unlabeled"]
+    assert winner.outcome == pytest.approx(1.0)
+    assert loser.outcome == pytest.approx(-1.0)
+    assert winner.signal_types == ("curation_pair_winner",)
+    assert loser.signal_types == ("curation_pair_loser",)
+    # The label's confidence field is 1-exp(-evidence); the pair signal's
+    # confidence itself surfaces as effective_evidence:
+    # 0.5 * (1 + 2*0.2) * min(4, 1/1.0) = 0.7.
+    assert winner.effective_evidence == pytest.approx(0.7)
+    assert loser.effective_evidence == pytest.approx(0.7)
+    assert winner.confidence == pytest.approx(1 - math.exp(-0.7))
+
+
+def test_curation_pair_labels_ips_confidence_clamped(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    # Confirming pick (pred_winner 0.3 > pred_loser 0.1 -> surprise 0) at a low
+    # selection probability: 0.5 * 1 * min(4, 1/0.25) = 2.0, clamped to 1.0.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cpw-2', 'unusual', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "p2", "round_id": "r2", "dimension": "performer",
+                  "predicted_winner": 0.3, "predicted_loser": 0.1,
+                  "selection_probability": 0.25}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    assert labels["unusual"].outcome == pytest.approx(1.0)
+    # Signal confidence 2.0 clamped to 1.0 -> effective_evidence 1.0.
+    assert labels["unusual"].effective_evidence == pytest.approx(1.0)
+
+
 def test_satiation_content_dots_match_naive_recent_loop() -> None:
     reference = REFERENCE_MS
     candidate = {"shared_a": 0.8, "shared_b": 0.6, "unique_c": 0.4}

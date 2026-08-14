@@ -105,11 +105,11 @@
       description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
     {
-      value: "taste",
-      label: "Taste Profile",
-      icon: faTag,
+      value: "curate",
+      label: "Curate",
+      icon: faBullseye,
       maintenance: true,
-      description: "Review what Curator has inferred and directly teach it how you feel about tags.",
+      description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
     },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
@@ -119,6 +119,7 @@
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
+  const PICKS_STATE_KEY = "stash-curator:picks-state:v1";
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
@@ -227,6 +228,37 @@
         : { modelId: null, configUpdatedAtMs: null, entries: [], exclusions: [] };
     } catch (_) {
       return { modelId: null, configUpdatedAtMs: null, entries: [], exclusions: [] };
+    }
+  }
+
+  function readPicksState() {
+    try {
+      const value = JSON.parse(localStorage.getItem(PICKS_STATE_KEY) || "null");
+      if (!value || typeof value !== "object" || !value.round) {
+        return null;
+      }
+      return {
+        round: value.round,
+        answers: value.answers && typeof value.answers === "object" ? value.answers : {},
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writePicksState(state) {
+    try {
+      localStorage.setItem(PICKS_STATE_KEY, JSON.stringify(state));
+    } catch (_) {
+      // In-memory state still works if storage is unavailable.
+    }
+  }
+
+  function clearPicksState() {
+    try {
+      localStorage.removeItem(PICKS_STATE_KEY);
+    } catch (_) {
+      // Nothing to recover; the panel resets in memory regardless.
     }
   }
 
@@ -738,6 +770,477 @@
             React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
           )
         )
+      )
+    );
+  }
+
+  function CurationVerdictBar({ label, rate, wins, appearances }) {
+    return React.createElement(
+      "div",
+      { className: "curator-pick-verdict-card" },
+      React.createElement("span", { className: "curator-pick-verdict-label" }, label),
+      React.createElement(
+        "div",
+        { className: "curator-pick-verdict-track" },
+        React.createElement("div", { className: "curator-pick-verdict-fill", style: { width: `${Math.max(0, Math.min(100, Math.round(rate * 100)))}%` } })
+      ),
+      React.createElement("span", { className: "curator-pick-verdict-count" }, `${wins}/${appearances}`)
+    );
+  }
+
+  function PickSceneCard({ meta, picked, onPick, onFlag }) {
+    return React.createElement(
+      "button",
+      { type: "button", className: `curator-pick-card${picked ? " curator-pick-selected" : ""}`, onClick: onPick, "aria-pressed": !!picked },
+      React.createElement(
+        "div",
+        { className: "curator-pick-media" },
+        React.createElement("video", { className: "curator-pick-video", src: `/scene/${meta.scene_id}/preview`, poster: `/scene/${meta.scene_id}/screenshot`, muted: true, loop: true, playsInline: true, autoPlay: true, preload: "auto" })
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-pick-info" },
+        React.createElement("img", { className: "curator-pick-cover", src: `/scene/${meta.scene_id}/screenshot`, alt: "" }),
+        React.createElement(
+          "div",
+          { className: "curator-pick-info-body" },
+          meta.title && React.createElement("div", { className: "curator-pick-title" }, meta.title),
+          (meta.studio || meta.date) && React.createElement("div", { className: "curator-pick-meta" }, [meta.studio, meta.date].filter(Boolean).join(" · ")),
+          meta.performers && meta.performers.length > 0 && React.createElement("div", { className: "curator-pick-performers" }, meta.performers.map((performer) => React.createElement("span", { key: performer.performer_id, className: "badge badge-secondary" }, performer.name))),
+          meta.details && React.createElement("div", { className: "curator-pick-details" }, meta.details),
+          meta.tags.length > 0 && React.createElement("div", { className: "curator-pick-tags" }, meta.tags.slice(0, 4).map((tag) => React.createElement("span", { key: tag.tag_id, className: "badge badge-light" }, tag.name))),
+          React.createElement("span", { role: "button", className: "curator-pick-flag", onClick: (event) => { event.stopPropagation(); onFlag && onFlag(); }, title: "This scene's metadata is wrong — exclude it from the round and the model" }, "Metadata wrong")
+        )
+      )
+    );
+  }
+
+  function CuratePanel() {
+    const restoredPicks = React.useRef(readPicksState()).current;
+    const [picksRound, setPicksRound] = React.useState(restoredPicks ? restoredPicks.round : null);
+    const [picksAnswers, setPicksAnswers] = React.useState(restoredPicks ? restoredPicks.answers : {});
+    const [picksVerdict, setPicksVerdict] = React.useState(null);
+    const [picksError, setPicksError] = React.useState("");
+    const [picksBusy, setPicksBusy] = React.useState(false);
+    const [flash, setFlash] = React.useState(null); // {pairId, winner} while the outline shows
+    const [picksUndo, setPicksUndo] = React.useState([]); // [{pairId, winner}] for Forward
+    const FLASH_MS = 500;
+    const [curateTab, setCurateTab] = React.useState("pick");
+    const [tags, setTags] = React.useState(null);
+    const [suggestions, setSuggestions] = React.useState(null);
+    const [suggestionError, setSuggestionError] = React.useState("");
+    useCuratorActivity("curate", !tags && !picksError, "Loading curation tools…");
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "get_taste_profile" }).then(
+        (value) => {
+          if (active) {
+            setTags(value.items);
+            loadSuggestions(value.items);
+          }
+        },
+        (failure) => active && setPicksError(failure.message)
+      );
+      return () => { active = false; };
+    }, []);
+    async function loadSuggestions(profileItems) {
+      const items = profileItems || tags || [];
+      const ratedLow = items
+        .filter((item) =>
+          (item.direct_value !== null && item.direct_value < 0)
+          || (item.direct_value === null && Number(item.inferred_value) < -0.05)
+        )
+        .sort((a, b) => Number(b.scene_count) - Number(a.scene_count))
+        .slice(0, 5);
+      if (!ratedLow.length) {
+        setSuggestions([]);
+        return;
+      }
+      setSuggestionError("");
+      const results = await Promise.all(ratedLow.map((tag) =>
+        operation({ operation: "get_tag_context_candidates", tag_id: tag.tag_id, min_support: 20 })
+          .then((value) => value.items.map((item) => ({
+            base_tag_id: tag.tag_id,
+            base_name: tag.name,
+            context_tag_id: item.tag_id,
+            context_name: item.name,
+            cooccurrence: item.cooccurrence,
+            contrast: item.contrast,
+          })))
+          .catch(() => [])
+      ));
+      const flat = results.flat();
+      flat.sort((a, b) =>
+        (a.contrast === null ? 1 : 0) - (b.contrast === null ? 1 : 0)
+        || (b.contrast ?? -Infinity) - (a.contrast ?? -Infinity)
+        || (b.cooccurrence - a.cooccurrence)
+      );
+      const MAX_SUGGESTIONS_PER_BASE = 3;
+      const perBase = {};
+      const capped = [];
+      for (const suggestion of flat) {
+        const key = suggestion.base_tag_id;
+        if ((perBase[key] || 0) >= MAX_SUGGESTIONS_PER_BASE) {
+          continue;
+        }
+        perBase[key] = (perBase[key] || 0) + 1;
+        capped.push(suggestion);
+        if (capped.length >= 8) {
+          break;
+        }
+      }
+      setSuggestions(capped);
+    }
+    function generatePicks(dimension, baseTag, contextTag) {
+      setPicksBusy(true);
+      setPicksError("");
+      operation({
+        operation: "get_curation_picks",
+        dimension,
+        budget: 10,
+        base_tag_id: baseTag,
+        context_tag_id: contextTag,
+      }).then(
+        (value) => {
+          setPicksRound(value);
+          setPicksAnswers({});
+          setPicksVerdict(null);
+          setPicksBusy(false);
+        },
+        (failure) => { setPicksError(failure.message); setPicksBusy(false); }
+      );
+    }
+    function answerPicks(pairId, winner) {
+      if (flash) {
+        return; // input is locked while the selection outline shows
+      }
+      setPicksUndo([]);
+      setFlash({ pairId, winner });
+    }
+    function backPicks() {
+      if (flash || !picksRound) {
+        return;
+      }
+      const answeredCount = Object.keys(picksAnswers).length;
+      if (answeredCount === 0) {
+        return;
+      }
+      const lastPairId = picksRound.pairs[answeredCount - 1].pair_id;
+      const winner = picksAnswers[lastPairId];
+      setPicksAnswers((current) => {
+        const next = { ...current };
+        delete next[lastPairId];
+        return next;
+      });
+      setPicksUndo((current) => [...current, { pairId: lastPairId, winner }]);
+    }
+    function forwardPicks() {
+      if (flash || picksUndo.length === 0) {
+        return;
+      }
+      const entry = picksUndo[picksUndo.length - 1];
+      setPicksUndo((current) => current.slice(0, -1));
+      setPicksAnswers((current) => ({ ...current, [entry.pairId]: entry.winner }));
+    }
+    React.useEffect(() => {
+      if (!flash) {
+        return;
+      }
+      const timer = setTimeout(() => {
+        const pairId = flash.pairId;
+        const winner = flash.winner;
+        setFlash(null);
+        setPicksAnswers((current) => ({ ...current, [pairId]: winner }));
+      }, FLASH_MS);
+      return () => clearTimeout(timer);
+    }, [flash]);
+    React.useEffect(() => {
+      if (picksRound) {
+        writePicksState({ round: picksRound, answers: picksAnswers });
+      }
+    }, [picksRound, picksAnswers]);
+    React.useEffect(() => {
+      if (curateTab !== "pick" || !picksRound || picksVerdict || picksRound.pairs.length === 0) {
+        return;
+      }
+      const answeredCount = Object.keys(picksAnswers).length;
+      if (answeredCount >= picksRound.pairs.length) {
+        return;
+      }
+      const pairId = picksRound.pairs[answeredCount].pair_id;
+      function onKey(event) {
+        if (flash) {
+          return;
+        }
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          answerPicks(pairId, "a");
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          answerPicks(pairId, "b");
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          answerPicks(pairId, "similar");
+        } else if (event.key === "ArrowDown") {
+          event.preventDefault();
+          answerPicks(pairId, "skip");
+        }
+      }
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }, [curateTab, picksRound, picksVerdict, picksAnswers, flash]);
+    async function submitPicks() {
+      const entries = Object.entries(picksAnswers)
+        .filter(([, winner]) => winner !== "similar")
+        .map(([pairId, winner]) => {
+          if (winner === "flag_a" || winner === "flag_b") {
+            return { pair_id: pairId, winner: "flag", scene: winner === "flag_a" ? "a" : "b" };
+          }
+          return { pair_id: pairId, winner };
+        });
+      if (!entries.length) {
+        setPicksError("Answer at least one comparison before submitting.");
+        return;
+      }
+      setPicksBusy(true);
+      setPicksError("");
+      try {
+        await operation({
+          operation: "submit_curation_picks",
+          round_id: picksRound.round_id,
+          picks: entries,
+        });
+        const result = await operation({
+          operation: "get_curation_pair_verdict",
+          round_id: picksRound.round_id,
+        });
+        setPicksVerdict(result);
+      } catch (failure) {
+        setPicksError(failure.message);
+      } finally {
+        setPicksBusy(false);
+      }
+    }
+    function pickCellLabel(cell) {
+      const base = picksRound && picksRound.base_tag && picksRound.base_tag.name;
+      const context = picksRound && picksRound.context_tag && picksRound.context_tag.name;
+      if (base && context) {
+        const labels = {
+          "L&T": `${base} + ${context}`,
+          "L&!T": `${base} without ${context}`,
+          "!L&T": `${context} without ${base}`,
+          "neither": "Neither",
+        };
+        return labels[cell] || cell;
+      }
+      return cell;
+    }
+    function startRound() {
+      clearPicksState();
+      setPicksRound(null);
+      setPicksAnswers({});
+      setPicksVerdict(null);
+      setFlash(null);
+      setPicksUndo([]);
+    }
+    return React.createElement(
+      "section",
+      { className: "curator-curate", "aria-labelledby": "curator-curate-title" },
+      React.createElement("h2", { id: "curator-curate-title" }, "Curate"),
+      React.createElement("p", null, "Pick the scene you prefer in each pair — every choice teaches the model about all tags, performers, and studios the scenes carried."),
+      React.createElement(
+        "div",
+        { className: "curator-curate-tabs", role: "tablist", "aria-label": "Curate views" },
+        React.createElement(Button, { size: "sm", variant: curateTab === "pick" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "pick", onClick: () => setCurateTab("pick") }, "Pick"),
+        React.createElement(Button, { size: "sm", variant: curateTab === "tags" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "tags", onClick: () => setCurateTab("tags") }, "Tag sentiment")
+      ),
+      curateTab === "tags" && React.createElement(TasteProfilePanel),
+      curateTab === "pick" && !picksRound && React.createElement(
+        "div",
+        { className: "curator-curate-started" },
+        React.createElement("h3", null, "Compare two scenes"),
+        React.createElement("p", null, "Each pair varies one factor at a time — your pick tells the model which way you lean. No wrong answers; Skip when it feels like a coin flip."),
+        picksError && React.createElement("div", { className: "alert alert-danger" }, picksError),
+        React.createElement(
+          "div",
+          { className: "curator-curate-quick" },
+          React.createElement(
+            "div",
+            { className: "curator-curate-quick-block" },
+            React.createElement("strong", null, "Random round"),
+            React.createElement(
+              "div",
+              { className: "curator-curate-suggestion" },
+              React.createElement("span", { className: "curator-curate-suggestion-text" }, "10 random pairs", React.createElement("small", null, "Widest coverage across your library")),
+              React.createElement(Button, { size: "sm", variant: "primary", disabled: picksBusy, onClick: () => generatePicks("orthogonal", "", "") }, "Generate")
+            )
+          ),
+          React.createElement(
+            "div",
+            { className: "curator-curate-quick-block" },
+            React.createElement("strong", null, "Pick-test a hypothesis"),
+            suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — the Tag sentiment tab and your rated scenes generate them."),
+            (suggestions || []).map((suggestion) =>
+              React.createElement(
+                "div",
+                { key: `pick-${suggestion.base_tag_id}:${suggestion.context_tag_id}`, className: "curator-curate-suggestion" },
+                React.createElement("span", { className: "curator-curate-suggestion-text" }, `${suggestion.base_name} + ${suggestion.context_name}`),
+                React.createElement(Button, { size: "sm", variant: "primary", disabled: picksBusy, onClick: () => generatePicks("tag", suggestion.base_tag_id, suggestion.context_tag_id) }, "Pick-test")
+              )
+            )
+          )
+        )
+      ),
+      curateTab === "pick" && picksRound && React.createElement(
+        "div",
+        { className: "curator-pick" },
+        React.createElement(
+          "div",
+          { className: "curator-curate-batch-header" },
+          React.createElement("strong", null, picksRound.dimension === "tag"
+            ? `${(picksRound.base_tag && picksRound.base_tag.name) || "?"} + ${(picksRound.context_tag && picksRound.context_tag.name) || "?"}`
+            : "Random round"),
+          React.createElement("span", null, `${Object.keys(picksAnswers).length}/${picksRound.pairs.length} compared`),
+          React.createElement(Button, { size: "sm", variant: "link", onClick: startRound }, "New round")
+        ),
+        picksError && React.createElement("div", { className: "alert alert-danger" }, picksError),
+        picksVerdict && React.createElement(
+          "div",
+          { className: "curator-curate-verdict" },
+          React.createElement("h3", null, picksVerdict.dimension === "tag" ? "Pick verdict" : "Round verdict"),
+          React.createElement("p", { className: "curator-pick-verdict-summary" },
+            `${picksVerdict.n_answered} comparisons · left ${Object.values(picksAnswers).filter((w) => w === "a").length} · right ${Object.values(picksAnswers).filter((w) => w === "b").length}`,
+            picksVerdict.dimension === "orthogonal" && " · win rates for the tags that differed between scenes"
+          ),
+          picksVerdict.dimension === "tag" && (() => {
+            const byCell = {};
+            picksVerdict.cells.forEach((cell) => { byCell[cell.cell] = cell; });
+            const withCtx = byCell["L&T"] || { wins: 0 };
+            const withoutCtx = byCell["L&!T"] || { wins: 0 };
+            const total = withCtx.wins + withoutCtx.wins;
+            let headline;
+            if (withCtx.wins > withoutCtx.wins) {
+              headline = `You preferred ${pickCellLabel("L&T")} — ${withCtx.wins} to ${withoutCtx.wins} across ${total} comparisons.`;
+            } else if (withoutCtx.wins > withCtx.wins) {
+              headline = `You preferred ${pickCellLabel("L&!T")} — ${withoutCtx.wins} to ${withCtx.wins} across ${total} comparisons.`;
+            } else {
+              headline = `No clear preference — ${total} comparisons.`;
+            }
+            const rate = (wins) => (total > 0 ? wins / total : 0);
+            return React.createElement(
+              "div",
+              null,
+              React.createElement("p", { className: "curator-pick-verdict-headline" }, headline),
+              React.createElement(
+                "div",
+                { className: "curator-pick-verdict-rows" },
+                React.createElement(
+                  "div",
+                  { className: "curator-pick-verdict-row" },
+                  React.createElement("span", { className: "curator-pick-verdict-row-label" }, pickCellLabel("L&T")),
+                  React.createElement(
+                    "div",
+                    { className: "curator-pick-verdict-track" },
+                    React.createElement("div", { className: "curator-pick-verdict-fill", style: { width: `${Math.round(rate(withCtx.wins) * 100)}%` } })
+                  ),
+                  React.createElement("span", { className: "curator-pick-verdict-count" }, withCtx.wins)
+                ),
+                React.createElement(
+                  "div",
+                  { className: "curator-pick-verdict-row" },
+                  React.createElement("span", { className: "curator-pick-verdict-row-label" }, pickCellLabel("L&!T")),
+                  React.createElement(
+                    "div",
+                    { className: "curator-pick-verdict-track" },
+                    React.createElement("div", { className: "curator-pick-verdict-fill", style: { width: `${Math.round(rate(withoutCtx.wins) * 100)}%` } })
+                  ),
+                  React.createElement("span", { className: "curator-pick-verdict-count" }, withoutCtx.wins)
+                )
+              ),
+              React.createElement("p", { className: "curator-pick-verdict-note" },
+                "Pairs were matched to isolate this one relationship. Every pick also teaches the model about all tags, performers, and studios the scenes carried: shared features cancel, differing ones get the signal."
+              )
+            );
+          })(),
+          picksVerdict.dimension !== "tag" && (picksVerdict.items || []).length > 0 && (() => {
+            const leftCount = Object.values(picksAnswers).filter((w) => w === "a").length;
+            const rightCount = Object.values(picksAnswers).filter((w) => w === "b").length;
+            const answered = leftCount + rightCount;
+            const lopsided = answered > 0 && Math.min(leftCount, rightCount) * 10 < answered * 3;
+            const items = picksVerdict.items.slice().sort((a, b) =>
+              b.win_rate - a.win_rate || b.appearances - a.appearances
+            );
+            return React.createElement(
+              "div",
+              null,
+              React.createElement(
+                "div",
+                { className: "curator-pick-verdict-grid" },
+                items.slice(0, 12).map((item) =>
+                  React.createElement(CurationVerdictBar, { key: item.tag_id || item.name, label: item.name, rate: item.win_rate, wins: item.wins, appearances: item.appearances })
+                )
+              ),
+              lopsided && React.createElement("p", { className: "curator-pick-verdict-note" },
+                `Picks were one-sided (left ${leftCount} · right ${rightCount}) — win rates mostly reflect the side you favored, so tags can't be discriminated yet. Varied picks will separate them.`
+              ),
+              !lopsided && answered > 0 && React.createElement("p", { className: "curator-pick-verdict-note" },
+                `Evenly split (left ${leftCount} · right ${rightCount}) — most tags won every comparison they appeared in, so these rates are still coarse. Keep comparing; each round sharpens them.`
+              )
+            );
+          })(),
+          picksVerdict.dimension !== "tag" && picksVerdict.items.length === 0 && React.createElement("p", null, "No tag had enough appearances to report yet.")
+        ),
+        !picksVerdict && picksRound.pairs.length === 0 && React.createElement("p", null, "No candidate pairs above zero information — try a different dimension or rate more scenes first."),
+        !picksVerdict && picksRound.pairs.length > 0 && (() => {
+          const answeredCount = Object.keys(picksAnswers).length;
+          const currentPair = answeredCount < picksRound.pairs.length ? picksRound.pairs[answeredCount] : null;
+          const leftCount = Object.values(picksAnswers).filter((w) => w === "a").length;
+          const rightCount = Object.values(picksAnswers).filter((w) => w === "b").length;
+          if (!currentPair) {
+            return React.createElement(
+              "div",
+              { className: "curator-pick-done" },
+              React.createElement("p", null, `All ${picksRound.pairs.length} compared — left ${leftCount}, right ${rightCount}.`),
+              React.createElement(
+                "div",
+                { className: "curator-pick-controls" },
+                React.createElement(Button, { size: "sm", variant: "secondary", disabled: flash, onClick: backPicks, title: "Undo the last pick" }, "Back"),
+                React.createElement(Button, { size: "sm", variant: "primary", disabled: picksBusy, onClick: submitPicks }, picksBusy ? "Submitting…" : "Submit picks")
+              )
+            );
+          }
+          const answer = picksAnswers[currentPair.pair_id];
+          return React.createElement(
+            "div",
+            { className: "curator-pick-compare" },
+            React.createElement("div", { className: "curator-pick-tally" }, `left ${leftCount} · right ${rightCount} · compared ${answeredCount}/${picksRound.pairs.length}`),
+            React.createElement(
+              "div",
+              { className: "curator-pick-cards" },
+              React.createElement(PickSceneCard, { meta: currentPair.scene_a, picked: answer === "a" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "a"), onPick: () => answerPicks(currentPair.pair_id, "a"), onFlag: () => answerPicks(currentPair.pair_id, "flag_a") }),
+              React.createElement(PickSceneCard, { meta: currentPair.scene_b, picked: answer === "b" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "b"), onPick: () => answerPicks(currentPair.pair_id, "b"), onFlag: () => answerPicks(currentPair.pair_id, "flag_b") })
+            ),
+            React.createElement(
+              "div",
+              { className: "curator-pick-controls" },
+              React.createElement(
+                "div",
+                { className: "curator-pick-nav-group", role: "group", "aria-label": "Navigate picks" },
+                React.createElement(Button, { size: "sm", variant: "secondary", disabled: answeredCount === 0 || flash, onClick: backPicks, title: "Undo the previous pick" }, "Back"),
+                React.createElement(Button, { size: "sm", variant: "secondary", disabled: picksUndo.length === 0 || flash, onClick: forwardPicks, title: "Redo the undone pick" }, "Forward")
+              ),
+              React.createElement(
+                "div",
+                { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison" },
+                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "a") }, "← Left"),
+                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "b") }, "Right →"),
+                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "similar") }, "Similar ↑"),
+                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "skip") }, "Skip ↓"),
+                React.createElement("span", { className: "curator-pick-hint" }, "Keys: ", React.createElement("kbd", null, "←/→"), " pick · ", React.createElement("kbd", null, "↑"), " similar · ", React.createElement("kbd", null, "↓"), " skip")
+              )
+            )
+          );
+        })()
       )
     );
   }
@@ -2699,7 +3202,7 @@
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { initialType: route.get("type") || "scene", initialId: route.get("id"), initialLabel: route.get("label") }),
       lane === "history" && React.createElement(RecommendationHistoryPanel),
       lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
-      lane === "taste" && React.createElement(TasteProfilePanel),
+      lane === "curate" && React.createElement(CuratePanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, initialPerformerId: route.get("performer"), initialPerformerLabel: route.get("label") }),
