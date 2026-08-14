@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.11.0](https://github.com/mrx-31415/stash-curator/compare/v0.10.0...v0.11.0) (2026-08-13)
+
+
+### Features
+
+* sentiment-review surface with sort direction and appeal threshold ([#141](https://github.com/mrx-31415/stash-curator/issues/141)) ([79602bf](https://github.com/mrx-31415/stash-curator/commit/79602bf07c89c1ed4fd6ff415b4c24a4bb5faecc))
+
+## [0.10.0](https://github.com/mrx-31415/stash-curator/compare/v0.9.2...v0.10.0) (2026-08-13)
+
+
+### Features
+
+* mirror derived artifact cache into backup storage ([#136](https://github.com/mrx-31415/stash-curator/issues/136)) ([2dcf5b2](https://github.com/mrx-31415/stash-curator/commit/2dcf5b218c2d2491497bb336a7261d4c9a499fd2))
+* score-review op sorted by model appeal ([#138](https://github.com/mrx-31415/stash-curator/issues/138)) ([cbb1bfb](https://github.com/mrx-31415/stash-curator/commit/cbb1bfbcdf868a162d35ae1aa19204fc731070bd))
+
+
+### Bug Fixes
+
+* re-annotate expand candidates against current links at serve time ([#137](https://github.com/mrx-31415/stash-curator/issues/137)) ([2695973](https://github.com/mrx-31415/stash-curator/commit/26959733b66a89f316a20cb294b0478855de4296))
+* URL carries full view state for expand/similar/history/prune; add score-review view ([#139](https://github.com/mrx-31415/stash-curator/issues/139)) ([9b5399e](https://github.com/mrx-31415/stash-curator/commit/9b5399efaf4398f74a350be308f91019832deaf0))
+
+## [0.9.2](https://github.com/mrx-31415/stash-curator/compare/v0.9.1...v0.9.2) (2026-08-12)
+
+
+### Performance Improvements
+
+* batch artifact inserts into multi-row statements ([#132](https://github.com/mrx-31415/stash-curator/issues/132)) ([9821904](https://github.com/mrx-31415/stash-curator/commit/9821904174b7e8e243409c3fc7c3f803af08b13b))
+
+## [0.9.1](https://github.com/mrx-31415/stash-curator/compare/v0.9.0...v0.9.1) (2026-08-12)
+
+
+### Performance Improvements
+
+* parallelize the similar op's independent reads on a read-only pool ([#130](https://github.com/mrx-31415/stash-curator/issues/130)) ([3e03ba8](https://github.com/mrx-31415/stash-curator/commit/3e03ba861e71954e87e9467adb90cb4a7f572df9))
+
 ## [0.9.0](https://github.com/mrx-31415/stash-curator/compare/v0.8.1...v0.9.0) (2026-08-12)
 
 

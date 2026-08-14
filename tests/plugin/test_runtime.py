@@ -614,12 +614,17 @@ def test_plugin_pages_generated_results_without_repeating_external_searches() ->
         "page_feedback",
         "page_history",
         "page_similar",
-        "page_prune_${view}",
-        "page_expand_${entityType}",
+        "page_prune_",
+        "page_expand_",
         "page_hunt",
+        "page_sentiment",
     ):
         assert param in source
-    assert "setPage(last, { replace: true })" in source
+    # The URL-backed page keys stay canonical: prune/expand derive theirs from
+    # the current view/entity type exactly as the fixed keys used to.
+    assert "page: urlPageSpec((state) => `page_prune_${state.view}`)" in source
+    assert "page: urlPageSpec((state) => `page_expand_${state.entityType}`)" in source
+    assert "updateUrl((s) => ({ ...s, page: last }), { replace: true })" in source
     assert "return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`" in source
     assert "externalItems.slice((page - 1) * pageSize, page * pageSize)" in source
     assert 'operation: "get_expand", page' in source
@@ -658,6 +663,90 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert "data?.truncated" in source
     assert "(failure) => active && (setError(failure.message), setLoading(false))" in source
     assert 'entityType === "hunt" ? "scene" : entityType' in source
+
+
+def test_panels_serialize_full_view_state_to_the_url() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert "function useUrlState(spec)" in source
+    assert "function parseUrlState(search, spec)" in source
+    # Similarity panel namespace: filters, source, exclusions, and the selected
+    # source entity (type/id/label stay the shared-link params).
+    for param in (
+        'urlStringField("sim_source"',
+        'urlStringField("sim_gender"',
+        'urlBoolField("sim_favorite"',
+        'urlListField("sim_include_tags"',
+        'urlListField("sim_exclude_tags"',
+        'urlListField("sim_performers"',
+        'urlListField("sim_studios"',
+        'urlNumberField("sim_min_sim"',
+        'urlBoolField("sim_hide_phash"',
+        'urlBoolField("sim_include_owned"',
+        'param: "sim_excluded"',
+    ):
+        assert param in source
+    assert 'urlStringField("type"' in source
+    assert 'param: "id"' in source
+    # Expand panel namespace.
+    for param in (
+        'urlStringField("exp_type"',
+        'urlStringField("exp_sort"',
+        'urlStringField("exp_performer"',
+        'urlStringField("exp_gender"',
+        'urlBoolField("exp_favorite"',
+        'urlListField("exp_include_tags"',
+        'urlListField("exp_exclude_tags"',
+        'urlListField("exp_performers"',
+        'urlListField("exp_studios"',
+        'urlNumberField("exp_min_score"',
+        'urlBoolField("exp_hide_phash"',
+    ):
+        assert param in source
+    # Hunt panel namespace: performer/label stay the shared-link params.
+    for param in (
+        'param: "performer"',
+        'urlStringField("hunt_view"',
+        'urlStringField("hunt_sort"',
+        'urlListField("hunt_include_tags"',
+        'urlListField("hunt_exclude_tags"',
+        'urlBoolField("hunt_hide_phash"',
+    ):
+        assert param in source
+    # History lane filter and prune view/aggressiveness.
+    assert 'urlStringField("hist_lane"' in source
+    assert 'urlStringField("prn_view"' in source
+    assert 'urlNumberField("prn_aggr"' in source
+    # URL writes are batched into one history push per user action.
+    assert "const search = route.toString();" in source
+    assert 'history[options.replace ? "replace" : "push"]' in source
+
+
+def test_score_review_view_is_a_maintenance_nav_item_and_uses_the_slate_card() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert 'value: "sentiment"' in source
+    assert 'label: "Sentiment review"' in source
+    assert "icon: faBalanceScale" in source
+    assert "maintenance: true" in source
+    assert "function ScoreReviewPanel" in source
+    assert 'operation: "get_score_review"' in source
+    assert 'urlPageSpec("page_sentiment")' in source
+    assert 'lane === "sentiment" && React.createElement(ScoreReviewPanel)' in source
+    # The review surface reuses the slate card (Score, Why this?, thumbs) and
+    # the pager, mirroring CuratorPage's slate rendering.
+    assert (
+        "React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`"
+        in source
+    )
+    assert "source_lane: item.lane || item.source_lane" in source
+    assert "model_id: data.model_version" in source
+    # The review direction and the appeal threshold are URL-backed state and
+    # flow into the op.
+    assert 'urlStringField("sent_order", "asc"' in source
+    assert 'urlNumberField("sent_max", 0)' in source
+    assert "max_appeal: threshold, order" in source
+    assert 'label: "Sentiment review pages"' in source
 
 
 def test_plugin_reads_local_file_phashes_for_external_matching() -> None:
@@ -717,7 +806,7 @@ def test_similarity_source_switch_visible_before_reference_is_selected() -> None
     assert f'selected && React.createElement("div", {{ {tabs}' not in source
     # Switching the entity type must not silently reset the chosen source.
     assert 'setSource("library")' not in source
-    assert 'React.useState("library")' in source
+    assert 'urlStringField("sim_source", "library"' in source
 
 
 def test_performer_source_reference_uses_portrait_image() -> None:

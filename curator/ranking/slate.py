@@ -904,6 +904,124 @@ class SlateBuilder:
         )
         return sum(1 for scene_id in excluded if eligibility.get(scene_id, {}).get("eligible"))
 
+    def _score_review_eligibility(
+        self, now_ms: int, scene_ids: set[str]
+    ) -> dict[str, dict[str, object]]:
+        """scene_eligibility for the review surface: the current_thumb_down
+        reason does NOT exclude. Recommendation lanes hide thumb-downed
+        scenes so they are never re-recommended; the score-review surface
+        exists to inspect the bottom of the appeal distribution, and the
+        scenes the user explicitly disliked are exactly the ones it must
+        show. Every other reason (file_unavailable, hard_exclusion,
+        pruning_*, not_now, blocked_tag) still excludes. Mirrors the Go
+        core's scoreReviewEligibility exactly."""
+        eligibility = scene_eligibility(self.connection, now_ms, self.config, scene_ids=scene_ids)
+        for state in eligibility.values():
+            if state.get("eligible"):
+                continue
+            reasons = state.get("reasons", [])
+            if not isinstance(reasons, list):
+                continue
+            state["reasons"] = [r for r in reasons if r != "current_thumb_down"]
+            state["eligible"] = not state["reasons"]
+        return eligibility
+
+    def score_review_available_count(self, model_id: str, max_appeal: float = 0.0) -> int:
+        """Count eligible scenes at the bottom of the appeal distribution
+        (appeal <= max_appeal) without hydrating items, applying the same
+        live eligibility as the slate path."""
+        scene_ids = {
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id FROM model_scene_score
+                WHERE model_id=? AND appeal <= ?
+                """,
+                (model_id, max_appeal),
+            )
+        }
+        eligibility = self._score_review_eligibility(time.time_ns() // 1_000_000, scene_ids)
+        return sum(1 for scene_id in scene_ids if eligibility.get(scene_id, {}).get("eligible"))
+
+    def score_review(
+        self, model_id: str, count: int, *, max_appeal: float = 0.0, order: str = "asc"
+    ) -> Slate:
+        """The bottom of the appeal distribution: model_scene_score rows
+        ordered by appeal (ASC = least-appealing first, the default review
+        direction; DESC = most-appealing within the window first), filtered
+        appeal <= max_appeal, the same live eligibility applied as the slate
+        path, hydrated into recommendation items with score-first semantics
+        (final_utility = appeal, the score-first zero penalties/bonuses, lane
+        "score_review")."""
+        if model_id is None:
+            raise RuntimeError("no published model; run build-model first")
+        started = time.perf_counter()
+        now_ms = time.time_ns() // 1_000_000
+        direction = "ASC" if order == "asc" else "DESC"
+        selected_rows: list[sqlite3.Row] = []
+        offset = 0
+        chunk_size = max(100, count)
+        while len(selected_rows) < count:
+            rows = self.connection.execute(
+                f"""
+                SELECT scene_id FROM model_scene_score
+                WHERE model_id=? AND appeal <= ?
+                ORDER BY appeal {direction}, scene_id
+                LIMIT ? OFFSET ?
+                """,
+                (model_id, max_appeal, chunk_size, offset),
+            ).fetchall()
+            if not rows:
+                break
+            offset += len(rows)
+            scene_ids = {str(row["scene_id"]) for row in rows}
+            eligibility = self._score_review_eligibility(now_ms, scene_ids)
+            selected_rows.extend(
+                row for row in rows if eligibility.get(str(row["scene_id"]), {}).get("eligible")
+            )
+            if len(rows) < chunk_size:
+                break
+        selected_rows = selected_rows[:count]
+        scene_ids = {str(row["scene_id"]) for row in selected_rows}
+        scores = RecommendationModelStore(self.connection).scores(model_id, scene_ids)
+        penalties = json.loads(SCORE_FIRST_RANKING_JSON)["penalties"]
+        penalties["live_cooldown"] = 0.0
+        bonuses = json.loads(SCORE_FIRST_RANKING_JSON)["bonuses"]
+        items = []
+        for position, row in enumerate(selected_rows):
+            scene_id = str(row["scene_id"])
+            score = scores[scene_id]
+            items.append(
+                RecommendationItem(
+                    scene_id,
+                    "score_review",
+                    "score_review",
+                    None,
+                    position,
+                    score.appeal,
+                    score.current_fit,
+                    score.confidence,
+                    score.appeal,
+                    score.appeal,
+                    dict(penalties),
+                    dict(bonuses),
+                    score.components,
+                    score.neighbors,
+                    score.eligibility,
+                    {},
+                    ("eligibility.lane",),
+                )
+            )
+        elapsed = round((time.perf_counter() - started) * 1_000)
+        record_duration("python", "ranking.score_review", elapsed)
+        return Slate(
+            model_id,
+            "score_review",
+            tuple(items),
+            (),
+            {"materialized": 1, "selection": elapsed, "total": elapsed},
+        )
+
     def _direct_play_filters(self, now_ms: int) -> tuple[dict[str, int], set[str]]:
         direct_plays = {
             str(row["scene_id"]): int(row["last_played"])

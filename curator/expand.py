@@ -579,6 +579,7 @@ class ExpandService:
         hide_phash_matches: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
+        links: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, object]:
         if entity_type not in {"scene", "performer"} or sort not in {"match", "newest"}:
             raise ValueError("invalid Expand query")
@@ -615,6 +616,12 @@ class ExpandService:
             if float(row["score"]) < minimum_score:
                 continue
             payload = json.loads(row["payload_json"])
+            # Issue #118: the stored annotation can be stale (the candidate
+            # was fetched before the local scene gained its StashDB id).
+            # Re-derive it against the current links map; the serve-time
+            # match is authoritative for the exclusion and the served payload.
+            if links is not None and entity_type == "scene":
+                payload = self._annotate_local_match(payload, links)
             match_type = (payload.get("curator_local_match") or {}).get("type")
             if entity_type == "scene" and (
                 match_type == "stashdb_id" or (hide_phash_matches and match_type == "phash")

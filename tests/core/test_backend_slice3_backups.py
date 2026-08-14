@@ -28,8 +28,11 @@ from pathlib import Path
 import pytest
 
 from curator.core import core_binary
+from curator.storage import connect_database
+from curator.storage.artifacts import ARTIFACT_SCHEMA_VERSION, create_artifact, publish_file
 from tests.core.compare import assert_equivalent
 from tests.core.test_backend import (
+    FEATURE_VERSION,
     PLUGIN_DIR,
     _StubStash,
     make_sidecar,
@@ -396,3 +399,196 @@ def test_restore_backup_state_parity(backup_sidecar: Path, binary: Path, stub_st
             connection.close()
         shutil.rmtree(run_dir, ignore_errors=True)
     assert_equivalent(states[0], states[1])
+
+
+# ── derived-artifact mirroring (issue #116) ────────────────────────────────
+
+MODEL_ID = "model-" + "b" * 20
+
+
+@pytest.fixture(scope="module")
+def derived_backup_sidecar(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A migrated sidecar with published feature+model artifacts in the live
+    <stem>-derived cache, plus decoys the mirror must ignore (a stray file
+    and a leftover temp artifact)."""
+    directory = tmp_path_factory.mktemp("derived-backup-sidecar")
+    path = directory / "curator.sqlite3"
+    make_sidecar(path, with_jobs=True)
+    connection = sqlite3.connect(path)
+    try:
+        core = connect_database(path, attach_artifacts=False)
+        artifact, temporary, final = create_artifact(core, "feature", FEATURE_VERSION)
+        artifact.close()
+        publish_file(artifact, temporary, final)
+        core.execute(
+            """
+            INSERT INTO feature_build(
+                feature_version, status, config_json, source_fingerprint, created_at_ms,
+                artifact_basename, artifact_schema_version, artifact_bytes, validation_status,
+                validation_summary_json, reuse_count
+            ) VALUES (?, 'published', '{}', 'fp', 1, ?, ?, ?, 'valid', '{}', 0)
+            """,
+            (FEATURE_VERSION, final.name, ARTIFACT_SCHEMA_VERSION, final.stat().st_size),
+        )
+        artifact, temporary, final = create_artifact(core, "model", MODEL_ID)
+        artifact.close()
+        publish_file(artifact, temporary, final)
+        core.execute(
+            """
+            INSERT INTO model_version(
+                model_id, status, feature_version, config_json, created_at_ms,
+                artifact_basename, artifact_schema_version, artifact_bytes, validation_status,
+                validation_summary_json, reuse_count
+            ) VALUES (?, 'published', ?, '{}', 1, ?, ?, ?, 'valid', '{}', 0)
+            """,
+            (MODEL_ID, FEATURE_VERSION, final.name, ARTIFACT_SCHEMA_VERSION, final.stat().st_size),
+        )
+        core.commit()
+        core.close()
+    finally:
+        connection.close()
+    cache = path.parent / f"{path.stem}-derived"
+    (cache / "notes.txt").write_text("not an artifact")
+    (cache / ".feature-fv-aaaaaaaaaaaaaaaaaaaa.00000000000000000000000000000000.tmp").write_text(
+        "stale temp"
+    )
+    return path
+
+
+def _go_create_backup(
+    binary: Path, sidecar: Path, stash_url: str, backup_dir: Path
+) -> subprocess.CompletedProcess[bytes]:
+    """Run the Go binary's create_backup with the given backupPath."""
+    _StubStash.plugin_settings = {"backupPath": str(backup_dir)}
+    try:
+        return run_backend(
+            binary, PLUGIN_DIR, _with_db_path(payload("create_backup", sidecar, stash_url), sidecar)
+        )
+    finally:
+        _StubStash.plugin_settings = {}
+
+
+def test_create_backup_mirrors_derived_artifacts(
+    derived_backup_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """create_backup copies the published feature/model artifacts into a
+    derived/ subdir of the backup storage, byte-identical to the live cache,
+    and leaves decoys (non-artifact files, leftover temps) behind."""
+    storage = tmp_path / "backup-storage"
+    result = _go_create_backup(binary, derived_backup_sidecar, stub_stash, storage)
+    assert result.returncode == 0, result.stdout + result.stderr
+    backups = sorted(storage.glob("curator-*.sqlite3.backup"))
+    assert len(backups) == 1  # the database snapshot still lands top-level
+    mirrored = storage / "derived"
+    assert sorted(p.name for p in mirrored.iterdir()) == [
+        "feature-fv-aaaaaaaaaaaaaaaaaaaa.sqlite3",
+        "model-bbbbbbbbbbbbbbbbbbbb.sqlite3",
+    ]
+    cache = derived_backup_sidecar.parent / f"{derived_backup_sidecar.stem}-derived"
+    for name in ("feature-fv-aaaaaaaaaaaaaaaaaaaa.sqlite3", "model-bbbbbbbbbbbbbbbbbbbb.sqlite3"):
+        assert (mirrored / name).read_bytes() == (cache / name).read_bytes()
+    assert not (mirrored / "notes.txt").exists()
+    assert not list(mirrored.glob("*.tmp"))
+
+
+def test_create_backup_mirror_idempotent(
+    derived_backup_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """Re-running the backup skips unchanged artifacts: the mirrored files
+    keep their mtimes/inodes from the first run and no temp files linger."""
+    storage = tmp_path / "backup-storage"
+    first = _go_create_backup(binary, derived_backup_sidecar, stub_stash, storage)
+    assert first.returncode == 0, first.stdout + first.stderr
+    mirrored = storage / "derived"
+    before = {
+        p.name: (p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_size)
+        for p in mirrored.iterdir()
+    }
+    second = _go_create_backup(binary, derived_backup_sidecar, stub_stash, storage)
+    assert second.returncode == 0, second.stdout + second.stderr
+    after = {
+        p.name: (p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_size)
+        for p in mirrored.iterdir()
+    }
+    assert before == after  # unchanged artifacts were skipped, not rewritten
+    assert len(list(storage.glob("curator-*.sqlite3.backup"))) == 2  # two snapshots, one mirror
+    assert not list(mirrored.glob("*.tmp"))
+
+
+def test_create_backup_never_file_copies_live_sidecar(
+    derived_backup_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """The live WAL sidecar appears in the backup storage only as the
+    SQLite-backup-API snapshot: no file copy of the sidecar, its -wal, or
+    its -shm anywhere, and the mirror holds only artifact files."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run_db = run_dir / derived_backup_sidecar.name
+    shutil.copy2(derived_backup_sidecar, run_db)
+    derived_src = derived_backup_sidecar.parent / f"{derived_backup_sidecar.stem}-derived"
+    shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+    # Put the sidecar in real WAL mode with a committed-but-not-checkpointed
+    # frame, so a live -wal/-shm pair exists beside the database.
+    wal = sqlite3.connect(run_db)
+    try:
+        wal.execute("PRAGMA journal_mode=WAL")
+        wal.execute("INSERT INTO application_meta(key, value) VALUES ('wal_probe', '1')")
+        wal.commit()
+        assert (run_dir / f"{run_db.name}-wal").exists()
+        storage = tmp_path / "backup-storage"
+        result = _go_create_backup(binary, run_db, stub_stash, storage)
+        assert result.returncode == 0, result.stdout + result.stderr
+    finally:
+        wal.close()
+    top = {p.name for p in storage.iterdir()}
+    assert "derived" in top
+    others = top - {"derived"}
+    assert len(others) == 1
+    backup_name = others.pop()
+    assert backup_name.startswith("curator-") and backup_name.endswith(".sqlite3.backup")
+    # The sidecar itself and its WAL siblings were never file-copied.
+    assert "curator.sqlite3" not in top
+    assert not any(n.endswith(("-wal", "-shm")) for n in top)
+    mirrored = {p.name for p in (storage / "derived").iterdir()}
+    assert mirrored == {
+        "feature-fv-aaaaaaaaaaaaaaaaaaaa.sqlite3",
+        "model-bbbbbbbbbbbbbbbbbbbb.sqlite3",
+    }
+    assert not any(n.endswith(("-wal", "-shm")) for n in mirrored)
+
+
+def test_backup_task_mirrors_derived_artifacts(
+    derived_backup_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """The backup task mode mirrors the derived cache into the backup storage
+    alongside the SQLite snapshot."""
+    storage = tmp_path / "backup-storage"
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run_db = run_dir / derived_backup_sidecar.name
+    shutil.copy2(derived_backup_sidecar, run_db)
+    derived_src = derived_backup_sidecar.parent / f"{derived_backup_sidecar.stem}-derived"
+    shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+    raw = json.dumps(
+        {
+            "server_connection": {
+                "Host": "127.0.0.1",
+                "Port": int(stub_stash.rsplit(":", 1)[1]),
+                "Scheme": "http",
+                "SessionCookie": {},
+            },
+            "args": {"database_path": str(run_db)},
+        },
+        separators=(",", ":"),
+    ).encode()
+    _StubStash.plugin_settings = {"backupPath": str(storage)}
+    try:
+        result = run_backend(binary, PLUGIN_DIR, raw, "backup")
+    finally:
+        _StubStash.plugin_settings = {}
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(list(storage.glob("curator-*.sqlite3.backup"))) == 1
+    assert sorted(p.name for p in (storage / "derived").iterdir()) == [
+        "feature-fv-aaaaaaaaaaaaaaaaaaaa.sqlite3",
+        "model-bbbbbbbbbbbbbbbbbbbb.sqlite3",
+    ]

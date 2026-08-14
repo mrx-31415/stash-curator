@@ -150,6 +150,51 @@ class CuratorAPI:
             "ranking_timings_ms": slate.timings_ms,
         }
 
+    def get_score_review(
+        self,
+        page: int = 1,
+        count: int = 20,
+        *,
+        max_appeal: float = 0.0,
+        order: str = "asc",
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        if page < 1 or not 1 <= count <= 500:
+            raise ValueError("invalid score review page")
+        if order not in ("asc", "desc"):
+            raise ValueError("invalid score review order")
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model; run build-model first")
+        start = (page - 1) * count
+        end = page * count
+        builder = SlateBuilder(self.connection)
+        total = builder.score_review_available_count(model_id, max_appeal)
+        built = builder.score_review(model_id, end, max_appeal=max_appeal, order=order)
+        selected = built.items[start:end]
+        slate = Slate(
+            built.model_id,
+            built.lane,
+            tuple(
+                replace(item, position=position)
+                for position, item in enumerate(selected, start=start)
+            ),
+            built.diagnostics,
+            built.timings_ms,
+        )
+        impression_id = str(uuid4())
+        now_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
+        InteractionStore(self.connection).record_impression(impression_id, slate, now_ms, None)
+        items = [{**asdict(item), "impression_id": impression_id} for item in slate.items]
+        return {
+            "items": items,
+            "total": total,
+            "page_size": count,
+            "has_more": total > end,
+            "page": page,
+            "model_version": model_id,
+        }
+
     def inspector(self, entity_type: str, entity_id: str) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
@@ -382,6 +427,7 @@ class CuratorAPI:
         hide_phash_matches: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
+        links: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, object]:
         return ExpandService(self.connection).results(
             entity_type,
@@ -399,6 +445,7 @@ class CuratorAPI:
             hide_phash_matches=hide_phash_matches,
             minimum_score=minimum_score,
             count=count,
+            links=links,
         )
 
     def expand_shortlist(self, page: int = 1, page_size: int = 20) -> dict[str, object]:

@@ -66,15 +66,24 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		}
 	}
 	count := argsInt(args, "count", pythonInt(cfg.get("page_size")))
+	// The local-match exclusion is re-derived at serve time against the
+	// current links map: a candidate fetched while the local scene had no
+	// StashDB id keeps its missing annotation in payload_json forever, so
+	// the stored annotation is never authoritative for hiding (issue #118).
+	links, err := externalLinks(payload, db)
+	if err != nil {
+		return jvNull(), err
+	}
 	return expandResults(db, entityType, page, sortBy, performerID, favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery,
-		hidePhash, minimumScore, count)
+		hidePhash, minimumScore, count, links)
 }
 
 // expandResults mirrors ExpandService.results.
 func expandResults(db dbx, entityType string, page int64, sortBy string, performerID jVal,
 	favoriteOnly bool, gender string, includeTags, excludeTags, performerNames, studioNames []string,
-	performerQuery, studioQuery string, hidePhash bool, minimumScore float64, count int64) (jVal, error) {
+	performerQuery, studioQuery string, hidePhash bool, minimumScore float64, count int64,
+	links jVal) (jVal, error) {
 	if (entityType != "scene" && entityType != "performer") || (sortBy != "match" && sortBy != "newest") {
 		return jvNull(), errors.New("invalid Expand query")
 	}
@@ -165,6 +174,13 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		payload, err := parseJSON([]byte(asDBString(row["payload_json"])))
 		if err != nil {
 			return jvNull(), err
+		}
+		// Issue #118: the stored annotation can be stale (the candidate was
+		// fetched before the local scene gained its StashDB id). Re-derive it
+		// against the current links map; the serve-time match is
+		// authoritative for the exclusion and for the served payload.
+		if links.kind == jObj && entityType == "scene" {
+			payload = annotateLocalMatch(payload, links)
 		}
 		matchType := payload.get("curator_local_match").get("type").asString()
 		if entityType == "scene" && (matchType == "stashdb_id" || (hidePhash && matchType == "phash")) {
