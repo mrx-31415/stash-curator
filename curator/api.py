@@ -787,6 +787,9 @@ class CuratorAPI:
     def curation_pair_verdict(self, round_id: str) -> dict[str, object]:
         return curation.pair_verdict(self.connection, round_id)
 
+    def curation_impact(self) -> dict[str, object]:
+        return curation.curation_impact(self.connection)
+
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
         impressions = [

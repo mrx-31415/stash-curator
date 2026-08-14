@@ -11,7 +11,7 @@
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
-  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -108,7 +108,6 @@
       value: "curate",
       label: "Curate",
       icon: faBullseye,
-      maintenance: true,
       description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
     },
   ];
@@ -120,6 +119,10 @@
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const PICKS_STATE_KEY = "stash-curator:picks-state:v1";
+  const CURATE_NUDGE_KEY = "stash-curator:curate-nudge:v1";
+  // The For You nudge retires after this many submitted rounds: by then the
+  // Curate flow is discovered and the impact report is the better hook.
+  const MAX_NUDGE_ROUNDS = 3;
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
@@ -231,6 +234,22 @@
     }
   }
 
+  function readCurateNudge() {
+    try {
+      const value = JSON.parse(localStorage.getItem(CURATE_NUDGE_KEY) || "null");
+      return { rounds: Number(value && value.rounds) || 0, dismissed: !!(value && value.dismissed) };
+    } catch (_) {
+      return { rounds: 0, dismissed: false };
+    }
+  }
+  function bumpCurateRounds() {
+    const state = readCurateNudge();
+    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds + 1, dismissed: state.dismissed }));
+  }
+  function dismissCurateNudge() {
+    const state = readCurateNudge();
+    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds, dismissed: true }));
+  }
   function readPicksState() {
     try {
       const value = JSON.parse(localStorage.getItem(PICKS_STATE_KEY) || "null");
@@ -815,11 +834,125 @@
     );
   }
 
+  function fmtDelta(value) {
+    const abs = Math.abs(value);
+    const digits = abs >= 0.01 ? 3 : abs >= 0.001 ? 4 : 5;
+    return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
+  }
+
+  function ImpactSceneCard({ entry }) {
+    const why = (entry.contributors || []).map((contributor) => `${contributor.name} ${fmtDelta(contributor.delta)}`).join(" · ");
+    return React.createElement(
+      "a",
+      { className: "curator-impact-scene", href: `/scenes/${entry.scene_id}`, target: "_blank", rel: "noopener noreferrer" },
+      React.createElement("img", { className: "curator-impact-thumb", src: `/scene/${entry.scene_id}/screenshot`, alt: "", loading: "lazy" }),
+      React.createElement("div", { className: "curator-impact-scene-body" },
+        React.createElement("div", { className: "curator-impact-scene-title" }, entry.title || `Scene ${entry.scene_id}`),
+        React.createElement("div", { className: "curator-impact-scene-meta" }, [entry.studio, entry.date].filter(Boolean).join(" · ")),
+        why && React.createElement("div", { className: "curator-impact-scene-why" }, "Because: ", why)
+      ),
+      React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
+    );
+  }
+
+  function ImpactPerformerCard({ entry }) {
+    return React.createElement(
+      "a",
+      { className: "curator-impact-person", href: `/performers/${entry.performer_id}`, target: "_blank", rel: "noopener noreferrer" },
+      React.createElement("img", { className: "curator-impact-avatar", src: `/performer/${entry.performer_id}/image`, alt: "", loading: "lazy" }),
+      React.createElement("span", { className: "curator-impact-person-name" }, entry.name || `Performer ${entry.performer_id}`),
+      React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
+    );
+  }
+
+  function ImpactTagCard({ entry }) {
+    return React.createElement(
+      "a",
+      { className: "curator-impact-tag", href: `/tags/${entry.tag_id}`, target: "_blank", rel: "noopener noreferrer" },
+      React.createElement("span", { className: "curator-impact-tag-name" }, entry.name || entry.tag_id),
+      React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
+    );
+  }
+
+  function ImpactList({ title, entries, renderer, tone }) {
+    if (!entries || entries.length === 0) return null;
+    return React.createElement(
+      "div",
+      { className: `curator-impact-list curator-impact-${tone}` },
+      React.createElement("div", { className: "curator-impact-list-title" }, title),
+      entries.map(renderer)
+    );
+  }
+
+  function ImpactReport({ impact }) {
+    const maxMove = (group) => Math.max(
+      0,
+      ...(group.promoted || []).map((entry) => Math.abs(entry.delta)),
+      ...(group.demoted || []).map((entry) => Math.abs(entry.delta))
+    );
+    const weakNote = (group, label) => maxMove(group) < 0.005 && React.createElement("p", { className: "curator-impact-weak" }, `${label} barely moved this build — new picks since the previous build will show up here.`);
+    return React.createElement(
+      "div",
+      { className: "curator-impact" },
+      React.createElement("h4", { className: "curator-impact-heading" }, "What your picks moved"),
+      React.createElement("p", { className: "curator-impact-ago" }, `Newest model built ${new Date(impact.published_at_ms).toLocaleString()} — the feedback since the previous build is what moved these.`),
+      React.createElement(
+        "div",
+        { className: "curator-impact-groups" },
+        React.createElement(
+          "div",
+          { className: "curator-impact-group" },
+          React.createElement("div", { className: "curator-impact-group-label" }, "Scenes"),
+            impact.scenes.promoted.length === 0 && impact.scenes.demoted.length === 0 && React.createElement("p", { className: "curator-impact-weak" }, "No scene moves came from your feedback this build — new picks since the previous build will show up here."),
+          React.createElement("div", { className: "curator-impact-columns" },
+            React.createElement(ImpactList, { title: "Promoted", entries: impact.scenes.promoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry }), tone: "up" }),
+            React.createElement(ImpactList, { title: "Demoted", entries: impact.scenes.demoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry }), tone: "down" })
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-impact-group" },
+          React.createElement("div", { className: "curator-impact-group-label" }, "Performers"),
+          weakNote(impact.performers, "Performers"),
+          React.createElement("div", { className: "curator-impact-columns" },
+            React.createElement(ImpactList, { title: "Promoted", entries: impact.performers.promoted, renderer: (entry) => React.createElement(ImpactPerformerCard, { key: entry.performer_id, entry }), tone: "up" }),
+            React.createElement(ImpactList, { title: "Demoted", entries: impact.performers.demoted, renderer: (entry) => React.createElement(ImpactPerformerCard, { key: entry.performer_id, entry }), tone: "down" })
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-impact-group" },
+          React.createElement("div", { className: "curator-impact-group-label" }, "Tags"),
+          weakNote(impact.tags, "Tags"),
+          React.createElement("div", { className: "curator-impact-columns" },
+            React.createElement(ImpactList, { title: "Promoted", entries: impact.tags.promoted, renderer: (entry) => React.createElement(ImpactTagCard, { key: entry.tag_id, entry }), tone: "up" }),
+            React.createElement(ImpactList, { title: "Demoted", entries: impact.tags.demoted, renderer: (entry) => React.createElement(ImpactTagCard, { key: entry.tag_id, entry }), tone: "down" })
+          )
+        )
+      )
+    );
+  }
+
+  function CurateNudge({ onOpen, onDismiss }) {
+    return React.createElement(
+      "div",
+      { className: "curator-curate-nudge" },
+      React.createElement(FontAwesomeIcon, { icon: faBullseye, className: "curator-curate-nudge-icon" }),
+      React.createElement("div", { className: "curator-curate-nudge-body" },
+        React.createElement("strong", null, "Teach the model what you like"),
+        React.createElement("p", null, "Compare scenes in pairs — each pick sharpens the model for all tags, performers, and studios, and you get a report of what your picks moved.")
+      ),
+      React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpen }, "Open Curate"),
+      React.createElement("button", { type: "button", className: "curator-curate-nudge-dismiss", onClick: onDismiss, title: "Don't show this again", "aria-label": "Dismiss" }, React.createElement(FontAwesomeIcon, { icon: faXmark }))
+    );
+  }
+
   function CuratePanel() {
     const restoredPicks = React.useRef(readPicksState()).current;
     const [picksRound, setPicksRound] = React.useState(restoredPicks ? restoredPicks.round : null);
     const [picksAnswers, setPicksAnswers] = React.useState(restoredPicks ? restoredPicks.answers : {});
     const [picksVerdict, setPicksVerdict] = React.useState(null);
+    const [picksImpact, setPicksImpact] = React.useState(null);
     const [picksError, setPicksError] = React.useState("");
     const [picksBusy, setPicksBusy] = React.useState(false);
     const [flash, setFlash] = React.useState(null); // {pairId, winner} while the outline shows
@@ -1015,6 +1148,13 @@
           round_id: picksRound.round_id,
         });
         setPicksVerdict(result);
+        bumpCurateRounds();
+        try {
+          const impact = await operation({ operation: "get_curation_impact" });
+          setPicksImpact(impact);
+        } catch (_) {
+          // Impact is best-effort: it needs two model builds and their artifacts.
+        }
       } catch (failure) {
         setPicksError(failure.message);
       } finally {
@@ -1188,7 +1328,8 @@
               )
             );
           })(),
-          picksVerdict.dimension !== "tag" && picksVerdict.items.length === 0 && React.createElement("p", null, "No tag had enough appearances to report yet.")
+          picksVerdict.dimension !== "tag" && picksVerdict.items.length === 0 && React.createElement("p", null, "No tag had enough appearances to report yet."),
+          picksImpact && picksImpact.available && React.createElement(ImpactReport, { impact: picksImpact })
         ),
         !picksVerdict && picksRound.pairs.length === 0 && React.createElement("p", null, "No candidate pairs above zero information — try a different dimension or rate more scenes first."),
         !picksVerdict && picksRound.pairs.length > 0 && (() => {
@@ -2998,6 +3139,7 @@
     const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
+    const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
     const lane = NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you";
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
@@ -3210,6 +3352,7 @@
       lane === "profiling" && React.createElement(ProfilingPanel),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
+      lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,

@@ -479,8 +479,14 @@ def test_curate_lane_renders_picks_and_tag_sentiment() -> None:
     assert '"Random round"' in source
     assert "PICKS_STATE_KEY" in source
     assert "curator-pick-selected" in source
-    assert "icon: faBullseye,\n      maintenance: true" in source
+    assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
     assert 'lane === "curate" && React.createElement(CuratePanel)' in source
+    assert "CurateNudge" in source
+    assert "CURATE_NUDGE_KEY" in source
+    assert "MAX_NUDGE_ROUNDS" in source
+    assert "curator-curate-nudge-dismiss" in source
+    assert 'operation: "get_curation_impact"' in source
+    assert "ImpactReport" in source
     assert "loadSuggestions" in source
     assert "MAX_SUGGESTIONS_PER_BASE" in source
     # The scene-batch rating flow is retired: picks are the single interaction.
@@ -498,7 +504,7 @@ def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_trac
     assert "const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);" in source
     assert "const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);" in source
     assert "icon: faBroom,\n      maintenance: true" in source
-    assert "icon: faBullseye,\n      maintenance: true" in source
+    assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
     assert 'className: "curator-maintenance-menu"' in source
     assert 'React.createElement("span", null, "Maintenance")' in source
     assert 'operation: "get_diagnostics"' in source

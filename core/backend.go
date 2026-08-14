@@ -231,6 +231,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitCurationPicks(pluginDir, payload)
 	case "get_curation_pair_verdict":
 		return opGetCurationPairVerdict(pluginDir, payload)
+	case "get_curation_impact":
+		return opGetCurationImpact(pluginDir, payload)
 	case "reset":
 		return opReset(pluginDir, payload)
 	default:

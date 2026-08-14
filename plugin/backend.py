@@ -892,6 +892,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.submit_curation_picks(str(args.get("round_id") or ""), picks)
         if operation == "get_curation_pair_verdict":
             return api.curation_pair_verdict(str(args.get("round_id") or ""))
+        if operation == "get_curation_impact":
+            return api.curation_impact()
         if operation == "get_external_tag_choices":
             tags = args.get("tags")
             if not isinstance(tags, list):
