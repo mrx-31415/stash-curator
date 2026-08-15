@@ -381,6 +381,77 @@
   color: #fff;
 }
 
+/* Sentiment slider: the 5-point spectrum from curator-sentiment-danger to
+   -love. The wrapping label carries the current tier's className (reusing
+   the --sc custom property declared above) so the thumb inherits the right
+   color; when the tier classes above are used here, their border-color
+   assignment is a harmless no-op since this wrapper draws no border. */
+.curator-sentiment-range-wrap {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.4rem;
+  min-width: 6rem;
+}
+
+.curator-sentiment-current {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  min-width: 5.5rem;
+}
+
+.curator-sentiment-range {
+  appearance: none;
+  -webkit-appearance: none;
+  background: linear-gradient(90deg, #dc3545, #fd7e14, #6c757d, #6b8e23, #198754);
+  border-radius: var(--curator-radius-lg);
+  flex: 1 1 auto;
+  height: 0.35rem;
+  min-width: 4rem;
+  outline: none;
+}
+
+.curator-sentiment-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-card-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
+.curator-sentiment-range::-moz-range-thumb {
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-card-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
+.curator-sentiment-range-unset::-webkit-slider-thumb {
+  opacity: 0.45;
+}
+
+.curator-sentiment-range-unset::-moz-range-thumb {
+  opacity: 0.45;
+}
+
+.curator-sentiment-range-blocked {
+  opacity: 0.4;
+}
+
+.curator-sentiment-compact .curator-sentiment-range-wrap {
+  min-width: 4rem;
+}
+
+.curator-sentiment-compact .curator-sentiment-range {
+  min-width: 3rem;
+}
+
 @media (max-width: 480px) {
   .curator-sentiment .btn-sm {
     font-size: 0.7rem;

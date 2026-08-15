@@ -655,7 +655,14 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert '["unlinked", `Not linked locally ${huntCounts.unlinked}`]' in source
     assert 'kind: "tag", label: "Include tags"' in source
     assert 'kind: "tag", label: "Exclude tags"' in source
-    assert source.count('" Hide exact PHash matches"') == 3
+    # Similar/Expand/Hunt share one FilterBar component (variant-gated), so
+    # this markup now appears once in FilterBar's definition rather than
+    # once per hand-duplicated filter panel.
+    assert source.count('" Hide exact PHash matches"') == 1
+    assert "function FilterBar({" in source
+    assert 'React.createElement(FilterBar, {\n        variant: "similar"' in source
+    assert 'React.createElement(FilterBar, {\n        variant: "hunt"' in source
+    assert 'React.createElement(FilterBar, {\n        variant: "expand"' in source
     assert "hide_phash_matches: hidePhashMatches" in source
     assert '"Likely local · exact PHash"' in source
     assert '"Release date"' in source
@@ -780,12 +787,20 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'className: "performer-tag-container row"' in source
     assert 'className: "image-thumbnail"' in source
     assert 'className: "tag-item tag-link badge badge-secondary"' in source
+    # RecommendationCard, ExternalCard, and SimilarityPanel's library-match
+    # grid share the "Why this?"/"Score" <details> shell via EvidenceScore;
+    # the shell markup lives once in its definition, content stays
+    # per-caller (async explain-on-toggle vs static text).
+    assert 'function EvidenceScore({ evidenceProps, evidenceContent, scoreSummary, scoreContent })' in source
     assert 'React.createElement("summary", null, "Why this?")' in source
-    assert '{ className: "curator-evidence", onToggle: explain }' in source
+    assert 'className: "curator-evidence", ...evidenceProps' in source
+    assert "evidenceProps: { onToggle: explain }" in source
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
-    assert 'React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`)' in source
-    assert 'React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`)' in source
+    assert 'React.createElement("summary", null, `Score · ${scoreSummary}`)' in source
+    assert "scoreSummary: item.final_utility.toFixed(2)" in source
+    assert "scoreSummary: item.score.toFixed(2)" in source
+    assert "scoreSummary: item.rank_score.toFixed(2)" in source
     assert (
         'className: kind === "scene" ? "scene-card__details" : "curator-external-details"' in source
     )
@@ -796,6 +811,26 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar content"' in source
     assert "Wildcard items are selected outside preference-derived seeds" in source
+
+
+def test_external_card_actions_are_a_named_shared_component() -> None:
+    """ExternalActions is the "external" action-set variant, sibling to
+    Feedback's "local" variant (thumbs up/down + More menu) — Package 2's
+    two-variant Card split (GH #150)."""
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert "function ExternalActions({" in source
+    assert "React.createElement(ExternalActions, {" in source
+    assert 'className: "curator-prune-actions"' in source
+    assert '"Open on StashDB"' in source
+    assert "onCopy" in source
+    assert "onAddToWhisparr" in source
+    assert "tagsAvailable: tags.length > 0" in source
+    assert "tagsActive: tagChoices !== null" in source
+    # Feedback (thumbs up/down + More menu) is the other variant; still its
+    # own function, untouched by this extraction.
+    assert 'function Feedback({ item, onRemove, onThumbDown })' in source
+    assert 'className: "curator-more-menu"' in source
 
 
 def test_similarity_source_switch_visible_before_reference_is_selected() -> None:
@@ -1113,8 +1148,16 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "RatingSection" in source
     assert "Collapse matching local tag ratings" in source
     assert "compact: true" in source
-    assert 'const shortLabel = score === -1 ? "--"' in source
+    # Tag sentiment is a 6-point control: "Never" is a separate toggle, the
+    # 5-point spectrum is one range input shared by every call site
+    # (compact or not), not per-value buttons.
+    assert 'function TagSentimentControl({ tag, value, blocked, onChange, compact = false })' in source
+    assert 'type: "range"' in source
+    assert 'min: "-1"' in source
+    assert 'max: "1"' in source
+    assert 'step: "0.5"' in source
     assert "curator-sentiment-compact" in css
+    assert ".curator-sentiment-range" in css
     assert ".curator-external-tag-rating-header" in css
     assert ".curator-external-tag-row" in css
     assert ".curator-task-progress-track" in css

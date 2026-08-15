@@ -683,17 +683,36 @@
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
+  // A 6-point control: "Never" is a separate toggle (not on the continuous
+  // track, since it's categorically different from "how much do you like
+  // this" — it means "don't ask again"), and the 5 sentiment levels are one
+  // continuous range input rather than 5 discrete buttons.
   function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
-    const rated = value !== null && value !== undefined || blocked;
+    const rated = (value !== null && value !== undefined) || blocked;
+    const sliderValue = value ?? 0;
+    const currentEntry = !blocked && rated ? SENTIMENTS.find(([score]) => score === value) : null;
+    const currentLabel = blocked ? "Never" : currentEntry ? currentEntry[1] : "Not rated";
+    const tierClass = currentEntry ? currentEntry[2] : "";
     return React.createElement(
       "div",
-      { className: `curator-sentiment${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
       React.createElement(Button, { size: "sm", className: `curator-sentiment-never${blocked ? " curator-sentiment-active" : ""}`, "aria-pressed": blocked, "aria-label": "Never show scenes with this tag", title: "Never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
-      SENTIMENTS.map(([score, label, cls]) => {
-        const selected = !blocked && value === score;
-        const shortLabel = score === -1 ? "--" : score === -0.5 ? "-" : score === 0 ? "0" : score === 0.5 ? "+" : "++";
-        return React.createElement(Button, { key: score, size: "sm", className: `${cls}${selected ? " curator-sentiment-active" : ""}`, "aria-pressed": selected, "aria-label": label, title: label, onClick: () => onChange({ value: score, blocked: false }) }, compact ? shortLabel : label);
-      }),
+      React.createElement(
+        "label",
+        { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
+        !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel),
+        React.createElement("input", {
+          type: "range",
+          min: "-1",
+          max: "1",
+          step: "0.5",
+          className: `curator-sentiment-range${!rated ? " curator-sentiment-range-unset" : ""}${blocked ? " curator-sentiment-range-blocked" : ""}`,
+          value: sliderValue,
+          "aria-label": `Sentiment for ${tag.name}`,
+          "aria-valuetext": currentLabel,
+          onChange: (event) => onChange({ value: Number(event.target.value), blocked: false }),
+        })
+      ),
       (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
   }
@@ -1617,6 +1636,38 @@
     );
   }
 
+  // Shared "Why this?"/"Score · X" details shell, used by RecommendationCard,
+  // ExternalCard, and SimilarityPanel's library-match grid. The shell (the
+  // two <details>/<summary> elements) is genuinely identical across all
+  // three; what goes inside each is not (RecommendationCard lazy-loads its
+  // explanation on toggle and shows a ScoreNode tree, the other two are
+  // static), so content stays fully caller-supplied via props rather than
+  // forcing those shapes into a shared config.
+  function EvidenceScore({ evidenceProps, evidenceContent, scoreSummary, scoreContent }) {
+    return React.createElement(
+      React.Fragment,
+      null,
+      evidenceContent !== null && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent),
+      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${scoreSummary}`), scoreContent)
+    );
+  }
+
+  // The "external" action-set variant (StashDB/Whisparr/shortlist), sibling
+  // to Feedback's "local" variant (thumbs up/down + More menu).
+  function ExternalActions({ href, item, kind, copied, onCopy, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
+    return React.createElement(
+      "div",
+      { className: "curator-prune-actions" },
+      React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })),
+      React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: onCopy }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })),
+      onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
+      kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
+      kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
+    );
+  }
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -1707,8 +1758,8 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, scoreDetail))); })()),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)),
+      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreSummary: item.score.toFixed(2), scoreContent: React.createElement(React.Fragment, null, scoreBar(item), React.createElement("p", null, scoreDetail)) })); })()),
+      React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
   });
@@ -1990,36 +2041,38 @@
         React.createElement(
           "div",
           { className: "curator-card-details" },
-          React.createElement(
-            "details",
-            { className: "curator-evidence", onToggle: explain },
-            React.createElement("summary", null, "Why this?"),
-            explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
-            explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
-            explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
-            explanation && React.createElement(
-              "ul",
+          React.createElement(EvidenceScore, {
+            evidenceProps: { onToggle: explain },
+            evidenceContent: React.createElement(
+              React.Fragment,
               null,
-              explanation.supporting_reasons.map((reason, index) =>
-                React.createElement(
-                  "li",
-                  { key: `${reason.code}-${index}` },
-                  `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
+              explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
+              explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
+              explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
+              explanation && React.createElement(
+                "ul",
+                null,
+                explanation.supporting_reasons.map((reason, index) =>
+                  React.createElement(
+                    "li",
+                    { key: `${reason.code}-${index}` },
+                    `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
+                  )
                 )
               )
-            )
-          ),
-          React.createElement(
-            "details",
-            { className: "curator-score" },
-            React.createElement("summary", null, `Score · ${item.final_utility.toFixed(2)}`),
-            React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
-            React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
-            React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
-            React.createElement(ScoreNode, { name: "components", value: item.components }),
-            React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
-            React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
-          ),
+            ),
+            scoreSummary: item.final_utility.toFixed(2),
+            scoreContent: React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
+              React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
+              React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
+              React.createElement(ScoreNode, { name: "components", value: item.components }),
+              React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
+              React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
+            ),
+          }),
           React.createElement(Feedback, { item, onRemove, onThumbDown })
         )
       )
@@ -2185,6 +2238,53 @@
       React.createElement("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
       React.createElement("label", null, React.createElement("input", { type: "checkbox", checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }), " Default"),
       React.createElement(Button, { size: "sm", disabled: !name.trim(), onClick: save }, "Save")
+    );
+  }
+
+  // Shared filter panel for Similar/Expand/Hunt. The three views show
+  // different field subsets (hunt only ever shows tags + hide-phash, with
+  // no entityType gating at all, since it has no "scene vs performer"
+  // split); variant captures that shape plus the couple of markup
+  // differences (favorites button's aria-pressed/title, gender aria-label,
+  // minimum-match range floor) that predate this extraction and aren't
+  // being "fixed" here, just ported as-is. State mutation stays with the
+  // caller (each already has its own updateUrl closures per field).
+  function FilterBar({
+    variant,
+    entityType,
+    includeTags, onIncludeTagsChange,
+    excludeTags, onExcludeTagsChange,
+    performers, onPerformersChange,
+    studios, onStudiosChange,
+    favoriteOnly, onToggleFavorite,
+    hidePhashMatches, onToggleHidePhash,
+    gender, onGenderChange,
+    minimum, onMinimumChange,
+    savedCurrent, onApplySaved,
+    applyVisible = true, onApply,
+  }) {
+    const sceneGated = variant !== "hunt";
+    const showScene = !sceneGated || entityType === "scene";
+    const minimumMin = variant === "expand" ? "-0.2" : "0";
+    const genderAriaLabel = variant === "expand" ? "External performer gender" : "Performer gender";
+    const favoriteExtra = variant === "expand" ? { title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly } : {};
+    return React.createElement(
+      "div",
+      { className: "curator-expand-filters curator-filter-panel" },
+      React.createElement(
+        "div",
+        null,
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: onIncludeTagsChange }),
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: onExcludeTagsChange }),
+        sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
+        sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
+        sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
+        showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"),
+        sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
+        sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
+        (sceneGated ? showScene : true) && React.createElement(SavedFilters, { scope: variant, current: savedCurrent, onApply: onApplySaved }),
+        applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
+      )
     );
   }
 
@@ -2439,7 +2539,22 @@
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
       ),
-      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })) }, "Apply"))),
+      filtersOpen && React.createElement(FilterBar, {
+        variant: "similar",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        performers: filterPerformers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })),
+        studios: filterStudios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })),
+        favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
+        minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
+        savedCurrent: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity },
+        onApplySaved: applySaved,
+        applyVisible: Boolean(selected),
+        onApply: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })),
+      }),
       search && !selected && React.createElement(
         "div",
         { className: "curator-similar-candidates" },
@@ -2456,7 +2571,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, relationshipChips(item))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`))));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreSummary: item.rank_score.toFixed(2), scoreContent: React.createElement(React.Fragment, null, scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`)) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -2771,8 +2886,31 @@
         data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, huntSort: event.target.value })), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
       entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
-      entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)) }, "Apply"))),
-      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: (value) => updateUrl((s) => ({ ...s, performers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: (value) => updateUrl((s) => ({ ...s, studios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)) }, "Apply"))),
+      entityType === "hunt" && filtersOpen && React.createElement(FilterBar, {
+        variant: "hunt",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        savedCurrent: { hidePhashMatches, includeTags, excludeTags },
+        onApplySaved: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })),
+        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)),
+      }),
+      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
+        variant: "expand",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        performers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, performers: value })),
+        studios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, studios: value })),
+        favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
+        gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
+        minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
+        savedCurrent: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore },
+        onApplySaved: applySaved,
+        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)),
+      }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
