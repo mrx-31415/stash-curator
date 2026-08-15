@@ -124,10 +124,34 @@
       icon: faBullseye,
       description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
     },
+    {
+      value: "profiling",
+      label: "Profiling",
+      icon: faDev,
+      maintenance: true,
+      description: "Inspect render and query performance profiles captured during development.",
+    },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
   const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
+  const RECOMMENDATIONS_NAV_ITEM = {
+    value: "recommendations",
+    label: "Recommendations",
+    icon: faStar,
+    description: "A balanced shelf of strong matches, timely revisits, and a little discovery, split into five lanes.",
+  };
+  const MANAGE_NAV_ITEM = {
+    value: "manage",
+    label: "Manage",
+    icon: faWrench,
+    description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, and profiling.",
+  };
+  const TOP_NAV_ITEMS = [
+    RECOMMENDATIONS_NAV_ITEM,
+    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value)),
+    MANAGE_NAV_ITEM,
+  ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
@@ -2518,6 +2542,7 @@
       }
       return React.createElement("span", { className: "curator-chips" }, ...chips);
     }
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
       { className: "curator-similar" },
@@ -2537,7 +2562,7 @@
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
-        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
+        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount))
       ),
       filtersOpen && React.createElement(FilterBar, {
         variant: "similar",
@@ -2864,6 +2889,7 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
       { className: huntOnly ? "curator-hunt" : "curator-expand" },
@@ -2873,7 +2899,7 @@
         !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
-        entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
+        entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
@@ -3521,21 +3547,47 @@
       )
     );
 
+    // Api.components.HoverPopover is only registered once some other part of
+    // Stash's own app has mounted first — on a cold/direct navigation to the
+    // Curator page it can still be undefined here (confirmed empirically: it
+    // reliably resolves in-app, but not on a fresh load of /plugins/stash-
+    // curator). CuratorControls always renders, so fall back to the trigger
+    // pill alone rather than crashing the whole page on an invalid element.
+    const { HoverPopover } = Api.components;
+    const healthTrigger = React.createElement(
+      "button",
+      { type: "button", className: "curator-health-pill", "aria-label": "Curator sync and task status" },
+      React.createElement("span", { className: `curator-health-pulse curator-health-pulse-${running ? "running" : latestFailure ? "failed" : hasSynced ? "ready" : "idle"}` }),
+      React.createElement("span", { className: "curator-health-pill-label" }, running ? "Running" : hasSynced ? "Synced" : "Not synced")
+    );
+    const healthControl = HoverPopover
+      ? React.createElement(
+          HoverPopover,
+          {
+            className: "curator-health-trigger",
+            enterDelay: 150,
+            leaveDelay: 250,
+            placement: "bottom",
+            content: React.createElement(
+              "div",
+              { className: "curator-health-panel", role: "status" },
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Sync"), React.createElement("b", null, running ? `Running ${running.job_type}` : hasSynced ? "Synced" : "Not synced")),
+              React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Model"), React.createElement("b", null, health?.model_pending ? `${health.model_pending_events} waiting` : modelStatus)),
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Playback sessions captured"), React.createElement("b", null, health?.capture?.direct_playback_sessions || 0)),
+              health?.last_sync_at_ms && React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Last sync"), React.createElement("b", null, new Date(health.last_sync_at_ms).toLocaleString()))
+            ),
+          },
+          healthTrigger
+        )
+      : healthTrigger;
     return React.createElement(
       React.Fragment,
       null,
       React.createElement(
         "section",
         { className: "curator-controls" },
-        React.createElement(
-          "div",
-          { className: "curator-status", role: "status" },
-          React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
-          React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
-          React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
-          React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
-          health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
-        ),
+        healthControl,
         React.createElement(
           "div",
           { className: "curator-task-buttons" },
@@ -3633,6 +3685,63 @@
     );
   }
 
+  // Manage shell (GH #150 Package 3): a two-pane list/detail view that hosts
+  // every maintenance-flagged NAV_ITEMS entry plus Profiling. Each panel is
+  // mounted unmodified — this is pure relocation, not a rebuild.
+  const MANAGE_BODIES = {
+    feedback: () => React.createElement(FeedbackHistoryPanel),
+    taste: () => React.createElement(TasteProfilePanel),
+    sentiment: () => React.createElement(ScoreReviewPanel),
+    history: () => React.createElement(RecommendationHistoryPanel),
+    backups: () => React.createElement(BackupPanel),
+    diagnostics: () => React.createElement(DiagnosticsPanel),
+    prune: () => React.createElement(PrunePanel),
+    profiling: () => React.createElement(ProfilingPanel),
+  };
+
+  function ManagePanel({ section, onSelectSection }) {
+    const items = MAINTENANCE_ITEMS;
+    const active = items.find((item) => item.value === section) || items[0];
+    const body = MANAGE_BODIES[active.value];
+    return React.createElement(
+      "div",
+      { className: "curator-manage-shell" },
+      React.createElement(
+        "nav",
+        { className: "curator-manage-list", "aria-label": "Manage sections" },
+        items.map((item) => React.createElement(
+          "button",
+          {
+            key: item.value,
+            type: "button",
+            className: "curator-manage-item",
+            "aria-current": item.value === active.value ? "page" : undefined,
+            onClick: () => onSelectSection(item.value),
+            title: item.description,
+          },
+          React.createElement("span", { className: "curator-manage-item-icon" }, React.createElement(FontAwesomeIcon, { icon: item.icon })),
+          React.createElement(
+            "span",
+            { className: "curator-manage-item-copy" },
+            React.createElement("span", { className: "curator-manage-item-title" }, item.label),
+            React.createElement("span", { className: "curator-manage-item-desc" }, item.description)
+          )
+        ))
+      ),
+      React.createElement(
+        "section",
+        { className: "curator-manage-detail", "aria-live": "polite" },
+        React.createElement(
+          "div",
+          { className: "curator-manage-detail-head" },
+          React.createElement("h2", null, active.label),
+          React.createElement("p", null, active.description)
+        ),
+        body && body()
+      )
+    );
+  }
+
   function CuratorPage() {
     const history = useHistory();
     const routeLocation = useLocation();
@@ -3640,7 +3749,16 @@
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
     const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
-    const lane = NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you";
+    // "?view=<maintenance item>" (taste, feedback, backups, …) keeps working
+    // as a soft alias into Manage forever — it resolves lane/currentSection
+    // directly with no history.replace, so old bookmarks render identically
+    // without ever rewriting the address bar to the canonical ?section= form.
+    const lane = requestedView === "manage" || MAINTENANCE_ITEMS.some((item) => item.value === requestedView)
+      ? "manage"
+      : PRIMARY_NAV_ITEMS.some((item) => item.value === requestedView) ? requestedView : "for_you";
+    const currentSection = lane === "manage"
+      ? route.get("section") || (MAINTENANCE_ITEMS.some((item) => item.value === requestedView) ? requestedView : MAINTENANCE_ITEMS[0].value)
+      : null;
     const [slate, setSlate] = React.useState(null);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
@@ -3746,6 +3864,14 @@
       for (const param of ["performer", "label", "id", "type"]) route.delete(param);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
+    function openManage(section) {
+      if (lane === "manage" && section === currentSection) return;
+      setFollowUps([]);
+      route.set("view", "manage");
+      if (section) route.set("section", section); else route.delete("section");
+      for (const param of ["performer", "label", "id", "type"]) route.delete(param);
+      history.push({ pathname: routeLocation.pathname, search: route.toString() });
+    }
     async function toggleDiversity() {
       const nextEnabled = !diversityEnabled;
       setDiversitySaving(true);
@@ -3780,39 +3906,46 @@
           React.createElement(
             Nav,
             { variant: "tabs", role: "tablist", className: "curator-tabs" },
-            PRIMARY_NAV_ITEMS.map((option) =>
-              React.createElement(
+            TOP_NAV_ITEMS.map((option) => {
+              const active = option.value === "recommendations" ? laneByValue.has(lane)
+                : option.value === "manage" ? lane === "manage"
+                : lane === option.value;
+              const onClick = option.value === "recommendations"
+                ? () => { if (!laneByValue.has(lane)) openView("for_you"); }
+                : option.value === "manage"
+                  ? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }
+                  : () => openView(option.value);
+              return React.createElement(
                 Nav.Link,
-                { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), onMouseEnter: () => prefetchLane(option.value), onFocus: () => prefetchLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+                { key: option.value, as: "button", className: `curator-nav-${option.value}`, active, onClick, role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": active },
                 React.createElement(FontAwesomeIcon, { icon: option.icon }),
                 React.createElement("span", null, option.label)
-              )
-            )
-          ),
-          React.createElement(
-            "details",
-            { className: "curator-maintenance-menu" },
-            React.createElement(
-              "summary",
-              { className: `nav-link ${laneOption?.maintenance ? "active" : ""}`, title: "Maintenance", "aria-label": laneOption?.maintenance ? `Maintenance: ${laneOption.label}` : "Maintenance" },
-              React.createElement(FontAwesomeIcon, { icon: faWrench }),
-              React.createElement("span", null, "Maintenance")
-            ),
-            React.createElement(
-              "div",
-              { className: "curator-maintenance-items" },
-              MAINTENANCE_ITEMS.map((option) =>
-                React.createElement(
-                  "button",
-                  { key: option.value, type: "button", className: lane === option.value ? "active" : "", onClick: (event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openView(option.value); }, title: option.description, "aria-current": lane === option.value ? "page" : undefined },
-                  React.createElement(FontAwesomeIcon, { icon: option.icon }),
-                  React.createElement("span", null, option.label)
-                )
-              )
-            )
+              );
+            })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openView("profiling"), profilingActive: lane === "profiling" })
+        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openManage("profiling"), profilingActive: lane === "manage" && currentSection === "profiling" })
+      ),
+      laneByValue.has(lane) && React.createElement(
+        "div",
+        { className: "curator-lane-switcher", role: "tablist", "aria-label": "Recommendation lane" },
+        LANES.map((laneItem) => React.createElement(
+          "button",
+          {
+            key: laneItem.value,
+            type: "button",
+            className: "curator-lane-card",
+            style: { "--lc": `var(--curator-hue-${laneItem.value})` },
+            "aria-pressed": lane === laneItem.value,
+            onClick: () => openView(laneItem.value),
+            onMouseEnter: () => prefetchLane(laneItem.value),
+            onFocus: () => prefetchLane(laneItem.value),
+            title: laneItem.description,
+          },
+          React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: laneItem.icon })),
+          React.createElement("span", { className: "curator-lane-card-name" }, laneItem.label),
+          React.createElement("span", { className: "curator-lane-card-desc" }, laneItem.description)
+        ))
       ),
       laneOption && React.createElement(
         "div",
@@ -3840,18 +3973,14 @@
         )
       ),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      lane === "feedback" && React.createElement(FeedbackHistoryPanel),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
-      lane === "history" && React.createElement(RecommendationHistoryPanel),
-      lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "curate" && React.createElement(CuratePanel),
-      lane === "taste" && React.createElement(TasteProfilePanel),
-      lane === "sentiment" && React.createElement(ScoreReviewPanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
-      lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
-      lane === "diagnostics" && React.createElement(DiagnosticsPanel),
-      lane === "profiling" && React.createElement(ProfilingPanel),
+      // Prune renders scene cards directly, same as SimilarityPanel above, so
+      // it keeps its pre-existing !loadingComponents gate even though it now
+      // mounts inside ManagePanel rather than as its own top-level branch.
+      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),

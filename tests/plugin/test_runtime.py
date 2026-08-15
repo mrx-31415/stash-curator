@@ -391,7 +391,17 @@ def test_curator_tabs_update_browser_history() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "const routeLocation = useLocation();" in source
     assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
-    assert "onClick: () => openView(option.value)" in source
+    assert ": () => openView(option.value);" in source
+    # The Recommendations and Manage pills must no-op when a lane/section
+    # under them is already active, or clicking the parent pill while on
+    # e.g. Best Bets would wrongly reset to For You (GH #150 Package 3).
+    assert (
+        '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
+    )
+    assert (
+        '? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }'
+        in source
+    )
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
     # cannot leak into another panel, e.g. the expand performer filter.
@@ -505,8 +515,11 @@ def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_trac
     assert "const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);" in source
     assert "icon: faBroom,\n      maintenance: true" in source
     assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
-    assert 'className: "curator-maintenance-menu"' in source
-    assert 'React.createElement("span", null, "Maintenance")' in source
+    # Diagnostics is a maintenance item folded into the Manage shell rather
+    # than the old flat maintenance dropdown (GH #150 Package 3).
+    assert 'className: "curator-manage-shell"' in source
+    assert "function ManagePanel(" in source
+    assert "diagnostics: () => React.createElement(DiagnosticsPanel)," in source
     assert 'operation: "get_diagnostics"' in source
     assert '"Diagnostics copied."' in source
     assert 'link.download = "stash-curator-diagnostics.json"' in source
@@ -598,8 +611,11 @@ def test_curator_prefetches_only_the_intended_lane() -> None:
     assert "if (!laneByValue.has(lane) || cachedConfigUpdatedAtMs === null) return;" in source
     assert "loadSlate(lane, page).then(" in source
     assert "loadSlate(lane, 1, true).catch(" in source
-    assert "onMouseEnter: () => prefetchLane(option.value)" in source
-    assert "onFocus: () => prefetchLane(option.value)" in source
+    # Prefetch now hangs off the lane-switcher cards inside the collapsed
+    # Recommendations tab, not the (now removed) flat per-lane nav pills
+    # (GH #150 Package 3).
+    assert "onMouseEnter: () => prefetchLane(laneItem.value)" in source
+    assert "onFocus: () => prefetchLane(laneItem.value)" in source
 
 
 def test_plugin_pages_generated_results_without_repeating_external_searches() -> None:
@@ -739,7 +755,9 @@ def test_score_review_view_is_a_maintenance_nav_item_and_uses_the_slate_card() -
     assert "function ScoreReviewPanel" in source
     assert 'operation: "get_score_review"' in source
     assert 'urlPageSpec("page_sentiment")' in source
-    assert 'lane === "sentiment" && React.createElement(ScoreReviewPanel)' in source
+    # Sentiment review mounts through the Manage shell's MANAGE_BODIES lookup
+    # rather than its own top-level lane branch (GH #150 Package 3).
+    assert "sentiment: () => React.createElement(ScoreReviewPanel)," in source
     # The review surface reuses the slate card (Score, Why this?, thumbs) and
     # the pager, mirroring CuratorPage's slate rendering.
     assert (

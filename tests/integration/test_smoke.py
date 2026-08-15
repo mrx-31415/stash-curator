@@ -99,6 +99,24 @@ TABS: list[tuple[str, list[str]]] = [
             "Create, inspect",
         ],
     ),
+    # Canonical Manage-shell URLs (GH #150 Package 3) alongside the legacy
+    # ?view=<item> aliases above, which must keep resolving into Manage too.
+    (
+        "?view=manage&section=sentiment",
+        ["Sentiment review", "No scenes below the current appeal threshold."],
+    ),
+    (
+        "?view=manage&section=prune",
+        ["Prune", "Nothing in this view."],
+    ),
+    (
+        "?view=manage&section=diagnostics",
+        ["Diagnostics", "This allowlisted report excludes library metadata"],
+    ),
+    (
+        "?view=manage&section=profiling",
+        ["Profiling", "No profiles have been recorded yet."],
+    ),
 ]
 
 
@@ -131,6 +149,56 @@ def test_curator_tab_renders_without_errors(
 
     errors = _collect_errors(page)
     assert not errors, f"JS errors on '{view_param or '/'}': {errors}"
+
+
+def test_curator_nav_collapse_and_manage_shell_are_click_driven(page: Page, base_url: str) -> None:
+    """Exercise the collapsed nav interactively (GH #150 Package 3).
+
+    URL-only coverage (test_curator_tab_renders_without_errors above) can't
+    prove the pill click-branching logic actually works — only that each URL
+    renders. This clicks through the lane switcher and the Manage shell, and
+    specifically checks that clicking the already-active Recommendations
+    pill while on a non-default lane does not reset it back to For You (the
+    single riskiest bit of new logic in this package).
+    """
+    page.goto(base_url + CURATOR_PATH, wait_until="domcontentloaded")
+    _wait(page)
+    _dismiss_modals(page)
+
+    # Lane switcher: click Discover, confirm the URL and active state follow.
+    discover_card = page.locator(".curator-lane-card").filter(
+        has=page.locator(".curator-lane-card-name", has_text="Discover")
+    )
+    discover_card.click()
+    page.wait_for_timeout(800)
+    assert "view=discover" in page.url
+    assert discover_card.get_attribute("aria-pressed") == "true"
+
+    # Clicking the already-active Recommendations pill must be a no-op, not
+    # a reset to the default "for_you" lane.
+    page.locator(".curator-nav-recommendations").click()
+    page.wait_for_timeout(500)
+    assert "view=discover" in page.url
+
+    # Manage: open it, pick a section, confirm the detail pane swaps.
+    page.locator(".curator-nav-manage").click()
+    page.wait_for_timeout(800)
+    assert "view=manage" in page.url
+    backups_item = page.locator(".curator-manage-item").filter(
+        has=page.locator(".curator-manage-item-title", has_text="Backups")
+    )
+    backups_item.click()
+    page.wait_for_timeout(800)
+    assert "section=backups" in page.url
+    assert "Backups" in page.locator(".curator-manage-detail-head").inner_text()
+
+    # Clicking the already-active Manage pill must not drop the section.
+    page.locator(".curator-nav-manage").click()
+    page.wait_for_timeout(500)
+    assert "section=backups" in page.url
+
+    errors = _collect_errors(page)
+    assert not errors, f"JS errors during nav-collapse interaction: {errors}"
 
 
 def test_curator_tasks_page_renders(page: Page, base_url: str) -> None:
