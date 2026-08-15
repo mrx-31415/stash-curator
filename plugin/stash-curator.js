@@ -3974,6 +3974,7 @@
         React.createElement(
           "div",
           { className: "curator-view-copy" },
+          React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
           laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
         ),

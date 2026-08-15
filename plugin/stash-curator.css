@@ -183,6 +183,11 @@
   min-width: 0;
 }
 
+.curator-view-copy h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.2rem;
+}
+
 .curator-view-copy p {
   display: inline;
   margin: 0;
