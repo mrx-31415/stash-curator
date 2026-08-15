@@ -1567,6 +1567,7 @@
               "div",
               { className: "curator-pick-cards" },
               React.createElement(PickSceneCard, { meta: currentPair.scene_a, picked: answer === "a" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "a"), onPick: () => answerPicks(currentPair.pair_id, "a"), onFlag: () => answerPicks(currentPair.pair_id, "flag_a") }),
+              React.createElement("span", { className: "curator-pick-vs", "aria-hidden": "true" }, "vs"),
               React.createElement(PickSceneCard, { meta: currentPair.scene_b, picked: answer === "b" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "b"), onPick: () => answerPicks(currentPair.pair_id, "b"), onFlag: () => answerPicks(currentPair.pair_id, "flag_b") })
             ),
             React.createElement(
