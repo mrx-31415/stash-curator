@@ -2303,7 +2303,7 @@
     const favoriteExtra = variant === "expand" ? { title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly } : {};
     return React.createElement(
       "div",
-      { className: "curator-expand-filters curator-filter-panel" },
+      { className: "curator-filter-panel-body curator-filter-panel" },
       React.createElement(
         "div",
         null,

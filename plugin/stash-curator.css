@@ -1385,11 +1385,11 @@
   margin-left: 0.35rem;
 }
 
-.curator-expand-filters {
+.curator-filter-panel-body {
   margin: 0.4rem 0 0.8rem;
 }
 
-.curator-expand-filters > div {
+.curator-filter-panel-body > div {
   align-items: end;
   display: grid;
   gap: 0.5rem;
@@ -1397,7 +1397,7 @@
   margin-top: 0.5rem;
 }
 
-.curator-expand-filters label {
+.curator-filter-panel-body label {
   font-size: 0.78rem;
   margin: 0;
 }
@@ -1885,7 +1885,7 @@
     grid-template-columns: 1fr;
   }
 
-  .curator-expand-filters > div {
+  .curator-filter-panel-body > div {
     grid-template-columns: 1fr;
   }
 
