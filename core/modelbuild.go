@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,6 +121,81 @@ ORDER BY scene_id, occurred_at_ms`)
 			value = 0.90
 		}
 		signals[sceneID] = append(signals[sceneID], signal{value, 1.0, feedbackType})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = db.Query(`
+SELECT scene_id, value FROM feedback
+WHERE reversed_by_id IS NULL AND feedback_type='curation_rating'
+ORDER BY scene_id, occurred_at_ms`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID string
+		var value sql.NullString
+		if err := rows.Scan(&sceneID, &value); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !value.Valid {
+			continue
+		}
+		rating, parseErr := strconv.ParseInt(value.String, 10, 64)
+		if parseErr != nil || rating < 0 || rating > 10 {
+			continue
+		}
+		signals[sceneID] = append(signals[sceneID], signal{
+			clamp((float64(rating) - 5) / 5), 0.80, "curation_rating",
+		})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = db.Query(`
+SELECT scene_id, feedback_type, payload_json FROM feedback
+WHERE reversed_by_id IS NULL
+  AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+ORDER BY scene_id, occurred_at_ms`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID, feedbackType, payloadJSON string
+		if err := rows.Scan(&sceneID, &feedbackType, &payloadJSON); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		payload, parseErr := parseJSON([]byte(payloadJSON))
+		if parseErr != nil {
+			continue
+		}
+		selectionProbability := pythonFloatValue(payload.get("selection_probability"))
+		if selectionProbability <= 0 {
+			selectionProbability = 1.0
+		}
+		if selectionProbability > 1 {
+			continue
+		}
+		predictedWinner := pythonFloatValue(payload.get("predicted_winner"))
+		predictedLoser := pythonFloatValue(payload.get("predicted_loser"))
+		isWinner := feedbackType == "curation_pair_winner"
+		surprise := predictedLoser - predictedWinner
+		if surprise < 0 {
+			surprise = 0
+		}
+		confidence := 0.50 * (1.0 + 2.0*surprise) * math.Min(4.0, 1.0/selectionProbability)
+		if confidence > 1.0 {
+			confidence = 1.0
+		}
+		value := -1.0
+		if isWinner {
+			value = 1.0
+		}
+		signals[sceneID] = append(signals[sceneID], signal{value, confidence, feedbackType})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -233,7 +309,7 @@ func modelEvidenceFingerprint(db dbx, labels map[string]sceneLabel) (string, err
 	}
 	feedbackState := jvArr()
 	rows, err := db.Query(`
-SELECT feedback_id, scene_id, feedback_type, value, occurred_at_ms, reversed_by_id
+SELECT feedback_id, scene_id, feedback_type, value, occurred_at_ms, reversed_by_id, payload_json
 FROM feedback ORDER BY feedback_id`)
 	if err != nil {
 		return "", err
@@ -242,7 +318,8 @@ FROM feedback ORDER BY feedback_id`)
 		var feedbackID, sceneID, feedbackType string
 		var value, reversedBy sql.NullString
 		var occurredAtMs int64
-		if err := rows.Scan(&feedbackID, &sceneID, &feedbackType, &value, &occurredAtMs, &reversedBy); err != nil {
+		var payloadJSON string
+		if err := rows.Scan(&feedbackID, &sceneID, &feedbackType, &value, &occurredAtMs, &reversedBy, &payloadJSON); err != nil {
 			rows.Close()
 			return "", err
 		}
@@ -256,7 +333,7 @@ FROM feedback ORDER BY feedback_id`)
 		}
 		feedbackState.arr = append(feedbackState.arr, jvArr(
 			jvStr(feedbackID), jvStr(sceneID), jvStr(feedbackType),
-			feedbackValue, jvInt(occurredAtMs), reversedValue,
+			feedbackValue, jvInt(occurredAtMs), reversedValue, jvStr(payloadJSON),
 		))
 	}
 	rows.Close()

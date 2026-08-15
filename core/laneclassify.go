@@ -409,7 +409,7 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) [
 	}
 	durable := false
 	for _, signal := range signals {
-		if signal == "o" || signal == "thumb_up" || signal == "repeat" || signal == "scene_rating" {
+		if signal == "o" || signal == "thumb_up" || signal == "repeat" || signal == "scene_rating" || signal == "curation_rating" {
 			durable = true
 			break
 		}

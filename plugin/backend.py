@@ -871,6 +871,42 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("scene_id") or ""),
                 min(3, int(args.get("limit") or 3)),
             )
+        if operation == "get_curation_batch":
+            return api.curation_batch(
+                str(args.get("mode") or ""),
+                str(args.get("base_tag_id") or "") or None,
+                str(args.get("context_tag_id") or "") or None,
+                int(args.get("budget") or 20),
+            )
+        if operation == "submit_curation_ratings":
+            ratings = args.get("ratings")
+            if not isinstance(ratings, list):
+                raise ValueError("ratings must be a list")
+            return api.submit_curation_ratings(str(args.get("batch_id") or ""), ratings)
+        if operation == "get_curation_verdict":
+            return api.curation_verdict(str(args.get("batch_id") or ""))
+        if operation == "get_tag_context_candidates":
+            return api.tag_context_candidates(
+                str(args.get("tag_id") or ""),
+                int(args.get("min_support") or 20),
+            )
+        if operation == "get_curation_picks":
+            return api.curation_picks(
+                str(args.get("dimension") or ""),
+                int(args.get("budget") or 10),
+                str(args.get("base_tag_id") or "") or None,
+                str(args.get("context_tag_id") or "") or None,
+                str(args.get("performer_id") or "") or None,
+            )
+        if operation == "submit_curation_picks":
+            picks = args.get("picks")
+            if not isinstance(picks, list):
+                raise ValueError("picks must be a list")
+            return api.submit_curation_picks(str(args.get("round_id") or ""), picks)
+        if operation == "get_curation_pair_verdict":
+            return api.curation_pair_verdict(str(args.get("round_id") or ""))
+        if operation == "get_curation_impact":
+            return api.curation_impact()
         if operation == "get_external_tag_choices":
             tags = args.get("tags")
             if not isinstance(tags, list):

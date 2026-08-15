@@ -188,7 +188,8 @@ class LanePolicy:
             signals = direct.get("signals", []) if isinstance(direct, dict) else []
             durable = bool(
                 isinstance(signals, list)
-                and {"o", "thumb_up", "repeat", "scene_rating"} & set(map(str, signals))
+                and {"o", "thumb_up", "repeat", "scene_rating", "curation_rating"}
+                & set(map(str, signals))
             )
             if (
                 score.direct_appeal > 0.10

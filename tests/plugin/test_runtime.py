@@ -417,7 +417,9 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    assert 'value: "taste"' in source
+    # Tag sentiment now lives as a tab under Curate.
+    assert '"Tag sentiment"' in source
+    assert "curateTab" in source
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -434,6 +436,66 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'if (sort !== "suggested")' in source
 
 
+def test_curate_lane_renders_picks_and_tag_sentiment() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+
+    assert 'value: "curate"' in source
+    assert '"Tag sentiment"' in source
+    assert 'role: "tablist"' in source
+    assert '"Pick"' in source
+    assert "Compare scenes in pairs to teach the model fast" in source
+    assert "PickSceneCard" in source
+    assert 'event.key === "ArrowLeft"' in source
+    assert 'event.key === "ArrowRight"' in source
+    assert 'event.key === "ArrowUp"' in source
+    assert 'event.key === "ArrowDown"' in source
+    assert "backPicks" in source
+    assert "forwardPicks" in source
+    assert "picksUndo" in source
+    assert "pickCellLabel" in source
+    assert "without ${context}" in source
+    assert "curator-pick-verdict-note" in source
+    assert "shared features cancel, differing ones get the signal." in source
+    assert "You preferred" in source
+    assert "Picks were one-sided" in source
+    assert "← Left" in source
+    assert "Similar ↑" in source
+    assert "Skip ↓" in source
+    assert "FLASH_MS" in source
+    assert "setFlash" in source
+    assert "curator-pick-video" in source
+    assert "curator-pick-info" in source
+    assert "curator-pick-cover" in source
+    assert "poster: `/scene/${meta.scene_id}/screenshot`" in source
+    assert "meta.performers" in source
+    assert "Metadata wrong" in source
+    assert "curator-pick-flag" in source
+    assert 'winner: "flag"' in source
+    assert 'operation: "get_curation_picks"' in source
+    assert 'operation: "submit_curation_picks"' in source
+    assert 'operation: "get_curation_pair_verdict"' in source
+    assert 'operation: "get_tag_context_candidates"' in source
+    assert '"Pick-test"' in source
+    assert '"Random round"' in source
+    assert "PICKS_STATE_KEY" in source
+    assert "curator-pick-selected" in source
+    assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
+    assert 'lane === "curate" && React.createElement(CuratePanel)' in source
+    assert "CurateNudge" in source
+    assert "CURATE_NUDGE_KEY" in source
+    assert "MAX_NUDGE_ROUNDS" in source
+    assert "curator-curate-nudge-dismiss" in source
+    assert 'operation: "get_curation_impact"' in source
+    assert "ImpactReport" in source
+    assert "loadSuggestions" in source
+    assert "MAX_SUGGESTIONS_PER_BASE" in source
+    # The scene-batch rating flow is retired: picks are the single interaction.
+    assert "get_curation_batch" not in source
+    assert "submit_curation_ratings" not in source
+    assert "CurationSceneCard" not in source
+    assert "CURATION_STATE_KEY" not in source
+
+
 def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_traces() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
@@ -442,7 +504,7 @@ def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_trac
     assert "const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);" in source
     assert "const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);" in source
     assert "icon: faBroom,\n      maintenance: true" in source
-    assert "icon: faTag,\n      maintenance: true" in source
+    assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
     assert 'className: "curator-maintenance-menu"' in source
     assert 'React.createElement("span", null, "Maintenance")' in source
     assert 'operation: "get_diagnostics"' in source

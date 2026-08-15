@@ -217,6 +217,6 @@ def test_attach_skips_tables_missing_from_older_artifact(tmp_path: Path) -> None
         assert "model_performer_edge" not in views
         # Migration 25 creates and indexes model_performer_edge; the shadowing view
         # used to make its CREATE INDEX fail with "views may not be indexed".
-        assert MigrationRunner(attached).migrate(applied_at_ms=2).current_version == 28
+        assert MigrationRunner(attached).migrate(applied_at_ms=2).current_version == 30
     finally:
         attached.close()

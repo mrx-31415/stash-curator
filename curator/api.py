@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 from typing import Any
 from uuid import uuid4
 
+from curator import curation
 from curator.config import DEFAULT_CONFIG
 from curator.expand import STASHDB, ExpandService
 from curator.explanations import ExplanationService
@@ -787,6 +788,54 @@ class CuratorAPI:
             "scene_id": scene_id,
             "items": candidates[:limit],
         }
+
+    def curation_batch(
+        self,
+        mode: str,
+        base_tag_id: str | None,
+        context_tag_id: str | None,
+        budget: int = 20,
+    ) -> dict[str, object]:
+        return curation.create_batch(self.connection, mode, base_tag_id, context_tag_id, budget)
+
+    def submit_curation_ratings(
+        self, batch_id: str, ratings: list[dict[str, Any]]
+    ) -> dict[str, object]:
+        return curation.submit_ratings(self.connection, batch_id, ratings)
+
+    def curation_verdict(self, batch_id: str) -> dict[str, object]:
+        return curation.verdict(self.connection, batch_id)
+
+    def tag_context_candidates(self, tag_id: str, min_support: int = 20) -> dict[str, object]:
+        return curation.tag_context_candidates(self.connection, tag_id, min_support)
+
+    def curation_picks(
+        self,
+        dimension: str,
+        budget: int = 10,
+        base_tag_id: str | None = None,
+        context_tag_id: str | None = None,
+        performer_id: str | None = None,
+    ) -> dict[str, object]:
+        return curation.create_pair_round(
+            self.connection,
+            dimension,
+            budget,
+            base_tag_id,
+            context_tag_id,
+            performer_id,
+        )
+
+    def submit_curation_picks(
+        self, round_id: str, picks: list[dict[str, Any]]
+    ) -> dict[str, object]:
+        return curation.submit_picks(self.connection, round_id, picks)
+
+    def curation_pair_verdict(self, round_id: str) -> dict[str, object]:
+        return curation.pair_verdict(self.connection, round_id)
+
+    def curation_impact(self) -> dict[str, object]:
+        return curation.curation_impact(self.connection)
 
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
