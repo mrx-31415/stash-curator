@@ -513,22 +513,12 @@
 .curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
 .curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
 
-.curator-sentiment-never.curator-sentiment-active,
-.curator-sentiment-danger.curator-sentiment-active,
-.curator-sentiment-warning.curator-sentiment-active,
-.curator-sentiment-neutral.curator-sentiment-active,
-.curator-sentiment-like.curator-sentiment-active,
-.curator-sentiment-love.curator-sentiment-active {
-  background: var(--sc);
-  border-color: var(--sc);
-  color: #fff;
-}
-
-/* Sentiment slider: the 5-point spectrum from curator-sentiment-danger to
-   -love. The wrapping label carries the current tier's className (reusing
-   the --sc custom property declared above) so the thumb inherits the right
-   color; when the tier classes above are used here, their border-color
-   assignment is a harmless no-op since this wrapper draws no border. */
+/* Sentiment slider: a single 6-stop track, "Never" at position 0 then the
+   5-point spectrum from curator-sentiment-danger to -love. The wrapping
+   label carries the current tier's className (reusing the --sc custom
+   property declared above) so the thumb inherits the right color; when the
+   tier classes above are used here, their border-color assignment is a
+   harmless no-op since this wrapper draws no border. */
 .curator-sentiment-range-wrap {
   align-items: center;
   display: flex;
@@ -544,15 +534,31 @@
   min-width: 5.5rem;
 }
 
+.curator-sentiment-track {
+  flex: 1 1 auto;
+  min-width: 4rem;
+  position: relative;
+}
+
+.curator-sentiment-divider {
+  background: var(--curator-card-border-strong);
+  bottom: 0;
+  left: 10%;
+  position: absolute;
+  top: 0;
+  transform: translateX(-1px);
+  width: 2px;
+}
+
 .curator-sentiment-range {
   appearance: none;
   -webkit-appearance: none;
-  background: linear-gradient(90deg, #dc3545, #fd7e14, #6c757d, #6b8e23, #198754);
+  background: linear-gradient(90deg, #212529, #212529 10%, #dc3545 12%, #fd7e14, #6c757d, #6b8e23, #198754);
   border-radius: var(--curator-radius-lg);
-  flex: 1 1 auto;
+  display: block;
   height: 0.35rem;
-  min-width: 4rem;
   outline: none;
+  width: 100%;
 }
 
 .curator-sentiment-range::-webkit-slider-thumb {
@@ -591,7 +597,7 @@
   min-width: 4rem;
 }
 
-.curator-sentiment-compact .curator-sentiment-range {
+.curator-sentiment-compact .curator-sentiment-track {
   min-width: 3rem;
 }
 

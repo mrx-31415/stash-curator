@@ -708,35 +708,43 @@
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
-  // A 6-point control: "Never" is a separate toggle (not on the continuous
-  // track, since it's categorically different from "how much do you like
-  // this" — it means "don't ask again"), and the 5 sentiment levels are one
-  // continuous range input rather than 5 discrete buttons.
+  // A single 6-stop control: "Never" is stop 0 on the same track as the 5
+  // sentiment levels (not a separate toggle) — set apart visually with its
+  // own color and a divider line, per the #150 design brief, but still one
+  // continuous range input rather than a track plus an out-of-band button.
   function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
     const rated = (value !== null && value !== undefined) || blocked;
-    const sliderValue = value ?? 0;
-    const currentEntry = !blocked && rated ? SENTIMENTS.find(([score]) => score === value) : null;
-    const currentLabel = blocked ? "Never" : currentEntry ? currentEntry[1] : "Not rated";
-    const tierClass = currentEntry ? currentEntry[2] : "";
+    const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
+    const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
+    const tierClass = blocked ? "curator-sentiment-never" : rated ? SENTIMENTS[stopIndex - 1][2] : "";
+    function handleChange(event) {
+      const index = Number(event.target.value);
+      if (index === 0) onChange({ value: null, blocked: true });
+      else onChange({ value: SENTIMENTS[index - 1][0], blocked: false });
+    }
     return React.createElement(
       "div",
       { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
-      React.createElement(Button, { size: "sm", className: `curator-sentiment-never${blocked ? " curator-sentiment-active" : ""}`, "aria-pressed": blocked, "aria-label": "Never show scenes with this tag", title: "Never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
       React.createElement(
         "label",
         { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
         !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel),
-        React.createElement("input", {
-          type: "range",
-          min: "-1",
-          max: "1",
-          step: "0.5",
-          className: `curator-sentiment-range${!rated ? " curator-sentiment-range-unset" : ""}${blocked ? " curator-sentiment-range-blocked" : ""}`,
-          value: sliderValue,
-          "aria-label": `Sentiment for ${tag.name}`,
-          "aria-valuetext": currentLabel,
-          onChange: (event) => onChange({ value: Number(event.target.value), blocked: false }),
-        })
+        React.createElement(
+          "span",
+          { className: "curator-sentiment-track" },
+          React.createElement("span", { className: "curator-sentiment-divider", "aria-hidden": "true" }),
+          React.createElement("input", {
+            type: "range",
+            min: "0",
+            max: "5",
+            step: "1",
+            className: `curator-sentiment-range${!rated ? " curator-sentiment-range-unset" : ""}${blocked ? " curator-sentiment-range-blocked" : ""}`,
+            value: stopIndex,
+            "aria-label": `Sentiment for ${tag.name}`,
+            "aria-valuetext": currentLabel,
+            onChange: handleChange,
+          })
+        )
       ),
       (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
