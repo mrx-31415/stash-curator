@@ -1166,16 +1166,17 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "RatingSection" in source
     assert "Collapse matching local tag ratings" in source
     assert "compact: true" in source
-    # Tag sentiment is a 6-point control: "Never" is a separate toggle, the
-    # 5-point spectrum is one range input shared by every call site
-    # (compact or not), not per-value buttons.
+    # Tag sentiment is a single 6-stop control: "Never" is stop 0 on the same
+    # range input as the 5-point spectrum (set apart visually, not pulled out
+    # into a separate button), shared by every call site (compact or not).
     assert 'function TagSentimentControl({ tag, value, blocked, onChange, compact = false })' in source
     assert 'type: "range"' in source
-    assert 'min: "-1"' in source
-    assert 'max: "1"' in source
-    assert 'step: "0.5"' in source
+    assert 'min: "0"' in source
+    assert 'max: "5"' in source
+    assert 'step: "1"' in source
     assert "curator-sentiment-compact" in css
     assert ".curator-sentiment-range" in css
+    assert ".curator-sentiment-divider" in css
     assert ".curator-external-tag-rating-header" in css
     assert ".curator-external-tag-row" in css
     assert ".curator-task-progress-track" in css
