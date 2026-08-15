@@ -419,6 +419,57 @@ class PreferenceModelBuilder:
                 )
             )
         for row in self.connection.execute(
+            """
+            SELECT scene_id, value FROM feedback
+            WHERE reversed_by_id IS NULL AND feedback_type='curation_rating'
+            ORDER BY scene_id, occurred_at_ms
+            """
+        ):
+            value = row["value"]
+            try:
+                rating = int(value)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= rating <= 10:
+                continue
+            signals[str(row["scene_id"])].append(
+                (
+                    _clamp((rating - 5) / 5),
+                    self.config.model.curation_rating_confidence,
+                    "curation_rating",
+                )
+            )
+        for row in self.connection.execute(
+            """
+            SELECT scene_id, feedback_type, payload_json FROM feedback
+            WHERE reversed_by_id IS NULL
+              AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+            ORDER BY scene_id, occurred_at_ms
+            """
+        ):
+            payload = json.loads(str(row["payload_json"]) or "{}")
+            try:
+                selection_probability = float(payload.get("selection_probability") or 1.0)
+                predicted_winner = float(payload.get("predicted_winner") or 0.0)
+                predicted_loser = float(payload.get("predicted_loser") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if not 0 < selection_probability <= 1:
+                continue
+            is_winner = str(row["feedback_type"]) == "curation_pair_winner"
+            # Surprise-weighted: a pick that contradicts the model's predicted
+            # ordering is stronger evidence than one that confirms it.
+            surprise = max(0.0, predicted_loser - predicted_winner)
+            confidence = (
+                self.config.model.curation_pair_confidence
+                * (1.0 + self.config.model.curation_pair_surprise_bonus * surprise)
+                * min(self.config.model.curation_pair_ips_cap, 1.0 / selection_probability)
+            )
+            confidence = min(1.0, confidence)
+            signals[str(row["scene_id"])].append(
+                (1.0 if is_winner else -1.0, confidence, str(row["feedback_type"]))
+            )
+        for row in self.connection.execute(
             "SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL"
         ):
             value = _clamp((float(row["rating100"]) - 50) / 50)
@@ -468,7 +519,8 @@ class PreferenceModelBuilder:
             tuple(row)
             for row in self.connection.execute(
                 """
-                SELECT feedback_id, scene_id, feedback_type, value, occurred_at_ms, reversed_by_id
+                SELECT feedback_id, scene_id, feedback_type, value, occurred_at_ms,
+                       reversed_by_id, payload_json
                 FROM feedback ORDER BY feedback_id
                 """
             )
