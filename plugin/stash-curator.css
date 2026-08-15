@@ -1,30 +1,15 @@
-/* Design tokens (GH #150 Package 1). Stash's own chrome (navbar, page
-   background) has no light theme at all — confirmed against the running
-   app, not just its default SCSS — so a viewer's prefers-color-scheme
-   can't be used to drive Curator's palette: a light-calibrated accent
-   sitting in Stash's permanently-dark navbar just reads as washed out,
-   not "light mode". Every token below is therefore the dark column from
-   the #150 design brief, applied unconditionally. The light column
-   (bg #f1f2f5, accent #1d5fb8, secondary #a56f2a, lane hues at the same
-   62/46 S/L recipe as the dark set below) is preserved here for whenever
-   Stash ships a real light theme:
-     --curator-bg: #f1f2f5; --curator-accent: #1d5fb8;
-     --curator-accent-secondary: #a56f2a;
-     --curator-hue-for_you: #2d6cbe; --curator-hue-similar: #2d9cbe;
-     --curator-hue-best_bets: #2dbe8e; --curator-hue-hunt: #2dbe45;
-     --curator-hue-discover: #be9c2d; --curator-hue-adventure: #be5d2d;
-     --curator-hue-revisit: #692dbe; --curator-hue-expand: #be2d75;
-     --curator-hue-prune: #be392d; --curator-surface: #ffffff;
-     --curator-surface-raised: #e9ebef; --curator-border: rgba(16,18,22,.14);
-     --curator-border-strong: rgba(16,18,22,.24); --curator-text: #16181c;
-     --curator-text-muted: #5b6470; --curator-wash-raised: rgba(16,18,22,.04);
-     --curator-wash-recessed: rgba(16,18,22,.06);
-     --curator-shadow-color: rgba(16,18,22,.16);
-     --curator-glow-color: rgba(29,95,184,.22).
-   --curator-card-* stays a separate, identical-today family: it backs
-   Stash's native scene-card/performer-card internals, whose title and
-   detail text is hardcoded light-on-dark with no theming hook, so those
-   surfaces must stay pinned dark even after Stash grows a light theme. */
+/* Design tokens (GH #150 Package 1, revised GH #152 Package 5). Stash's own
+   chrome (navbar, page background) has no light theme at all, so these
+   tokens can't be driven by the viewer's prefers-color-scheme — a
+   light-calibrated accent sitting in Stash's permanently-dark navbar would
+   read as washed out, not "light mode". Dark stays the default (bare
+   :root, matching the app it's embedded in and every existing install);
+   light is an explicit opt-in via [data-theme="light"], flipped by the
+   header's theme toggle rather than by OS preference.
+   --curator-card-* is a separate, always-dark family: it backs Stash's
+   native scene-card/performer-card internals, whose title and detail text
+   is hardcoded light-on-dark with no theming hook, so those surfaces stay
+   pinned dark in both themes. */
 :root {
   --curator-bg: #101216;
   --curator-surface: #182126;
@@ -49,15 +34,15 @@
   --curator-accent: #4f8ce0;
   --curator-accent-secondary: #d59a52;
 
-  --curator-hue-for_you: #6e9cd8;
-  --curator-hue-similar: #6ec0d8;
-  --curator-hue-best_bets: #6ed8b5;
-  --curator-hue-hunt: #6ed880;
-  --curator-hue-discover: #d8c06e;
-  --curator-hue-adventure: #d8916e;
-  --curator-hue-revisit: #9a6ed8;
-  --curator-hue-expand: #d86ea3;
-  --curator-hue-prune: #d8776e;
+  --curator-hue-for_you: #4f8ce0;
+  --curator-hue-similar: #6cc4dc;
+  --curator-hue-best_bets: #d59a52;
+  --curator-hue-hunt: #d98a9e;
+  --curator-hue-discover: #5cc19c;
+  --curator-hue-adventure: #e0824f;
+  --curator-hue-revisit: #b79ce0;
+  --curator-hue-expand: #e0645c;
+  --curator-hue-prune: #9aa1ab;
 
   --curator-radius-sm: 4px;
   --curator-radius: 7px;
@@ -69,9 +54,44 @@
   --curator-shadow-glow: 0 0.25rem 0.8rem var(--curator-glow-color);
 
   --curator-gradient-brand: linear-gradient(145deg, var(--curator-accent), var(--curator-hue-similar));
+
+  --curator-font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --curator-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --curator-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+}
+
+.curator-page[data-theme="light"] {
+  --curator-bg: #f1f2f5;
+  --curator-surface: #ffffff;
+  --curator-surface-raised: #e9ebef;
+  --curator-border: rgba(16, 18, 22, 0.14);
+  --curator-border-strong: rgba(16, 18, 22, 0.24);
+  --curator-text: #16181c;
+  --curator-text-muted: #5b6470;
+  --curator-overlay: rgba(16, 18, 22, 0.5);
+  --curator-wash-raised: rgba(16, 18, 22, 0.04);
+  --curator-wash-recessed: rgba(16, 18, 22, 0.06);
+  --curator-shadow-color: rgba(16, 18, 22, 0.16);
+  --curator-glow-color: rgba(29, 95, 184, 0.22);
+
+  --curator-accent: #1d5fb8;
+  --curator-accent-secondary: #a56f2a;
+
+  --curator-hue-for_you: #1d5fb8;
+  --curator-hue-similar: #1f7f96;
+  --curator-hue-best_bets: #a56f2a;
+  --curator-hue-hunt: #a34a63;
+  --curator-hue-discover: #2f8f68;
+  --curator-hue-adventure: #b85e33;
+  --curator-hue-revisit: #7452ad;
+  --curator-hue-expand: #b83f4c;
+  --curator-hue-prune: #7c838c;
 }
 
 .curator-page {
+  background: var(--curator-bg);
+  color: var(--curator-text);
+  font-family: var(--curator-font-ui);
   box-sizing: border-box;
   margin: 0 auto;
   max-width: 112rem;
@@ -79,6 +99,12 @@
   overflow-x: clip;
   padding: 0.55rem 1.25rem 2rem;
   width: 100%;
+}
+
+.curator-page h1,
+.curator-page h2,
+.curator-page h3 {
+  font-family: var(--curator-font-display);
 }
 
 .curator-header {
@@ -730,7 +756,7 @@
 }
 
 .curator-profile-table td:last-child {
-  font-family: monospace;
+  font-family: var(--curator-font-mono);
   max-width: 32rem;
   overflow-wrap: anywhere;
 }
@@ -2381,7 +2407,7 @@
 }
 
 .curator-pick-hint kbd {
-  font-family: inherit;
+  font-family: var(--curator-font-mono);
   font-size: 0.68rem;
   background: var(--curator-wash-raised);
   border: 1px solid var(--curator-card-border-strong);

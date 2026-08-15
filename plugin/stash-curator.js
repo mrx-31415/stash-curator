@@ -11,7 +11,7 @@
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
   const { faDev } = libraries.FontAwesomeBrands;
-  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -52,17 +52,28 @@
   const NAV_ITEMS = [
     ...LANES,
     {
-      value: "feedback",
-      label: "Feedback history",
-      icon: faThumbsUp,
-      maintenance: true,
-      description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+      value: "curate",
+      label: "Curate",
+      icon: faBullseye,
+      description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
     },
     {
       value: "similar",
       label: "Similar",
       icon: faClone,
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
+    },
+    {
+      value: "expand",
+      label: "Expand",
+      icon: faGlobe,
+      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
+    },
+    {
+      value: "hunt",
+      label: "Performer Hunt",
+      icon: faCrosshairs,
+      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
     },
     {
       value: "taste",
@@ -79,37 +90,18 @@
       description: "Review the model's sentiment estimates: least-appealing scenes first, with reasons and feedback on each card.",
     },
     {
+      value: "feedback",
+      label: "Feedback history",
+      icon: faThumbsUp,
+      maintenance: true,
+      description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+    },
+    {
       value: "history",
       label: "Recently recommended",
       icon: faHistory,
       maintenance: true,
       description: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
-    },
-    {
-      value: "expand",
-      label: "Expand",
-      icon: faGlobe,
-      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
-    },
-    {
-      value: "backups",
-      label: "Backups",
-      icon: faDatabase,
-      maintenance: true,
-      description: "Create, inspect, and safely restore Curator sidecar backups.",
-    },
-    {
-      value: "hunt",
-      label: "Performer Hunt",
-      icon: faCrosshairs,
-      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
-    },
-    {
-      value: "diagnostics",
-      label: "Diagnostics",
-      icon: faWrench,
-      maintenance: true,
-      description: "Preview and export a privacy-safe status report for bug reports.",
     },
     {
       value: "prune",
@@ -119,10 +111,18 @@
       description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
     {
-      value: "curate",
-      label: "Curate",
-      icon: faBullseye,
-      description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
+      value: "backups",
+      label: "Backups",
+      icon: faDatabase,
+      maintenance: true,
+      description: "Create, inspect, and safely restore Curator sidecar backups.",
+    },
+    {
+      value: "diagnostics",
+      label: "Diagnostics",
+      icon: faWrench,
+      maintenance: true,
+      description: "Preview and export a privacy-safe status report for bug reports.",
     },
     {
       value: "profiling",
@@ -153,6 +153,7 @@
     MANAGE_NAV_ITEM,
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
+  const THEME_STORAGE_KEY = "stash-curator:theme";
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
@@ -3443,7 +3444,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, onProfiling, profilingActive }) {
+  function CuratorControls({ onRefresh, onProfiling, profilingActive, theme, onToggleTheme }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -3594,6 +3595,7 @@
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button curator-profiling-button", size: "sm", variant: profilingActive ? "primary" : "secondary", title: "Open performance profiles.", "aria-label": "Open performance profiles", "aria-pressed": profilingActive, onClick: onProfiling }, React.createElement(FontAwesomeIcon, { icon: faDev })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
@@ -3768,6 +3770,25 @@
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
     const [followUps, setFollowUps] = React.useState([]);
+    const [theme, setTheme] = React.useState(() => {
+      try {
+        return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+      } catch {
+        return "dark";
+      }
+    });
+    function toggleTheme() {
+      setTheme((current) => {
+        const next = current === "light" ? "dark" : "light";
+        try {
+          window.localStorage.setItem(THEME_STORAGE_KEY, next);
+        } catch {
+          // localStorage can be unavailable (private browsing); the toggle
+          // still works for the session, it just won't persist.
+        }
+        return next;
+      });
+    }
 
     React.useEffect(() => setFollowUps([]), [lane]);
 
@@ -3895,7 +3916,7 @@
 
     return React.createElement(
       "main",
-      { className: "curator-page container-fluid" },
+      { className: "curator-page container-fluid", "data-theme": theme },
       React.createElement(
         "header",
         { className: "curator-header" },
@@ -3924,7 +3945,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openManage("profiling"), profilingActive: lane === "manage" && currentSection === "profiling" })
+        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openManage("profiling"), profilingActive: lane === "manage" && currentSection === "profiling", theme, onToggleTheme: toggleTheme })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",
