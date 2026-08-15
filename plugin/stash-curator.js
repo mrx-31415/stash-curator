@@ -65,6 +65,13 @@
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
     },
     {
+      value: "taste",
+      label: "Taste Profile",
+      icon: faTag,
+      maintenance: true,
+      description: "Review what Curator has inferred and directly teach it how you feel about tags.",
+    },
+    {
       value: "sentiment",
       label: "Sentiment review",
       icon: faBalanceScale,
