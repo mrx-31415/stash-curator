@@ -610,7 +610,7 @@ def test_curator_prefetches_only_the_intended_lane() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "function prefetchLanes" not in source
     assert "if (!laneByValue.has(lane) || cachedConfigUpdatedAtMs === null) return;" in source
-    assert "loadSlate(lane, page).then(" in source
+    assert "loadSlate(lane, page, false, slateFilters).then(" in source
     assert "loadSlate(lane, 1, true).catch(" in source
     # Prefetch now hangs off the lane-switcher cards inside the collapsed
     # Recommendations tab, not the (now removed) flat per-lane nav pills
@@ -687,6 +687,25 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert "data?.truncated" in source
     assert "(failure) => active && (setError(failure.message), setLoading(false))" in source
     assert 'entityType === "hunt" ? "scene" : entityType' in source
+
+
+def test_recommendations_filter_bar_wired() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    # Recommendations is FilterBar's 4th call site, alongside similar/hunt/expand.
+    assert 'React.createElement(FilterBar, {\n        variant: "recommendations"' in source
+    assert 'const rankingOnly = variant !== "recommendations";' in source
+    # get_slate gets the same filter arg shape as get_similar/get_expand.
+    assert "include_tags: filters.includeTags || []" in source
+    assert "exclude_tags: filters.excludeTags || []" in source
+    assert "performer_ids: filters.performers || []" in source
+    assert "studio_ids: filters.studios || []" in source
+    assert "gender: filters.gender || \"\"" in source
+    # Filtered slates bypass the persistent lane+page cache rather than
+    # polluting it with a filter-blind key.
+    assert "const hasFilters = Boolean(filters &&" in source
+    assert "if (!hasFilters) slateRequests.set(key, request);" in source
+    assert 'scope: "recommendations"' in source
 
 
 def test_panels_serialize_full_view_state_to_the_url() -> None:

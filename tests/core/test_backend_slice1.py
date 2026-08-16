@@ -268,6 +268,53 @@ def test_get_slate_page_exclusions_byte_identical(
     )
 
 
+def test_get_slate_performer_and_tag_filters_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_slate",
+        model_sidecar,
+        stub_stash,
+        lane="for_you",
+        count=5,
+        page=1,
+        performer_ids=["p1"],
+        include_tags=["Familiar Scenario"],
+        impression_id="fixed-impression-slate-filters",
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=model_sidecar,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+
+
+def test_get_slate_studio_and_gender_filters_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_slate",
+        model_sidecar,
+        stub_stash,
+        lane="for_you",
+        count=5,
+        page=1,
+        studio_ids=["studio-2"],
+        exclude_tags=["nonexistent-tag"],
+        gender="FEMALE",
+        impression_id="fixed-impression-slate-filters-2",
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=model_sidecar,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+
+
 def test_replace_item_byte_identical(model_sidecar: Path, binary: Path, stub_stash: str) -> None:
     raw = payload(
         "replace_item", model_sidecar, stub_stash, lane="for_you", exclude_scene_ids=["old-good"]
