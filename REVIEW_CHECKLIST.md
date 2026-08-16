@@ -1,7 +1,7 @@
 # Curator plugin — review checklist (living doc)
 
 Consolidated from two independent review passes against the live instance
-(`http://192.168.1.100:9999/plugins/stash-curator`), cross-checked against the
+(`/plugins/stash-curator`), cross-checked against the
 design mockup (`https://claude.ai/code/artifact/0e341da5-9b63-4ffc-ac60-05ee0df6174a`)
 and, for pass 2, against this worktree at commit `78da835` (round 13,
 `feat/plugin-visual-overhaul`). Tracks GH issue #152 (follow-up to #150);
