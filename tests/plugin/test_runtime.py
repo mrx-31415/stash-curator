@@ -395,12 +395,9 @@ def test_curator_tabs_update_browser_history() -> None:
     # The Recommendations and Manage pills must no-op when a lane/section
     # under them is already active, or clicking the parent pill while on
     # e.g. Best Bets would wrongly reset to For You (GH #150 Package 3).
+    assert '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
     assert (
-        '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
-    )
-    assert (
-        '? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }'
-        in source
+        'if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value)' in source
     )
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
@@ -430,7 +427,7 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     # Tag sentiment lives exclusively under Manage > Taste Profile now (GH
     # #152 round 2) — Curate's old "Tag sentiment" tab duplicated it and was
     # removed, since Taste Profile is Manage's default landing section.
-    assert 'function TasteProfilePanel({ embedded = false } = {})' in source
+    assert "function TasteProfilePanel({ embedded = false } = {})" in source
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -699,11 +696,11 @@ def test_recommendations_filter_bar_wired() -> None:
     # FilterTokens stores {id, name} objects for chip display, so these
     # must extract the field the backend actually wants (tag name, or
     # performer/studio id as a string), not pass the object through raw.
-    assert 'include_tags: (filters.includeTags || []).map((item) => item.name)' in source
-    assert 'exclude_tags: (filters.excludeTags || []).map((item) => item.name)' in source
-    assert 'performer_ids: (filters.performers || []).map((item) => String(item.id))' in source
-    assert 'studio_ids: (filters.studios || []).map((item) => String(item.id))' in source
-    assert "gender: filters.gender || \"\"" in source
+    assert "include_tags: (filters.includeTags || []).map((item) => item.name)" in source
+    assert "exclude_tags: (filters.excludeTags || []).map((item) => item.name)" in source
+    assert "performer_ids: (filters.performers || []).map((item) => String(item.id))" in source
+    assert "studio_ids: (filters.studios || []).map((item) => String(item.id))" in source
+    assert 'gender: filters.gender || ""' in source
     # Filtered slates bypass the persistent lane+page cache rather than
     # polluting it with a filter-blind key.
     assert "const hasFilters = Boolean(filters &&" in source
@@ -832,13 +829,15 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     # grid share the "Why this?"/"Score" <details> shell via EvidenceScore;
     # the shell markup lives once in its definition, content stays
     # per-caller (async explain-on-toggle vs static text).
-    assert 'function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent })' in source
+    assert "function EvidenceScore({ evidenceProps, evidenceContent," in source
+    assert "scoreBarContent, scoreSummary, scoreContent })" in source
     assert 'React.createElement("summary", null, "Why this?")' in source
     assert 'className: "curator-evidence", ...evidenceProps' in source
     assert "evidenceProps: { onToggle: explain }" in source
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
-    assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" : `Score · ${scoreSummary}`)' in source
+    assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" :' in source
+    assert "`Score · ${scoreSummary}`)" in source
     assert "scoreSummary: item.final_utility.toFixed(2)" in source
     assert "scoreSummary: item.score.toFixed(2)" in source
     assert "scoreSummary: item.rank_score.toFixed(2)" in source
@@ -870,7 +869,7 @@ def test_external_card_actions_are_a_named_shared_component() -> None:
     assert "tagsActive: tagChoices !== null" in source
     # Feedback (thumbs up/down + More menu) is the other variant; still its
     # own function, untouched by this extraction.
-    assert 'function Feedback({ item, onRemove, onThumbDown })' in source
+    assert "function Feedback({ item, onRemove, onThumbDown })" in source
     assert 'className: "curator-more-menu"' in source
 
 
@@ -1192,7 +1191,8 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     # Tag sentiment is a single 6-stop control: "Never" is stop 0 on the same
     # range input as the 5-point spectrum (set apart visually, not pulled out
     # into a separate button), shared by every call site (compact or not).
-    assert 'function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null })' in source
+    assert "function TagSentimentControl({ tag, value, blocked, onChange, compact = false" in source
+    assert "= false, inferredValue = null })" in source
     assert 'type: "range"' in source
     assert 'min: "0"' in source
     assert 'max: "5"' in source

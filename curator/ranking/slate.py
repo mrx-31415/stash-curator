@@ -1104,9 +1104,7 @@ class SlateBuilder:
                 return False
             if performer_id_set and not performer_id_set <= candidate_performers:
                 return False
-            if studio_id_set and studios.get(scene_id) not in studio_id_set:
-                return False
-            return True
+            return not (studio_id_set and studios.get(scene_id) not in studio_id_set)
 
         return matches
 
