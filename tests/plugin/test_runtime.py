@@ -816,7 +816,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "evidenceProps: { onToggle: explain }" in source
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
-    assert 'React.createElement("summary", null, `Score · ${scoreSummary}`)' in source
+    assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" : `Score · ${scoreSummary}`)' in source
     assert "scoreSummary: item.final_utility.toFixed(2)" in source
     assert "scoreSummary: item.score.toFixed(2)" in source
     assert "scoreSummary: item.rank_score.toFixed(2)" in source

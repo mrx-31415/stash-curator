@@ -441,6 +441,17 @@
   margin-top: 0.5rem;
 }
 
+/* Neither the mockup nor this shell caps the detail pane's height — with
+   short demo content that never mattered, but a real section (e.g.
+   Sentiment review with many cards) can run tens of thousands of pixels
+   tall, pushing the section list off-screen and forcing a scroll-to-top
+   just to switch sections. Pin the list instead of trying to guess a
+   max-height for the detail pane. */
+.curator-manage-list {
+  position: sticky;
+  top: 0.75rem;
+}
+
 @media (max-width: 860px) {
   .curator-manage-shell {
     grid-template-columns: 1fr;

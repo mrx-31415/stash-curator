@@ -1688,7 +1688,7 @@
       null,
       evidenceContent !== null && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent),
       scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, "Match"), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
-      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${scoreSummary}`), scoreContent)
+      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, scoreBarContent ? "Score breakdown" : `Score · ${scoreSummary}`), scoreContent)
     );
   }
 
@@ -1730,10 +1730,17 @@
     const tags = kind === "scene" ? payload.tags || [] : [];
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
+      const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
+      // Api.components.HoverPopover is undefined on a cold/direct navigation
+      // to /plugins/stash-curator until some other part of Stash's own app
+      // has mounted first (same root cause as CuratorControls' health-pill
+      // guard) — fall back to the trigger alone rather than crashing the
+      // whole card on an invalid element type.
+      if (!HoverPopover) return trigger;
       return React.createElement(
         HoverPopover,
         { className: `curator-external-${id}-trigger`, enterDelay: 150, leaveDelay: 250, placement: "bottom", content: React.createElement("div", { className: `curator-external-popover-links curator-external-${id}-popover` }, content) },
-        React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count))
+        trigger
       );
     }
     const metadataControls = kind === "scene" && React.createElement(
@@ -1887,6 +1894,8 @@
     never_show: "Never Show",
     metadata_wrong: "Metadata Wrong",
     prune: "Prune",
+    curation_pair_winner: "Picked in Curate",
+    curation_pair_loser: "Passed over in Curate",
   };
 
   function FeedbackHistoryRow({ item, scene, onCorrect }) {
@@ -2062,14 +2071,19 @@
         setExplanationLoading(false);
       }
     }
+    // score_review is a synthetic pseudo-lane (Sentiment review reuses this
+    // card to page through the bottom of the model's score distribution,
+    // not a real recommendation source) — it was never given a label,
+    // falling through to the raw enum value ("SCORE_REVIEW") in the badge.
+    const laneLabel = item.source_lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.source_lane)?.label || item.source_lane);
     return React.createElement(
       "article",
       { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
       React.createElement(
         "span",
-        { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}`, "aria-label": `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
+        { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
         React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
-        React.createElement("span", null, (laneByValue.get(item.source_lane)?.label || item.source_lane).toUpperCase())
+        React.createElement("span", null, laneLabel.toUpperCase())
       ),
       scene
         ? React.createElement(SceneCard, { scene })
