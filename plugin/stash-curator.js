@@ -573,10 +573,10 @@
       exploration: 0,
       context: { route: location.pathname, prefetched },
       ...(hasFilters ? {
-        include_tags: filters.includeTags || [],
-        exclude_tags: filters.excludeTags || [],
-        performer_ids: filters.performers || [],
-        studio_ids: filters.studios || [],
+        include_tags: (filters.includeTags || []).map((item) => item.name),
+        exclude_tags: (filters.excludeTags || []).map((item) => item.name),
+        performer_ids: (filters.performers || []).map((item) => String(item.id)),
+        studio_ids: (filters.studios || []).map((item) => String(item.id)),
         gender: filters.gender || "",
       } : {}),
     })
