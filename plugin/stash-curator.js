@@ -1688,10 +1688,19 @@
   // keyed off item.details.score_breakdown and it silently rendered empty
   // for real Similar-panel results, since that field isn't populated there.
   // A single clamped fill is the one thing guaranteed to have real data.
+  // Utility/appeal is usually in [0, 1], but bonuses (e.g. uncovered-content)
+  // can push final_utility modestly above 1.0 — clamping the fill to 1.0
+  // made every overflowing score (1.15, 1.16, 1.17, ...) render at the same
+  // ~100% width as a plain 0.95, erasing the difference. Scale against a
+  // slightly wider ceiling so that range is visible; anything that still
+  // exceeds the ceiling gets a distinct "off the chart" treatment rather
+  // than silently pinning to 100% again.
+  const UTILITY_BAR_CEILING = 1.2;
   function utilityBar(value) {
-    const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
+    const clipped = value > UTILITY_BAR_CEILING;
+    const pct = Math.round((Math.min(UTILITY_BAR_CEILING, Math.max(0, value)) / UTILITY_BAR_CEILING) * 100);
     return React.createElement("div", { className: "curator-score-bar" },
-      React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct + "%" }, title: `Utility ${value.toFixed(3)}` })
+      React.createElement("span", { className: `curator-score-bar-seg curator-score-app${clipped ? " curator-score-bar-clipped" : ""}`, style: { width: pct + "%" }, title: `Utility ${value.toFixed(3)}` })
     );
   }
 

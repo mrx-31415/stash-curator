@@ -2348,6 +2348,10 @@
 }
 .curator-score-app { background: #50b86c; }
 
+.curator-score-bar-clipped {
+  background: repeating-linear-gradient(45deg, #50b86c, #50b86c 4px, #d59a52 4px, #d59a52 8px);
+}
+
 /* ---- Relationship chips ---- */
 .curator-chips {
   display: flex;

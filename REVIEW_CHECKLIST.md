@@ -189,10 +189,14 @@ Artifacts:
       round-trip via network trace) with only a subtly-dimmed button; Expand's
       candidate list is blank for up to 10s with zero spinner/skeleton. Reads
       as frozen, not slow.
-- [ ] **MATCH bar clips/misrepresents scores >1.0** — cards showing
-      `1.17`/`1.16`/`1.15` render at essentially the same bar width as `0.95`.
-      Either normalize fill to the actual observed max or drop the bar and
-      show only the number for these cases.
+- [x] **MATCH bar clips/misrepresents scores >1.0** — `utilityBar()` clamped
+      fill to `[0, 1]`, so any overflow above 1.0 (final_utility can exceed
+      1.0 via bonuses like uncovered-content) rendered at the same ~100%
+      width as a plain 0.95. Rescaled against a wider ceiling (1.2) so that
+      range is visible, with a distinct striped treatment for the rare case
+      that still exceeds it. Verified on live data: 1.171/1.160/1.154/1.140
+      now render at 98%/97%/96%/95% vs. 0.95's 79% — clearly distinguishable
+      (previously all ≈100%).
 - [x] **Sentiment badges carry no color signal** — reused the existing
       sentiment-tier classes (`.curator-sentiment-love`/`-danger`/`-neutral`,
       which already set `--sc`) on the badge instead of Bootstrap's
