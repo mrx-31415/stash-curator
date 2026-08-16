@@ -695,11 +695,14 @@ def test_recommendations_filter_bar_wired() -> None:
     # Recommendations is FilterBar's 4th call site, alongside similar/hunt/expand.
     assert 'React.createElement(FilterBar, {\n        variant: "recommendations"' in source
     assert 'const rankingOnly = variant !== "recommendations";' in source
-    # get_slate gets the same filter arg shape as get_similar/get_expand.
-    assert "include_tags: filters.includeTags || []" in source
-    assert "exclude_tags: filters.excludeTags || []" in source
-    assert "performer_ids: filters.performers || []" in source
-    assert "studio_ids: filters.studios || []" in source
+    # get_slate gets the same filter arg shape as get_similar/get_expand —
+    # FilterTokens stores {id, name} objects for chip display, so these
+    # must extract the field the backend actually wants (tag name, or
+    # performer/studio id as a string), not pass the object through raw.
+    assert 'include_tags: (filters.includeTags || []).map((item) => item.name)' in source
+    assert 'exclude_tags: (filters.excludeTags || []).map((item) => item.name)' in source
+    assert 'performer_ids: (filters.performers || []).map((item) => String(item.id))' in source
+    assert 'studio_ids: (filters.studios || []).map((item) => String(item.id))' in source
     assert "gender: filters.gender || \"\"" in source
     # Filtered slates bypass the persistent lane+page cache rather than
     # polluting it with a filter-blind key.
