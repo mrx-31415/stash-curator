@@ -237,9 +237,11 @@ Artifacts:
       neither that check nor the list map, so nothing showed at all for the
       whole fetch. Added a `suggestions === null` branch rendering "Loading
       hypotheses…". Verified via screenshot mid-fetch and after resolution.
-- [ ] Similar's free-text scene search results render as a bare, unstyled
-      inline list of link-colored text — no card/border/container, visually
-      inconsistent with the app's card-heavy aesthetic elsewhere.
+- [x] Similar's free-text scene search results render as a bare, unstyled
+      inline list of link-colored text — changed from `variant: "link"` to
+      `variant: "secondary"` (small), giving each result the same bordered-
+      chip treatment used elsewhere in the app instead of plain underlined
+      text. Verified via screenshot.
 - [x] Minor: Backups' directory path uses an alarm-colored magenta/pink
       `curator-mono` style for what's just informational text. Root cause:
       `.curator-mono` only ever set `font-family`, so Bootstrap's default
