@@ -1581,12 +1581,11 @@
               ),
               React.createElement(
                 "div",
-                { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison" },
-                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "a") }, "← Left"),
-                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "b") }, "Right →"),
-                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "similar") }, "Similar ↑"),
-                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "skip") }, "Skip ↓"),
-                React.createElement("span", { className: "curator-pick-hint" }, "Keys: ", React.createElement("kbd", null, "←/→"), " pick · ", React.createElement("kbd", null, "↑"), " similar · ", React.createElement("kbd", null, "↓"), " skip")
+                { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison", title: "Keys: ←/→ pick · ↑ similar · ↓ skip" },
+                React.createElement(Button, { size: "sm", variant: "primary", title: "← pick", onClick: () => answerPicks(currentPair.pair_id, "a") }, "← Left"),
+                React.createElement(Button, { size: "sm", variant: "primary", title: "→ pick", onClick: () => answerPicks(currentPair.pair_id, "b") }, "Right →"),
+                React.createElement(Button, { size: "sm", variant: "secondary", title: "↑ similar", onClick: () => answerPicks(currentPair.pair_id, "similar") }, "Similar ↑"),
+                React.createElement(Button, { size: "sm", variant: "secondary", title: "↓ skip", onClick: () => answerPicks(currentPair.pair_id, "skip") }, "Skip ↓")
               )
             )
           );
@@ -1656,17 +1655,19 @@
     );
   }
 
-  function scoreBar(item) {
-    const bd = item.details?.score_breakdown || {};
-    const sim = bd.similarity || 0;
-    const app = bd.appeal || 0;
-    const mh = bd.multi_hop || 0;
-    const total = sim + app + mh || 1;
-    const pct = (v) => Math.round(v / total * 100);
+  // The always-visible match bar needs to be robust to whatever score
+  // shape a caller has — RecommendationCard's final_utility, ExternalCard's
+  // basic match score, and SimilarityPanel's rank_score are all "ranking
+  // utility, not a probability" (per the cards' own copy) and can exceed 1,
+  // and none reliably carry the similarity/appeal/multi-hop breakdown a
+  // segmented bar would need — an earlier version tried a segmented bar
+  // keyed off item.details.score_breakdown and it silently rendered empty
+  // for real Similar-panel results, since that field isn't populated there.
+  // A single clamped fill is the one thing guaranteed to have real data.
+  function utilityBar(value) {
+    const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
     return React.createElement("div", { className: "curator-score-bar" },
-      React.createElement("span", { className: "curator-score-bar-seg curator-score-sim", style: { width: pct(sim) + "%" }, title: `Similarity ${sim.toFixed(3)}` }),
-      React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct(app) + "%" }, title: `Appeal ${app.toFixed(3)}` }),
-      mh > 0 && React.createElement("span", { className: "curator-score-bar-seg curator-score-mh", style: { width: pct(mh) + "%" }, title: `Multi-hop ${mh.toFixed(4)}` })
+      React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct + "%" }, title: `Utility ${value.toFixed(3)}` })
     );
   }
 
@@ -1677,11 +1678,16 @@
   // explanation on toggle and shows a ScoreNode tree, the other two are
   // static), so content stays fully caller-supplied via props rather than
   // forcing those shapes into a shared config.
-  function EvidenceScore({ evidenceProps, evidenceContent, scoreSummary, scoreContent }) {
+  // The match bar is always visible in the mockup — it's the at-a-glance
+  // signal a card carries, not something worth an extra click to see.
+  // Everything else (the breakdown text/tree) stays behind the existing
+  // collapsed "Score · N" details for progressive disclosure.
+  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent }) {
     return React.createElement(
       React.Fragment,
       null,
       evidenceContent !== null && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent),
+      scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, "Match"), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
       React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${scoreSummary}`), scoreContent)
     );
   }
@@ -1792,7 +1798,7 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreSummary: item.score.toFixed(2), scoreContent: React.createElement(React.Fragment, null, scoreBar(item), React.createElement("p", null, scoreDetail)) })); })()),
+      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreBarContent: utilityBar(item.score), scoreSummary: item.score.toFixed(2), scoreContent: React.createElement("p", null, scoreDetail) })); })()),
       React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
@@ -2062,7 +2068,8 @@
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}`, "aria-label": `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
-        React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass })
+        React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
+        React.createElement("span", null, (laneByValue.get(item.source_lane)?.label || item.source_lane).toUpperCase())
       ),
       scene
         ? React.createElement(SceneCard, { scene })
@@ -2095,6 +2102,7 @@
                 )
               )
             ),
+            scoreBarContent: utilityBar(item.final_utility),
             scoreSummary: item.final_utility.toFixed(2),
             scoreContent: React.createElement(
               React.Fragment,
@@ -2294,7 +2302,6 @@
     hidePhashMatches, onToggleHidePhash,
     gender, onGenderChange,
     minimum, onMinimumChange,
-    savedCurrent, onApplySaved,
     applyVisible = true, onApply,
   }) {
     const sceneGated = variant !== "hunt";
@@ -2316,7 +2323,6 @@
         showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"),
         sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
         sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
-        (sceneGated ? showScene : true) && React.createElement(SavedFilters, { scope: variant, current: savedCurrent, onApply: onApplySaved }),
         applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
       )
     );
@@ -2572,7 +2578,8 @@
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
-        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount))
+        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
       filtersOpen && React.createElement(FilterBar, {
         variant: "similar",
@@ -2585,8 +2592,6 @@
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
         minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
-        savedCurrent: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity },
-        onApplySaved: applySaved,
         applyVisible: Boolean(selected),
         onApply: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })),
       }),
@@ -2606,7 +2611,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreSummary: item.rank_score.toFixed(2), scoreContent: React.createElement(React.Fragment, null, scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`)) })));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.rank_score), scoreSummary: item.rank_score.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -2910,6 +2915,8 @@
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
+        entityType !== "shortlist" && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
@@ -2928,8 +2935,6 @@
         includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
-        savedCurrent: { hidePhashMatches, includeTags, excludeTags },
-        onApplySaved: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })),
         onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)),
       }),
       entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
@@ -2943,8 +2948,6 @@
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
         minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
-        savedCurrent: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore },
-        onApplySaved: applySaved,
         onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)),
       }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
@@ -3037,7 +3040,7 @@
       { className: "curator-backup-page" },
       React.createElement(Button, { size: "sm", disabled: busy, onClick: create }, busy ? "Working…" : "Create backup"),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading backups…"),
-      data && React.createElement("p", null, `Backup directory: ${data.backup_directory}`),
+      data && React.createElement("p", null, "Backup directory: ", React.createElement("code", { className: "curator-mono" }, data.backup_directory)),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No Curator backups found."),

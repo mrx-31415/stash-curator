@@ -894,6 +894,10 @@
   overflow-wrap: anywhere;
 }
 
+.curator-mono {
+  font-family: var(--curator-font-mono);
+}
+
 .curator-diagnostics-preview {
   max-height: 60vh;
   overflow: auto;
@@ -910,9 +914,12 @@
 .curator-lane-hunt { --lane-color: var(--curator-hue-hunt); }
 .curator-lane-prune { --lane-color: var(--curator-hue-prune); }
 
-.curator-tabs .nav-link svg,
-.curator-source-badge svg {
+.curator-tabs .nav-link svg {
   color: var(--lane-color);
+}
+
+.curator-source-badge svg {
+  color: #fff;
 }
 
 .curator-controls {
@@ -1210,19 +1217,11 @@
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.curator-source-best_bets { --lane-color: var(--curator-hue-best_bets); }
-.curator-source-revisit { --lane-color: var(--curator-hue-revisit); }
-.curator-source-discover { --lane-color: var(--curator-hue-discover); }
-.curator-source-adventure { --lane-color: var(--curator-hue-adventure); }
-
 .curator-card:hover {
   border-color: var(--curator-card-border-strong);
   box-shadow: var(--curator-card-shadow-lg);
 }
 
-.curator-card[class*="curator-source-"] {
-  border-left: 3px solid var(--lane-color, var(--curator-card-border));
-}
 
 .curator-similar { --surface-color: var(--curator-hue-similar); }
 .curator-expand { --surface-color: var(--curator-hue-expand); }
@@ -1300,16 +1299,21 @@
 
 .curator-source-badge {
   align-items: center;
-  background: var(--curator-overlay);
+  background: var(--lane-color, var(--curator-overlay));
   border-radius: var(--curator-radius-sm);
+  color: #fff;
   display: inline-flex;
-  font-size: 0.9rem;
-  height: 1.8rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  gap: 0.3rem;
+  height: auto;
   justify-content: center;
   left: 0.5rem;
+  letter-spacing: 0.03em;
+  padding: 0.3rem 0.5rem;
   position: absolute;
   top: 0.5rem;
-  width: 1.8rem;
+  width: auto;
   z-index: 3;
 }
 
@@ -2080,6 +2084,35 @@
 }
 
 /* ---- Score bar ---- */
+.curator-match-row {
+  align-items: center;
+  display: flex;
+  flex: 1 1 100%;
+  gap: 0.5rem;
+  margin: 0.3rem 0;
+  width: 100%;
+}
+
+.curator-match-label {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.curator-match-value {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+}
+
+.curator-match-row .curator-score-bar {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
 .curator-score-bar {
   display: flex;
   height: 6px;
@@ -2093,9 +2126,7 @@
   height: 100%;
   transition: width 0.3s ease;
 }
-.curator-score-sim { background: #4a90d9; }
 .curator-score-app { background: #50b86c; }
-.curator-score-mh { background: #9b59b6; }
 
 /* ---- Relationship chips ---- */
 .curator-chips {
@@ -2582,23 +2613,6 @@
 .curator-pick-flag:hover {
   background: rgba(216, 162, 74, 0.18);
   border-color: var(--curator-accent-secondary);
-}
-
-.curator-pick-hint {
-  font-size: 0.72rem;
-  color: var(--curator-card-text-muted);
-  margin-left: 0.4rem;
-}
-
-.curator-pick-hint kbd {
-  font-family: var(--curator-font-mono);
-  font-size: 0.68rem;
-  background: var(--curator-wash-raised);
-  border: 1px solid var(--curator-card-border-strong);
-  border-bottom-width: 2px;
-  border-radius: var(--curator-radius-sm);
-  padding: 0.05rem 0.3rem;
-  color: var(--curator-card-text-muted);
 }
 
 .curator-pick-verdict-headline {

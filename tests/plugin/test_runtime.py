@@ -810,7 +810,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     # grid share the "Why this?"/"Score" <details> shell via EvidenceScore;
     # the shell markup lives once in its definition, content stays
     # per-caller (async explain-on-toggle vs static text).
-    assert 'function EvidenceScore({ evidenceProps, evidenceContent, scoreSummary, scoreContent })' in source
+    assert 'function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent })' in source
     assert 'React.createElement("summary", null, "Why this?")' in source
     assert 'className: "curator-evidence", ...evidenceProps' in source
     assert "evidenceProps: { onToggle: explain }" in source
