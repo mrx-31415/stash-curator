@@ -3761,17 +3761,6 @@
       ? route.get("section") || (MAINTENANCE_ITEMS.some((item) => item.value === requestedView) ? requestedView : MAINTENANCE_ITEMS[0].value)
       : null;
     const [slate, setSlate] = React.useState(null);
-    const [headerTaskBusy, setHeaderTaskBusy] = React.useState(false);
-    async function runHeaderTask(taskName) {
-      setHeaderTaskBusy(true);
-      try {
-        await runTask(taskName);
-      } catch (failure) {
-        setError(failure.message);
-      } finally {
-        setHeaderTaskBusy(false);
-      }
-    }
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
@@ -3992,8 +3981,6 @@
         React.createElement(
           "div",
           { className: "curator-view-actions" },
-          laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: "secondary", disabled: headerTaskBusy, onClick: () => runHeaderTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild"),
-          laneByValue.has(lane) && React.createElement(Button, { size: "sm", disabled: headerTaskBusy, onClick: () => runHeaderTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync library"),
           laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
             Button,
             {
