@@ -1451,6 +1451,7 @@
             "div",
             { className: "curator-curate-quick-block" },
             React.createElement("strong", null, "Pick-test a hypothesis"),
+            suggestions === null && React.createElement("small", { role: "status" }, "Loading hypotheses…"),
             suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — Manage → Taste Profile and your rated scenes generate them."),
             (suggestions || []).map((suggestion) =>
               React.createElement(

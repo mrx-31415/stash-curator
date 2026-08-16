@@ -229,9 +229,14 @@ Artifacts:
       sentiment via the separate Taste Profile panel. (Old handover #6,
       confirmed still open — deliberately deferred pending discussion per
       prior triage.)
-- [ ] **Curate's "Pick-test a hypothesis" list renders empty on first paint**
-      with no loading/empty-state messaging, looks broken before it
-      populates.
+- [x] **Curate's "Pick-test a hypothesis" list renders empty on first paint**
+      — confirmed the fetch genuinely takes several seconds (it's up to 5
+      parallel `get_tag_context_candidates` calls), so the gap was real, not
+      imagined. `suggestions` starts `null`, and the render only handled the
+      "loaded and empty" case (`suggestions.length === 0`) — `null` matched
+      neither that check nor the list map, so nothing showed at all for the
+      whole fetch. Added a `suggestions === null` branch rendering "Loading
+      hypotheses…". Verified via screenshot mid-fetch and after resolution.
 - [ ] Similar's free-text scene search results render as a bare, unstyled
       inline list of link-colored text — no card/border/container, visually
       inconsistent with the app's card-heavy aesthetic elsewhere.
