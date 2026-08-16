@@ -418,6 +418,19 @@ Artifacts:
       "Stash Curator" → "Curator" (kept as a `title` tooltip on the brand)
       to help it fit, matching the mockup's own `.brand-word` text exactly.
       Verified across 1440/1000/800/420px.
+      **Follow-up (user feedback): still visibly misaligned.** Root cause
+      was separate from the row-layout change: the Nav component renders
+      `className="curator-tabs nav nav-tabs"`, and Bootstrap's own
+      `.nav-tabs` rule sets `margin: auto` then `margin-bottom: 1.5rem`
+      (same specificity, same selector, so the second declaration wins for
+      that one property) — a fixed 21px bottom margin leaves no free space
+      for the auto top margin to distribute, so the tabs strip sat flush
+      against the header's top edge with 21px of dead space below it
+      instead of being centered like every other header control. Curator's
+      own `.curator-tabs` rule only neutralized the horizontal margins
+      (`margin-inline: 0`), never the vertical ones. Changed to `margin: 0`.
+      Verified via computed-geometry dump: tabs/controls/brand now share
+      the same centerY (~84.4px) at 1440px width.
 - [x] **Card-size control**: added a header icon-button (cycles Compact/
       Comfortable/Spacious, localStorage-persisted like theme) driving a new
       `--curator-card-min-width` CSS variable that `.curator-grid` already
@@ -434,6 +447,13 @@ Artifacts:
       instance of this exact bug pattern — worth remembering if a fourth
       turns up: any native/uncontrolled `.minimal.btn` inside `.curator-
       page` needs this same treatment). Verified resting and hover states.
+      **Follow-up (user feedback): read as "solid black," not discreet.**
+      The first attempt used `var(--curator-overlay)` (a dark translucent
+      scrim, chosen for sitting over an image) — reasonable in isolation,
+      but the user specifically wanted it to match the "More" menu
+      trigger's actual look, which is just plain `.btn-secondary`
+      (`var(--curator-surface)` + a visible border), not a dark overlay.
+      Switched to that exact treatment for a true match.
 - [x] **"Default" checkbox in SavedFilters** looked out of place next to the
       Save button row — converted to Bootstrap's native `.custom-switch`
       toggle (already bundled in Stash's own CSS, no new styling needed),

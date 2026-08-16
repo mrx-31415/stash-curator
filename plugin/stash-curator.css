@@ -387,6 +387,15 @@
   min-width: 0;
 }
 
+/* Bootstrap's own .nav-tabs rule (also applied here — the Nav component
+   renders className="curator-tabs nav nav-tabs") sets `margin: auto` then
+   `margin-bottom: 1.5rem`, i.e. an auto top margin plus a *fixed* 21px
+   bottom margin — that 21px doesn't get distributed as centering space
+   (there's no free space left to give the auto margin once the fixed
+   bottom margin claims its share), so the tabs strip sat flush against the
+   header's top edge with 21px of invisible margin below it instead of
+   being vertically centered like every other header control. `margin: 0`
+   here overrides both. */
 .curator-tabs {
   align-items: center;
   align-self: center;
@@ -395,7 +404,7 @@
   flex-wrap: nowrap;
   height: 3rem;
   justify-content: flex-start;
-  margin-inline: 0;
+  margin: 0;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1641,17 +1650,20 @@
    .minimal utility (meant to strip background/border) and .curator-page
    .btn-primary wins on specificity, painting a solid gradient pill over
    what's meant to be a quiet on-image icon+count trigger — reads as
-   shouting for attention on every single card. Force it back to a discreet
-   outline treatment instead, matching .curator-icon-action elsewhere. */
+   shouting for attention on every single card. First attempt used a dark
+   translucent overlay treatment, which read as "solid black" rather than
+   discreet; matches the actual .btn-secondary look used elsewhere (e.g. the
+   "More" menu trigger) instead. */
 .curator-page .curator-card .card-popovers .btn.minimal {
-  background: var(--curator-overlay);
-  border-color: transparent;
-  color: #fff;
+  background: var(--curator-surface);
+  border-color: var(--curator-border-strong);
+  color: var(--curator-text);
 }
 
 .curator-page .curator-card .card-popovers .btn.minimal:hover {
-  background: color-mix(in srgb, var(--curator-overlay) 80%, #000);
-  color: #fff;
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-text-muted);
+  color: var(--curator-text);
 }
 
 .curator-card .card-popovers .fa-icon {
