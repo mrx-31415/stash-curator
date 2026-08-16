@@ -158,15 +158,24 @@ Artifacts:
 
 ## Other bugs / quirks
 
-- [ ] **Manage page height still unbounded** — round 11's sticky section list
-      stops the scroll-to-top pain on desktop, but the document itself is
-      still ~76,700px tall (Taste Profile renders all 949 tags unpaginated/
-      unvirtualized) and **worse on mobile at ~142,000px**, where
-      `@media (max-width:860px) { .curator-manage-list { position: static } }`
-      explicitly disables the sticky list — mobile users lose the section
-      rail entirely while scrolling. Fixes the symptom, not the cause;
-      consider pagination/virtualization on Taste Profile instead (see UX
-      suggestions).
+- [x] **Manage page height still unbounded** — fixed at the root per the UX
+      suggestion below rather than patching the symptom further: Taste
+      Profile now paginates client-side (30 rows/page, `useUrlPage`-backed
+      so pages are bookmarkable/back-button-able, same convention as
+      Feedback history/Recommendation history's server-side pagers) instead
+      of rendering all ~1,000 tags at once. `get_taste_profile` already
+      returns the full set in one call, so this needed no backend change —
+      just slicing the already-in-memory filtered/sorted array and adding
+      the existing `Pager` component. Measured on live data: desktop
+      76,700px → 3,032px, mobile 142,000px → 5,547px. Every other Manage
+      section (Recently Recommended, Sentiment review, Prune, Feedback
+      history) was already paginated server-side; Taste Profile was the one
+      unbounded list. The mobile `position: static` override for
+      `.curator-manage-list` is unrelated to this — it exists because the
+      layout drops to one column below 860px (list and detail stack instead
+      of sitting side by side), where sticky positioning doesn't apply
+      regardless of page length, not because of the height problem — left
+      as is.
 - [x] **Raw enum leak regression**: Manage → Recently Recommended's "Lane"
       column showed `score_review` verbatim for Sentiment-review-sourced
       rows. `RecommendationHistoryRow` had its own separate lane→label
@@ -256,8 +265,8 @@ Artifacts:
 - [x] Color-code sentiment badges using the sentiment-tier color system the
       slider thumb already has (`--sc` custom property) — done, see the
       "Other bugs / quirks" entry above.
-- [ ] Add pagination or virtualization to Taste Profile (fixes the Manage
-      height problem at the root).
+- [x] Add pagination or virtualization to Taste Profile (fixes the Manage
+      height problem at the root) — done, see "Other bugs / quirks" above.
 - [ ] Add loading skeletons for lane switches and Curate generation.
 - [ ] Add empty-state copy to Curate's hypothesis list explaining the blank
       state instead of leaving it silent.

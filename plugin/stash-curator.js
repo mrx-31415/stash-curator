@@ -956,12 +956,14 @@
     );
   }
 
+  const TASTE_PROFILE_PAGE_SIZE = 30;
   function TasteProfilePanel({ embedded = false } = {}) {
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
     const [sort, setSort] = React.useState("suggested");
     const [status, setStatus] = React.useState("all");
+    const [page, setPage] = useUrlPage("page_taste");
     useCuratorActivity("taste", !data && !error, "Loading taste profile…");
     React.useEffect(() => {
       let active = true;
@@ -990,6 +992,16 @@
         return difference || left.name.localeCompare(right.name);
       });
     }
+    // Taste Profile can hold ~1,000 tags fetched in one get_taste_profile
+    // call; rendering every visibleItems row unpaginated made the Manage
+    // document tens of thousands of pixels tall (the root cause of the
+    // "unbounded Manage page height" bug — see round 11's sticky section
+    // list, which only masked the symptom). Paginate client-side since the
+    // full filtered/sorted list is already in memory.
+    React.useEffect(() => setPage(1, { replace: true }), [query, status, sort]);
+    const totalPages = Math.max(1, Math.ceil(visibleItems.length / TASTE_PROFILE_PAGE_SIZE));
+    React.useEffect(() => { if (page > totalPages) setPage(totalPages, { replace: true }); }, [page, totalPages]);
+    const pageItems = visibleItems.slice((page - 1) * TASTE_PROFILE_PAGE_SIZE, page * TASTE_PROFILE_PAGE_SIZE);
     return React.createElement(
       "section",
       { className: "curator-taste", "aria-labelledby": embedded ? undefined : "curator-taste-title" },
@@ -1017,7 +1029,7 @@
       data && React.createElement(
         "div",
         { className: "curator-taste-list" },
-        visibleItems.map((item) =>
+        pageItems.map((item) =>
           React.createElement(
             "article",
             { key: item.tag_id, className: "curator-taste-item" },
@@ -1029,7 +1041,8 @@
             React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
           )
         )
-      )
+      ),
+      data && visibleItems.length > 0 && React.createElement(Pager, { page, total: visibleItems.length, pageSize: TASTE_PROFILE_PAGE_SIZE, hasMore: page * TASTE_PROFILE_PAGE_SIZE < visibleItems.length, loading: false, onPage: setPage, label: "Taste profile pages" })
     );
   }
 
