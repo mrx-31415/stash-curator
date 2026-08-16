@@ -2289,6 +2289,30 @@
     mask-image: linear-gradient(90deg, transparent, #000 1rem, #000 calc(100% - 1rem), transparent);
   }
 
+  /* The fade mask alone isn't a strong enough affordance when the active
+     pill happens to fill the visible strip edge-to-edge (no sliver of the
+     next pill peeks through to hint "more here") — a narrow first-load
+     viewport with only "Recommendations" visible reads as the complete nav,
+     not a scrollable one. A persistent chevron makes the affordance
+     unambiguous regardless of scroll position or which pill is active. */
+  .curator-navigation {
+    position: relative;
+  }
+
+  .curator-navigation::after {
+    border-right: 2px solid var(--curator-text-muted);
+    border-top: 2px solid var(--curator-text-muted);
+    content: "";
+    height: 0.4rem;
+    opacity: 0.65;
+    pointer-events: none;
+    position: absolute;
+    right: 0.2rem;
+    top: 50%;
+    transform: translateY(-50%) rotate(45deg);
+    width: 0.4rem;
+  }
+
   .curator-tabs .nav-link {
     font-size: 0.78rem;
     padding: 0.4rem 0.55rem;

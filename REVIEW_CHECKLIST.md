@@ -205,10 +205,15 @@ Artifacts:
       a button treatment: transparent fill, border-only). Like now reads
       green, dislike red, unsure gray — no new design work, per the UX
       suggestion below. Verified via screenshot.
-- [ ] **Mobile primary nav hides 5 of 6 tabs off-screen with no affordance** —
-      `.curator-tabs` is horizontally scrollable with the scrollbar hidden and
-      no fade/chevron hint; only "Recommendations" is visible on load at a
-      420px viewport.
+- [x] **Mobile primary nav hides 5 of 6 tabs off-screen with no affordance** —
+      a fade mask was already in place (`.curator-tabs`'s `mask-image`) but
+      wasn't enough of a cue on its own: at a 420px viewport the active
+      "Recommendations" pill fills the visible strip edge-to-edge with no
+      sliver of the next pill peeking through, so the faded edge alone read
+      as "this is the whole nav," not "scroll for more." Added a small
+      persistent chevron (`.curator-navigation::after`) that doesn't depend
+      on scroll position or which pill happens to be active. Verified via
+      screenshot at 420px.
 - [x] **Prune still shows plain text** ("Appeal −0.94 · confidence 0.99")
       where Recommendations/Sentiment review show a MATCH bar for the same
       underlying data. Swapped to the shared `EvidenceScore`/`utilityBar`
