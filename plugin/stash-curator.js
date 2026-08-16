@@ -10,8 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faDev } = libraries.FontAwesomeBrands;
-  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -52,17 +51,28 @@
   const NAV_ITEMS = [
     ...LANES,
     {
-      value: "feedback",
-      label: "Feedback history",
-      icon: faThumbsUp,
-      maintenance: true,
-      description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+      value: "curate",
+      label: "Curate",
+      icon: faBullseye,
+      description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
     },
     {
       value: "similar",
       label: "Similar",
       icon: faClone,
       description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
+    },
+    {
+      value: "expand",
+      label: "Expand",
+      icon: faGlobe,
+      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
+    },
+    {
+      value: "hunt",
+      label: "Performer Hunt",
+      icon: faCrosshairs,
+      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
     },
     {
       value: "taste",
@@ -79,37 +89,18 @@
       description: "Review the model's sentiment estimates: least-appealing scenes first, with reasons and feedback on each card.",
     },
     {
+      value: "feedback",
+      label: "Feedback history",
+      icon: faThumbsUp,
+      maintenance: true,
+      description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+    },
+    {
       value: "history",
       label: "Recently recommended",
       icon: faHistory,
       maintenance: true,
       description: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
-    },
-    {
-      value: "expand",
-      label: "Expand",
-      icon: faGlobe,
-      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
-    },
-    {
-      value: "backups",
-      label: "Backups",
-      icon: faDatabase,
-      maintenance: true,
-      description: "Create, inspect, and safely restore Curator sidecar backups.",
-    },
-    {
-      value: "hunt",
-      label: "Performer Hunt",
-      icon: faCrosshairs,
-      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
-    },
-    {
-      value: "diagnostics",
-      label: "Diagnostics",
-      icon: faWrench,
-      maintenance: true,
-      description: "Preview and export a privacy-safe status report for bug reports.",
     },
     {
       value: "prune",
@@ -119,16 +110,53 @@
       description: "Curator never deletes media; tagging is reversible, and Candidates, Explicit dislikes, and Model suspects are separate review queues.",
     },
     {
-      value: "curate",
-      label: "Curate",
-      icon: faBullseye,
-      description: "Compare scenes in pairs to teach the model fast, or review tag sentiment.",
+      value: "backups",
+      label: "Backups",
+      icon: faDatabase,
+      maintenance: true,
+      description: "Create, inspect, and safely restore Curator sidecar backups.",
+    },
+    {
+      value: "diagnostics",
+      label: "Diagnostics",
+      icon: faWrench,
+      maintenance: true,
+      description: "Preview and export a privacy-safe status report for bug reports.",
+    },
+    {
+      value: "profiling",
+      label: "Profiling",
+      icon: faChartLine,
+      maintenance: true,
+      description: "Inspect render and query performance profiles captured during development.",
     },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
   const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
+  const RECOMMENDATIONS_NAV_ITEM = {
+    value: "recommendations",
+    label: "Recommendations",
+    icon: faStar,
+    description: "A balanced shelf of strong matches, timely revisits, and a little discovery, split into five lanes.",
+  };
+  const MANAGE_NAV_ITEM = {
+    value: "manage",
+    label: "Manage",
+    icon: faWrench,
+    description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, and profiling.",
+  };
+  const TOP_NAV_ITEMS = [
+    RECOMMENDATIONS_NAV_ITEM,
+    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value)),
+    MANAGE_NAV_ITEM,
+  ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
+  const THEME_STORAGE_KEY = "stash-curator:theme";
+  const CARD_SIZE_STORAGE_KEY = "stash-curator:card-size";
+  const CARD_SIZE_MIN = 14;
+  const CARD_SIZE_MAX = 32;
+  const CARD_SIZE_DEFAULT = 22;
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
@@ -496,12 +524,12 @@
     return React.createElement(
       "nav",
       { className: "curator-pager", "aria-label": label },
-      React.createElement(Button, { size: "sm", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
       pagerPages(page, totalPages).map((value, index) => value === null
         ? React.createElement("span", { key: `ellipsis-${index}`, className: "curator-pager-ellipsis", "aria-hidden": "true" }, "…")
         : React.createElement(Button, { key: value, size: "sm", variant: value === page ? "primary" : "secondary", disabled: loading || value === page, onClick: () => onPage(value), "aria-label": `Page ${value}`, "aria-current": value === page ? "page" : undefined }, value)),
       React.createElement("span", { className: "curator-pager-summary" }, `Page ${page} of ${totalPages}`),
-      React.createElement(Button, { size: "sm", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
     );
   }
 
@@ -528,10 +556,18 @@
     if (!copied) throw new Error("Copy failed");
   }
 
-  function loadSlate(lane, page = 1, prefetched = false) {
+  // filters narrow a lane's already-classified candidates server-side (same
+  // include/exclude tag, performer, studio, and gender shape as Similar).
+  // Filtered slates aren't cached: the persistent slateCache is keyed only
+  // by lane+page, and filter combinations change too often relative to how
+  // long they stay open to be worth a filter-aware cache key.
+  function loadSlate(lane, page = 1, prefetched = false, filters = null) {
+    const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.gender));
     const key = slateKey(lane, page);
-    if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
-    if (slateRequests.has(key)) return slateRequests.get(key);
+    if (!hasFilters) {
+      if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
+      if (slateRequests.has(key)) return slateRequests.get(key);
+    }
     const generation = cacheGeneration;
     const request = operation({
       operation: "get_slate",
@@ -540,6 +576,13 @@
       exclude_scene_ids: [...(laneExclusions.get(lane) || [])],
       exploration: 0,
       context: { route: location.pathname, prefetched },
+      ...(hasFilters ? {
+        include_tags: (filters.includeTags || []).map((item) => item.name),
+        exclude_tags: (filters.excludeTags || []).map((item) => item.name),
+        performer_ids: (filters.performers || []).map((item) => String(item.id)),
+        studio_ids: (filters.studios || []).map((item) => String(item.id)),
+        gender: filters.gender || "",
+      } : {}),
     })
       .then((data) => {
         if (generation !== cacheGeneration) return data;
@@ -551,12 +594,14 @@
         }
         cachedModelId = data.model_id;
         cachedConfigUpdatedAtMs = data.config_updated_at_ms;
-        slateCache.set(slateKey(lane, page), data);
-        persistSlateCache();
+        if (!hasFilters) {
+          slateCache.set(slateKey(lane, page), data);
+          persistSlateCache();
+        }
         return data;
       })
       .finally(() => slateRequests.delete(key));
-    slateRequests.set(key, request);
+    if (!hasFilters) slateRequests.set(key, request);
     return request;
   }
 
@@ -582,6 +627,15 @@
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
     return payload.data.configurePlugin;
+  }
+
+  function formatTimeAgo(ms) {
+    const minutes = Math.round((Date.now() - ms) / 60000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
   }
 
   async function runTask(taskName) {
@@ -670,6 +724,13 @@
     const labels = {
       "appeal.performer_identity": "Performer match",
       "appeal.content_neighbor": "Similar content",
+      // The baseline reason present on every impression regardless of lane
+      // (core/slate.go, slate_greedy.go, score_review.go all seed reasonIDs
+      // with this) — richer reasons like the two above are appended after
+      // it when they apply, but plenty of items have no reason beyond this
+      // one. The naive fallback below (last dot-segment, title-cased) turns
+      // it into the confusing bare word "Lane".
+      "eligibility.lane": "Eligible for this lane",
     };
     const fallback = code.split(".").at(-1).replaceAll("_", " ");
     return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
@@ -683,18 +744,135 @@
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
-  function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
-    const rated = value !== null && value !== undefined || blocked;
+  // The 5-point spectrum spans stops 1-5 of the 6-stop track (stop 0 is
+  // "Never"), i.e. positions 20%/40%/60%/80%/100% — a continuous value in
+  // [-1, 1] (Taste Profile's model-inferred sentiment) maps onto that same
+  // linear scale, skipping the "Never" slot since inference has no opinion
+  // on hard exclusion.
+  function sentimentValueToTrackPct(value) {
+    return 20 + (Math.max(-1, Math.min(1, value)) + 1) * 40;
+  }
+  function nearestSentiment(value) {
+    let best = SENTIMENTS[0];
+    let bestDistance = Infinity;
+    for (const entry of SENTIMENTS) {
+      const distance = Math.abs(entry[0] - value);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = entry;
+      }
+    }
+    return best;
+  }
+  function nearestSentimentLabel(value) {
+    return nearestSentiment(value)[1];
+  }
+  const BELIEF_PHRASES = {
+    "Strong dislike": "strongly dislike",
+    "Slight dislike": "slightly dislike",
+    "Neutral": "feel neutral about",
+    "Slight like": "slightly like",
+    "Strong like": "strongly like",
+  };
+  function beliefSentence(value) {
+    return `I think you ${BELIEF_PHRASES[nearestSentimentLabel(value)]} this`;
+  }
+
+  // Design-mockup "confidence pips": 5 bars, filled left-to-right by how
+  // much viewing history supports the model's inference for this tag.
+  function ConfidencePips({ confidence }) {
+    const on = Math.round(Math.max(0, Math.min(1, confidence)) * 5);
     return React.createElement(
       "div",
-      { className: `curator-sentiment${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
-      React.createElement(Button, { size: "sm", className: `curator-sentiment-never${blocked ? " curator-sentiment-active" : ""}`, "aria-pressed": blocked, "aria-label": "Never show scenes with this tag", title: "Never show scenes with this tag", onClick: () => onChange({ blocked: true }) }, "Never"),
-      SENTIMENTS.map(([score, label, cls]) => {
-        const selected = !blocked && value === score;
-        const shortLabel = score === -1 ? "--" : score === -0.5 ? "-" : score === 0 ? "0" : score === 0.5 ? "+" : "++";
-        return React.createElement(Button, { key: score, size: "sm", className: `${cls}${selected ? " curator-sentiment-active" : ""}`, "aria-pressed": selected, "aria-label": label, title: label, onClick: () => onChange({ value: score, blocked: false }) }, compact ? shortLabel : label);
-      }),
-      (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
+      { className: "curator-confidence-wrap" },
+      React.createElement("span", { className: "curator-confidence-label" }, "Confidence"),
+      React.createElement(
+        "div",
+        { className: "curator-confidence-pips", title: "How much viewing history supports this inference — more filled bars means more evidence" },
+        [0, 1, 2, 3, 4].map((index) => React.createElement("span", { key: index, className: index < on ? "on" : "" }))
+      )
+    );
+  }
+
+  // A single 6-stop control: "Never" is stop 0 on the same track as the 5
+  // sentiment levels (not a separate toggle) — set apart visually with its
+  // own color, per the #150 design brief. The visible track/stops/thumb are
+  // a purely decorative rail; a fully transparent native range input sits
+  // on top capturing clicks/drags/keyboard, so the control stays as
+  // accessible as a plain <input type="range"> without hand-rolling pointer
+  // math the way the original design mockup's static-HTML version did.
+  // `inferredValue`, when given (only Taste Profile has this — it's the
+  // model's own continuous estimate, distinct from the user's discrete
+  // direct rating), renders as a small differently-colored tick on the same
+  // track so the two can be compared at a glance.
+  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null }) {
+    const rated = (value !== null && value !== undefined) || blocked;
+    const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
+    const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
+    const tierClass = blocked ? "curator-sentiment-never" : rated ? SENTIMENTS[stopIndex - 1][2] : "";
+    function commit(index) {
+      if (index === 0) onChange({ value: null, blocked: true });
+      else onChange({ value: SENTIMENTS[index - 1][0], blocked: false });
+    }
+    function handleChange(event) {
+      commit(Number(event.target.value));
+    }
+    // An unrated item is displayed with the thumb parked at stop 3
+    // ("Neutral")'s position, purely as a resting point — there's no real
+    // value yet. A native range input only fires input/change when its
+    // value actually changes, so a click that resolves to that SAME stop
+    // (i.e. clicking dead-center on "Neutral") is indistinguishable from a
+    // no-op to the browser and silently does nothing. Recompute the
+    // intended stop from click position and commit directly whenever it
+    // matches the value already showing, which is exactly the case the
+    // native event won't fire for.
+    function handleClick(event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      const index = Math.round(ratio * 5);
+      if (index === stopIndex) commit(index);
+    }
+    const hasModelEstimate = inferredValue !== null && inferredValue !== undefined;
+    return React.createElement(
+      "div",
+      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      React.createElement(
+        "label",
+        { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
+        React.createElement(
+          "span",
+          { className: "curator-sentiment-track" },
+          React.createElement(
+            "span",
+            { className: "curator-sentiment-rail", "aria-hidden": "true" },
+            [0, 1, 2, 3, 4, 5].map((stop) => React.createElement("span", {
+              key: stop,
+              className: `curator-sentiment-stop${stop === 0 ? " curator-sentiment-stop-never" : ""}${rated && stopIndex === stop ? " curator-sentiment-stop-active" : ""}`,
+              style: { left: `${(stop / 5) * 100}%` },
+            })),
+            hasModelEstimate && React.createElement("span", {
+              className: "curator-sentiment-model-dot",
+              style: { left: `${sentimentValueToTrackPct(inferredValue)}%` },
+              title: `Model estimate: ${nearestSentimentLabel(inferredValue)} (${inferredValue.toFixed(2)})`,
+            }),
+            rated && React.createElement("span", { className: "curator-sentiment-thumb", style: { left: `${(stopIndex / 5) * 100}%` } })
+          ),
+          React.createElement("input", {
+            type: "range",
+            min: "0",
+            max: "5",
+            step: "1",
+            className: "curator-sentiment-input",
+            value: stopIndex,
+            "aria-label": `Sentiment for ${tag.name}`,
+            "aria-valuetext": currentLabel,
+            onChange: handleChange,
+            onClick: handleClick,
+          })
+        ),
+        !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
+      ),
+      React.createElement(Button, { size: "sm", variant: "secondary", className: !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
   }
 
@@ -872,12 +1050,14 @@
     );
   }
 
-  function TasteProfilePanel() {
+  const TASTE_PROFILE_PAGE_SIZE = 30;
+  function TasteProfilePanel({ embedded = false } = {}) {
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
     const [sort, setSort] = React.useState("suggested");
     const [status, setStatus] = React.useState("all");
+    const [page, setPage] = useUrlPage("page_taste");
     useCuratorActivity("taste", !data && !error, "Loading taste profile…");
     React.useEffect(() => {
       let active = true;
@@ -906,11 +1086,21 @@
         return difference || left.name.localeCompare(right.name);
       });
     }
+    // Taste Profile can hold ~1,000 tags fetched in one get_taste_profile
+    // call; rendering every visibleItems row unpaginated made the Manage
+    // document tens of thousands of pixels tall (the root cause of the
+    // "unbounded Manage page height" bug — see round 11's sticky section
+    // list, which only masked the symptom). Paginate client-side since the
+    // full filtered/sorted list is already in memory.
+    React.useEffect(() => setPage(1, { replace: true }), [query, status, sort]);
+    const totalPages = Math.max(1, Math.ceil(visibleItems.length / TASTE_PROFILE_PAGE_SIZE));
+    React.useEffect(() => { if (page > totalPages) setPage(totalPages, { replace: true }); }, [page, totalPages]);
+    const pageItems = visibleItems.slice((page - 1) * TASTE_PROFILE_PAGE_SIZE, page * TASTE_PROFILE_PAGE_SIZE);
     return React.createElement(
       "section",
-      { className: "curator-taste", "aria-labelledby": "curator-taste-title" },
-      React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
-      React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
+      { className: "curator-taste", "aria-labelledby": embedded ? undefined : "curator-taste-title" },
+      !embedded && React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
+      !embedded && React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
       React.createElement(
         "div",
         { className: "curator-taste-toolbar" },
@@ -933,19 +1123,21 @@
       data && React.createElement(
         "div",
         { className: "curator-taste-list" },
-        visibleItems.map((item) =>
+        pageItems.map((item) =>
           React.createElement(
             "article",
             { key: item.tag_id, className: "curator-taste-item" },
             React.createElement("div", null,
-              React.createElement("strong", null, item.name),
-              item.prompt && React.createElement("span", { className: "badge badge-info" }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
+              React.createElement("strong", null, React.createElement(NavLink, { to: `/tags/${item.tag_id}`, title: `Review scenes tagged ${item.name}` }, item.name)),
+              item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? nearestSentiment(item.inferred_value)[2] : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? beliefSentence(item.inferred_value) : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
-            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
+            React.createElement(ConfidencePips, { confidence: item.confidence }),
+            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, inferredValue: item.inferred_value, onChange: (value) => answer(item.tag_id, value) })
           )
         )
-      )
+      ),
+      data && visibleItems.length > 0 && React.createElement(Pager, { page, total: visibleItems.length, pageSize: TASTE_PROFILE_PAGE_SIZE, hasMore: page * TASTE_PROFILE_PAGE_SIZE < visibleItems.length, loading: false, onPage: setPage, label: "Taste profile pages" })
     );
   }
 
@@ -1114,7 +1306,6 @@
     const [flash, setFlash] = React.useState(null); // {pairId, winner} while the outline shows
     const [picksUndo, setPicksUndo] = React.useState([]); // [{pairId, winner}] for Forward
     const FLASH_MS = 500;
-    const [curateTab, setCurateTab] = React.useState("pick");
     const [tags, setTags] = React.useState(null);
     const [suggestions, setSuggestions] = React.useState(null);
     const [suggestionError, setSuggestionError] = React.useState("");
@@ -1249,7 +1440,7 @@
       }
     }, [picksRound, picksAnswers]);
     React.useEffect(() => {
-      if (curateTab !== "pick" || !picksRound || picksVerdict || picksRound.pairs.length === 0) {
+      if (!picksRound || picksVerdict || picksRound.pairs.length === 0) {
         return;
       }
       const answeredCount = Object.keys(picksAnswers).length;
@@ -1277,7 +1468,7 @@
       }
       window.addEventListener("keydown", onKey);
       return () => window.removeEventListener("keydown", onKey);
-    }, [curateTab, picksRound, picksVerdict, picksAnswers, flash]);
+    }, [picksRound, picksVerdict, picksAnswers, flash]);
     async function submitPicks() {
       const entries = Object.entries(picksAnswers)
         .filter(([, winner]) => winner !== "similar")
@@ -1344,14 +1535,7 @@
       { className: "curator-curate", "aria-labelledby": "curator-curate-title" },
       React.createElement("h2", { id: "curator-curate-title" }, "Curate"),
       React.createElement("p", null, "Pick the scene you prefer in each pair — every choice teaches the model about all tags, performers, and studios the scenes carried."),
-      React.createElement(
-        "div",
-        { className: "curator-curate-tabs", role: "tablist", "aria-label": "Curate views" },
-        React.createElement(Button, { size: "sm", variant: curateTab === "pick" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "pick", onClick: () => setCurateTab("pick") }, "Pick"),
-        React.createElement(Button, { size: "sm", variant: curateTab === "tags" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "tags", onClick: () => setCurateTab("tags") }, "Tag sentiment")
-      ),
-      curateTab === "tags" && React.createElement(TasteProfilePanel),
-      curateTab === "pick" && !picksRound && React.createElement(
+      !picksRound && React.createElement(
         "div",
         { className: "curator-curate-started" },
         React.createElement("h3", null, "Compare two scenes"),
@@ -1375,7 +1559,8 @@
             "div",
             { className: "curator-curate-quick-block" },
             React.createElement("strong", null, "Pick-test a hypothesis"),
-            suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — the Tag sentiment tab and your rated scenes generate them."),
+            suggestions === null && React.createElement("small", { role: "status" }, "Loading hypotheses…"),
+            suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — Manage → Taste Profile and your rated scenes generate them."),
             (suggestions || []).map((suggestion) =>
               React.createElement(
                 "div",
@@ -1387,7 +1572,7 @@
           )
         )
       ),
-      curateTab === "pick" && picksRound && React.createElement(
+      picksRound && React.createElement(
         "div",
         { className: "curator-pick" },
         React.createElement(
@@ -1515,6 +1700,7 @@
               "div",
               { className: "curator-pick-cards" },
               React.createElement(PickSceneCard, { meta: currentPair.scene_a, picked: answer === "a" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "a"), onPick: () => answerPicks(currentPair.pair_id, "a"), onFlag: () => answerPicks(currentPair.pair_id, "flag_a") }),
+              React.createElement("span", { className: "curator-pick-vs", "aria-hidden": "true" }, "vs"),
               React.createElement(PickSceneCard, { meta: currentPair.scene_b, picked: answer === "b" || (flash && flash.pairId === currentPair.pair_id && flash.winner === "b"), onPick: () => answerPicks(currentPair.pair_id, "b"), onFlag: () => answerPicks(currentPair.pair_id, "flag_b") })
             ),
             React.createElement(
@@ -1528,12 +1714,11 @@
               ),
               React.createElement(
                 "div",
-                { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison" },
-                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "a") }, "← Left"),
-                React.createElement(Button, { size: "sm", variant: "primary", onClick: () => answerPicks(currentPair.pair_id, "b") }, "Right →"),
-                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "similar") }, "Similar ↑"),
-                React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => answerPicks(currentPair.pair_id, "skip") }, "Skip ↓"),
-                React.createElement("span", { className: "curator-pick-hint" }, "Keys: ", React.createElement("kbd", null, "←/→"), " pick · ", React.createElement("kbd", null, "↑"), " similar · ", React.createElement("kbd", null, "↓"), " skip")
+                { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison", title: "Keys: ←/→ pick · ↑ similar · ↓ skip" },
+                React.createElement(Button, { size: "sm", variant: "primary", title: "← pick", onClick: () => answerPicks(currentPair.pair_id, "a") }, "← Left"),
+                React.createElement(Button, { size: "sm", variant: "primary", title: "→ pick", onClick: () => answerPicks(currentPair.pair_id, "b") }, "Right →"),
+                React.createElement(Button, { size: "sm", variant: "secondary", title: "↑ similar", onClick: () => answerPicks(currentPair.pair_id, "similar") }, "Similar ↑"),
+                React.createElement(Button, { size: "sm", variant: "secondary", title: "↓ skip", onClick: () => answerPicks(currentPair.pair_id, "skip") }, "Skip ↓")
               )
             )
           );
@@ -1603,17 +1788,65 @@
     );
   }
 
-  function scoreBar(item) {
-    const bd = item.details?.score_breakdown || {};
-    const sim = bd.similarity || 0;
-    const app = bd.appeal || 0;
-    const mh = bd.multi_hop || 0;
-    const total = sim + app + mh || 1;
-    const pct = (v) => Math.round(v / total * 100);
+  // The always-visible match bar needs to be robust to whatever score
+  // shape a caller has — RecommendationCard's final_utility, ExternalCard's
+  // basic match score, and SimilarityPanel's rank_score are all "ranking
+  // utility, not a probability" (per the cards' own copy) and can exceed 1,
+  // and none reliably carry the similarity/appeal/multi-hop breakdown a
+  // segmented bar would need — an earlier version tried a segmented bar
+  // keyed off item.details.score_breakdown and it silently rendered empty
+  // for real Similar-panel results, since that field isn't populated there.
+  // A single clamped fill is the one thing guaranteed to have real data.
+  // Utility/appeal is usually in [0, 1], but bonuses (e.g. uncovered-content)
+  // can push final_utility modestly above 1.0 — clamping the fill to 1.0
+  // made every overflowing score (1.15, 1.16, 1.17, ...) render at the same
+  // ~100% width as a plain 0.95, erasing the difference. Scale against a
+  // slightly wider ceiling so that range is visible; anything that still
+  // exceeds the ceiling gets a distinct "off the chart" treatment rather
+  // than silently pinning to 100% again.
+  const UTILITY_BAR_CEILING = 1.2;
+  function utilityBar(value) {
+    const clipped = value > UTILITY_BAR_CEILING;
+    const pct = Math.round((Math.min(UTILITY_BAR_CEILING, Math.max(0, value)) / UTILITY_BAR_CEILING) * 100);
     return React.createElement("div", { className: "curator-score-bar" },
-      React.createElement("span", { className: "curator-score-bar-seg curator-score-sim", style: { width: pct(sim) + "%" }, title: `Similarity ${sim.toFixed(3)}` }),
-      React.createElement("span", { className: "curator-score-bar-seg curator-score-app", style: { width: pct(app) + "%" }, title: `Appeal ${app.toFixed(3)}` }),
-      mh > 0 && React.createElement("span", { className: "curator-score-bar-seg curator-score-mh", style: { width: pct(mh) + "%" }, title: `Multi-hop ${mh.toFixed(4)}` })
+      React.createElement("span", { className: `curator-score-bar-seg curator-score-app${clipped ? " curator-score-bar-clipped" : ""}`, style: { width: pct + "%" }, title: `Utility ${value.toFixed(3)}` })
+    );
+  }
+
+  // Shared "Why this?"/"Score · X" details shell, used by RecommendationCard,
+  // ExternalCard, and SimilarityPanel's library-match grid. The shell (the
+  // two <details>/<summary> elements) is genuinely identical across all
+  // three; what goes inside each is not (RecommendationCard lazy-loads its
+  // explanation on toggle and shows a ScoreNode tree, the other two are
+  // static), so content stays fully caller-supplied via props rather than
+  // forcing those shapes into a shared config.
+  // The match bar is always visible in the mockup — it's the at-a-glance
+  // signal a card carries, not something worth an extra click to see.
+  // Everything else (the breakdown text/tree) stays behind the existing
+  // collapsed "Score · N" details for progressive disclosure.
+  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent }) {
+    return React.createElement(
+      React.Fragment,
+      null,
+      evidenceContent !== null && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent),
+      scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, "Match"), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
+      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, scoreBarContent ? "Score breakdown" : `Score · ${scoreSummary}`), scoreContent)
+    );
+  }
+
+  // The "external" action-set variant (StashDB/Whisparr/shortlist), sibling
+  // to Feedback's "local" variant (thumbs up/down + More menu).
+  function ExternalActions({ href, item, kind, copied, onCopy, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
+    return React.createElement(
+      "div",
+      { className: "curator-prune-actions" },
+      React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })),
+      React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: onCopy }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })),
+      onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
+      kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
+      kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
   }
 
@@ -1639,10 +1872,17 @@
     const tags = kind === "scene" ? payload.tags || [] : [];
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
+      const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
+      // Api.components.HoverPopover is undefined on a cold/direct navigation
+      // to /plugins/stash-curator until some other part of Stash's own app
+      // has mounted first (same root cause as CuratorControls' health-pill
+      // guard) — fall back to the trigger alone rather than crashing the
+      // whole card on an invalid element type.
+      if (!HoverPopover) return trigger;
       return React.createElement(
         HoverPopover,
         { className: `curator-external-${id}-trigger`, enterDelay: 150, leaveDelay: 250, placement: "bottom", content: React.createElement("div", { className: `curator-external-popover-links curator-external-${id}-popover` }, content) },
-        React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count))
+        trigger
       );
     }
     const metadataControls = kind === "scene" && React.createElement(
@@ -1707,8 +1947,8 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, payload.why?.length && React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · "))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, scoreDetail))); })()),
-      React.createElement("div", { className: "curator-prune-actions" }, React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })), React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } } }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })), onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })), kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagChoices !== null ? "primary" : "secondary", disabled: tags.length === 0 || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: rateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })), kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })), kind === "scene" && onWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: addToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))), whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)),
+      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreBarContent: utilityBar(item.score), scoreSummary: item.score.toFixed(2), scoreContent: React.createElement("p", null, scoreDetail) })); })()),
+      React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
   });
@@ -1779,10 +2019,10 @@
         React.createElement(
           "div",
           { className: "curator-more-menu" },
-          React.createElement(Button, { size: "sm", title: "Hide this scene temporarily without treating it as a dislike.", onClick: () => send("not_now") }, "Not now"),
-          React.createElement(Button, { size: "sm", title: "Permanently exclude this scene from Curator.", onClick: () => send("never_show") }, "Never show"),
-          React.createElement(Button, { size: "sm", title: "Keep the scene, but do not learn from its current metadata.", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
-          React.createElement(Button, { size: "sm", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
+          React.createElement(Button, { size: "sm", variant: "link", title: "Hide this scene temporarily without treating it as a dislike.", onClick: () => send("not_now") }, "Not now"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Permanently exclude this scene from Curator.", onClick: () => send("never_show") }, "Never show"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Keep the scene, but do not learn from its current metadata.", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
         )
       ),
       saved && React.createElement("small", { role: "status" }, saved)
@@ -1796,6 +2036,8 @@
     never_show: "Never Show",
     metadata_wrong: "Metadata Wrong",
     prune: "Prune",
+    curation_pair_winner: "Picked in Curate",
+    curation_pair_loser: "Passed over in Curate",
   };
 
   function FeedbackHistoryRow({ item, scene, onCorrect }) {
@@ -1821,36 +2063,36 @@
       }
     }
     return React.createElement(
-      "tr",
-      null,
+      "div",
+      { className: "curator-record-row curator-feedback-row" },
+      React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp })),
       React.createElement(
-        "td",
-        null,
-        scene
-          ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
-          : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+        "div",
+        { className: "curator-record-main" },
+        React.createElement(
+          "div",
+          { className: "curator-record-title" },
+          scene
+            ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
+            : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+        ),
+        React.createElement("div", { className: "curator-record-meta" }, `${FEEDBACK_LABELS[item.feedback_type] || item.feedback_type} · ${new Date(item.occurred_at_ms).toLocaleString()}`)
       ),
-      React.createElement("td", null, FEEDBACK_LABELS[item.feedback_type] || item.feedback_type),
-      React.createElement("td", null, new Date(item.occurred_at_ms).toLocaleString()),
-      React.createElement(
-        "td",
-        null,
-        item.reversed_by_id
-          ? React.createElement("span", { className: "text-muted" }, "Corrected")
-          : React.createElement(
-              "div",
-              { className: "curator-feedback-correction" },
-              React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => correct(null) }, "Undo"),
-              React.createElement(
-                "select",
-                { className: "form-control form-control-sm", value: replacement, disabled: busy, onChange: (event) => setReplacement(event.target.value), "aria-label": "Replacement feedback" },
-                React.createElement("option", { value: "" }, "Replace with…"),
-                Object.entries(FEEDBACK_LABELS).map(([value, label]) => React.createElement("option", { key: value, value }, label))
-              ),
-              React.createElement(Button, { size: "sm", disabled: busy || !replacement, onClick: () => correct(replacement) }, "Save"),
-              error && React.createElement("small", { className: "text-danger" }, error)
-            )
-      )
+      item.reversed_by_id
+        ? React.createElement("span", { className: "text-muted" }, "Corrected")
+        : React.createElement(
+            "div",
+            { className: "curator-feedback-correction" },
+            React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => correct(null) }, "Undo"),
+            React.createElement(
+              "select",
+              { className: "form-control form-control-sm", value: replacement, disabled: busy, onChange: (event) => setReplacement(event.target.value), "aria-label": "Replacement feedback" },
+              React.createElement("option", { value: "" }, "Replace with…"),
+              Object.entries(FEEDBACK_LABELS).map(([value, label]) => React.createElement("option", { key: value, value }, label))
+            ),
+            React.createElement(Button, { size: "sm", variant: "link", disabled: busy || !replacement, onClick: () => correct(replacement) }, "Save"),
+            error && React.createElement("small", { className: "text-danger" }, error)
+          )
     );
   }
 
@@ -1891,13 +2133,8 @@
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No feedback has been recorded yet."),
       data && data.items.length > 0 && React.createElement(
         "div",
-        { className: "table-responsive" },
-        React.createElement(
-          "table",
-          { className: "table" },
-          React.createElement("thead", null, React.createElement("tr", null, ["Scene", "Action", "Time", "Correction"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
-          React.createElement("tbody", null, data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) })))
-        )
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) }))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
     );
@@ -1971,13 +2208,19 @@
         setExplanationLoading(false);
       }
     }
+    // score_review is a synthetic pseudo-lane (Sentiment review reuses this
+    // card to page through the bottom of the model's score distribution,
+    // not a real recommendation source) — it was never given a label,
+    // falling through to the raw enum value ("SCORE_REVIEW") in the badge.
+    const laneLabel = item.source_lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.source_lane)?.label || item.source_lane);
     return React.createElement(
       "article",
       { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
       React.createElement(
         "span",
-        { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}`, "aria-label": `Selected from ${laneByValue.get(item.source_lane)?.label || item.source_lane}` },
-        React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass })
+        { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
+        React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
+        React.createElement("span", null, laneLabel.toUpperCase())
       ),
       scene
         ? React.createElement(SceneCard, { scene })
@@ -1990,36 +2233,39 @@
         React.createElement(
           "div",
           { className: "curator-card-details" },
-          React.createElement(
-            "details",
-            { className: "curator-evidence", onToggle: explain },
-            React.createElement("summary", null, "Why this?"),
-            explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
-            explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
-            explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
-            explanation && React.createElement(
-              "ul",
+          React.createElement(EvidenceScore, {
+            evidenceProps: { onToggle: explain },
+            evidenceContent: React.createElement(
+              React.Fragment,
               null,
-              explanation.supporting_reasons.map((reason, index) =>
-                React.createElement(
-                  "li",
-                  { key: `${reason.code}-${index}` },
-                  `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
+              explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
+              explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
+              explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
+              explanation && React.createElement(
+                "ul",
+                null,
+                explanation.supporting_reasons.map((reason, index) =>
+                  React.createElement(
+                    "li",
+                    { key: `${reason.code}-${index}` },
+                    `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
+                  )
                 )
               )
-            )
-          ),
-          React.createElement(
-            "details",
-            { className: "curator-score" },
-            React.createElement("summary", null, `Score · ${item.final_utility.toFixed(2)}`),
-            React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
-            React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
-            React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
-            React.createElement(ScoreNode, { name: "components", value: item.components }),
-            React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
-            React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
-          ),
+            ),
+            scoreBarContent: utilityBar(item.final_utility),
+            scoreSummary: item.final_utility.toFixed(2),
+            scoreContent: React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
+              React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
+              React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
+              React.createElement(ScoreNode, { name: "components", value: item.components }),
+              React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
+              React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
+            ),
+          }),
           React.createElement(Feedback, { item, onRemove, onThumbDown })
         )
       )
@@ -2047,7 +2293,7 @@
           ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
           : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
       ),
-      React.createElement("td", null, laneByValue.get(item.lane)?.label || item.lane),
+      React.createElement("td", null, item.lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.lane)?.label || item.lane)),
       React.createElement(
         "td",
         null,
@@ -2168,6 +2414,7 @@
     const [saved, setSaved] = React.useState(() => readFilterPresets()[scope] || {});
     const [name, setName] = React.useState("");
     const [makeDefault, setMakeDefault] = React.useState(false);
+    const [switchId] = React.useState(() => `curator-default-switch-${uuid()}`);
     function save() {
       const clean = name.trim();
       if (!clean) return;
@@ -2183,8 +2430,64 @@
       { className: "curator-saved-filters" },
       React.createElement("select", { value: "", onChange: (event) => { const value = saved.presets?.[event.target.value]; if (value) onApply(value); }, "aria-label": "Load saved filter" }, React.createElement("option", { value: "" }, "Saved filters…"), Object.keys(saved.presets || {}).sort().map((value) => React.createElement("option", { key: value, value }, `${value}${saved.default === value ? " · default" : ""}`))),
       React.createElement("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
-      React.createElement("label", null, React.createElement("input", { type: "checkbox", checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }), " Default"),
-      React.createElement(Button, { size: "sm", disabled: !name.trim(), onClick: save }, "Save")
+      React.createElement(
+        "div",
+        { className: "custom-control custom-switch curator-default-switch" },
+        React.createElement("input", { type: "checkbox", className: "custom-control-input", id: switchId, checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }),
+        React.createElement("label", { className: "custom-control-label", htmlFor: switchId }, "Default")
+      ),
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: !name.trim(), onClick: save }, "Save")
+    );
+  }
+
+  // Shared filter panel for Similar/Expand/Hunt. The three views show
+  // different field subsets (hunt only ever shows tags + hide-phash, with
+  // no entityType gating at all, since it has no "scene vs performer"
+  // split); variant captures that shape plus the couple of markup
+  // differences (favorites button's aria-pressed/title, gender aria-label,
+  // minimum-match range floor) that predate this extraction and aren't
+  // being "fixed" here, just ported as-is. State mutation stays with the
+  // caller (each already has its own updateUrl closures per field).
+  function FilterBar({
+    variant,
+    entityType,
+    includeTags, onIncludeTagsChange,
+    excludeTags, onExcludeTagsChange,
+    performers, onPerformersChange,
+    studios, onStudiosChange,
+    favoriteOnly, onToggleFavorite,
+    hidePhashMatches, onToggleHidePhash,
+    gender, onGenderChange,
+    minimum, onMinimumChange,
+    applyVisible = true, onApply,
+  }) {
+    const sceneGated = variant !== "hunt";
+    const showScene = !sceneGated || entityType === "scene";
+    // Recommendations narrows a lane's already-classified local scenes: no
+    // StashDB-only concept (hide-phash), similarity score (minimum match),
+    // or the "boost favorited performers" ranking knob (favorite-only) — all
+    // three are about ranking a candidate against a source entity or a
+    // remote catalog, not about narrowing a pre-picked set.
+    const rankingOnly = variant !== "recommendations";
+    const minimumMin = variant === "expand" ? "-0.2" : "0";
+    const genderAriaLabel = variant === "expand" ? "External performer gender" : "Performer gender";
+    const favoriteExtra = variant === "expand" ? { title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly } : {};
+    return React.createElement(
+      "div",
+      { className: "curator-filter-panel-body curator-filter-panel" },
+      React.createElement(
+        "div",
+        null,
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: onIncludeTagsChange }),
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: onExcludeTagsChange }),
+        sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
+        sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
+        rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
+        rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, "Hide exact PHash matches"),
+        sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
+        rankingOnly && sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
+        applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
+      )
     );
   }
 
@@ -2418,6 +2721,7 @@
       }
       return React.createElement("span", { className: "curator-chips" }, ...chips);
     }
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
       { className: "curator-similar" },
@@ -2436,14 +2740,29 @@
           React.createElement("input", { className: "form-control form-control-sm", value: query, onChange: (event) => setQuery(event.target.value), placeholder: `Search for a ${entityType}…`, "aria-label": `Search for a ${entityType}` }),
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
-        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
-        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters")
+        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
+        React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
-      filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: filterPerformers, onChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: filterStudios, onChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })), "aria-label": "Performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumSimilarity.toFixed(2)}`), React.createElement("input", { type: "range", min: "0", max: "0.8", step: "0.05", value: minimumSimilarity, onChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved }), selected && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })) }, "Apply"))),
+      filtersOpen && React.createElement(FilterBar, {
+        variant: "similar",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        performers: filterPerformers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })),
+        studios: filterStudios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })),
+        favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
+        minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
+        applyVisible: Boolean(selected),
+        onApply: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })),
+      }),
       search && !selected && React.createElement(
         "div",
         { className: "curator-similar-candidates" },
-        candidates.map((entity) => React.createElement(Button, { key: entity.id, variant: "link", onClick: () => choose(entity) }, entity.title || entity.name || `#${entity.id}`)),
+        candidates.map((entity) => React.createElement(Button, { key: entity.id, size: "sm", variant: "secondary", onClick: () => choose(entity) }, entity.title || entity.name || `#${entity.id}`)),
+        (sceneSearch.loading || performerSearch.loading) && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Searching…")),
         !sceneSearch.loading && !performerSearch.loading && candidates.length === 0 && React.createElement("p", null, "No matches found.")
       ),
       selected && React.createElement("div", { className: "curator-similar-reference" }, React.createElement("strong", null, "Comparing from"), React.createElement(SourceReference, { entity: sourceEntity, type: entityType, fallback: selected })),
@@ -2456,7 +2775,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement("details", { className: "curator-evidence" }, React.createElement("summary", null, "Why this?"), React.createElement("p", { className: "curator-explanation" }, relationshipChips(item))), React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`), scoreBar(item), React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`))));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.rank_score), scoreSummary: item.rank_score.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -2546,7 +2865,7 @@
           { className: "btn-group", role: "group", "aria-label": "Prune view" },
           [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, view: value, page: 1 })) }, label))
         ),
-        view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
+        view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", className: "curator-range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
         view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…")),
@@ -2563,7 +2882,12 @@
             { key: item.scene_id, className: "curator-card" },
             item.tagged && React.createElement("span", { className: "curator-prune-badge", title: `Tagged ${data.tag_name}`, "aria-label": `Tagged ${data.tag_name}` }, React.createElement(FontAwesomeIcon, { icon: faBroom })),
             React.createElement(SceneCard, { scene }),
-            React.createElement("div", { className: "curator-card-body" }, React.createElement("p", { className: "curator-similarity-reason" }, item.evidence.join(" · ")), item.appeal !== null && React.createElement("small", null, `Appeal ${item.appeal.toFixed(2)} · confidence ${item.confidence.toFixed(2)}`)),
+            React.createElement("div", { className: "curator-card-body" }, React.createElement("p", { className: "curator-similarity-reason" }, item.evidence.join(" · ")), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, {
+              evidenceContent: null,
+              scoreBarContent: item.appeal !== null ? utilityBar(item.appeal) : null,
+              scoreSummary: item.appeal !== null ? item.appeal.toFixed(2) : "—",
+              scoreContent: React.createElement("p", null, `Confidence ${item.confidence.toFixed(2)}`),
+            }))),
             React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && item.suspect && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
           );
         })
@@ -2749,6 +3073,7 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
       { className: huntOnly ? "curator-hunt" : "curator-expand" },
@@ -2758,7 +3083,9 @@
         !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
-        entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters"),
+        entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
+        entityType !== "shortlist" && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
@@ -2771,11 +3098,31 @@
         data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, huntSort: event.target.value })), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
       entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
-      entityType === "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)) }, "Apply"))),
-      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement("div", { className: "curator-expand-filters curator-filter-panel" }, React.createElement("div", null, entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: (value) => updateUrl((s) => ({ ...s, performers: value })) }), entityType === "scene" && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: (value) => updateUrl((s) => ({ ...s, studios: value })) }), entityType === "scene" && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly, onClick: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })) }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"), entityType === "scene" && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })) }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"), React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })), "aria-label": "External performer gender" }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))), entityType === "scene" && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimumScore.toFixed(2)}`), React.createElement("input", { type: "range", min: "-0.2", max: "0.8", step: "0.05", value: minimumScore, onChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })) })), entityType === "scene" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)) }, "Apply"))),
+      entityType === "hunt" && filtersOpen && React.createElement(FilterBar, {
+        variant: "hunt",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)),
+      }),
+      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
+        variant: "expand",
+        entityType,
+        includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
+        excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        performers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, performers: value })),
+        studios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, studios: value })),
+        favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })),
+        hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
+        gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
+        minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
+        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)),
+      }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
       data && !data.ready && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       data?.ready && React.createElement(
@@ -2863,26 +3210,26 @@
       { className: "curator-backup-page" },
       React.createElement(Button, { size: "sm", disabled: busy, onClick: create }, busy ? "Working…" : "Create backup"),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading backups…"),
-      data && React.createElement("p", null, `Backup directory: ${data.backup_directory}`),
+      data && React.createElement("p", null, "Backup directory: ", React.createElement("code", { className: "curator-mono" }, data.backup_directory)),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No Curator backups found."),
       data && data.items.length > 0 && React.createElement(
         "div",
-        { className: "table-responsive" },
-        React.createElement(
-          "table",
-          { className: "table" },
-          React.createElement("thead", null, React.createElement("tr", null, ["Created", "Size", "File", "Action"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
-          React.createElement("tbody", null, data.items.map((item) => React.createElement(
-            "tr",
-            { key: item.id },
-            React.createElement("td", null, new Date(item.created_at_ms).toLocaleString()),
-            React.createElement("td", null, `${(item.size_bytes / 1048576).toFixed(1)} MB`),
-            React.createElement("td", null, item.id),
-            React.createElement("td", null, React.createElement(Button, { size: "sm", disabled: busy, onClick: () => restore(item) }, "Restore"), " ", React.createElement(Button, { size: "sm", variant: "danger", disabled: busy, onClick: () => remove(item) }, "Delete"))
-          )))
-        )
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(
+          "div",
+          { key: item.id, className: "curator-record-row" },
+          React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: faDatabase })),
+          React.createElement(
+            "div",
+            { className: "curator-record-main" },
+            React.createElement("div", { className: "curator-record-title" }, item.id),
+            React.createElement("div", { className: "curator-record-meta" }, `${new Date(item.created_at_ms).toLocaleString()} · ${(item.size_bytes / 1048576).toFixed(1)} MB`)
+          ),
+          React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => restore(item) }, "Restore"),
+          React.createElement(Button, { size: "sm", variant: "link", className: "curator-record-destructive", disabled: busy, onClick: () => remove(item) }, "Delete")
+        ))
       )
     );
   }
@@ -3013,7 +3360,7 @@
     const pprofSection = React.createElement("div", { className: "curator-pprof" },
       React.createElement("div", { className: "curator-profiling-toolbar" },
         React.createElement("h3", null, "CPU profiles"),
-        React.createElement(Button, { size: "sm", onClick: loadPprof }, "Refresh"),
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: loadPprof }, "Refresh"),
         React.createElement(Button, { size: "sm", variant: "danger", onClick: clearPprof, disabled: !pprofs?.items?.length }, "Clear"),
       ),
       !pprofs?.enabled && React.createElement("div", { className: "alert alert-info" }, "Capture is off. Enable \u201cCapture CPU profiles\u201d in the plugin settings, then run the operation to profile it."),
@@ -3025,13 +3372,13 @@
           React.createElement("td", null, item.name),
           React.createElement("td", null, formatSize(item.size_bytes)),
           React.createElement("td", null, new Date(item.modified_ms).toLocaleString()),
-          React.createElement("td", null, React.createElement(Button, { size: "sm", onClick: () => viewPprof(item.name) }, "View"), " ", React.createElement(Button, { size: "sm", onClick: () => downloadPprof(item.name) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download")),
+          React.createElement("td", null, React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => viewPprof(item.name) }, "View"), " ", React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => downloadPprof(item.name) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download")),
         ))),
       ),
       pprofView && React.createElement("div", { className: "curator-pprof-detail" },
         React.createElement("div", { className: "curator-profiling-toolbar" },
           React.createElement("h4", null, pprofView.name),
-          flameRoot ? React.createElement(Button, { size: "sm", onClick: () => setFlameRoot(null) }, "Back to root") : null,
+          flameRoot ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => setFlameRoot(null) }, "Back to root") : null,
         ),
         React.createElement("p", null, `${pprofView.kind} · ${pprofView.unit_label} · ${pprofView.sample_count} samples · ${pprofView.total.toFixed(1)} ${pprofView.unit_label}${pprofView.duration_ms ? ` · ${pprofView.duration_ms} ms captured` : ""}`),
         flameHeight > 0 && React.createElement("svg", { viewBox: `0 0 1000 ${flameHeight}`, preserveAspectRatio: "xMidYMid meet", className: "curator-flamegraph" }, flameRects),
@@ -3099,13 +3446,13 @@
       { className: "curator-profiling", role: "tabpanel" },
       !profiles?.enabled && React.createElement("div", { className: "alert alert-info" }, "Profiling is disabled. Enable it in Curator's plugin settings to record new operations; saved profiles remain available."),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, "Recent profiles"), React.createElement(Button, { size: "sm", onClick: load, disabled: loading }, "Refresh"), React.createElement(Button, { size: "sm", variant: "danger", onClick: clear, disabled: !profiles?.items?.length }, "Clear")),
+      React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, "Recent profiles"), React.createElement(Button, { size: "sm", variant: "secondary", onClick: load, disabled: loading }, "Refresh"), React.createElement(Button, { size: "sm", variant: "danger", onClick: clear, disabled: !profiles?.items?.length }, "Clear")),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading profiles…"),
       profiles && !loading && profiles.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No profiles have been recorded yet."),
       profiles?.items?.length > 0 && React.createElement("div", { className: "curator-profile-layout" },
         React.createElement("div", { className: "curator-profile-list", role: "list" }, profiles.items.map((item) => React.createElement("button", { key: item.trace_id, type: "button", className: selected?.trace_id === item.trace_id ? "active" : "", onClick: () => inspect(item.trace_id) }, React.createElement("strong", null, item.operation), React.createElement("span", null, `${item.kind} · ${formatDuration(item.duration_us)}`), React.createElement("small", null, `${new Date(item.started_at_ms).toLocaleString()} · ${item.status}${item.truncated ? " · truncated" : ""}`)))),
         selected && React.createElement("div", { className: "curator-profile-detail" },
-          React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, selected.operation), React.createElement(Button, { size: "sm", onClick: exportTrace }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Export trace")),
+          React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, selected.operation), React.createElement(Button, { size: "sm", variant: "secondary", onClick: exportTrace }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Export trace")),
           React.createElement("p", null, `${formatDuration(selected.duration_us)} · ${selected.span_count} spans · ${selected.status}`),
           React.createElement("div", { className: "curator-profile-timeline", "aria-label": "Trace timeline" }, spans.slice(0, 100).map((event, index) => React.createElement("div", { key: `${event.name}-${index}`, title: `${event.cat}: ${event.name} (${formatDuration(event.dur)})` }, React.createElement("span", { className: `curator-profile-${event.cat}`, style: { marginLeft: `${Math.max(0, ((event.ts - root.ts) / total) * 100)}%`, width: `${Math.max(0.4, (event.dur / total) * 100)}%` } })))),
           spans.length > visibleSpans.length && React.createElement("small", null, `Showing the 500 longest of ${spans.length} spans; export contains all spans.`),
@@ -3158,9 +3505,9 @@
       React.createElement(
         "div",
         { className: "curator-profiling-toolbar" },
-        React.createElement(Button, { size: "sm", onClick: load }, "Refresh"),
-        React.createElement(Button, { size: "sm", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
-        React.createElement(Button, { size: "sm", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: load }, "Refresh"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading diagnostics…"),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
@@ -3279,7 +3626,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, onProfiling, profilingActive }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -3383,27 +3730,109 @@
       )
     );
 
+    // Api.components.HoverPopover is only registered once some other part of
+    // Stash's own app has mounted first — on a cold/direct navigation to the
+    // Curator page it can still be undefined here (confirmed empirically: it
+    // reliably resolves in-app, but not on a fresh load of /plugins/stash-
+    // curator). CuratorControls always renders, so fall back to the trigger
+    // pill alone rather than crashing the whole page on an invalid element.
+    const { HoverPopover } = Api.components;
+    // "Synced" on its own only ever meant "has a sync ever completed" — it
+    // never told you whether the model itself needs attention (pending
+    // events not yet folded in, or a rebuild already underway), so the pill
+    // could read "Synced" right when a rebuild would actually be useful.
+    // Surface those states in both the pulse color and the label text
+    // instead of only inside the hover popover.
+    const pillState = running ? "running"
+      : latestFailure ? "failed"
+        : health?.model_rebuilding ? "rebuilding"
+          : health?.model_pending ? "pending"
+            : hasSynced ? "ready" : "idle";
+    const pillLabel = {
+      running: "Running",
+      failed: "Failed",
+      rebuilding: "Rebuilding",
+      pending: `${health?.model_pending_events || 0} pending`,
+      ready: "Synced",
+      idle: "Not synced",
+    }[pillState];
+    const healthTrigger = React.createElement(
+      "button",
+      { type: "button", className: "curator-health-pill", "aria-label": "Curator sync and task status" },
+      React.createElement("span", { className: `curator-health-pulse curator-health-pulse-${pillState}` }),
+      React.createElement("span", { className: "curator-health-pill-label" }, pillLabel)
+    );
+    const healthControl = HoverPopover
+      ? React.createElement(
+          HoverPopover,
+          {
+            className: "curator-health-trigger",
+            enterDelay: 150,
+            leaveDelay: 250,
+            placement: "bottom",
+            content: React.createElement(
+              "div",
+              { className: "curator-health-panel", role: "status" },
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Sync"), React.createElement("b", null, running ? `Running ${running.job_type}` : hasSynced ? "Synced" : "Not synced")),
+              React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Model"), React.createElement("b", null, health?.model_pending ? `${health.model_pending_events} waiting` : modelStatus)),
+              React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Playback sessions captured"), React.createElement("b", null, health?.capture?.direct_playback_sessions || 0)),
+              health?.last_sync_at_ms && React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Last sync"), React.createElement("b", null, new Date(health.last_sync_at_ms).toLocaleString()))
+            ),
+          },
+          healthTrigger
+        )
+      : healthTrigger;
+    // Card size used to be a click-to-cycle icon button (3 fixed steps,
+    // faExpand icon) — feedback: the icon read as "fullscreen" rather than
+    // "resize cards", and cycling blind made it hard to tell how many
+    // distinct sizes even existed. A hover-revealed slider makes every
+    // size directly selectable and reachable in one drag instead of up to
+    // 2 extra clicks, and CARD_SIZE_MIN..MAX is a continuous range rather
+    // than 3 fixed stops.
+    const cardSizeTrigger = React.createElement(Button, { className: "curator-icon-button", size: "sm", title: `Card size (${cardSize}rem) — hover to adjust`, "aria-label": `Card size: ${cardSize}rem` }, React.createElement(FontAwesomeIcon, { icon: faThLarge }));
+    const cardSizeControl = !onChangeCardSize ? null : HoverPopover
+      ? React.createElement(
+          HoverPopover,
+          {
+            className: "curator-card-size-trigger",
+            enterDelay: 150,
+            leaveDelay: 250,
+            placement: "bottom",
+            content: React.createElement(
+              "div",
+              { className: "curator-card-size-panel" },
+              React.createElement("div", { className: "curator-card-size-head" }, React.createElement("label", { htmlFor: "curator-card-size-input" }, "Card size"), React.createElement("span", null, `${cardSize}rem`)),
+              React.createElement("input", {
+                id: "curator-card-size-input",
+                type: "range",
+                className: "curator-range",
+                min: CARD_SIZE_MIN,
+                max: CARD_SIZE_MAX,
+                step: 1,
+                value: cardSize,
+                "aria-label": "Card size",
+                onChange: (event) => onChangeCardSize(Number(event.target.value)),
+              })
+            ),
+          },
+          cardSizeTrigger
+        )
+      : cardSizeTrigger;
     return React.createElement(
       React.Fragment,
       null,
       React.createElement(
         "section",
         { className: "curator-controls" },
-        React.createElement(
-          "div",
-          { className: "curator-status", role: "status" },
-          React.createElement("span", { title: running ? `Running ${running.job_type}` : hasSynced ? "Library synchronized" : "Library has not been synchronized" }, React.createElement(FontAwesomeIcon, { icon: faDatabase }), running ? "Running" : hasSynced ? "Synced" : "Not synced"),
-          React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
-          React.createElement("span", { title: health?.model_pending ? "Playback and feedback are batched before rebuilding the preference model." : modelStatus }, React.createElement(FontAwesomeIcon, { icon: health?.model_pending ? faClock : health?.ready ? faCheckCircle : faWrench }), modelStatus),
-          React.createElement("span", { title: "Playback sessions captured by Curator" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), health?.capture?.direct_playback_sessions || 0),
-          health?.last_sync_at_ms && React.createElement("span", { title: `Last sync ${new Date(health.last_sync_at_ms).toLocaleString()}` }, React.createElement(FontAwesomeIcon, { icon: faClock }), new Date(health.last_sync_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
-        ),
+        healthControl,
         React.createElement(
           "div",
           { className: "curator-task-buttons" },
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
-          React.createElement(Button, { className: "curator-icon-button curator-profiling-button", size: "sm", variant: profilingActive ? "primary" : "secondary", title: "Open performance profiles.", "aria-label": "Open performance profiles", "aria-pressed": profilingActive, onClick: onProfiling }, React.createElement(FontAwesomeIcon, { icon: faDev })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
+          cardSizeControl,
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
@@ -3480,7 +3909,7 @@
         "div",
         { className: "curator-expand-toolbar" },
         React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: order, onChange: (event) => updateUrl((s) => ({ ...s, order: event.target.value, page: 1 })), "aria-label": "Sort sentiment review" }, React.createElement("option", { value: "asc" }, "Least appealing first"), React.createElement("option", { value: "desc" }, "Most appealing first"))),
-        React.createElement("label", { className: "curator-prune-aggressiveness", title: "Show scenes at or below this appeal threshold." }, React.createElement("span", null, `Appeal ≤ ${threshold.toFixed(2)}`), React.createElement("input", { type: "range", min: -1, max: 1, step: 0.05, value: threshold, onChange: (event) => updateUrl((s) => ({ ...s, maxAppeal: Number(event.target.value), page: 1 })), "aria-label": "Maximum appeal threshold" }))
+        React.createElement("label", { className: "curator-prune-aggressiveness", title: "Show scenes at or below this appeal threshold." }, React.createElement("span", null, `Appeal ≤ ${threshold.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: -1, max: 1, step: 0.05, value: threshold, onChange: (event) => updateUrl((s) => ({ ...s, maxAppeal: Number(event.target.value), page: 1 })), "aria-label": "Maximum appeal threshold" }))
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading sentiment review…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
@@ -3495,6 +3924,63 @@
     );
   }
 
+  // Manage shell (GH #150 Package 3): a two-pane list/detail view that hosts
+  // every maintenance-flagged NAV_ITEMS entry plus Profiling. Each panel is
+  // mounted unmodified — this is pure relocation, not a rebuild.
+  const MANAGE_BODIES = {
+    feedback: () => React.createElement(FeedbackHistoryPanel),
+    taste: () => React.createElement(TasteProfilePanel, { embedded: true }),
+    sentiment: () => React.createElement(ScoreReviewPanel),
+    history: () => React.createElement(RecommendationHistoryPanel),
+    backups: () => React.createElement(BackupPanel),
+    diagnostics: () => React.createElement(DiagnosticsPanel),
+    prune: () => React.createElement(PrunePanel),
+    profiling: () => React.createElement(ProfilingPanel),
+  };
+
+  function ManagePanel({ section, onSelectSection }) {
+    const items = MAINTENANCE_ITEMS;
+    const active = items.find((item) => item.value === section) || items[0];
+    const body = MANAGE_BODIES[active.value];
+    return React.createElement(
+      "div",
+      { className: "curator-manage-shell" },
+      React.createElement(
+        "nav",
+        { className: "curator-manage-list", "aria-label": "Manage sections" },
+        items.map((item) => React.createElement(
+          "button",
+          {
+            key: item.value,
+            type: "button",
+            className: "curator-manage-item",
+            "aria-current": item.value === active.value ? "page" : undefined,
+            onClick: () => onSelectSection(item.value),
+            title: item.description,
+          },
+          React.createElement("span", { className: "curator-manage-item-icon" }, React.createElement(FontAwesomeIcon, { icon: item.icon })),
+          React.createElement(
+            "span",
+            { className: "curator-manage-item-copy" },
+            React.createElement("span", { className: "curator-manage-item-title" }, item.label),
+            React.createElement("span", { className: "curator-manage-item-desc" }, item.description)
+          )
+        ))
+      ),
+      React.createElement(
+        "section",
+        { className: "curator-manage-detail", "aria-live": "polite" },
+        React.createElement(
+          "div",
+          { className: "curator-manage-detail-head" },
+          React.createElement("h2", null, active.label),
+          React.createElement("p", null, active.description)
+        ),
+        body && body()
+      )
+    );
+  }
+
   function CuratorPage() {
     const history = useHistory();
     const routeLocation = useLocation();
@@ -3502,16 +3988,87 @@
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
     const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
-    const lane = NAV_ITEMS.some((item) => item.value === requestedView) || requestedView === "profiling" ? requestedView : "for_you";
+    // "?view=<maintenance item>" (taste, feedback, backups, …) keeps working
+    // as a soft alias into Manage forever — it resolves lane/currentSection
+    // directly with no history.replace, so old bookmarks render identically
+    // without ever rewriting the address bar to the canonical ?section= form.
+    const lane = requestedView === "manage" || MAINTENANCE_ITEMS.some((item) => item.value === requestedView)
+      ? "manage"
+      : PRIMARY_NAV_ITEMS.some((item) => item.value === requestedView) ? requestedView : "for_you";
+    const currentSection = lane === "manage"
+      ? route.get("section") || (MAINTENANCE_ITEMS.some((item) => item.value === requestedView) ? requestedView : MAINTENANCE_ITEMS[0].value)
+      : null;
     const [slate, setSlate] = React.useState(null);
+    const [lastSyncAtMs, setLastSyncAtMs] = React.useState(null);
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "health" }).then(
+        (result) => active && setLastSyncAtMs(result.last_sync_at_ms || null),
+        () => {}
+      );
+      return () => { active = false; };
+    }, []);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
+    const initialSlateFilters = React.useMemo(() => defaultFilters("recommendations"), []);
+    const [filtersOpen, setFiltersOpen] = React.useState(false);
+    const [filterIncludeTags, setFilterIncludeTags] = React.useState(initialSlateFilters.includeTags || []);
+    const [filterExcludeTags, setFilterExcludeTags] = React.useState(initialSlateFilters.excludeTags || []);
+    const [filterPerformers, setFilterPerformers] = React.useState(initialSlateFilters.performers || []);
+    const [filterStudios, setFilterStudios] = React.useState(initialSlateFilters.studios || []);
+    const [filterGender, setFilterGender] = React.useState(initialSlateFilters.gender || "");
+    const slateFilters = { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender };
+    const activeSlateFilterCount = filterIncludeTags.length + filterExcludeTags.length + filterPerformers.length + filterStudios.length + (filterGender ? 1 : 0);
+    function applySavedSlateFilters(value) {
+      setFilterIncludeTags(value.includeTags || []);
+      setFilterExcludeTags(value.excludeTags || []);
+      setFilterPerformers(value.performers || []);
+      setFilterStudios(value.studios || []);
+      setFilterGender(value.gender || "");
+      setPage(1);
+    }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
     const [followUps, setFollowUps] = React.useState([]);
+    const [theme, setTheme] = React.useState(() => {
+      try {
+        return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+      } catch {
+        return "dark";
+      }
+    });
+    function toggleTheme() {
+      setTheme((current) => {
+        const next = current === "light" ? "dark" : "light";
+        try {
+          window.localStorage.setItem(THEME_STORAGE_KEY, next);
+        } catch {
+          // localStorage can be unavailable (private browsing); the toggle
+          // still works for the session, it just won't persist.
+        }
+        return next;
+      });
+    }
+    const [cardSize, setCardSize] = React.useState(() => {
+      try {
+        const stored = Number(window.localStorage.getItem(CARD_SIZE_STORAGE_KEY));
+        return stored >= CARD_SIZE_MIN && stored <= CARD_SIZE_MAX ? stored : CARD_SIZE_DEFAULT;
+      } catch {
+        return CARD_SIZE_DEFAULT;
+      }
+    });
+    function changeCardSize(value) {
+      setCardSize(value);
+      try {
+        window.localStorage.setItem(CARD_SIZE_STORAGE_KEY, String(value));
+      } catch {
+        // localStorage can be unavailable (private browsing); the change
+        // still works for the session, it just won't persist.
+      }
+    }
 
     React.useEffect(() => setFollowUps([]), [lane]);
 
@@ -3540,11 +4097,11 @@
         setError("");
         return () => { active = false; };
       }
-      const cached = slateCache.get(slateKey(lane, page));
+      const cached = activeSlateFilterCount === 0 ? slateCache.get(slateKey(lane, page)) : null;
       setSlate(cached || null);
       setLoading(!cached);
       setError("");
-      loadSlate(lane, page).then(
+      loadSlate(lane, page, false, slateFilters).then(
         (data) => {
           if (!active) return;
           setSlate(data);
@@ -3555,7 +4112,7 @@
       return () => {
         active = false;
       };
-    }, [lane, page, refreshKey, configReady]);
+    }, [lane, page, refreshKey, configReady, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
     React.useEffect(() => {
       if (slate?.page === page) {
         const last = Math.max(1, Math.ceil(slate.total / slate.page_size));
@@ -3608,6 +4165,14 @@
       for (const param of ["performer", "label", "id", "type"]) route.delete(param);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
+    function openManage(section) {
+      if (lane === "manage" && section === currentSection) return;
+      setFollowUps([]);
+      route.set("view", "manage");
+      if (section) route.set("section", section); else route.delete("section");
+      for (const param of ["performer", "label", "id", "type"]) route.delete(param);
+      history.push({ pathname: routeLocation.pathname, search: route.toString() });
+    }
     async function toggleDiversity() {
       const nextEnabled = !diversityEnabled;
       setDiversitySaving(true);
@@ -3631,97 +4196,124 @@
 
     return React.createElement(
       "main",
-      { className: "curator-page container-fluid" },
+      { className: "curator-page container-fluid", "data-theme": theme, style: { "--curator-card-min-width": `${cardSize}rem` } },
       React.createElement(
         "header",
         { className: "curator-header" },
-        React.createElement("div", { className: "curator-brand" }, React.createElement("span", { className: "curator-brand-mark", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement("div", null, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste."))),
+        React.createElement("div", { className: "curator-brand", title: "Navigate your library, guided by your taste." }, React.createElement("span", { className: "curator-brand-mark", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement("h1", null, "Curator")),
         React.createElement(
           "div",
           { className: "curator-navigation" },
           React.createElement(
             Nav,
             { variant: "tabs", role: "tablist", className: "curator-tabs" },
-            PRIMARY_NAV_ITEMS.map((option) =>
-              React.createElement(
+            TOP_NAV_ITEMS.map((option) => {
+              const active = option.value === "recommendations" ? laneByValue.has(lane)
+                : option.value === "manage" ? lane === "manage"
+                : lane === option.value;
+              const onClick = option.value === "recommendations"
+                ? () => { if (!laneByValue.has(lane)) openView("for_you"); }
+                : option.value === "manage"
+                  ? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }
+                  : () => openView(option.value);
+              return React.createElement(
                 Nav.Link,
-                { key: option.value, as: "button", className: `curator-lane-${option.value}`, active: lane === option.value, onClick: () => openView(option.value), onMouseEnter: () => prefetchLane(option.value), onFocus: () => prefetchLane(option.value), role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": lane === option.value },
+                { key: option.value, as: "button", className: `curator-nav-${option.value}`, active, onClick, role: "tab", title: option.description, "aria-label": `${option.label}: ${option.description}`, "aria-selected": active },
                 React.createElement(FontAwesomeIcon, { icon: option.icon }),
                 React.createElement("span", null, option.label)
-              )
-            )
-          ),
-          React.createElement(
-            "details",
-            { className: "curator-maintenance-menu" },
-            React.createElement(
-              "summary",
-              { className: `nav-link ${laneOption?.maintenance ? "active" : ""}`, title: "Maintenance", "aria-label": laneOption?.maintenance ? `Maintenance: ${laneOption.label}` : "Maintenance" },
-              React.createElement(FontAwesomeIcon, { icon: faWrench }),
-              React.createElement("span", null, "Maintenance")
-            ),
-            React.createElement(
-              "div",
-              { className: "curator-maintenance-items" },
-              MAINTENANCE_ITEMS.map((option) =>
-                React.createElement(
-                  "button",
-                  { key: option.value, type: "button", className: lane === option.value ? "active" : "", onClick: (event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openView(option.value); }, title: option.description, "aria-current": lane === option.value ? "page" : undefined },
-                  React.createElement(FontAwesomeIcon, { icon: option.icon }),
-                  React.createElement("span", null, option.label)
-                )
-              )
-            )
+              );
+            })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openView("profiling"), profilingActive: lane === "profiling" })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize })
       ),
-      laneOption && React.createElement(
+      laneByValue.has(lane) && React.createElement(
+        "div",
+        { className: "curator-lane-switcher", role: "tablist", "aria-label": "Recommendation lane" },
+        LANES.map((laneItem) => React.createElement(
+          "button",
+          {
+            key: laneItem.value,
+            type: "button",
+            className: "curator-lane-card",
+            style: { "--lc": `var(--curator-hue-${laneItem.value})` },
+            "aria-pressed": lane === laneItem.value,
+            onClick: () => openView(laneItem.value),
+            onMouseEnter: () => prefetchLane(laneItem.value),
+            onFocus: () => prefetchLane(laneItem.value),
+            title: laneItem.description,
+          },
+          React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: laneItem.icon })),
+          React.createElement("span", { className: "curator-lane-card-name" }, laneItem.label),
+          React.createElement("span", { className: "curator-lane-card-desc" }, laneItem.description)
+        ))
+      ),
+      laneOption && lane !== "curate" && React.createElement(
         "div",
         { className: "curator-view-guidance" },
         React.createElement(
           "div",
           { className: "curator-view-copy" },
+          React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
-          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
+          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability."),
+          laneByValue.has(lane) && slate && React.createElement(
+            "p",
+            { className: "curator-view-stats" },
+            `${slate.total} in rotation`,
+            lastSyncAtMs && ` · Model refreshed ${formatTimeAgo(lastSyncAtMs)}`
+          )
         ),
-        laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
-          Button,
-          {
-            className: "curator-diversity-toggle",
-            size: "sm",
-            variant: diversityEnabled ? "primary" : "secondary",
-            disabled: diversitySaving,
-            "aria-pressed": diversityEnabled,
-            "aria-label": diversityEnabled ? "Disable recommendation variety" : "Enable recommendation variety",
-            title: diversityEnabled ? "Switch to the model's score-first order" : "Vary performers, studios, and similar content",
-            onClick: toggleDiversity,
-          },
-          React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
-          diversityEnabled ? " Balanced" : " Score-first"
+        React.createElement(
+          "div",
+          { className: "curator-view-actions" },
+          laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
+            Button,
+            {
+              className: "curator-diversity-toggle",
+              size: "sm",
+              variant: diversityEnabled ? "primary" : "secondary",
+              disabled: diversitySaving,
+              "aria-pressed": diversityEnabled,
+              "aria-label": diversityEnabled ? "Disable recommendation variety" : "Enable recommendation variety",
+              title: diversityEnabled ? "Switch to the model's score-first order" : "Vary performers, studios, and similar content",
+              onClick: toggleDiversity,
+            },
+            React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
+            diversityEnabled ? " Balanced" : " Score-first"
+          ),
+          laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
+          laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
       ),
+      laneByValue.has(lane) && filtersOpen && React.createElement(FilterBar, {
+        variant: "recommendations",
+        entityType: "scene",
+        includeTags: filterIncludeTags, onIncludeTagsChange: (value) => setFilterIncludeTags(value),
+        excludeTags: filterExcludeTags, onExcludeTagsChange: (value) => setFilterExcludeTags(value),
+        performers: filterPerformers, onPerformersChange: (value) => setFilterPerformers(value),
+        studios: filterStudios, onStudiosChange: (value) => setFilterStudios(value),
+        gender: filterGender, onGenderChange: (event) => setFilterGender(event.target.value),
+        onApply: () => { setPage(1); setFiltersOpen(false); },
+      }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      lane === "feedback" && React.createElement(FeedbackHistoryPanel),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
-      lane === "history" && React.createElement(RecommendationHistoryPanel),
-      lane === "prune" && !loadingComponents && React.createElement(PrunePanel),
       lane === "curate" && React.createElement(CuratePanel),
-      lane === "taste" && React.createElement(TasteProfilePanel),
-      lane === "sentiment" && React.createElement(ScoreReviewPanel),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
-      lane === "backups" && React.createElement(BackupPanel),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
-      lane === "diagnostics" && React.createElement(DiagnosticsPanel),
-      lane === "profiling" && React.createElement(ProfilingPanel),
-      error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
+      // Prune renders scene cards directly, same as SimilarityPanel above, so
+      // it keeps its pre-existing !loadingComponents gate even though it now
+      // mounts inside ManagePanel rather than as its own top-level branch.
+      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage }),
+      error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
+      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,
           null,
-          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Nothing qualifies for this lane right now."), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
+          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Nothing qualifies for this lane right now."), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
           React.createElement(
             "section",
             { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
