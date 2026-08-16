@@ -55,7 +55,14 @@
   --curator-shadow-lg: 0 0.4rem 1rem var(--curator-shadow-color);
   --curator-shadow-glow: 0 0.25rem 0.8rem var(--curator-glow-color);
 
-  --curator-gradient-brand: linear-gradient(145deg, var(--curator-accent), var(--curator-hue-similar));
+  /* Deliberately NOT var(--curator-accent)/var(--curator-hue-similar) — those
+     vivid hues measure 3.41:1/1.99:1 against white text, both failing WCAG
+     AA (4.5:1). These are the same darker blue/teal already used as the
+     *light*-theme accent/hue-similar values (6.21:1/4.63:1) — reused here
+     as literals so dark theme's primary-button gradient passes AA too,
+     without darkening the vivid accent everywhere else it's used
+     (lane-hue dots, focus rings, etc). */
+  --curator-gradient-brand: linear-gradient(145deg, #1d5fb8, #1f7f96);
 
   --curator-font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --curator-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
