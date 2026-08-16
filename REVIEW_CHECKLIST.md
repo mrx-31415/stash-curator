@@ -437,6 +437,16 @@ Artifacts:
       reads via `minmax(var(...), 1fr)` — no backend change, affects every
       card grid in the app (Recommendations/Similar/Expand/Prune) at once.
       Verified 4→5 cards/row (Compact) and 4→3 (Spacious) at 1440px.
+      **Follow-up (user feedback): cycling was unclear, icon read as
+      "fullscreen."** Confirmed the underlying 3-step cycle itself worked
+      correctly (each click produced a genuinely different column count),
+      so the complaint was about the *interaction*, not a bug — clicking
+      blind through 3 states makes it hard to tell how many sizes exist,
+      and `faExpand` reads as a fullscreen/maximize action, not "resize
+      cards." Replaced with a hover-revealed `HoverPopover` panel
+      containing a continuous slider (14–32rem, reusing `.curator-range`)
+      instead of 3 fixed steps, and swapped the icon to `faThLarge`.
+      Verified drag-to-resize end to end (30rem → 3 cols/row at 1440px).
 - [x] **Native SceneCard's tag/performer/organized overlay buttons were
       solid blue**, same root cause as two earlier `.minimal` fixes this
       pass (#152 round 16, round "Follow-up 1" above): no explicit variant
@@ -454,6 +464,41 @@ Artifacts:
       trigger's actual look, which is just plain `.btn-secondary`
       (`var(--curator-surface)` + a visible border), not a dark overlay.
       Switched to that exact treatment for a true match.
+      **Follow-up 2 (user feedback): still no visible border, and
+      misaligned with the date.** Two separate bugs: (1) `.minimal`'s own
+      `border: none` shorthand collapses border-width/style even once
+      border-color is overridden — border-color alone is invisible without
+      them, so the "border" was never actually rendering; needed the full
+      `border: 1px solid ...` shorthand, not just a recolor. (2)
+      `.card-popovers` (a child of `.scene-card`) and `.scene-card__date`
+      (nested inside a *sibling* `.card-section`) aren't in a flex/grid
+      relationship with each other, so the `bottom: 0.2rem` offset was
+      tuned against the card's bottom edge, not the date row — measured
+      the actual centerY gap (10px) and retuned to `bottom: 0.92rem`,
+      confirmed via computed geometry (both now within 1px of the same
+      centerY) and screenshot.
+- [x] **Lane corner badges (BEST BETS/DISCOVER/REVISIT/ADVENTURE/etc.) used
+      flat vivid hue backgrounds that all failed WCAG AA** — per user
+      request to extend the primary-button gradient treatment to these too;
+      turned up a real, previously-undiscovered instance of the same
+      systemic bug this whole pass has repeatedly found (round 14's
+      button-contrast fix, round 30's relationship-chips fix, the Manage
+      active-nav-item fix): every single one of the 9 lane hues measured
+      1.99–3.42:1 against white text (Similar and Discover the worst,
+      *below* the original button bug's worst case). Applied the same
+      technique as the original fix rather than a flat recolor: a 145deg
+      two-stop gradient per lane, reusing light theme's already-AA-passing
+      hue as the lighter stop where it qualified (for_you/similar/hunt/
+      revisit/expand), and computing new darker literals for the four that
+      didn't (best_bets/discover/adventure/prune — light theme's own
+      versions only measured 3.83–4.48:1, still short of 4.5). Each
+      gradient's second stop is the first darkened ~22% further, which can
+      only raise contrast, never lower it — kept on a separate
+      `--lane-badge-gradient` property rather than changing `--lane-color`/
+      `--curator-hue-*` directly, since those still back non-text uses
+      (nav-pill icon color, card left-border accents) that don't need this
+      constraint. Verified via computed-style dump of the actual rendered
+      gradients and screenshot.
 - [x] **"Default" checkbox in SavedFilters** looked out of place next to the
       Save button row — converted to Bootstrap's native `.custom-switch`
       toggle (already bundled in Stash's own CSS, no new styling needed),

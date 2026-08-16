@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpand, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -154,11 +154,9 @@
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
   const CARD_SIZE_STORAGE_KEY = "stash-curator:card-size";
-  const CARD_SIZES = [
-    { key: "compact", label: "Compact", minWidth: "16rem" },
-    { key: "comfortable", label: "Comfortable", minWidth: "22rem" },
-    { key: "spacious", label: "Spacious", minWidth: "28rem" },
-  ];
+  const CARD_SIZE_MIN = 14;
+  const CARD_SIZE_MAX = 32;
+  const CARD_SIZE_DEFAULT = 22;
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
@@ -3628,7 +3626,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onCycleCardSize }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -3785,6 +3783,42 @@
           healthTrigger
         )
       : healthTrigger;
+    // Card size used to be a click-to-cycle icon button (3 fixed steps,
+    // faExpand icon) — feedback: the icon read as "fullscreen" rather than
+    // "resize cards", and cycling blind made it hard to tell how many
+    // distinct sizes even existed. A hover-revealed slider makes every
+    // size directly selectable and reachable in one drag instead of up to
+    // 2 extra clicks, and CARD_SIZE_MIN..MAX is a continuous range rather
+    // than 3 fixed stops.
+    const cardSizeTrigger = React.createElement(Button, { className: "curator-icon-button", size: "sm", title: `Card size (${cardSize}rem) — hover to adjust`, "aria-label": `Card size: ${cardSize}rem` }, React.createElement(FontAwesomeIcon, { icon: faThLarge }));
+    const cardSizeControl = !onChangeCardSize ? null : HoverPopover
+      ? React.createElement(
+          HoverPopover,
+          {
+            className: "curator-card-size-trigger",
+            enterDelay: 150,
+            leaveDelay: 250,
+            placement: "bottom",
+            content: React.createElement(
+              "div",
+              { className: "curator-card-size-panel" },
+              React.createElement("div", { className: "curator-card-size-head" }, React.createElement("label", { htmlFor: "curator-card-size-input" }, "Card size"), React.createElement("span", null, `${cardSize}rem`)),
+              React.createElement("input", {
+                id: "curator-card-size-input",
+                type: "range",
+                className: "curator-range",
+                min: CARD_SIZE_MIN,
+                max: CARD_SIZE_MAX,
+                step: 1,
+                value: cardSize,
+                "aria-label": "Card size",
+                onChange: (event) => onChangeCardSize(Number(event.target.value)),
+              })
+            ),
+          },
+          cardSizeTrigger
+        )
+      : cardSizeTrigger;
     return React.createElement(
       React.Fragment,
       null,
@@ -3798,7 +3832,7 @@
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
-          onCycleCardSize && React.createElement(Button, { className: "curator-icon-button", size: "sm", title: `Card size: ${CARD_SIZES.find((size) => size.key === cardSize)?.label}. Click to cycle.`, "aria-label": `Card size: ${CARD_SIZES.find((size) => size.key === cardSize)?.label}. Click to cycle.`, onClick: onCycleCardSize }, React.createElement(FontAwesomeIcon, { icon: faExpand })),
+          cardSizeControl,
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
@@ -4020,24 +4054,20 @@
     }
     const [cardSize, setCardSize] = React.useState(() => {
       try {
-        const stored = window.localStorage.getItem(CARD_SIZE_STORAGE_KEY);
-        return CARD_SIZES.some((size) => size.key === stored) ? stored : "comfortable";
+        const stored = Number(window.localStorage.getItem(CARD_SIZE_STORAGE_KEY));
+        return stored >= CARD_SIZE_MIN && stored <= CARD_SIZE_MAX ? stored : CARD_SIZE_DEFAULT;
       } catch {
-        return "comfortable";
+        return CARD_SIZE_DEFAULT;
       }
     });
-    function cycleCardSize() {
-      setCardSize((current) => {
-        const index = CARD_SIZES.findIndex((size) => size.key === current);
-        const next = CARD_SIZES[(index + 1) % CARD_SIZES.length].key;
-        try {
-          window.localStorage.setItem(CARD_SIZE_STORAGE_KEY, next);
-        } catch {
-          // localStorage can be unavailable (private browsing); the change
-          // still works for the session, it just won't persist.
-        }
-        return next;
-      });
+    function changeCardSize(value) {
+      setCardSize(value);
+      try {
+        window.localStorage.setItem(CARD_SIZE_STORAGE_KEY, String(value));
+      } catch {
+        // localStorage can be unavailable (private browsing); the change
+        // still works for the session, it just won't persist.
+      }
     }
 
     React.useEffect(() => setFollowUps([]), [lane]);
@@ -4166,7 +4196,7 @@
 
     return React.createElement(
       "main",
-      { className: "curator-page container-fluid", "data-theme": theme, style: { "--curator-card-min-width": CARD_SIZES.find((size) => size.key === cardSize)?.minWidth } },
+      { className: "curator-page container-fluid", "data-theme": theme, style: { "--curator-card-min-width": `${cardSize}rem` } },
       React.createElement(
         "header",
         { className: "curator-header" },
@@ -4195,7 +4225,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onCycleCardSize: cycleCardSize })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",

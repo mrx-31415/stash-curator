@@ -1263,6 +1263,33 @@
 .curator-lane-hunt { --lane-color: var(--curator-hue-hunt); }
 .curator-lane-prune { --lane-color: var(--curator-hue-prune); }
 
+/* --lane-color (above) is the vivid dark-theme hue, used for icon color and
+   border accents where flat text-on-background contrast doesn't apply —
+   left as-is. .curator-source-badge (BEST BETS / DISCOVER / REVISIT /
+   ADVENTURE corner badges) pairs white text directly on a solid fill of
+   that hue, same shape of bug as the original --curator-gradient-brand fix:
+   every single lane hue measured 1.99–3.42:1 against white, all failing
+   AA (4.5:1) — Similar and Discover were the worst, below even the
+   original button-contrast bug's worst case. Per user request, applied
+   the *same technique* as that fix (a 145deg two-stop gradient of a
+   darker, independently-AA-passing color) rather than one flat solid, so
+   the badges also get the same visual depth as the logo mark/active nav
+   pill. Where the light-theme hue already passed 4.5:1 it's reused as the
+   lighter gradient stop (for_you/similar/hunt/revisit/expand); the other
+   four (best_bets/discover/adventure/prune) needed new darker literals —
+   light theme's own versions still fell short (3.83–4.48:1). Each
+   gradient's second stop is that first stop darkened ~22% further, which
+   can only raise contrast, never lower it. */
+.curator-lane-for_you { --lane-badge-gradient: linear-gradient(145deg, #1d5fb8, #174a90); }
+.curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #1f7f96, #186375); }
+.curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #976d3a, #76552d); }
+.curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #a34a63, #7f3a4d); }
+.curator-lane-discover { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
+.curator-lane-adventure { --lane-badge-gradient: linear-gradient(145deg, #ac643d, #864e30); }
+.curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #7452ad, #5a4087); }
+.curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #b83f4c, #90313b); }
+.curator-lane-prune { --lane-badge-gradient: linear-gradient(145deg, #72777f, #595d63); }
+
 .curator-tabs .nav-link svg {
   color: var(--lane-color);
 }
@@ -1381,6 +1408,37 @@
   color: var(--curator-text);
   font-weight: 600;
   text-align: right;
+}
+
+.curator-card-size-panel {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  box-shadow: var(--curator-shadow-lg);
+  color: var(--curator-text);
+  min-width: 11rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.curator-card-size-head {
+  align-items: center;
+  display: flex;
+  font-size: 0.75rem;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.curator-card-size-head label {
+  font-weight: 600;
+  margin: 0;
+}
+
+.curator-card-size-head span {
+  color: var(--curator-text-muted);
+}
+
+.curator-card-size-panel .curator-range {
+  width: 100%;
 }
 
 .curator-task-indicator {
@@ -1630,8 +1688,17 @@
   display: none;
 }
 
+/* bottom is tuned to vertically center these against .scene-card__date in
+   the same row, not against the card as a whole — the two aren't siblings
+   (card-popovers is a direct child of .scene-card; the date lives inside
+   .scene-card__details, nested under a sibling .card-section), so there's
+   no flex/grid relationship to align them automatically. Stable in
+   practice because .curator-card-description below is hidden (0 height)
+   and both the title (.card-section-title) and details row have fixed
+   min-heights regardless of content, so this row's position relative to
+   the card's bottom edge doesn't shift with title wrapping. */
 .curator-card .card-popovers {
-  bottom: 0.2rem;
+  bottom: 0.92rem;
   flex-wrap: nowrap;
   justify-content: flex-end;
   left: 7.5rem;
@@ -1653,10 +1720,13 @@
    shouting for attention on every single card. First attempt used a dark
    translucent overlay treatment, which read as "solid black" rather than
    discreet; matches the actual .btn-secondary look used elsewhere (e.g. the
-   "More" menu trigger) instead. */
+   "More" menu trigger) instead. .minimal's own `border: none` shorthand
+   still collapses border-width/style even once border-color is overridden
+   here — border-color alone is invisible without them — so the border has
+   to be respecified in full, not just recolored. */
 .curator-page .curator-card .card-popovers .btn.minimal {
   background: var(--curator-surface);
-  border-color: var(--curator-border-strong);
+  border: 1px solid var(--curator-border-strong);
   color: var(--curator-text);
 }
 
@@ -1698,7 +1768,7 @@
 
 .curator-source-badge {
   align-items: center;
-  background: var(--lane-color, var(--curator-overlay));
+  background: var(--lane-badge-gradient, var(--curator-overlay));
   border-radius: var(--curator-radius-sm);
   color: #fff;
   display: inline-flex;
