@@ -6,10 +6,12 @@
    :root, matching the app it's embedded in and every existing install);
    light is an explicit opt-in via [data-theme="light"], flipped by the
    header's theme toggle rather than by OS preference.
-   --curator-card-* is a separate, always-dark family: it backs Stash's
-   native scene-card/performer-card internals, whose title and detail text
-   is hardcoded light-on-dark with no theming hook, so those surfaces stay
-   pinned dark in both themes. */
+   --curator-card-* backs Stash's native scene-card/performer-card
+   internals and curator's own adjacent card-body content — its colors
+   *are* theme-responsive (see the light block below), Stash's own
+   hardcoded card CSS just isn't, so that half needs direct selector
+   overrides instead of a token swap (see the .curator-card .card rules
+   below the light-theme block). */
 :root {
   --curator-bg: #101216;
   --curator-surface: #182126;
@@ -64,6 +66,11 @@
   --curator-bg: #f1f2f5;
   --curator-surface: #ffffff;
   --curator-surface-raised: #e9ebef;
+  --curator-card-surface: #ffffff;
+  --curator-card-border: rgba(16, 18, 22, 0.14);
+  --curator-card-border-strong: rgba(16, 18, 22, 0.24);
+  --curator-card-text: #16181c;
+  --curator-card-text-muted: #5b6470;
   --curator-border: rgba(16, 18, 22, 0.14);
   --curator-border-strong: rgba(16, 18, 22, 0.24);
   --curator-text: #16181c;
@@ -86,6 +93,33 @@
   --curator-hue-revisit: #7452ad;
   --curator-hue-expand: #b83f4c;
   --curator-hue-prune: #7c838c;
+}
+
+/* Stash's own native scene/performer card (Api.components.SceneCard,
+   rendered inside .curator-card) was previously assumed un-themeable and
+   pinned dark to match — but its background/title-color rules are plain
+   CSS, not inline styles, so they're just as overridable as the
+   Bootstrap .btn-primary/.alert-* overrides above. Restyle the card body
+   (thumbnail + its own overlays are left alone — badges over arbitrary
+   video/image content should stay legible regardless of page theme, the
+   same convention this component already uses) for light mode. .text-muted
+   carries !important in Stash's own stylesheet, so the override needs it
+   too, not just higher specificity. */
+.curator-page[data-theme="light"] .curator-card .card {
+  background-color: var(--curator-surface);
+  color: var(--curator-text);
+}
+
+.curator-page[data-theme="light"] .curator-card .card-section-title {
+  color: var(--curator-text);
+}
+
+.curator-page[data-theme="light"] .curator-card .text-muted {
+  color: var(--curator-text-muted) !important;
+}
+
+.curator-page[data-theme="light"] .curator-card hr {
+  border-color: var(--curator-border);
 }
 
 /* Bare <button>s don't inherit color from their parent by default in most
