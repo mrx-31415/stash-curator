@@ -1427,7 +1427,7 @@
             "div",
             { className: "curator-curate-quick-block" },
             React.createElement("strong", null, "Pick-test a hypothesis"),
-            suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — the Tag sentiment tab and your rated scenes generate them."),
+            suggestions && suggestions.length === 0 && React.createElement("small", null, "No hypotheses yet — Manage → Taste Profile and your rated scenes generate them."),
             (suggestions || []).map((suggestion) =>
               React.createElement(
                 "div",
