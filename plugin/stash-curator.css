@@ -158,13 +158,25 @@
   color: var(--curator-text);
   font-family: var(--curator-font-ui);
   box-sizing: border-box;
-  margin: 0 auto;
-  max-width: 112rem;
+  /* Stash's own route wrapper (.main.container-fluid, outside anything
+     this stylesheet controls) carries a fixed 15px horizontal gutter with
+     a transparent background — Stash's real page background (a different
+     blue-grey, not --curator-bg) was showing through that gutter on every
+     side, most visibly on narrow/mobile widths where 15px is a much
+     bigger fraction of the screen. Same root cause as min-height above
+     (Stash's chrome bleeding through where this page doesn't reach), just
+     the horizontal axis instead of vertical — extend past the gutter with
+     matching negative margin, matched by extra inline padding so the
+     visible content inset is unchanged.
+  */
+  margin: 0 auto 0;
+  margin-inline: -15px;
+  max-width: calc(112rem + 30px);
   min-height: 100vh;
   min-width: 0;
   overflow-x: clip;
-  padding: 0.55rem 1.25rem 2rem;
-  width: 100%;
+  padding: 0.55rem calc(1.25rem + 15px) 2rem;
+  width: calc(100% + 30px);
 }
 
 /* Bootstrap's stock .alert-* colors (35 call sites across every screen —
@@ -267,7 +279,7 @@
 
 .curator-tagline,
 .curator-feedback small {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
 }
 
 .curator-tagline {
@@ -277,7 +289,7 @@
 
 .curator-view-guidance {
   align-items: center;
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   display: flex;
   font-size: 0.82rem;
   gap: 0.75rem;
@@ -423,7 +435,7 @@
 }
 
 .curator-lane-card-desc {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -455,6 +467,15 @@
 @media (max-width: 860px) {
   .curator-manage-shell {
     grid-template-columns: 1fr;
+  }
+
+  /* Below 860px the shell drops to one column — list and detail stack in
+     document order instead of sitting side by side, so a sticky list would
+     freeze partway down the page and visually overlap the detail content
+     scrolling underneath it (the sticky fix only makes sense for the
+     two-column layout it was built for). */
+  .curator-manage-list {
+    position: static;
   }
 }
 
@@ -520,7 +541,7 @@
 }
 
 .curator-manage-item-desc {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   font-size: 0.72rem;
   line-height: 1.35;
 }
@@ -547,7 +568,7 @@
 }
 
 .curator-manage-detail-head p {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   font-size: 0.8rem;
   margin: 0;
 }
@@ -654,7 +675,7 @@
 .curator-taste-item {
   align-items: center;
   background: var(--curator-wash-raised);
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius);
   display: flex;
   flex-wrap: wrap;
@@ -673,7 +694,7 @@
 }
 
 .curator-taste-item small {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
 }
 
 .curator-sentiment {
@@ -704,7 +725,7 @@
 .curator-sentiment-like,
 .curator-sentiment-love {
   background: transparent;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-sentiment-never            { --sc: #212529; border-color: var(--sc); }
@@ -729,7 +750,7 @@
 }
 
 .curator-sentiment-current {
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   flex: 0 0 auto;
   font-size: 0.72rem;
   min-width: 5.5rem;
@@ -742,7 +763,7 @@
 }
 
 .curator-sentiment-divider {
-  background: var(--curator-card-border-strong);
+  background: var(--curator-border-strong);
   bottom: 0;
   left: 10%;
   position: absolute;
@@ -754,7 +775,7 @@
 .curator-sentiment-range {
   appearance: none;
   -webkit-appearance: none;
-  background: var(--curator-card-border-strong);
+  background: var(--curator-border-strong);
   border-radius: var(--curator-radius-lg);
   display: block;
   height: 0.35rem;
@@ -766,7 +787,7 @@
   appearance: none;
   -webkit-appearance: none;
   background: var(--sc, var(--curator-accent));
-  border: 2px solid var(--curator-card-text);
+  border: 2px solid var(--curator-text);
   border-radius: 50%;
   cursor: pointer;
   height: 0.9rem;
@@ -775,7 +796,7 @@
 
 .curator-sentiment-range::-moz-range-thumb {
   background: var(--sc, var(--curator-accent));
-  border: 2px solid var(--curator-card-text);
+  border: 2px solid var(--curator-text);
   border-radius: 50%;
   cursor: pointer;
   height: 0.9rem;
@@ -801,6 +822,25 @@
 .curator-sentiment-compact .curator-sentiment-track {
   min-width: 3rem;
 }
+
+/* TagSentimentControl renders in two different contexts: standalone on the
+   page (Taste Profile, Curate's suggestion detail — the base rules above
+   are theme-responsive for these) and nested inside ExternalCard's "Rate
+   tags & terms" panel (.curator-external-tag-rating), which sits on the
+   deliberately-always-dark --curator-card-surface. Force the pinned-dark
+   card tokens back on specifically for that nested case so the slider
+   doesn't go light-on-dark there in light mode. */
+.curator-external-tag-rating .curator-sentiment-never,
+.curator-external-tag-rating .curator-sentiment-danger,
+.curator-external-tag-rating .curator-sentiment-warning,
+.curator-external-tag-rating .curator-sentiment-neutral,
+.curator-external-tag-rating .curator-sentiment-like,
+.curator-external-tag-rating .curator-sentiment-love { color: var(--curator-card-text); }
+.curator-external-tag-rating .curator-sentiment-current { color: var(--curator-card-text-muted); }
+.curator-external-tag-rating .curator-sentiment-divider { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-range { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-range::-webkit-slider-thumb { border-color: var(--curator-card-text); }
+.curator-external-tag-rating .curator-sentiment-range::-moz-range-thumb { border-color: var(--curator-card-text); }
 
 @media (max-width: 480px) {
   .curator-sentiment .btn-sm {
@@ -916,9 +956,9 @@
 
 .curator-profile-list button {
   background: var(--curator-wash-raised);
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius);
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   display: flex;
   flex-direction: column;
   padding: 0.45rem 0.6rem;
@@ -931,7 +971,7 @@
 
 .curator-profile-list span,
 .curator-profile-list small {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
 }
 
 .curator-profile-timeline {
@@ -1051,7 +1091,7 @@
   background: var(--curator-surface);
   border: 1px solid var(--curator-border-strong);
   border-radius: var(--curator-radius-sm);
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   display: inline-flex;
   font-size: 0.78rem;
   gap: 0.4rem;
@@ -1081,7 +1121,7 @@
 }
 
 .curator-health-pulse-idle {
-  background: var(--curator-card-border-strong);
+  background: var(--curator-border-strong);
 }
 
 .curator-health-panel {
@@ -1106,7 +1146,7 @@
 }
 
 .curator-health-row b {
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   font-weight: 600;
   text-align: right;
 }
@@ -1138,13 +1178,13 @@
 }
 
 .curator-task-progress-meta strong {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   font-size: 0.72rem;
 }
 
 .curator-task-progress-meta span,
 .curator-task-progress-detail {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   font-size: 0.65rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1152,7 +1192,7 @@
 }
 
 .curator-task-progress-track {
-  background: var(--curator-card-border-strong);
+  background: var(--curator-border-strong);
   border-radius: var(--curator-radius-lg);
   display: block;
   height: 0.32rem;
@@ -1272,7 +1312,7 @@
 }
 
 .curator-loading > span {
-  color: var(--text-muted, var(--curator-card-text-muted));
+  color: var(--curator-text-muted);
   display: block;
   margin-bottom: 0.4rem;
 }
@@ -1607,7 +1647,7 @@
 }
 
 .curator-shortlist-tab {
-  border-left: 1px solid var(--curator-card-border);
+  border-left: 1px solid var(--curator-border);
   margin-left: 0.35rem;
 }
 
@@ -2034,7 +2074,7 @@
   background: var(--curator-gradient-brand) !important;
   border-radius: var(--curator-radius-lg);
   box-shadow: var(--curator-shadow-glow);
-  color: var(--text-color, var(--curator-card-text));
+  color: var(--curator-text);
   height: 1.9rem;
   padding: 0;
   width: 1.9rem;
@@ -2073,7 +2113,7 @@
 
 @media (max-width: 75rem) {
   .curator-page {
-    padding-inline: 0.65rem;
+    padding-inline: calc(0.65rem + 15px);
   }
 
   /* The header stays one row (brand | scrollable nav | controls) at every
@@ -2315,12 +2355,12 @@
 
 .curator-curate-rated {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
 }
 
 .curator-curate-policy {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   margin: 0.25rem 0 0;
 }
 
@@ -2333,17 +2373,17 @@
 .curator-curate-verdict {
   margin-top: 1rem;
   padding: 0.75rem;
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius-sm);
 }
 
 .curator-curate-verdict {
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-curate-verdict h3 {
   font-size: 1rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-curate-started {
@@ -2384,7 +2424,7 @@
 }
 
 .curator-curate-suggestion-text small {
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
 }
 
 .curator-curate-custom {
@@ -2405,7 +2445,7 @@
 
 .curator-curate-meta {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   display: flex;
   gap: 0.5rem;
 }
@@ -2433,7 +2473,7 @@
 
 .curator-curate-details {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -2475,9 +2515,9 @@
 .curator-pick-vs {
   align-items: center;
   background: var(--curator-surface-raised);
-  border: 1px solid var(--curator-card-border-strong);
+  border: 1px solid var(--curator-border-strong);
   border-radius: 50%;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   display: flex;
   font-size: 0.7rem;
   font-weight: 700;
@@ -2509,7 +2549,7 @@
   flex-direction: column;
   gap: 0.25rem;
   background: transparent;
-  border: 2px solid var(--curator-card-border);
+  border: 2px solid var(--curator-border);
   border-radius: var(--curator-radius-sm);
   padding: 0;
   overflow: hidden;
@@ -2533,7 +2573,7 @@
   flex-wrap: wrap;
   gap: 0.25rem;
   font-size: 0.75rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   padding: 0 0.4rem;
 }
 
@@ -2543,7 +2583,7 @@
 
 .curator-pick-tally {
   font-size: 0.85rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
 }
 
 .curator-pick-controls {
@@ -2558,7 +2598,7 @@
   gap: 0.25rem;
   margin-right: 0.75rem;
   padding-right: 0.75rem;
-  border-right: 1px solid var(--curator-card-border);
+  border-right: 1px solid var(--curator-border);
 }
 
 .curator-pick-answer-group {
@@ -2574,7 +2614,7 @@
 }
 
 .curator-pick-verdict-card {
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius-sm);
   padding: 0.35rem;
   display: flex;
@@ -2584,7 +2624,7 @@
 
 .curator-pick-verdict-label {
   font-size: 0.8rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-pick-verdict-track {
@@ -2601,11 +2641,11 @@
 
 .curator-pick-verdict-count {
   font-size: 0.7rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
 }
 
 .curator-pick-title {
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-pick-performers {
@@ -2618,7 +2658,7 @@
 
 .curator-pick-details {
   font-size: 0.78rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -2654,7 +2694,7 @@
   height: 3.5rem;
   object-fit: cover;
   border-radius: var(--curator-radius-sm);
-  border: 1px solid var(--curator-card-border-strong);
+  border: 1px solid var(--curator-border-strong);
   flex-shrink: 0;
 }
 
@@ -2667,13 +2707,13 @@
 
 .curator-pick-verdict-summary {
   font-size: 0.85rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   margin: 0.25rem 0 0.5rem;
 }
 
 .curator-pick-verdict-note {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   margin-top: 0.5rem;
 }
 
@@ -2696,7 +2736,7 @@
 
 .curator-pick-verdict-headline {
   font-size: 1rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   font-weight: 600;
   margin: 0 0 0.6rem;
 }
@@ -2717,7 +2757,7 @@
 
 .curator-pick-verdict-row-label {
   font-size: 0.85rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-pick-verdict-row .curator-pick-verdict-count {
@@ -2751,7 +2791,7 @@
 .curator-curate-nudge-body p {
   margin: 0.15rem 0 0;
   font-size: 0.85rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
 }
 
 /* ── Impact report (verdict) ────────────────────────────────────────────── */
@@ -2759,7 +2799,7 @@
 .curator-impact {
   margin-top: 1.25rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--curator-card-border);
+  border-top: 1px solid var(--curator-border);
 }
 
 .curator-impact-heading {
@@ -2769,7 +2809,7 @@
 
 .curator-impact-ago {
   font-size: 0.8rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   margin: 0 0 0.75rem;
 }
 
@@ -2783,7 +2823,7 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   margin-bottom: 0.4rem;
 }
 
@@ -2823,7 +2863,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius-sm);
   padding: 0.35rem;
   color: inherit;
@@ -2831,7 +2871,7 @@
 }
 
 .curator-impact-scene:hover {
-  border-color: var(--curator-card-border-strong);
+  border-color: var(--curator-border-strong);
   background: var(--curator-wash-raised);
 }
 
@@ -2851,7 +2891,7 @@
 
 .curator-impact-scene-title {
   font-size: 0.8rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2859,7 +2899,7 @@
 
 .curator-impact-scene-meta {
   font-size: 0.68rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2869,7 +2909,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius-sm);
   padding: 0.3rem 0.45rem;
   color: inherit;
@@ -2877,7 +2917,7 @@
 }
 
 .curator-impact-person:hover {
-  border-color: var(--curator-card-border-strong);
+  border-color: var(--curator-border-strong);
   background: var(--curator-wash-raised);
 }
 
@@ -2894,7 +2934,7 @@
   flex: 1;
   min-width: 0;
   font-size: 0.8rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2904,7 +2944,7 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  border: 1px solid var(--curator-card-border);
+  border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius-lg);
   padding: 0.15rem 0.5rem;
   color: inherit;
@@ -2913,13 +2953,13 @@
 }
 
 .curator-impact-tag:hover {
-  border-color: var(--curator-card-border-strong);
+  border-color: var(--curator-border-strong);
   background: var(--curator-wash-raised);
 }
 
 .curator-impact-tag-name {
   font-size: 0.78rem;
-  color: var(--curator-card-text);
+  color: var(--curator-text);
 }
 
 .curator-impact-delta {
@@ -2939,7 +2979,7 @@
 
 .curator-impact-scene-why {
   font-size: 0.68rem;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2955,7 +2995,7 @@
   align-self: flex-start;
   background: transparent;
   border: none;
-  color: var(--curator-card-text-muted);
+  color: var(--curator-text-muted);
   cursor: pointer;
   font-size: 0.85rem;
   padding: 0.2rem 0.3rem;
@@ -2964,6 +3004,6 @@
 }
 
 .curator-curate-nudge-dismiss:hover {
-  color: var(--curator-card-text);
+  color: var(--curator-text);
   background: var(--curator-wash-raised);
 }
