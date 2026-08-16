@@ -124,6 +124,35 @@
   }
 }
 
+/* Bootstrap's stock .btn-primary/-secondary fills read heavier and flatter
+   than the mockup's palette: secondary there is just a bordered, --surface
+   button (color comes from the border/text, not a solid fill), and the
+   gradient treatment is reserved for the one true primary action per
+   screen rather than applied to every button that happens to default to
+   "primary". Restyle both to match. */
+.curator-page .btn-secondary,
+.curator-page .btn-outline-secondary {
+  background: var(--curator-surface);
+  border-color: var(--curator-border-strong);
+  color: var(--curator-text);
+}
+
+.curator-page .btn-secondary:hover,
+.curator-page .btn-outline-secondary:hover {
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-text-muted);
+}
+
+.curator-page .btn-primary {
+  background: var(--curator-gradient-brand);
+  border-color: var(--curator-accent);
+  color: #fff;
+}
+
+.curator-page .btn-primary:hover {
+  filter: brightness(1.08);
+}
+
 .curator-page {
   background: var(--curator-bg);
   color: var(--curator-text);
@@ -906,13 +935,26 @@
   gap: 0.4rem;
 }
 
+/* Icon buttons carried whatever Bootstrap variant they happened to be
+   given (mostly the unset default, "primary" — a solid blue fill) with no
+   override, so the header read as a row of heavy filled blocks instead of
+   the mockup's uniformly bordered, --surface-background .icon-btn. Force
+   the same subtle treatment here regardless of variant. */
 .curator-icon-button {
   align-items: center;
+  background: var(--curator-surface) !important;
+  border-color: var(--curator-border-strong) !important;
+  color: var(--curator-text-muted) !important;
   display: inline-flex;
   height: 1.8rem;
   justify-content: center;
   padding: 0;
   width: 1.8rem;
+}
+
+.curator-icon-button:hover {
+  border-color: var(--curator-text-muted) !important;
+  color: var(--curator-text) !important;
 }
 
 /* Health/sync status popover (GH #150 Package 3): replaces the always-open

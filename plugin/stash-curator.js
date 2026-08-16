@@ -608,6 +608,15 @@
     return payload.data.configurePlugin;
   }
 
+  function formatTimeAgo(ms) {
+    const minutes = Math.round((Date.now() - ms) / 60000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
   async function runTask(taskName) {
     const response = await fetch("/graphql", {
       method: "POST",
@@ -3761,6 +3770,15 @@
       ? route.get("section") || (MAINTENANCE_ITEMS.some((item) => item.value === requestedView) ? requestedView : MAINTENANCE_ITEMS[0].value)
       : null;
     const [slate, setSlate] = React.useState(null);
+    const [lastSyncAtMs, setLastSyncAtMs] = React.useState(null);
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "health" }).then(
+        (result) => active && setLastSyncAtMs(result.last_sync_at_ms || null),
+        () => {}
+      );
+      return () => { active = false; };
+    }, []);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
@@ -3976,7 +3994,12 @@
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
           laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability."),
-          laneByValue.has(lane) && slate && React.createElement("p", { className: "curator-view-stats" }, `${slate.total} in rotation`)
+          laneByValue.has(lane) && slate && React.createElement(
+            "p",
+            { className: "curator-view-stats" },
+            `${slate.total} in rotation`,
+            lastSyncAtMs && ` · Model refreshed ${formatTimeAgo(lastSyncAtMs)}`
+          )
         ),
         React.createElement(
           "div",
