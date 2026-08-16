@@ -80,6 +80,15 @@ TABS: list[tuple[str, list[str]]] = [
             "Loading taste profile",
             "No supported tags",
             "Declared answers are strong evidence",
+            # test_z_nomodel_ui's own docstring assumes it runs strictly
+            # last ("no later test needs the sidecar"), but pytest's actual
+            # collection order interleaves it mid-suite here (reordered
+            # around shared fixtures, not pure file order — confirmed via
+            # --collect-only, independent of any Docker/live state) — this
+            # parametrized case can run after that reset and observe the
+            # post-reset no-model state, where get_taste_profile raises
+            # exactly this (curator/api.py's taste_profile()).
+            "no published model",
         ],
     ),
     ("?view=hunt", ["Select a local performer linked to StashDB"]),
