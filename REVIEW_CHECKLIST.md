@@ -137,6 +137,39 @@ Artifacts:
       value available client-side, so no dot renders there, gracefully.
       Verified via screenshot in both themes, compact and standalone modes,
       mouse-click and keyboard interaction.
+- [x] **Follow-up 2 (user feedback on the round-26 redesign)**: five more
+      issues from a hands-on pass over the new slider.
+      1. Model-estimate marker changed from a hollow ring to a small filled
+         tick in `--curator-accent-secondary` (the existing amber token,
+         already used for the Best Bets lane hue) — reads more clearly as
+         "a third kind of marker" than a smaller/fainter thumb did.
+      2. Belief badges ("I think you dislike this") only ever checked the
+         sign of `inferred_value`, collapsing 4 of the 5 tiers into "like"/
+         "dislike" — now uses the same nearest-tier lookup the model dot's
+         tooltip already had, giving "I think you slightly/strongly like/
+         dislike this" (and "feel neutral about"), with the badge color
+         matching the specific tier instead of a plain binary green/red.
+      3. Added the mockup's confidence pips (`ConfidencePips`: 5 bars filled
+         left-to-right from `item.confidence`, previously only shown as
+         text) — this existed in the mockup but was never built.
+      4. **Real bug**: clicking dead-center on "Neutral" silently did
+         nothing for an unrated tag. An unrated item displays its thumb
+         parked at stop 3 ("Neutral")'s position as a resting point with no
+         real value yet — a native range input only fires `input`/`change`
+         when its value *changes*, so a click resolving to that same stop
+         is indistinguishable from a no-op to the browser. Added a narrow
+         `onClick` fallback that recomputes the intended stop from click
+         position and commits directly whenever it matches the value
+         already showing (the one case the native event won't fire for).
+      5. The unrated placeholder thumb fell back to the blue accent color
+         (no tier class means no `--sc`), which read as an actual (if
+         faint) vote sitting at "Neutral" rather than "nothing set yet" —
+         especially confusing since real "Neutral" votes are gray, not
+         blue. Removed the thumb entirely when unrated instead of
+         recoloring it, since the existing tier-color system doesn't have a
+         "this is fake" affordance and repurposing "Neutral"'s own gray for
+         both meanings would just move the ambiguity elsewhere. Verified
+         all five via screenshot/computed-value checks on live data.
 
 ## Buttons / icons
 

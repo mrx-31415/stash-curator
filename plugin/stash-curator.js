@@ -748,7 +748,7 @@
   function sentimentValueToTrackPct(value) {
     return 20 + (Math.max(-1, Math.min(1, value)) + 1) * 40;
   }
-  function nearestSentimentLabel(value) {
+  function nearestSentiment(value) {
     let best = SENTIMENTS[0];
     let bestDistance = Infinity;
     for (const entry of SENTIMENTS) {
@@ -758,7 +758,36 @@
         best = entry;
       }
     }
-    return best[1];
+    return best;
+  }
+  function nearestSentimentLabel(value) {
+    return nearestSentiment(value)[1];
+  }
+  const BELIEF_PHRASES = {
+    "Strong dislike": "strongly dislike",
+    "Slight dislike": "slightly dislike",
+    "Neutral": "feel neutral about",
+    "Slight like": "slightly like",
+    "Strong like": "strongly like",
+  };
+  function beliefSentence(value) {
+    return `I think you ${BELIEF_PHRASES[nearestSentimentLabel(value)]} this`;
+  }
+
+  // Design-mockup "confidence pips": 5 bars, filled left-to-right by how
+  // much viewing history supports the model's inference for this tag.
+  function ConfidencePips({ confidence }) {
+    const on = Math.round(Math.max(0, Math.min(1, confidence)) * 5);
+    return React.createElement(
+      "div",
+      { className: "curator-confidence-wrap" },
+      React.createElement("span", { className: "curator-confidence-label" }, "Confidence"),
+      React.createElement(
+        "div",
+        { className: "curator-confidence-pips", title: "How much viewing history supports this inference — more filled bars means more evidence" },
+        [0, 1, 2, 3, 4].map((index) => React.createElement("span", { key: index, className: index < on ? "on" : "" }))
+      )
+    );
   }
 
   // A single 6-stop control: "Never" is stop 0 on the same track as the 5
@@ -770,17 +799,34 @@
   // math the way the original design mockup's static-HTML version did.
   // `inferredValue`, when given (only Taste Profile has this — it's the
   // model's own continuous estimate, distinct from the user's discrete
-  // direct rating), renders as a small hollow ring on the same track so the
-  // two can be compared at a glance.
+  // direct rating), renders as a small differently-colored tick on the same
+  // track so the two can be compared at a glance.
   function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null }) {
     const rated = (value !== null && value !== undefined) || blocked;
     const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
     const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
     const tierClass = blocked ? "curator-sentiment-never" : rated ? SENTIMENTS[stopIndex - 1][2] : "";
-    function handleChange(event) {
-      const index = Number(event.target.value);
+    function commit(index) {
       if (index === 0) onChange({ value: null, blocked: true });
       else onChange({ value: SENTIMENTS[index - 1][0], blocked: false });
+    }
+    function handleChange(event) {
+      commit(Number(event.target.value));
+    }
+    // An unrated item is displayed with the thumb parked at stop 3
+    // ("Neutral")'s position, purely as a resting point — there's no real
+    // value yet. A native range input only fires input/change when its
+    // value actually changes, so a click that resolves to that SAME stop
+    // (i.e. clicking dead-center on "Neutral") is indistinguishable from a
+    // no-op to the browser and silently does nothing. Recompute the
+    // intended stop from click position and commit directly whenever it
+    // matches the value already showing, which is exactly the case the
+    // native event won't fire for.
+    function handleClick(event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      const index = Math.round(ratio * 5);
+      if (index === stopIndex) commit(index);
     }
     const hasModelEstimate = inferredValue !== null && inferredValue !== undefined;
     return React.createElement(
@@ -805,7 +851,7 @@
               style: { left: `${sentimentValueToTrackPct(inferredValue)}%` },
               title: `Model estimate: ${nearestSentimentLabel(inferredValue)} (${inferredValue.toFixed(2)})`,
             }),
-            React.createElement("span", { className: `curator-sentiment-thumb${!rated ? " curator-sentiment-thumb-unset" : ""}`, style: { left: `${(stopIndex / 5) * 100}%` } })
+            rated && React.createElement("span", { className: "curator-sentiment-thumb", style: { left: `${(stopIndex / 5) * 100}%` } })
           ),
           React.createElement("input", {
             type: "range",
@@ -817,6 +863,7 @@
             "aria-label": `Sentiment for ${tag.name}`,
             "aria-valuetext": currentLabel,
             onChange: handleChange,
+            onClick: handleClick,
           })
         ),
         !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
@@ -1078,9 +1125,10 @@
             { key: item.tag_id, className: "curator-taste-item" },
             React.createElement("div", null,
               React.createElement("strong", null, item.name),
-              item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? (item.inferred_value >= 0 ? "curator-sentiment-love" : "curator-sentiment-danger") : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
+              item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? nearestSentiment(item.inferred_value)[2] : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? beliefSentence(item.inferred_value) : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
+            React.createElement(ConfidencePips, { confidence: item.confidence }),
             React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, inferredValue: item.inferred_value, onChange: (value) => answer(item.tag_id, value) })
           )
         )
