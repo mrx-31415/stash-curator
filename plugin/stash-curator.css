@@ -1884,35 +1884,12 @@
     padding-inline: 0.65rem;
   }
 
-  .curator-header {
-    grid-template-columns: 1fr;
-  }
-
-  .curator-navigation {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .curator-tabs {
-    flex-basis: 100%;
-    overflow-x: auto;
-    width: 100%;
-  }
-
+  /* The header stays one row (brand | scrollable nav | controls) at every
+     width, matching the mockup's primary-nav — it never drops to a second
+     row of its own. .curator-tabs already scrolls horizontally (see base
+     rule above), so the middle grid column just shrinks instead. */
   .curator-tabs .nav-link {
     white-space: nowrap;
-  }
-
-  .curator-controls {
-    align-items: center;
-    flex-direction: row;
-    flex-wrap: wrap;
-    height: auto;
-    grid-column: 1;
-    grid-row: auto;
-    justify-content: flex-start;
-    margin-left: 0;
-    width: 100%;
   }
 
   .curator-grid {
@@ -1932,6 +1909,31 @@
   .curator-view-guidance {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  /* Brand shrinks to its icon mark only, freeing width for the scrollable
+     nav strip next to it — same trade the mockup makes at this width. */
+  .curator-tagline {
+    display: none;
+  }
+
+  .curator-header h1 {
+    font-size: 1.1rem;
+  }
+
+  /* .curator-navigation's base rule (grid-column: 1 / -1; grid-row: 2)
+     always gives the nav its own full-width row below brand+controls —
+     fine with room to spare, but on a phone the mockup instead keeps nav
+     inline as a horizontally-scrollable strip between the brand and
+     controls, one row total. Only override the placement at this width;
+     the desktop two-row header is intentional and unaffected. */
+  .curator-navigation {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .curator-health-pill-label {
+    display: none;
   }
 
   .curator-tabs .nav-link {
