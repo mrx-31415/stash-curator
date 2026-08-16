@@ -1,0 +1,541 @@
+# Curator plugin — review checklist (living doc)
+
+Consolidated from two independent review passes against the live instance
+(`/plugins/stash-curator`), cross-checked against the
+design mockup (`https://claude.ai/code/artifact/0e341da5-9b63-4ffc-ac60-05ee0df6174a`)
+and, for pass 2, against this worktree at commit `78da835` (round 13,
+`feat/plugin-visual-overhaul`). Tracks GH issue #152 (follow-up to #150);
+Settings-in-Manage is deliberately out of scope here, tracked as #151.
+
+Tick items off as they land. Add new findings at the bottom of the relevant
+section rather than renumbering, so this stays a stable reference.
+
+Artifacts:
+- Pass 1 (mockup-fidelity): `/tmp/curator-review/` — `HANDOVER.md`, cached
+  `mockup.html`, live bundle snapshot as of that pass, ~45 screenshots.
+- Pass 2 (critical UX audit): `/tmp/curator-review2/` — screenshots + probe
+  scripts, including `lane_bug_clean.py` / `lane_bug_directurl.py` /
+  `lane_bug_fromrevisit.py` which reproduce the lane-switch bug below.
+
+---
+
+## Critical / high severity
+
+- [x] **Recommendations lane switching broken for Revisit/Discover/Adventure
+      when clicked in-app.** Investigated end-to-end (element-level and
+      document-capture-phase event listeners, `history.pushState`
+      instrumentation, temporary logging inside the real `openView` source,
+      direct GraphQL calls, and a real-click DOM diff of rendered scene IDs).
+      **Not a real bug — two independent test artifacts in the two repro
+      scripts:**
+      1. Revisit/Discover/Best Bets: `lane_bug_clean.py` (and this doc's own
+         repro list) locate the lane card with
+         `.curator-lane-card:has-text('Revisit')` etc. — Playwright's
+         `:has-text()` is a case-insensitive **substring** match against the
+         full element text, and "For You"'s own description ("...timely
+         **revisits**, and a little **discovery**.") contains "revisits" and
+         "discovery" as substrings. `.first` silently resolved to the wrong
+         card (For You) instead of the intended lane. Re-run with precise
+         `page.get_by_text(lane, exact=True)` locators: all three switch
+         correctly (Best Bets 23908→5442, Revisit 23908→130, Discover
+         23908→14054).
+      2. Adventure: the repro's correctness oracle was the "N in rotation"
+         count text, which is the lane's *eligible candidate pool size*, not
+         its result set. In this dataset Adventure's pool happens to be
+         identical to For You's (23908, both draw from nearly the whole
+         library) purely by data coincidence, so the count didn't move even
+         though the click worked. Verified directly: `get_slate` for
+         `adventure` returns a completely different, correctly-ranked item
+         set (1/20 scene-ID overlap with `for_you`, distinct `appeal`
+         scores), and a real Playwright click swaps the rendered scene cards
+         (1/20 overlap) and updates the URL to `?view=adventure` — all
+         correctly.
+      No application code changed. Removed the temporary `console.log`
+      debug lines added to `openView` during this investigation and
+      redeployed the clean build to both the live instance and the local
+      test instance.
+- [x] **Primary-button text contrast fails WCAG AA in dark theme (the
+      default).** Root cause: `--curator-gradient-brand` (dark theme:
+      `linear-gradient(145deg, #4f8ce0, #6cc4dc)`, driven by
+      `--curator-accent`/`--curator-hue-similar`) paired with `color: #fff`
+      measured **3.41:1** at the dark end, **1.99:1** at the light end — both
+      fail 4.5:1. This affects every `.btn-primary` in dark theme, whether
+      `variant="primary"` is explicit (Curate Left/Right, Submit picks,
+      Generate) or an omitted-prop Bootstrap default (pagination, Copy
+      StashDB ID, Profiling buttons, etc.) — same root cause either way, so
+      fixed once at the token instead of auditing ~26+ call sites and
+      guessing which were meant to read as the "one true primary action" per
+      screen (many, like the Curate pick buttons, legitimately are).
+      **Fix**: `--curator-gradient-brand` now uses literal `#1d5fb8`/
+      `#1f7f96` — the same darker blue/teal already used as light theme's
+      accent/hue-similar (measured 6.21:1/4.63:1, both pass AA) — reused as
+      dark-theme-only literals so the vivid `--curator-accent`/
+      `--curator-hue-similar` tokens (lane-hue dots, focus rings, etc.) are
+      untouched. Verified via computed-style dump against the live instance
+      (`getComputedStyle` on every `.curator-page .btn-primary`, confirmed
+      `rgb(29, 95, 184)`/`rgb(31, 127, 150)` site-wide) and visually via
+      screenshot on Recommendations and Curate. The JS-side button-variant
+      *consistency* items below (icon-button reconciliation, Save
+      unification, dropping mismatched icons) are separate, still open —
+      this item was specifically the AA contrast failure.
+- [x] **Relationship chips (Similar/Expand results — "Same performer",
+      "Shared content", "Same studio", etc.) also failed WCAG AA**, same
+      root cause as the primary-button item above but a separate component
+      that fix never touched. Found in review, not in either original pass.
+      `same_performer`/`shared_content`/`same_studio` were solid hex
+      literals paired with `color: #fff` measuring **3.34:1/2.50:1/2.85:1**
+      — all fail 4.5:1 (green worst of all, below even the primary-button
+      bug's worst measurement). Their `similar_performer`/`similar_structure`
+      counterparts used the same hue at ~67% alpha to signal "weaker match",
+      which made contrast depend on whatever's behind the chip (a card
+      surface that's white in light theme) rather than guaranteeing AA.
+      `multi_hop` (`#9b59b6`) already passed (4.67:1), left unchanged.
+      **Fix**: replaced with darker solid literals for the "same_X" chips
+      (`#1d5fb8`/`#1e7e34`/`#a0530a`, 6.21:1/5.14:1/5.62:1) and a lighter
+      but still independently AA-passing solid (not alpha) for "similar_X"
+      (`#316bb0`/`#278041`, 5.44:1/4.94:1) — same visual distinction,
+      contrast now holds regardless of backdrop. Verified via independent
+      relative-luminance calculation for all 6 chip colors.
+- [x] **Manage panel's active left-nav item also failed WCAG AA in dark
+      theme** — reported by the user as "still hard to read" after the
+      button/chip fixes. Third instance of the same root cause: the
+      selected `.curator-manage-item[aria-current="page"]` used
+      `background: var(--curator-accent)` directly (dark theme's vivid
+      `#4f8ce0`), same 3.41:1 failure as the original button bug, and worse
+      for its child text: the description's `rgba(255,255,255,0.78)` and
+      the icon badge's `rgba(255,255,255,0.2)` both blend toward the vivid
+      background rather than white, measuring **2.69:1** and effectively
+      **2.59:1** — both well below AA. **Fix**: background now the literal
+      `#1d5fb8` (6.21:1 with white text; light theme's `--curator-accent`
+      already equals this literal, so light theme was unaffected).
+      Re-measured the child elements against the new background: title
+      6.21:1 (unchanged, already solid white), description bumped from
+      0.78 to 0.85 alpha (4.46:1 → 4.97:1, the old alpha would still have
+      failed against the darker background), icon badge unchanged at
+      4.08:1 (already clears the 3:1 non-text minimum against the new
+      background). Verified via independent relative-luminance calculation
+      for all three elements.
+
+## Sliders
+
+- [x] **All 4 sliders render as plain unstyled native browser range inputs**
+      (Taste Profile sentiment, Similar/Expand "Minimum match", Prune
+      "aggressiveness", Sentiment-review "Appeal ≤" threshold). Root cause
+      was broader than the sentiment slider's own specificity fight: Stash's
+      global `input[type="range"]` base rule *and* its
+      `::-webkit-slider-thumb`/`::-webkit-slider-runnable-track` pseudo-
+      element rules all beat a bare `.curator-sentiment-range` class — and
+      critically, curator's CSS never had `::-webkit-slider-runnable-track`/
+      `::-moz-range-track` rules at all (only a base `background` that
+      WebKit ignores for track rendering), so the intended thin bordered
+      track never rendered in Chrome/Safari even before the specificity
+      question. The other 3 sliders (Minimum match, Prune aggressiveness,
+      Appeal ≤ threshold) had zero color/track/thumb styling of their own —
+      only `width`.
+      **Fix**: introduced a shared `.curator-page .curator-range` class
+      (opt-in via `className="curator-range"`) covering base/track/thumb for
+      both WebKit and Gecko, applied to all 4 sliders. Thumb color reads
+      `var(--sc, var(--curator-accent))` so the sentiment slider's existing
+      tier-color wrapper (`--sc`) recolors it for free with no separate
+      override rule. Verified via computed-style dump (confirms Stash's
+      rules no longer win) and screenshots of all 4 sliders in both themes.
+- [x] **Taste Profile slider shows unrated items as already-filled** (~60%
+      blue) — resolved as a side effect of the fix above: the "filled" look
+      was Stash's own saturated `rgb(0,123,255)` track color rendering
+      identically regardless of value/rated-state (native range tracks don't
+      show a filled/unfilled split), combined with the unrated default
+      thumb position (stop 3 of 5, i.e. ~60%). Now that curator's own neutral
+      `--curator-border-strong` track and dimmed (`opacity: 0.45`,
+      previously inert) unrated thumb actually render, an unrated slider
+      reads as neutral/unanswered rather than pre-filled — confirmed via
+      screenshot.
+- [x] **Follow-up (user feedback, post-round-15): sentiment slider still
+      didn't match the design mockup** — the round-15 fix made the native
+      `<input type="range">` render *something* coherent, but the mockup
+      (`.rs-track`/`.rs-stop`/`.rs-thumb` — a compact ~10rem fixed-width
+      track with visible per-stop tick dots, not a full-row-width plain bar)
+      was never actually built; that gap is what "no ticks, line too wide"
+      was pointing at. Rebuilt `TagSentimentControl` per the mockup: a
+      decorative rail (`.curator-sentiment-rail`) with 6 tick-stop dots
+      (`.curator-sentiment-stop`, the "Never" stop distinctly shaped/
+      colored) and a 14px thumb, fixed-width (10rem standalone / 6rem
+      compact) instead of stretching to fill the row. A fully transparent
+      native range input sits on top at the same geometry so clicking/
+      dragging/keyboard/screen-reader semantics stay free (no hand-rolled
+      pointer math like the mockup's own static-HTML JS), with a
+      `:focus-visible` ring redirected onto the decorative thumb since the
+      real input is invisible. Also adds a feature beyond the mockup itself:
+      Taste Profile's model-inferred sentiment (`item.inferred_value`,
+      previously only shown as text) now renders as a small hollow ring on
+      the same track (`.curator-sentiment-model-dot`), distinct from the
+      solid direct-rating thumb, so the two can be compared at a glance —
+      the other two `TagSentimentControl` call sites (ExternalCard's "Rate
+      tags & terms", Curate's thumbs-down follow-up) don't have an inferred
+      value available client-side, so no dot renders there, gracefully.
+      Verified via screenshot in both themes, compact and standalone modes,
+      mouse-click and keyboard interaction.
+- [x] **Follow-up 2 (user feedback on the round-26 redesign)**: five more
+      issues from a hands-on pass over the new slider.
+      1. Model-estimate marker changed from a hollow ring to a small filled
+         tick in `--curator-accent-secondary` (the existing amber token,
+         already used for the Best Bets lane hue) — reads more clearly as
+         "a third kind of marker" than a smaller/fainter thumb did.
+      2. Belief badges ("I think you dislike this") only ever checked the
+         sign of `inferred_value`, collapsing 4 of the 5 tiers into "like"/
+         "dislike" — now uses the same nearest-tier lookup the model dot's
+         tooltip already had, giving "I think you slightly/strongly like/
+         dislike this" (and "feel neutral about"), with the badge color
+         matching the specific tier instead of a plain binary green/red.
+      3. Added the mockup's confidence pips (`ConfidencePips`: 5 bars filled
+         left-to-right from `item.confidence`, previously only shown as
+         text) — this existed in the mockup but was never built.
+      4. **Real bug**: clicking dead-center on "Neutral" silently did
+         nothing for an unrated tag. An unrated item displays its thumb
+         parked at stop 3 ("Neutral")'s position as a resting point with no
+         real value yet — a native range input only fires `input`/`change`
+         when its value *changes*, so a click resolving to that same stop
+         is indistinguishable from a no-op to the browser. Added a narrow
+         `onClick` fallback that recomputes the intended stop from click
+         position and commits directly whenever it matches the value
+         already showing (the one case the native event won't fire for).
+      5. The unrated placeholder thumb fell back to the blue accent color
+         (no tier class means no `--sc`), which read as an actual (if
+         faint) vote sitting at "Neutral" rather than "nothing set yet" —
+         especially confusing since real "Neutral" votes are gray, not
+         blue. Removed the thumb entirely when unrated instead of
+         recoloring it, since the existing tier-color system doesn't have a
+         "this is fake" affordance and repurposing "Neutral"'s own gray for
+         both meanings would just move the ambiguity elsewhere. Verified
+         all five via screenshot/computed-value checks on live data.
+- [x] **Follow-up 3 (user feedback on the round-27 fixes)**: three more.
+      1. "I think you slightly dislike/like this" badges were only
+         half-colored — the badge-coloring rule listed love/danger/neutral
+         (from when the badge was still binary) but not warning/like, which
+         round 27 added as real badge outcomes. They still got a tinted
+         *border* from the separate button-oriented tier rule, just not the
+         matching background/text, reading as inconsistent next to the
+         fully-colored strong tiers. Added the two missing tiers.
+      2. The "blue dot" turned out to be a second bug beyond round 27's
+         thumb fix: the *tick* at stop 3 ("Neutral") was rendering with the
+         `-active` (accent-colored) treatment purely because
+         `stopIndex === stop` for the unrated placeholder position too,
+         independent of whether the item was actually rated — the active-
+         stop highlight needed `rated &&`, not just a position match.
+      3. Taste Profile's tag name is now a link to `/tags/{tag_id}` (same
+         `NavLink` pattern used for scene titles elsewhere), so you can jump
+         straight to that tag's scenes instead of round-tripping through
+         Stash's own Tags page. Verified the link navigates correctly.
+- [x] **Follow-up 4 (user feedback: row alignment + Clear answer styling)**:
+      standalone (non-compact) rows only rendered a "Clear answer" button
+      when `rated` — unlike compact mode, which already reserved layout
+      space with an invisible placeholder for exactly this reason, the
+      standalone path omitted the element entirely when unrated, so rated
+      and unrated rows had different widths and misaligned. Always render
+      the button now (both compact and standalone), applying the existing
+      `.curator-sentiment-clear-placeholder` (`visibility: hidden`, space
+      still reserved) whenever unrated. Also changed the button from
+      `variant="link"` (plain underlined text) to `variant="secondary"`
+      (the bordered/outline treatment used elsewhere in the app) per
+      request. Verified row alignment and button styling via screenshot in
+      both standalone and compact contexts.
+
+## Buttons / icons
+
+- [x] Add explicit `variant` to the ~26 buttons currently defaulting to
+      Bootstrap `primary`. Audited every `React.createElement(Button, ...)`
+      call site without an explicit `variant`. Kept `primary` only where a
+      screen genuinely has one true CTA (Curate's pick buttons and Submit,
+      the first-run "Sync and build recommendations", Search, Create
+      backup, Apply, Generate) — assigned `secondary` to utility/navigation
+      buttons (pagination Previous/Next, Profiling/Diagnostics Refresh/View/
+      Download/Copy/Export/Back-to-root, the filter-bar Save, the "minimal"
+      ExternalCard tag/performer/studio count popover trigger, which turned
+      out to have the same bug: no explicit variant meant `.btn-primary`'s
+      gradient — at higher specificity than Stash's own `.minimal` reset —
+      painted over what should read as a plain ghost trigger) and `link` to
+      Curate's "More" dropdown-menu items (Not now/Never show/Metadata is
+      wrong/Mark for pruning, previously solid primary blocks stacked in a
+      small popover).
+- [x] Reconcile the two parallel icon-button patterns:
+      `.curator-icon-button` (header sync/rebuild/theme/settings) vs.
+      `.curator-icon-action` (ExternalCard's row). "Copy StashDB ID" and
+      "Show this performer's scenes" had no explicit variant (defaulting to
+      bright-blue primary) while their siblings were explicitly secondary/
+      state-toggled — now `variant: "secondary"` on both, consistent with
+      "Open on StashDB" and the unselected state of "Add to shortlist"/
+      "Rate tags & terms". Verified via screenshot on Expand results.
+- [x] Unify the two "Save" button treatments: feedback-history's inline
+      replace-row Save stays `variant="link"` (correct for a compact table-
+      row micro-action alongside its "Undo" sibling); the filter-bar Save
+      changed from an implicit solid-primary default to explicit
+      `variant="secondary"` — neither now competes with each screen's real
+      primary action (Apply/Submit), even though the two treatments still
+      differ in weight (link vs. bordered button) since they sit in
+      genuinely different-density contexts.
+- [x] Drop the icon on **"Hide exact PHash matches"** toggle (Similar).
+- [x] Drop the icon on **"Local"** (include-owned) toggle. Removed the
+      now-unused `faUserCheck` import.
+- [ ] Redesign the **ExternalCard action row** (5 icon-only buttons —
+      external-link, copy-ID, shortlist, rate-tags, refresh-Whisparr — on
+      every Similar/Expand/Hunt result card, 20+ per page): no labels, same
+      size/weight, requires hovering each to learn what it does. Recommend
+      collapsing to 2 visible actions + an overflow ("⋯") menu, or labeling
+      the most-used 1–2.
+
+## Other bugs / quirks
+
+- [x] **Manage page height still unbounded** — fixed at the root per the UX
+      suggestion below rather than patching the symptom further: Taste
+      Profile now paginates client-side (30 rows/page, `useUrlPage`-backed
+      so pages are bookmarkable/back-button-able, same convention as
+      Feedback history/Recommendation history's server-side pagers) instead
+      of rendering all ~1,000 tags at once. `get_taste_profile` already
+      returns the full set in one call, so this needed no backend change —
+      just slicing the already-in-memory filtered/sorted array and adding
+      the existing `Pager` component. Measured on live data: desktop
+      76,700px → 3,032px, mobile 142,000px → 5,547px. Every other Manage
+      section (Recently Recommended, Sentiment review, Prune, Feedback
+      history) was already paginated server-side; Taste Profile was the one
+      unbounded list. The mobile `position: static` override for
+      `.curator-manage-list` is unrelated to this — it exists because the
+      layout drops to one column below 860px (list and detail stack instead
+      of sitting side by side), where sticky positioning doesn't apply
+      regardless of page length, not because of the height problem — left
+      as is.
+- [x] **Raw enum leak regression**: Manage → Recently Recommended's "Lane"
+      column showed `score_review` verbatim for Sentiment-review-sourced
+      rows. `RecommendationHistoryRow` had its own separate lane→label
+      lookup (`laneByValue.get(item.lane)?.label || item.lane`) that never
+      got the `score_review` → "Sentiment review" special case already
+      applied elsewhere (e.g. the Sentiment-review card badge) — added it
+      here too. Verified via screenshot.
+- [x] **"Reason shown" column is dead** — not actually dead: every row
+      showing the literal string "Lane" was `reasonLabel()`'s naive fallback
+      (last dot-segment, title-cased) mangling `"eligibility.lane"`, the
+      baseline reason code every impression gets seeded with regardless of
+      lane (`core/slate.go`, `slate_greedy.go`, `score_review.go` all start
+      `reasonIDs` with it; richer reasons like `appeal.performer_identity`
+      are appended when they apply, but plenty of items have nothing beyond
+      the baseline). Added `"eligibility.lane": "Eligible for this lane"` to
+      the existing label map, same pattern as the other two entries.
+      Verified via screenshot — column now reads sensibly on every row.
+- [x] **No loading affordance for slow async actions** (systemic gap, not
+      just Curate) — per user request, added a real spinner (CSS `::before`
+      ring animation) to the shared `.curator-loading` element used by every
+      async panel, so the fix is one CSS change rather than per-view work.
+      Also added `.curator-loading` where it was entirely missing:
+      Recommendations' lane-switch grid (previously no indicator at all —
+      the whole grid section was gated on `!loading`, so switching lanes
+      showed a blank gap), Expand/Hunt/Shortlist's candidate grid (same gap,
+      confirmed ~10s blank on this dataset), and Similar's free-text search
+      (scene/performer search-in-progress had no indicator either). Verified
+      via screenshot on Prune (pre-existing spot) and the two newly-added
+      spots (lane switch, Expand).
+- [x] **MATCH bar clips/misrepresents scores >1.0** — `utilityBar()` clamped
+      fill to `[0, 1]`, so any overflow above 1.0 (final_utility can exceed
+      1.0 via bonuses like uncovered-content) rendered at the same ~100%
+      width as a plain 0.95. Rescaled against a wider ceiling (1.2) so that
+      range is visible, with a distinct striped treatment for the rare case
+      that still exceeds it. Verified on live data: 1.171/1.160/1.154/1.140
+      now render at 98%/97%/96%/95% vs. 0.95's 79% — clearly distinguishable
+      (previously all ≈100%).
+- [x] **Sentiment badges carry no color signal** — reused the existing
+      sentiment-tier classes (`.curator-sentiment-love`/`-danger`/`-neutral`,
+      which already set `--sc`) on the badge instead of Bootstrap's
+      `badge-info`, plus one small CSS rule giving `.badge` context a tinted
+      background/border/text from `--sc` (those classes previously only had
+      a button treatment: transparent fill, border-only). Like now reads
+      green, dislike red, unsure gray — no new design work, per the UX
+      suggestion below. Verified via screenshot.
+- [x] **Mobile primary nav hides 5 of 6 tabs off-screen with no affordance** —
+      a fade mask was already in place (`.curator-tabs`'s `mask-image`) but
+      wasn't enough of a cue on its own: at a 420px viewport the active
+      "Recommendations" pill fills the visible strip edge-to-edge with no
+      sliver of the next pill peeking through, so the faded edge alone read
+      as "this is the whole nav," not "scroll for more." Added a small
+      persistent chevron (`.curator-navigation::after`) that doesn't depend
+      on scroll position or which pill happens to be active. Verified via
+      screenshot at 420px.
+- [x] **Prune still shows plain text** ("Appeal −0.94 · confidence 0.99")
+      where Recommendations/Sentiment review show a MATCH bar for the same
+      underlying data. Swapped to the shared `EvidenceScore`/`utilityBar`
+      used elsewhere (`item.appeal` is the same raw-appeal value
+      score_review's bar already renders, confirming this was genuinely
+      the same underlying data): the evidence line ("Low predicted Appeal
+      with supporting evidence") stays always-visible above the card body
+      as before, appeal now gets the MATCH bar row, and confidence moved
+      into the "Score breakdown" collapsible. Verified via screenshot,
+      including the expanded breakdown.
+- [ ] **No inline sentiment slider on the Curate pair-comparison screen** —
+      mockup has a rate-strip directly under the pair; live only exposes tag
+      sentiment via the separate Taste Profile panel. (Old handover #6,
+      confirmed still open — deliberately deferred pending discussion per
+      prior triage.)
+- [x] **Curate's "Pick-test a hypothesis" list renders empty on first paint**
+      — confirmed the fetch genuinely takes several seconds (it's up to 5
+      parallel `get_tag_context_candidates` calls), so the gap was real, not
+      imagined. `suggestions` starts `null`, and the render only handled the
+      "loaded and empty" case (`suggestions.length === 0`) — `null` matched
+      neither that check nor the list map, so nothing showed at all for the
+      whole fetch. Added a `suggestions === null` branch rendering "Loading
+      hypotheses…". Verified via screenshot mid-fetch and after resolution.
+- [x] Similar's free-text scene search results render as a bare, unstyled
+      inline list of link-colored text — changed from `variant: "link"` to
+      `variant: "secondary"` (small), giving each result the same bordered-
+      chip treatment used elsewhere in the app instead of plain underlined
+      text. Verified via screenshot.
+- [x] Minor: Backups' directory path uses an alarm-colored magenta/pink
+      `curator-mono` style for what's just informational text. Root cause:
+      `.curator-mono` only ever set `font-family`, so Bootstrap's default
+      `code{color:#e83e8c}` (meant for inline code snippets) showed through
+      unopposed. Added `color: var(--curator-text-muted)`.
+
+## UX suggestions (independent judgment, not defects — discuss before building)
+
+- [ ] Move **Profiling** out of the primary Manage nav rail behind a debug
+      flag / `?debug=1` — it exposes raw `.pprof` CPU-trace downloads, which
+      reads as developer tooling leaking into end-user navigation.
+- [x] Color-code sentiment badges using the sentiment-tier color system the
+      slider thumb already has (`--sc` custom property) — done, see the
+      "Other bugs / quirks" entry above.
+- [x] Add pagination or virtualization to Taste Profile (fixes the Manage
+      height problem at the root) — done, see "Other bugs / quirks" above.
+- [x] Add loading skeletons for lane switches and Curate generation — done as
+      a spinner (not a skeleton) applied consistently app-wide, see "Other
+      bugs / quirks" above.
+- [ ] Add empty-state copy to Curate's hypothesis list explaining the blank
+      state instead of leaving it silent.
+
+## User feedback round (direct requests, not sourced from the original review pass)
+
+- [x] **Header was 2 rows on every width above 36rem** (brand+controls on
+      row 1, nav spanning full-width on row 2), unlike the design mockup's
+      single-row `app-header-inner` — an old `.curator-navigation` base rule
+      (`grid-column: 1/-1; grid-row: 2`) predates this pass and was never
+      actually matched to the mockup on desktop, only overridden back to one
+      row at the ≤36rem phone breakpoint. Changed `.curator-header` from a
+      2-row grid to a single-row flex layout at every width; shortened
+      "Stash Curator" → "Curator" (kept as a `title` tooltip on the brand)
+      to help it fit, matching the mockup's own `.brand-word` text exactly.
+      Verified across 1440/1000/800/420px.
+      **Follow-up (user feedback): still visibly misaligned.** Root cause
+      was separate from the row-layout change: the Nav component renders
+      `className="curator-tabs nav nav-tabs"`, and Bootstrap's own
+      `.nav-tabs` rule sets `margin: auto` then `margin-bottom: 1.5rem`
+      (same specificity, same selector, so the second declaration wins for
+      that one property) — a fixed 21px bottom margin leaves no free space
+      for the auto top margin to distribute, so the tabs strip sat flush
+      against the header's top edge with 21px of dead space below it
+      instead of being centered like every other header control. Curator's
+      own `.curator-tabs` rule only neutralized the horizontal margins
+      (`margin-inline: 0`), never the vertical ones. Changed to `margin: 0`.
+      Verified via computed-geometry dump: tabs/controls/brand now share
+      the same centerY (~84.4px) at 1440px width.
+- [x] **Card-size control**: added a header icon-button (cycles Compact/
+      Comfortable/Spacious, localStorage-persisted like theme) driving a new
+      `--curator-card-min-width` CSS variable that `.curator-grid` already
+      reads via `minmax(var(...), 1fr)` — no backend change, affects every
+      card grid in the app (Recommendations/Similar/Expand/Prune) at once.
+      Verified 4→5 cards/row (Compact) and 4→3 (Spacious) at 1440px.
+      **Follow-up (user feedback): cycling was unclear, icon read as
+      "fullscreen."** Confirmed the underlying 3-step cycle itself worked
+      correctly (each click produced a genuinely different column count),
+      so the complaint was about the *interaction*, not a bug — clicking
+      blind through 3 states makes it hard to tell how many sizes exist,
+      and `faExpand` reads as a fullscreen/maximize action, not "resize
+      cards." Replaced with a hover-revealed `HoverPopover` panel
+      containing a continuous slider (14–32rem, reusing `.curator-range`)
+      instead of 3 fixed steps, and swapped the icon to `faThLarge`.
+      Verified drag-to-resize end to end (30rem → 3 cols/row at 1440px).
+- [x] **Native SceneCard's tag/performer/organized overlay buttons were
+      solid blue**, same root cause as two earlier `.minimal` fixes this
+      pass (#152 round 16, round "Follow-up 1" above): no explicit variant
+      on Stash's own markup means Bootstrap's "primary" default fights
+      Stash's `.minimal` reset, and `.curator-page .btn-primary` wins on
+      specificity. Scoped a discreet outline-style override to
+      `.curator-card .card-popovers .btn.minimal` (this is the third
+      instance of this exact bug pattern — worth remembering if a fourth
+      turns up: any native/uncontrolled `.minimal.btn` inside `.curator-
+      page` needs this same treatment). Verified resting and hover states.
+      **Follow-up (user feedback): read as "solid black," not discreet.**
+      The first attempt used `var(--curator-overlay)` (a dark translucent
+      scrim, chosen for sitting over an image) — reasonable in isolation,
+      but the user specifically wanted it to match the "More" menu
+      trigger's actual look, which is just plain `.btn-secondary`
+      (`var(--curator-surface)` + a visible border), not a dark overlay.
+      Switched to that exact treatment for a true match.
+      **Follow-up 2 (user feedback): still no visible border, and
+      misaligned with the date.** Two separate bugs: (1) `.minimal`'s own
+      `border: none` shorthand collapses border-width/style even once
+      border-color is overridden — border-color alone is invisible without
+      them, so the "border" was never actually rendering; needed the full
+      `border: 1px solid ...` shorthand, not just a recolor. (2)
+      `.card-popovers` (a child of `.scene-card`) and `.scene-card__date`
+      (nested inside a *sibling* `.card-section`) aren't in a flex/grid
+      relationship with each other, so the `bottom: 0.2rem` offset was
+      tuned against the card's bottom edge, not the date row — measured
+      the actual centerY gap (10px) and retuned to `bottom: 0.92rem`,
+      confirmed via computed geometry (both now within 1px of the same
+      centerY) and screenshot.
+- [x] **Lane corner badges (BEST BETS/DISCOVER/REVISIT/ADVENTURE/etc.) used
+      flat vivid hue backgrounds that all failed WCAG AA** — per user
+      request to extend the primary-button gradient treatment to these too;
+      turned up a real, previously-undiscovered instance of the same
+      systemic bug this whole pass has repeatedly found (round 14's
+      button-contrast fix, round 30's relationship-chips fix, the Manage
+      active-nav-item fix): every single one of the 9 lane hues measured
+      1.99–3.42:1 against white text (Similar and Discover the worst,
+      *below* the original button bug's worst case). Applied the same
+      technique as the original fix rather than a flat recolor: a 145deg
+      two-stop gradient per lane, reusing light theme's already-AA-passing
+      hue as the lighter stop where it qualified (for_you/similar/hunt/
+      revisit/expand), and computing new darker literals for the four that
+      didn't (best_bets/discover/adventure/prune — light theme's own
+      versions only measured 3.83–4.48:1, still short of 4.5). Each
+      gradient's second stop is the first darkened ~22% further, which can
+      only raise contrast, never lower it — kept on a separate
+      `--lane-badge-gradient` property rather than changing `--lane-color`/
+      `--curator-hue-*` directly, since those still back non-text uses
+      (nav-pill icon color, card left-border accents) that don't need this
+      constraint. Verified via computed-style dump of the actual rendered
+      gradients and screenshot.
+- [x] **"Default" checkbox in SavedFilters** looked out of place next to the
+      Save button row — converted to Bootstrap's native `.custom-switch`
+      toggle (already bundled in Stash's own CSS, no new styling needed),
+      with a stable per-instance id via the existing `uuid()` helper.
+- [x] **Thin grey bar between Stash's navbar and Curator's own background**
+      — second instance of the round-11 gutter-bleed bug: Stash's
+      `.main.container-fluid` wrapper has an *undocumented* 7px top padding
+      (only the 15px horizontal gutter was compensated for originally),
+      transparent, letting `<body>`'s background color show through as a
+      thin bar between the (differently-colored) navbar and this page's own
+      background. Extended the existing negative-margin/matching-padding
+      technique to the top edge. Confirmed via computed-geometry dump
+      against the live instance before fixing.
+- [x] **No spinner during loading** — see "Other bugs / quirks" above (same
+      item as "No loading affordance for slow async actions").
+- [x] **"Synced" pill never indicated pending/rebuild-needed state** — it
+      only ever showed Running/Synced/Not-synced (has a sync ever
+      completed), never surfacing `model_pending`/`model_rebuilding` outside
+      the hover popover. Added those as two more pill states (amber pulse,
+      "N pending" / "Rebuilding" label) so the at-a-glance status is
+      actually informative. Considered moving Sync/Rebuild into the hover
+      popover per the initial ask, but recommended against it (burying the
+      two most frequently-used actions behind a hover interaction that
+      doesn't work well on touch) in favor of this — not yet revisited.
+
+## Deliberately out of scope (tracked elsewhere — listed for completeness)
+
+- [ ] Settings panel in Manage — tracked as issue #151, not #152. Gear icon
+      intentionally routes to Stash's native `/settings?tab=plugins`.
+
+## Already fixed — verified in pass 2, no action needed
+
+- [x] Recommendations was missing a filter bar entirely — now has full
+      Score-first/Filters/Saved filters/Save/tag-performer-studio filters.
+- [x] Backups/Feedback history used plain HTML tables — now proper icon+
+      title+meta record-row styling.
+- [x] Theme toggle didn't re-theme scene/performer cards — now confirmed
+      light theme properly re-themes them (round 13 commit).
+- [x] `Api.components.HoverPopover` cold-load fragility — health pill popover
+      confirmed working on true cold direct navigation, zero console errors.

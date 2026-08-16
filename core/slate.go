@@ -76,7 +76,25 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		context = c
 	}
 	exploration := argsFloat(args, "exploration", 0)
-	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration)
+	includeTags, err := stringList(args.get("include_tags"))
+	if err != nil {
+		return jvNull(), err
+	}
+	excludeTags, err := stringList(args.get("exclude_tags"))
+	if err != nil {
+		return jvNull(), err
+	}
+	performerIDs, err := stringList(args.get("performer_ids"))
+	if err != nil {
+		return jvNull(), err
+	}
+	studioIDs, err := stringList(args.get("studio_ids"))
+	if err != nil {
+		return jvNull(), err
+	}
+	gender := argsString(args, "gender", "")
+	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration,
+		includeTags, excludeTags, performerIDs, studioIDs, gender)
 }
 
 // replaceItemBody mirrors backend.py's replace_item: get_slate(lane, 1,
@@ -104,11 +122,17 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	lane := argsString(args, "lane", "for_you")
 	exploration := argsFloat(args, "exploration", 0)
 	return getSlateCore(db, config, lane, 1, 1, jvNull(),
-		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration)
+		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, nil, nil, nil, nil, "")
 }
 
-// getSlateCore mirrors CuratorAPI.get_slate after arg coercion.
-func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64) (jVal, error) {
+// getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter
+// args (includeTags/excludeTags/performerIDs/studioIDs/gender) narrow the
+// lane's already-classified candidates the same way get_similar narrows its
+// candidates; they don't change ranking. A filtered request always
+// recomputes total from a full candidate fetch, the same way an exploration
+// request does, since the cached eligibility count doesn't know about
+// filters.
+func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid recommendation page")
 	}
@@ -125,12 +149,18 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 	end := page * count
 	diversityEnabled := cfg.get("diversity_enabled").truthy()
 
-	total, err := availableCount(db, modelID, lane, diversityEnabled, excluded)
+	sceneFilter, err := buildSceneFilter(db, includeTags, excludeTags, performerIDs, studioIDs, gender)
 	if err != nil {
 		return jvNull(), err
 	}
-	if exploration != 0 {
-		total = -1
+	hasFilters := sceneFilter != nil
+
+	var total int64 = -1
+	if exploration == 0 && !hasFilters {
+		total, err = availableCount(db, modelID, lane, diversityEnabled, excluded)
+		if err != nil {
+			return jvNull(), err
+		}
 	}
 	var requestCount int64
 	if total >= 0 {
@@ -144,7 +174,7 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 		}
 		requestCount = maxInt64(end+int64(len(excluded)), candidateCount+int64(len(excluded)))
 	}
-	built, err := recommend(db, modelID, lane, requestCount, diversityEnabled, exploration)
+	built, err := recommend(db, modelID, lane, requestCount, diversityEnabled, exploration, sceneFilter)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -346,7 +376,7 @@ func materializedRowIsEligible(sceneID, sourceLane string, eligibility map[strin
 // model with materialized lanes, exploration == 0) is the read interface the
 // build task serves; the greedy recompute path is ported for byte parity when
 // lanes are not materialized or exploration is non-zero.
-func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool, exploration float64) (builtSlate, error) {
+func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool, exploration float64, sceneFilter func(string) bool) (builtSlate, error) {
 	if !slateLanes[lane] {
 		return builtSlate{}, fmt.Errorf("unknown lane: %s", lane)
 	}
@@ -360,7 +390,7 @@ func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool,
 		return builtSlate{}, fmt.Errorf("no published model; run build-model first")
 	}
 	if exploration == 0 {
-		slate, ok, err := loadMaterializedSlate(db, modelID, lane, count, diversityEnabled)
+		slate, ok, err := loadMaterializedSlate(db, modelID, lane, count, diversityEnabled, sceneFilter)
 		if err != nil {
 			return builtSlate{}, err
 		}
@@ -368,14 +398,16 @@ func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool,
 			return slate, nil
 		}
 	}
-	return recommendGreedy(db, modelID, lane, count, diversityEnabled, exploration)
+	return recommendGreedy(db, modelID, lane, count, diversityEnabled, exploration, sceneFilter)
 }
 
 func isFinite(f float64) bool { return !math.IsInf(f, 0) && !math.IsNaN(f) }
 
 // loadMaterializedSlate mirrors SlateBuilder._load_materialized_slate. The
 // second return value is false when the model has no materialized lanes.
-func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityEnabled bool) (builtSlate, bool, error) {
+// sceneFilter, when non-nil, additionally gates each row (get_slate's
+// include/exclude tag, performer, studio, and gender filters).
+func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityEnabled bool, sceneFilter func(string) bool) (builtSlate, bool, error) {
 	exists, err := scanExists(db, `SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID)
 	if err != nil || !exists {
 		return builtSlate{}, false, err
@@ -444,7 +476,8 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 			return builtSlate{}, false, err
 		}
 		for _, row := range chunk {
-			if materializedRowIsEligible(row.sceneID, row.sourceLane, eligibility, filter) {
+			if materializedRowIsEligible(row.sceneID, row.sourceLane, eligibility, filter) &&
+				(sceneFilter == nil || sceneFilter(row.sceneID)) {
 				selectedRows = append(selectedRows, row)
 			}
 		}
@@ -991,4 +1024,111 @@ func attachedGenerationID(db dbx, kind string) string {
 		return ""
 	}
 	return generationID
+}
+
+// buildSceneFilter returns a predicate for get_slate's include/exclude tag,
+// performer, studio, and gender filters, or nil when none are set. It mirrors
+// the corresponding per-candidate checks in similarCore/similarityService.scenes
+// (core/similar.go), narrowed to the fields that make sense for a lane that's
+// already been classified by the model: no minimum-similarity or
+// favorite-only knob, since those are about ranking a candidate against a
+// source entity, not about narrowing a pre-picked set.
+func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (func(string) bool, error) {
+	if len(includeTags) == 0 && len(excludeTags) == 0 && len(performerIDs) == 0 && len(studioIDs) == 0 && gender == "" {
+		return nil, nil
+	}
+	performers, err := scenePerformers(db)
+	if err != nil {
+		return nil, err
+	}
+	var genders map[string]string
+	if gender != "" {
+		genders, err = performerGenders(db)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var studioByScene map[string]string
+	if len(studioIDs) > 0 {
+		studioByScene, err = studios(db)
+		if err != nil {
+			return nil, err
+		}
+	}
+	included, err := equivalentTagNames(db, includeTags)
+	if err != nil {
+		return nil, err
+	}
+	excluded, err := equivalentTagNames(db, excludeTags)
+	if err != nil {
+		return nil, err
+	}
+	filterNames := make(map[string]bool)
+	for _, group := range included {
+		for name := range group {
+			filterNames[name] = true
+		}
+	}
+	for _, group := range excluded {
+		for name := range group {
+			filterNames[name] = true
+		}
+	}
+	var sceneTags map[string]map[string]bool
+	if len(filterNames) > 0 {
+		sceneTags, err = sceneTagNames(db, filterNames)
+		if err != nil {
+			return nil, err
+		}
+	}
+	performerIDSet := make(map[string]bool, len(performerIDs))
+	for _, id := range performerIDs {
+		performerIDSet[id] = true
+	}
+	studioIDSet := make(map[string]bool, len(studioIDs))
+	for _, id := range studioIDs {
+		studioIDSet[id] = true
+	}
+	return func(sceneID string) bool {
+		candidatePerformers := performers[sceneID]
+		if gender != "" {
+			matched := false
+			for _, p := range candidatePerformers {
+				if genders[p] == gender {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		candidateTags := sceneTags[sceneID]
+		for _, group := range included {
+			has := false
+			for name := range group {
+				if candidateTags[name] {
+					has = true
+					break
+				}
+			}
+			if !has {
+				return false
+			}
+		}
+		for _, group := range excluded {
+			for name := range group {
+				if candidateTags[name] {
+					return false
+				}
+			}
+		}
+		if len(performerIDSet) > 0 && !containsAll(candidatePerformers, performerIDSet) {
+			return false
+		}
+		if len(studioIDSet) > 0 && !studioIDSet[studioByScene[sceneID]] {
+			return false
+		}
+		return true
+	}, nil
 }

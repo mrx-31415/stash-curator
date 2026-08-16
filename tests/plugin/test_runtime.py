@@ -391,7 +391,14 @@ def test_curator_tabs_update_browser_history() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "const routeLocation = useLocation();" in source
     assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
-    assert "onClick: () => openView(option.value)" in source
+    assert ": () => openView(option.value);" in source
+    # The Recommendations and Manage pills must no-op when a lane/section
+    # under them is already active, or clicking the parent pill while on
+    # e.g. Best Bets would wrongly reset to For You (GH #150 Package 3).
+    assert '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
+    assert (
+        'if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value)' in source
+    )
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
     # cannot leak into another panel, e.g. the expand performer filter.
@@ -417,9 +424,10 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    # Tag sentiment now lives as a tab under Curate.
-    assert '"Tag sentiment"' in source
-    assert "curateTab" in source
+    # Tag sentiment lives exclusively under Manage > Taste Profile now (GH
+    # #152 round 2) — Curate's old "Tag sentiment" tab duplicated it and was
+    # removed, since Taste Profile is Manage's default landing section.
+    assert "function TasteProfilePanel({ embedded = false } = {})" in source
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -436,13 +444,13 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'if (sort !== "suggested")' in source
 
 
-def test_curate_lane_renders_picks_and_tag_sentiment() -> None:
+def test_curate_lane_renders_picks() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert 'value: "curate"' in source
-    assert '"Tag sentiment"' in source
-    assert 'role: "tablist"' in source
-    assert '"Pick"' in source
+    # No tab switcher any more — Curate is pair-comparison only now that its
+    # old "Tag sentiment" tab (a duplicate of Manage > Taste Profile) is gone.
+    assert "curateTab" not in source
     assert "Compare scenes in pairs to teach the model fast" in source
     assert "PickSceneCard" in source
     assert 'event.key === "ArrowLeft"' in source
@@ -505,8 +513,11 @@ def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_trac
     assert "const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);" in source
     assert "icon: faBroom,\n      maintenance: true" in source
     assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
-    assert 'className: "curator-maintenance-menu"' in source
-    assert 'React.createElement("span", null, "Maintenance")' in source
+    # Diagnostics is a maintenance item folded into the Manage shell rather
+    # than the old flat maintenance dropdown (GH #150 Package 3).
+    assert 'className: "curator-manage-shell"' in source
+    assert "function ManagePanel(" in source
+    assert "diagnostics: () => React.createElement(DiagnosticsPanel)," in source
     assert 'operation: "get_diagnostics"' in source
     assert '"Diagnostics copied."' in source
     assert 'link.download = "stash-curator-diagnostics.json"' in source
@@ -596,10 +607,13 @@ def test_curator_prefetches_only_the_intended_lane() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "function prefetchLanes" not in source
     assert "if (!laneByValue.has(lane) || cachedConfigUpdatedAtMs === null) return;" in source
-    assert "loadSlate(lane, page).then(" in source
+    assert "loadSlate(lane, page, false, slateFilters).then(" in source
     assert "loadSlate(lane, 1, true).catch(" in source
-    assert "onMouseEnter: () => prefetchLane(option.value)" in source
-    assert "onFocus: () => prefetchLane(option.value)" in source
+    # Prefetch now hangs off the lane-switcher cards inside the collapsed
+    # Recommendations tab, not the (now removed) flat per-lane nav pills
+    # (GH #150 Package 3).
+    assert "onMouseEnter: () => prefetchLane(laneItem.value)" in source
+    assert "onFocus: () => prefetchLane(laneItem.value)" in source
 
 
 def test_plugin_pages_generated_results_without_repeating_external_searches() -> None:
@@ -655,7 +669,14 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert '["unlinked", `Not linked locally ${huntCounts.unlinked}`]' in source
     assert 'kind: "tag", label: "Include tags"' in source
     assert 'kind: "tag", label: "Exclude tags"' in source
-    assert source.count('" Hide exact PHash matches"') == 3
+    # Similar/Expand/Hunt share one FilterBar component (variant-gated), so
+    # this markup now appears once in FilterBar's definition rather than
+    # once per hand-duplicated filter panel.
+    assert source.count('"Hide exact PHash matches"') == 1
+    assert "function FilterBar({" in source
+    assert 'React.createElement(FilterBar, {\n        variant: "similar"' in source
+    assert 'React.createElement(FilterBar, {\n        variant: "hunt"' in source
+    assert 'React.createElement(FilterBar, {\n        variant: "expand"' in source
     assert "hide_phash_matches: hidePhashMatches" in source
     assert '"Likely local · exact PHash"' in source
     assert '"Release date"' in source
@@ -663,6 +684,28 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert "data?.truncated" in source
     assert "(failure) => active && (setError(failure.message), setLoading(false))" in source
     assert 'entityType === "hunt" ? "scene" : entityType' in source
+
+
+def test_recommendations_filter_bar_wired() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    # Recommendations is FilterBar's 4th call site, alongside similar/hunt/expand.
+    assert 'React.createElement(FilterBar, {\n        variant: "recommendations"' in source
+    assert 'const rankingOnly = variant !== "recommendations";' in source
+    # get_slate gets the same filter arg shape as get_similar/get_expand —
+    # FilterTokens stores {id, name} objects for chip display, so these
+    # must extract the field the backend actually wants (tag name, or
+    # performer/studio id as a string), not pass the object through raw.
+    assert "include_tags: (filters.includeTags || []).map((item) => item.name)" in source
+    assert "exclude_tags: (filters.excludeTags || []).map((item) => item.name)" in source
+    assert "performer_ids: (filters.performers || []).map((item) => String(item.id))" in source
+    assert "studio_ids: (filters.studios || []).map((item) => String(item.id))" in source
+    assert 'gender: filters.gender || ""' in source
+    # Filtered slates bypass the persistent lane+page cache rather than
+    # polluting it with a filter-blind key.
+    assert "const hasFilters = Boolean(filters &&" in source
+    assert "if (!hasFilters) slateRequests.set(key, request);" in source
+    assert 'scope: "recommendations"' in source
 
 
 def test_panels_serialize_full_view_state_to_the_url() -> None:
@@ -732,7 +775,9 @@ def test_score_review_view_is_a_maintenance_nav_item_and_uses_the_slate_card() -
     assert "function ScoreReviewPanel" in source
     assert 'operation: "get_score_review"' in source
     assert 'urlPageSpec("page_sentiment")' in source
-    assert 'lane === "sentiment" && React.createElement(ScoreReviewPanel)' in source
+    # Sentiment review mounts through the Manage shell's MANAGE_BODIES lookup
+    # rather than its own top-level lane branch (GH #150 Package 3).
+    assert "sentiment: () => React.createElement(ScoreReviewPanel)," in source
     # The review surface reuses the slate card (Score, Why this?, thumbs) and
     # the pager, mirroring CuratorPage's slate rendering.
     assert (
@@ -780,12 +825,22 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'className: "performer-tag-container row"' in source
     assert 'className: "image-thumbnail"' in source
     assert 'className: "tag-item tag-link badge badge-secondary"' in source
+    # RecommendationCard, ExternalCard, and SimilarityPanel's library-match
+    # grid share the "Why this?"/"Score" <details> shell via EvidenceScore;
+    # the shell markup lives once in its definition, content stays
+    # per-caller (async explain-on-toggle vs static text).
+    assert "function EvidenceScore({ evidenceProps, evidenceContent," in source
+    assert "scoreBarContent, scoreSummary, scoreContent })" in source
     assert 'React.createElement("summary", null, "Why this?")' in source
-    assert '{ className: "curator-evidence", onToggle: explain }' in source
+    assert 'className: "curator-evidence", ...evidenceProps' in source
+    assert "evidenceProps: { onToggle: explain }" in source
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
-    assert 'React.createElement("summary", null, `Score · ${item.score.toFixed(2)}`)' in source
-    assert 'React.createElement("summary", null, `Score · ${item.rank_score.toFixed(2)}`)' in source
+    assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" :' in source
+    assert "`Score · ${scoreSummary}`)" in source
+    assert "scoreSummary: item.final_utility.toFixed(2)" in source
+    assert "scoreSummary: item.score.toFixed(2)" in source
+    assert "scoreSummary: item.rank_score.toFixed(2)" in source
     assert (
         'className: kind === "scene" ? "scene-card__details" : "curator-external-details"' in source
     )
@@ -796,6 +851,26 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar content"' in source
     assert "Wildcard items are selected outside preference-derived seeds" in source
+
+
+def test_external_card_actions_are_a_named_shared_component() -> None:
+    """ExternalActions is the "external" action-set variant, sibling to
+    Feedback's "local" variant (thumbs up/down + More menu) — Package 2's
+    two-variant Card split (GH #150)."""
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    assert "function ExternalActions({" in source
+    assert "React.createElement(ExternalActions, {" in source
+    assert 'className: "curator-prune-actions"' in source
+    assert '"Open on StashDB"' in source
+    assert "onCopy" in source
+    assert "onAddToWhisparr" in source
+    assert "tagsAvailable: tags.length > 0" in source
+    assert "tagsActive: tagChoices !== null" in source
+    # Feedback (thumbs up/down + More menu) is the other variant; still its
+    # own function, untouched by this extraction.
+    assert "function Feedback({ item, onRemove, onThumbDown })" in source
+    assert 'className: "curator-more-menu"' in source
 
 
 def test_similarity_source_switch_visible_before_reference_is_selected() -> None:
@@ -1113,8 +1188,21 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "RatingSection" in source
     assert "Collapse matching local tag ratings" in source
     assert "compact: true" in source
-    assert 'const shortLabel = score === -1 ? "--"' in source
+    # Tag sentiment is a single 6-stop control: "Never" is stop 0 on the same
+    # range input as the 5-point spectrum (set apart visually, not pulled out
+    # into a separate button), shared by every call site (compact or not).
+    assert "function TagSentimentControl({ tag, value, blocked, onChange, compact = false" in source
+    assert "= false, inferredValue = null })" in source
+    assert 'type: "range"' in source
+    assert 'min: "0"' in source
+    assert 'max: "5"' in source
+    assert 'step: "1"' in source
     assert "curator-sentiment-compact" in css
+    assert ".curator-sentiment-input" in css
+    assert ".curator-sentiment-rail" in css
+    assert ".curator-sentiment-stop" in css
+    assert ".curator-sentiment-thumb" in css
+    assert ".curator-sentiment-model-dot" in css
     assert ".curator-external-tag-rating-header" in css
     assert ".curator-external-tag-row" in css
     assert ".curator-task-progress-track" in css

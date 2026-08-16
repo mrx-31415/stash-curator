@@ -63,9 +63,15 @@ type greedyCandidate struct {
 }
 
 // recommendGreedy mirrors SlateBuilder.recommend's recompute branch.
-func recommendGreedy(db dbx, modelID, lane string, count int64, diversityEnabled bool, exploration float64) (builtSlate, error) {
+// sceneFilter, when non-nil, additionally gates the live candidate pool
+// (get_slate's include/exclude tag, performer, studio, and gender filters);
+// the prepared-slate cache (a previous unfiltered recommend()'s saved
+// result) is bypassed on both read and write when a filter is active, since
+// it isn't filter-keyed and would otherwise leak an unfiltered slate into a
+// filtered response or vice versa.
+func recommendGreedy(db dbx, modelID, lane string, count int64, diversityEnabled bool, exploration float64, sceneFilter func(string) bool) (builtSlate, error) {
 	var preparedSlate *builtSlate
-	if exploration == 0 {
+	if exploration == 0 && sceneFilter == nil {
 		slate, ok, err := loadPreparedSlate(db, modelID, lane, count, diversityEnabled)
 		if err != nil {
 			return builtSlate{}, err
@@ -144,7 +150,8 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		_, played := directPlays[c.sceneID]
 		if !state.eligible ||
 			(c.lane == "best_bets" && played) ||
-			(c.lane == "revisit" && unrecovered[c.sceneID]) {
+			(c.lane == "revisit" && unrecovered[c.sceneID]) ||
+			(sceneFilter != nil && !sceneFilter(c.sceneID)) {
 			continue
 		}
 		live = append(live, c)
@@ -378,7 +385,7 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 			"history": 0, "selection": 0, "items": 0, "total": 0,
 		},
 	}
-	if exploration == 0 {
+	if exploration == 0 && sceneFilter == nil {
 		if err := savePreparedSlate(db, modelID, lane, diversityEnabled, &slate); err != nil {
 			return builtSlate{}, err
 		}
