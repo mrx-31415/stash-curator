@@ -552,10 +552,18 @@
     if (!copied) throw new Error("Copy failed");
   }
 
-  function loadSlate(lane, page = 1, prefetched = false) {
+  // filters narrow a lane's already-classified candidates server-side (same
+  // include/exclude tag, performer, studio, and gender shape as Similar).
+  // Filtered slates aren't cached: the persistent slateCache is keyed only
+  // by lane+page, and filter combinations change too often relative to how
+  // long they stay open to be worth a filter-aware cache key.
+  function loadSlate(lane, page = 1, prefetched = false, filters = null) {
+    const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.gender));
     const key = slateKey(lane, page);
-    if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
-    if (slateRequests.has(key)) return slateRequests.get(key);
+    if (!hasFilters) {
+      if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
+      if (slateRequests.has(key)) return slateRequests.get(key);
+    }
     const generation = cacheGeneration;
     const request = operation({
       operation: "get_slate",
@@ -564,6 +572,13 @@
       exclude_scene_ids: [...(laneExclusions.get(lane) || [])],
       exploration: 0,
       context: { route: location.pathname, prefetched },
+      ...(hasFilters ? {
+        include_tags: filters.includeTags || [],
+        exclude_tags: filters.excludeTags || [],
+        performer_ids: filters.performers || [],
+        studio_ids: filters.studios || [],
+        gender: filters.gender || "",
+      } : {}),
     })
       .then((data) => {
         if (generation !== cacheGeneration) return data;
@@ -575,12 +590,14 @@
         }
         cachedModelId = data.model_id;
         cachedConfigUpdatedAtMs = data.config_updated_at_ms;
-        slateCache.set(slateKey(lane, page), data);
-        persistSlateCache();
+        if (!hasFilters) {
+          slateCache.set(slateKey(lane, page), data);
+          persistSlateCache();
+        }
         return data;
       })
       .finally(() => slateRequests.delete(key));
-    slateRequests.set(key, request);
+    if (!hasFilters) slateRequests.set(key, request);
     return request;
   }
 
@@ -2315,6 +2332,12 @@
   }) {
     const sceneGated = variant !== "hunt";
     const showScene = !sceneGated || entityType === "scene";
+    // Recommendations narrows a lane's already-classified local scenes: no
+    // StashDB-only concept (hide-phash), similarity score (minimum match),
+    // or the "boost favorited performers" ranking knob (favorite-only) — all
+    // three are about ranking a candidate against a source entity or a
+    // remote catalog, not about narrowing a pre-picked set.
+    const rankingOnly = variant !== "recommendations";
     const minimumMin = variant === "expand" ? "-0.2" : "0";
     const genderAriaLabel = variant === "expand" ? "External performer gender" : "Performer gender";
     const favoriteExtra = variant === "expand" ? { title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly } : {};
@@ -2328,10 +2351,10 @@
         showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: onExcludeTagsChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
-        sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
-        showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"),
+        rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
+        rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"),
         sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
-        sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
+        rankingOnly && sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
         applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
       )
     );
@@ -3796,6 +3819,23 @@
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
+    const initialSlateFilters = React.useMemo(() => defaultFilters("recommendations"), []);
+    const [filtersOpen, setFiltersOpen] = React.useState(false);
+    const [filterIncludeTags, setFilterIncludeTags] = React.useState(initialSlateFilters.includeTags || []);
+    const [filterExcludeTags, setFilterExcludeTags] = React.useState(initialSlateFilters.excludeTags || []);
+    const [filterPerformers, setFilterPerformers] = React.useState(initialSlateFilters.performers || []);
+    const [filterStudios, setFilterStudios] = React.useState(initialSlateFilters.studios || []);
+    const [filterGender, setFilterGender] = React.useState(initialSlateFilters.gender || "");
+    const slateFilters = { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender };
+    const activeSlateFilterCount = filterIncludeTags.length + filterExcludeTags.length + filterPerformers.length + filterStudios.length + (filterGender ? 1 : 0);
+    function applySavedSlateFilters(value) {
+      setFilterIncludeTags(value.includeTags || []);
+      setFilterExcludeTags(value.excludeTags || []);
+      setFilterPerformers(value.performers || []);
+      setFilterStudios(value.studios || []);
+      setFilterGender(value.gender || "");
+      setPage(1);
+    }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
     const [followUps, setFollowUps] = React.useState([]);
@@ -3846,11 +3886,11 @@
         setError("");
         return () => { active = false; };
       }
-      const cached = slateCache.get(slateKey(lane, page));
+      const cached = activeSlateFilterCount === 0 ? slateCache.get(slateKey(lane, page)) : null;
       setSlate(cached || null);
       setLoading(!cached);
       setError("");
-      loadSlate(lane, page).then(
+      loadSlate(lane, page, false, slateFilters).then(
         (data) => {
           if (!active) return;
           setSlate(data);
@@ -3861,7 +3901,7 @@
       return () => {
         active = false;
       };
-    }, [lane, page, refreshKey, configReady]);
+    }, [lane, page, refreshKey, configReady, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
     React.useEffect(() => {
       if (slate?.page === page) {
         const last = Math.max(1, Math.ceil(slate.total / slate.page_size));
@@ -4030,9 +4070,21 @@
             },
             React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
             diversityEnabled ? " Balanced" : " Score-first"
-          )
+          ),
+          laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
+          laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
       ),
+      laneByValue.has(lane) && filtersOpen && React.createElement(FilterBar, {
+        variant: "recommendations",
+        entityType: "scene",
+        includeTags: filterIncludeTags, onIncludeTagsChange: (value) => setFilterIncludeTags(value),
+        excludeTags: filterExcludeTags, onExcludeTagsChange: (value) => setFilterExcludeTags(value),
+        performers: filterPerformers, onPerformersChange: (value) => setFilterPerformers(value),
+        studios: filterStudios, onStudiosChange: (value) => setFilterStudios(value),
+        gender: filterGender, onGenderChange: (event) => setFilterGender(event.target.value),
+        onApply: () => { setPage(1); setFiltersOpen(false); },
+      }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
       lane === "curate" && React.createElement(CuratePanel),

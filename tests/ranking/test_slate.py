@@ -363,6 +363,70 @@ def test_available_count_matches_live_materialized_slate(tmp_path: Path) -> None
             )
 
 
+def test_scene_filter_narrows_materialized_and_greedy_slates(tmp_path: Path) -> None:
+    """get_slate's include/exclude tag, performer, studio, and gender filters
+    narrow a lane's already-classified candidates in place, the same way
+    get_similar's filters narrow its candidate set — not a client-side trim
+    of an already-paged response.
+
+    diversity_enabled=False here: with it on, the greedy path's adjacency
+    rule (never place two same-performer scenes back to back, unrelated to
+    filtering) would legitimately drop b-best after a filter narrows the
+    live candidate pool down to just the two p1 scenes with nothing else to
+    interleave with — a real diversity/filter interaction, not what this
+    test is isolating.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection, diversity_enabled=False)
+    unfiltered = builder.recommend("best_bets", 100)
+    unfiltered_ids = {item.scene_id for item in unfiltered.items}
+    # a-best/b-best are performer p1; c-best is performer p2 (all studio st1).
+    assert {"a-best", "b-best", "c-best"} <= unfiltered_ids
+
+    filtered = builder.recommend("best_bets", 100, performer_ids=("p1",))
+    filtered_ids = {item.scene_id for item in filtered.items}
+    assert {"a-best", "b-best"} <= filtered_ids
+    assert "c-best" not in filtered_ids
+    assert filtered_ids < unfiltered_ids
+
+    # Same narrowing through the materialized fast path (a fresh builder so
+    # the greedy path above didn't warm any per-instance candidate cache).
+    # Diversity stays on here: filtering only narrows the row list read back
+    # from an already-computed full-lane ordering, it doesn't re-run greedy
+    # selection, so it isn't subject to the adjacency rule above.
+    materialized_builder = SlateBuilder(connection)
+    materialized_builder.materialize("model", force=True)
+    materialized = materialized_builder._load_materialized_slate(
+        "model", "best_bets", 100, materialized_builder._scene_filter((), (), ("p1",), (), "")
+    )
+    assert materialized is not None
+    materialized_ids = {item.scene_id for item in materialized.items}
+    assert {"a-best", "b-best"} <= materialized_ids
+    assert "c-best" not in materialized_ids
+
+
+def test_get_slate_filter_total_reflects_filtered_count(tmp_path: Path) -> None:
+    """A filtered request's total/has_more/page come from the filtered
+    candidate set, not the full lane — the same page-integrity guarantee
+    exclude_scene_ids already gets, not a naive trim after pagination."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    SlateBuilder(connection).materialize("model", force=True)
+    api = CuratorAPI(connection)
+
+    full = api.get_slate("best_bets", 100, now_ms=1)
+    filtered = api.get_slate("best_bets", 1, now_ms=1, performer_ids=("p1",))
+
+    assert filtered["total"] < full["total"]
+    assert filtered["total"] == 2  # a-best, b-best
+    assert filtered["has_more"] is True
+    assert {item["scene_id"] for item in filtered["items"]} <= {"a-best", "b-best"}
+    second_page = api.get_slate("best_bets", 1, page=2, now_ms=1, performer_ids=("p1",))
+    assert second_page["items"][0]["scene_id"] != filtered["items"][0]["scene_id"]
+    assert {item["scene_id"] for item in second_page["items"]} <= {"a-best", "b-best"}
+
+
 def test_new_slate_builder_reuses_persisted_lane_classifications(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

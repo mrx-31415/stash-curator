@@ -712,6 +712,11 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 context=args.get("context") if isinstance(args.get("context"), dict) else None,
                 exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
+                include_tags=_string_list(args.get("include_tags")),
+                exclude_tags=_string_list(args.get("exclude_tags")),
+                performer_ids=_string_list(args.get("performer_ids")),
+                studio_ids=_string_list(args.get("studio_ids")),
+                gender=str(args.get("gender") or ""),
             )
         if operation == "get_score_review":
             config = api.config()["config"]
