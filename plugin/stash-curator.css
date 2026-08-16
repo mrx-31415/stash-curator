@@ -548,8 +548,14 @@
   background: var(--curator-wash-raised);
 }
 
+/* Literal, not var(--curator-accent) — same WCAG AA failure as the old
+   .btn-primary gradient (dark theme's vivid #4f8ce0 measures 3.41:1 against
+   white text, below 4.5:1). Light theme's --curator-accent is already this
+   exact literal (#1d5fb8, 6.21:1), so hardcoding it fixes dark theme
+   without touching the token other UI (lane-hue dots, focus rings) still
+   relies on being vivid. */
 .curator-manage-item[aria-current="page"] {
-  background: var(--curator-accent);
+  background: #1d5fb8;
   color: #fff;
 }
 
@@ -588,7 +594,9 @@
 }
 
 .curator-manage-item[aria-current="page"] .curator-manage-item-desc {
-  color: rgba(255, 255, 255, 0.78);
+  /* 0.78 measured 4.46:1 against the new #1d5fb8 background, just under
+     AA's 4.5:1 — bumped to clear it with a small margin. */
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .curator-manage-detail {
@@ -2515,11 +2523,22 @@
   border-radius: var(--curator-radius-lg);
   white-space: nowrap;
 }
-.curator-chip-same_performer      { background: #4a90d9; color: #fff; }
-.curator-chip-similar_performer   { background: #4a90d9aa; color: #fff; }
-.curator-chip-shared_content      { background: #50b86c; color: #fff; }
-.curator-chip-similar_structure   { background: #50b86caa; color: #fff; }
-.curator-chip-same_studio         { background: #e67e22; color: #fff; }
+/* Literal (not alpha-blended) colors, each independently measured against
+   white text — the previous versions used a base hue at full opacity for
+   "same_X" and the identical hue at ~67% alpha for "similar_X" to convey
+   "weaker match" via transparency. That let the "same_X" solids fail WCAG
+   AA outright (3.34:1/2.50:1/2.85:1 measured for blue/green/orange) and
+   made "similar_X" contrast depend on whatever's behind the chip (a card
+   surface that's white in light theme), which can't be guaranteed to pass
+   at all. Darker solids for "same_X", and a lighter-but-still-AA-passing
+   solid of the same hue for "similar_X" (instead of alpha) keep the same
+   visual distinction with contrast that holds regardless of backdrop.
+   multi_hop already passed (4.67:1) and is unchanged. */
+.curator-chip-same_performer      { background: #1d5fb8; color: #fff; }
+.curator-chip-similar_performer   { background: #316bb0; color: #fff; }
+.curator-chip-shared_content      { background: #1e7e34; color: #fff; }
+.curator-chip-similar_structure   { background: #278041; color: #fff; }
+.curator-chip-same_studio         { background: #a0530a; color: #fff; }
 .curator-chip-multi_hop           { background: #9b59b6; color: #fff; }
 .curator-chip-tags                { background: #555; color: #ddd; }
 

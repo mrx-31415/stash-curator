@@ -78,6 +78,43 @@ Artifacts:
       *consistency* items below (icon-button reconciliation, Save
       unification, dropping mismatched icons) are separate, still open —
       this item was specifically the AA contrast failure.
+- [x] **Relationship chips (Similar/Expand results — "Same performer",
+      "Shared content", "Same studio", etc.) also failed WCAG AA**, same
+      root cause as the primary-button item above but a separate component
+      that fix never touched. Found in review, not in either original pass.
+      `same_performer`/`shared_content`/`same_studio` were solid hex
+      literals paired with `color: #fff` measuring **3.34:1/2.50:1/2.85:1**
+      — all fail 4.5:1 (green worst of all, below even the primary-button
+      bug's worst measurement). Their `similar_performer`/`similar_structure`
+      counterparts used the same hue at ~67% alpha to signal "weaker match",
+      which made contrast depend on whatever's behind the chip (a card
+      surface that's white in light theme) rather than guaranteeing AA.
+      `multi_hop` (`#9b59b6`) already passed (4.67:1), left unchanged.
+      **Fix**: replaced with darker solid literals for the "same_X" chips
+      (`#1d5fb8`/`#1e7e34`/`#a0530a`, 6.21:1/5.14:1/5.62:1) and a lighter
+      but still independently AA-passing solid (not alpha) for "similar_X"
+      (`#316bb0`/`#278041`, 5.44:1/4.94:1) — same visual distinction,
+      contrast now holds regardless of backdrop. Verified via independent
+      relative-luminance calculation for all 6 chip colors.
+- [x] **Manage panel's active left-nav item also failed WCAG AA in dark
+      theme** — reported by the user as "still hard to read" after the
+      button/chip fixes. Third instance of the same root cause: the
+      selected `.curator-manage-item[aria-current="page"]` used
+      `background: var(--curator-accent)` directly (dark theme's vivid
+      `#4f8ce0`), same 3.41:1 failure as the original button bug, and worse
+      for its child text: the description's `rgba(255,255,255,0.78)` and
+      the icon badge's `rgba(255,255,255,0.2)` both blend toward the vivid
+      background rather than white, measuring **2.69:1** and effectively
+      **2.59:1** — both well below AA. **Fix**: background now the literal
+      `#1d5fb8` (6.21:1 with white text; light theme's `--curator-accent`
+      already equals this literal, so light theme was unaffected).
+      Re-measured the child elements against the new background: title
+      6.21:1 (unchanged, already solid white), description bumped from
+      0.78 to 0.85 alpha (4.46:1 → 4.97:1, the old alpha would still have
+      failed against the darker background), icon badge unchanged at
+      4.08:1 (already clears the 3:1 non-text minimum against the new
+      background). Verified via independent relative-luminance calculation
+      for all three elements.
 
 ## Sliders
 
