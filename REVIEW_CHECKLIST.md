@@ -319,11 +319,18 @@ Artifacts:
       the baseline). Added `"eligibility.lane": "Eligible for this lane"` to
       the existing label map, same pattern as the other two entries.
       Verified via screenshot — column now reads sensibly on every row.
-- [ ] **No loading affordance for slow async actions** (systemic gap, not
-      just Curate): Generate has 4–8s of dead air (confirmed ~8s GraphQL
-      round-trip via network trace) with only a subtly-dimmed button; Expand's
-      candidate list is blank for up to 10s with zero spinner/skeleton. Reads
-      as frozen, not slow.
+- [x] **No loading affordance for slow async actions** (systemic gap, not
+      just Curate) — per user request, added a real spinner (CSS `::before`
+      ring animation) to the shared `.curator-loading` element used by every
+      async panel, so the fix is one CSS change rather than per-view work.
+      Also added `.curator-loading` where it was entirely missing:
+      Recommendations' lane-switch grid (previously no indicator at all —
+      the whole grid section was gated on `!loading`, so switching lanes
+      showed a blank gap), Expand/Hunt/Shortlist's candidate grid (same gap,
+      confirmed ~10s blank on this dataset), and Similar's free-text search
+      (scene/performer search-in-progress had no indicator either). Verified
+      via screenshot on Prune (pre-existing spot) and the two newly-added
+      spots (lane switch, Expand).
 - [x] **MATCH bar clips/misrepresents scores >1.0** — `utilityBar()` clamped
       fill to `[0, 1]`, so any overflow above 1.0 (final_utility can exceed
       1.0 via bonuses like uncovered-content) rendered at the same ~100%
@@ -393,9 +400,64 @@ Artifacts:
       "Other bugs / quirks" entry above.
 - [x] Add pagination or virtualization to Taste Profile (fixes the Manage
       height problem at the root) — done, see "Other bugs / quirks" above.
-- [ ] Add loading skeletons for lane switches and Curate generation.
+- [x] Add loading skeletons for lane switches and Curate generation — done as
+      a spinner (not a skeleton) applied consistently app-wide, see "Other
+      bugs / quirks" above.
 - [ ] Add empty-state copy to Curate's hypothesis list explaining the blank
       state instead of leaving it silent.
+
+## User feedback round (direct requests, not sourced from the original review pass)
+
+- [x] **Header was 2 rows on every width above 36rem** (brand+controls on
+      row 1, nav spanning full-width on row 2), unlike the design mockup's
+      single-row `app-header-inner` — an old `.curator-navigation` base rule
+      (`grid-column: 1/-1; grid-row: 2`) predates this pass and was never
+      actually matched to the mockup on desktop, only overridden back to one
+      row at the ≤36rem phone breakpoint. Changed `.curator-header` from a
+      2-row grid to a single-row flex layout at every width; shortened
+      "Stash Curator" → "Curator" (kept as a `title` tooltip on the brand)
+      to help it fit, matching the mockup's own `.brand-word` text exactly.
+      Verified across 1440/1000/800/420px.
+- [x] **Card-size control**: added a header icon-button (cycles Compact/
+      Comfortable/Spacious, localStorage-persisted like theme) driving a new
+      `--curator-card-min-width` CSS variable that `.curator-grid` already
+      reads via `minmax(var(...), 1fr)` — no backend change, affects every
+      card grid in the app (Recommendations/Similar/Expand/Prune) at once.
+      Verified 4→5 cards/row (Compact) and 4→3 (Spacious) at 1440px.
+- [x] **Native SceneCard's tag/performer/organized overlay buttons were
+      solid blue**, same root cause as two earlier `.minimal` fixes this
+      pass (#152 round 16, round "Follow-up 1" above): no explicit variant
+      on Stash's own markup means Bootstrap's "primary" default fights
+      Stash's `.minimal` reset, and `.curator-page .btn-primary` wins on
+      specificity. Scoped a discreet outline-style override to
+      `.curator-card .card-popovers .btn.minimal` (this is the third
+      instance of this exact bug pattern — worth remembering if a fourth
+      turns up: any native/uncontrolled `.minimal.btn` inside `.curator-
+      page` needs this same treatment). Verified resting and hover states.
+- [x] **"Default" checkbox in SavedFilters** looked out of place next to the
+      Save button row — converted to Bootstrap's native `.custom-switch`
+      toggle (already bundled in Stash's own CSS, no new styling needed),
+      with a stable per-instance id via the existing `uuid()` helper.
+- [x] **Thin grey bar between Stash's navbar and Curator's own background**
+      — second instance of the round-11 gutter-bleed bug: Stash's
+      `.main.container-fluid` wrapper has an *undocumented* 7px top padding
+      (only the 15px horizontal gutter was compensated for originally),
+      transparent, letting `<body>`'s background color show through as a
+      thin bar between the (differently-colored) navbar and this page's own
+      background. Extended the existing negative-margin/matching-padding
+      technique to the top edge. Confirmed via computed-geometry dump
+      against the live instance before fixing.
+- [x] **No spinner during loading** — see "Other bugs / quirks" above (same
+      item as "No loading affordance for slow async actions").
+- [x] **"Synced" pill never indicated pending/rebuild-needed state** — it
+      only ever showed Running/Synced/Not-synced (has a sync ever
+      completed), never surfacing `model_pending`/`model_rebuilding` outside
+      the hover popover. Added those as two more pill states (amber pulse,
+      "N pending" / "Rebuilding" label) so the at-a-glance status is
+      actually informative. Considered moving Sync/Rebuild into the hover
+      popover per the initial ask, but recommended against it (burying the
+      two most frequently-used actions behind a hover interaction that
+      doesn't work well on touch) in favor of this — not yet revisited.
 
 ## Deliberately out of scope (tracked elsewhere — listed for completeness)
 

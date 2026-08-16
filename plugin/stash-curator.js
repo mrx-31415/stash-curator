@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpand, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -153,6 +153,12 @@
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
+  const CARD_SIZE_STORAGE_KEY = "stash-curator:card-size";
+  const CARD_SIZES = [
+    { key: "compact", label: "Compact", minWidth: "16rem" },
+    { key: "comfortable", label: "Comfortable", minWidth: "22rem" },
+    { key: "spacious", label: "Spacious", minWidth: "28rem" },
+  ];
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
@@ -2410,6 +2416,7 @@
     const [saved, setSaved] = React.useState(() => readFilterPresets()[scope] || {});
     const [name, setName] = React.useState("");
     const [makeDefault, setMakeDefault] = React.useState(false);
+    const [switchId] = React.useState(() => `curator-default-switch-${uuid()}`);
     function save() {
       const clean = name.trim();
       if (!clean) return;
@@ -2425,7 +2432,12 @@
       { className: "curator-saved-filters" },
       React.createElement("select", { value: "", onChange: (event) => { const value = saved.presets?.[event.target.value]; if (value) onApply(value); }, "aria-label": "Load saved filter" }, React.createElement("option", { value: "" }, "Saved filters…"), Object.keys(saved.presets || {}).sort().map((value) => React.createElement("option", { key: value, value }, `${value}${saved.default === value ? " · default" : ""}`))),
       React.createElement("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
-      React.createElement("label", null, React.createElement("input", { type: "checkbox", checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }), " Default"),
+      React.createElement(
+        "div",
+        { className: "custom-control custom-switch curator-default-switch" },
+        React.createElement("input", { type: "checkbox", className: "custom-control-input", id: switchId, checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }),
+        React.createElement("label", { className: "custom-control-label", htmlFor: switchId }, "Default")
+      ),
       React.createElement(Button, { size: "sm", variant: "secondary", disabled: !name.trim(), onClick: save }, "Save")
     );
   }
@@ -2752,6 +2764,7 @@
         "div",
         { className: "curator-similar-candidates" },
         candidates.map((entity) => React.createElement(Button, { key: entity.id, size: "sm", variant: "secondary", onClick: () => choose(entity) }, entity.title || entity.name || `#${entity.id}`)),
+        (sceneSearch.loading || performerSearch.loading) && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Searching…")),
         !sceneSearch.loading && !performerSearch.loading && candidates.length === 0 && React.createElement("p", null, "No matches found.")
       ),
       selected && React.createElement("div", { className: "curator-similar-reference" }, React.createElement("strong", null, "Comparing from"), React.createElement(SourceReference, { entity: sourceEntity, type: entityType, fallback: selected })),
@@ -3111,6 +3124,7 @@
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
+      loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
       data && !data.ready && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       data?.ready && React.createElement(
@@ -3614,7 +3628,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, theme, onToggleTheme }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onCycleCardSize }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -3725,11 +3739,30 @@
     // curator). CuratorControls always renders, so fall back to the trigger
     // pill alone rather than crashing the whole page on an invalid element.
     const { HoverPopover } = Api.components;
+    // "Synced" on its own only ever meant "has a sync ever completed" — it
+    // never told you whether the model itself needs attention (pending
+    // events not yet folded in, or a rebuild already underway), so the pill
+    // could read "Synced" right when a rebuild would actually be useful.
+    // Surface those states in both the pulse color and the label text
+    // instead of only inside the hover popover.
+    const pillState = running ? "running"
+      : latestFailure ? "failed"
+        : health?.model_rebuilding ? "rebuilding"
+          : health?.model_pending ? "pending"
+            : hasSynced ? "ready" : "idle";
+    const pillLabel = {
+      running: "Running",
+      failed: "Failed",
+      rebuilding: "Rebuilding",
+      pending: `${health?.model_pending_events || 0} pending`,
+      ready: "Synced",
+      idle: "Not synced",
+    }[pillState];
     const healthTrigger = React.createElement(
       "button",
       { type: "button", className: "curator-health-pill", "aria-label": "Curator sync and task status" },
-      React.createElement("span", { className: `curator-health-pulse curator-health-pulse-${running ? "running" : latestFailure ? "failed" : hasSynced ? "ready" : "idle"}` }),
-      React.createElement("span", { className: "curator-health-pill-label" }, running ? "Running" : hasSynced ? "Synced" : "Not synced")
+      React.createElement("span", { className: `curator-health-pulse curator-health-pulse-${pillState}` }),
+      React.createElement("span", { className: "curator-health-pill-label" }, pillLabel)
     );
     const healthControl = HoverPopover
       ? React.createElement(
@@ -3765,6 +3798,7 @@
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
+          onCycleCardSize && React.createElement(Button, { className: "curator-icon-button", size: "sm", title: `Card size: ${CARD_SIZES.find((size) => size.key === cardSize)?.label}. Click to cycle.`, "aria-label": `Card size: ${CARD_SIZES.find((size) => size.key === cardSize)?.label}. Click to cycle.`, onClick: onCycleCardSize }, React.createElement(FontAwesomeIcon, { icon: faExpand })),
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
       ),
@@ -3984,6 +4018,27 @@
         return next;
       });
     }
+    const [cardSize, setCardSize] = React.useState(() => {
+      try {
+        const stored = window.localStorage.getItem(CARD_SIZE_STORAGE_KEY);
+        return CARD_SIZES.some((size) => size.key === stored) ? stored : "comfortable";
+      } catch {
+        return "comfortable";
+      }
+    });
+    function cycleCardSize() {
+      setCardSize((current) => {
+        const index = CARD_SIZES.findIndex((size) => size.key === current);
+        const next = CARD_SIZES[(index + 1) % CARD_SIZES.length].key;
+        try {
+          window.localStorage.setItem(CARD_SIZE_STORAGE_KEY, next);
+        } catch {
+          // localStorage can be unavailable (private browsing); the change
+          // still works for the session, it just won't persist.
+        }
+        return next;
+      });
+    }
 
     React.useEffect(() => setFollowUps([]), [lane]);
 
@@ -4111,11 +4166,11 @@
 
     return React.createElement(
       "main",
-      { className: "curator-page container-fluid", "data-theme": theme },
+      { className: "curator-page container-fluid", "data-theme": theme, style: { "--curator-card-min-width": CARD_SIZES.find((size) => size.key === cardSize)?.minWidth } },
       React.createElement(
         "header",
         { className: "curator-header" },
-        React.createElement("div", { className: "curator-brand" }, React.createElement("span", { className: "curator-brand-mark", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement("div", null, React.createElement("h1", null, "Stash Curator"), React.createElement("p", { className: "curator-tagline" }, "Navigate your library, guided by your taste."))),
+        React.createElement("div", { className: "curator-brand", title: "Navigate your library, guided by your taste." }, React.createElement("span", { className: "curator-brand-mark", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement("h1", null, "Curator")),
         React.createElement(
           "div",
           { className: "curator-navigation" },
@@ -4140,7 +4195,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onCycleCardSize: cycleCardSize })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",
@@ -4223,6 +4278,7 @@
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
+      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,

@@ -200,23 +200,23 @@
   font-family: var(--curator-font-ui);
   box-sizing: border-box;
   /* Stash's own route wrapper (.main.container-fluid, outside anything
-     this stylesheet controls) carries a fixed 15px horizontal gutter with
-     a transparent background — Stash's real page background (a different
-     blue-grey, not --curator-bg) was showing through that gutter on every
-     side, most visibly on narrow/mobile widths where 15px is a much
-     bigger fraction of the screen. Same root cause as min-height above
-     (Stash's chrome bleeding through where this page doesn't reach), just
-     the horizontal axis instead of vertical — extend past the gutter with
-     matching negative margin, matched by extra inline padding so the
+     this stylesheet controls) carries a fixed 15px horizontal gutter *and*
+     a 7px top-padding gutter, both with a transparent background — Stash's
+     real page background (a different blue-grey, not --curator-bg) shows
+     through on all three edges: a thin grey bar between the navbar and
+     this page's own background at the top, and the same gutter bleed
+     horizontally, most visible on narrow/mobile widths where 15px is a
+     bigger fraction of the screen. Extend past the gutter on all three
+     sides with matching negative margin, matched by extra padding so the
      visible content inset is unchanged.
   */
-  margin: 0 auto 0;
+  margin: -7px auto 0;
   margin-inline: -15px;
   max-width: calc(112rem + 30px);
   min-height: 100vh;
   min-width: 0;
   overflow-x: clip;
-  padding: 0.55rem calc(1.25rem + 15px) 2rem;
+  padding: calc(0.55rem + 7px) calc(1.25rem + 15px) 2rem;
   width: calc(100% + 30px);
 }
 
@@ -266,11 +266,15 @@
   font-family: var(--curator-font-display);
 }
 
+/* Single row (brand | scrollable nav | controls) at every width, matching
+   the design mockup's app-header-inner — previously a 2-row grid (brand +
+   controls on row 1, nav spanning full-width on row 2) above 36rem, which
+   the mockup never does. */
 .curator-header {
   align-items: center;
-  display: grid;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.5rem 1.5rem;
-  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .curator-header > *,
@@ -379,8 +383,7 @@
 .curator-navigation {
   align-items: stretch;
   display: flex;
-  grid-column: 1 / -1;
-  grid-row: 2;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -1261,16 +1264,12 @@
 
 .curator-controls {
   align-items: center;
-  align-self: center;
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 0.35rem 0.6rem;
-  grid-column: 3;
-  grid-row: 1;
   height: 3rem;
-  justify-content: space-between;
-  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .curator-task-buttons {
@@ -1340,6 +1339,12 @@
 
 .curator-health-pulse-idle {
   background: var(--curator-border-strong);
+}
+
+.curator-health-pulse-pending,
+.curator-health-pulse-rebuilding {
+  background: var(--curator-accent-secondary);
+  box-shadow: 0 0 0 0.18rem color-mix(in srgb, var(--curator-accent-secondary) 22%, transparent);
 }
 
 .curator-health-panel {
@@ -1524,21 +1529,47 @@
   min-width: 16rem;
 }
 
+/* Shared loading indicator for every async panel (Similar/Expand/
+   Recommendations/Prune/Sentiment review/Backups/Profiling/Diagnostics) —
+   previously text-only, with no visual cue that something was actually
+   happening while a card grid populated or refreshed. */
 .curator-loading {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
   margin: 1rem 0;
   max-width: 28rem;
 }
 
-.curator-loading > span {
-  color: var(--curator-text-muted);
-  display: block;
-  margin-bottom: 0.4rem;
+.curator-loading::before {
+  animation: curator-spin 0.7s linear infinite;
+  border: 2px solid var(--curator-border-strong);
+  border-radius: 50%;
+  border-top-color: var(--curator-accent);
+  content: "";
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
 }
 
+@keyframes curator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.curator-loading > span {
+  color: var(--curator-text-muted);
+}
+
+/* --curator-card-min-width is set inline on .curator-page (see the header's
+   card-size button, CuratorPage's cardSize state) — Compact/Comfortable/
+   Spacious just change this one variable, cycling through 16rem/22rem/
+   28rem. */
 .curator-grid {
   display: grid;
   gap: 0.8rem;
-  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--curator-card-min-width, 22rem), 1fr));
 }
 
 .curator-card {
@@ -1602,6 +1633,25 @@
 
 .curator-card .card-popovers .btn {
   padding-inline: 0.35rem;
+}
+
+/* Same root cause as .curator-external-popover-button below: these native
+   SceneCard overlay buttons (tag/performer count, organized toggle) get no
+   explicit variant, so Bootstrap's "primary" default fights Stash's own
+   .minimal utility (meant to strip background/border) and .curator-page
+   .btn-primary wins on specificity, painting a solid gradient pill over
+   what's meant to be a quiet on-image icon+count trigger — reads as
+   shouting for attention on every single card. Force it back to a discreet
+   outline treatment instead, matching .curator-icon-action elsewhere. */
+.curator-page .curator-card .card-popovers .btn.minimal {
+  background: var(--curator-overlay);
+  border-color: transparent;
+  color: #fff;
+}
+
+.curator-page .curator-card .card-popovers .btn.minimal:hover {
+  background: color-mix(in srgb, var(--curator-overlay) 80%, #000);
+  color: #fff;
 }
 
 .curator-card .card-popovers .fa-icon {
@@ -2351,10 +2401,6 @@
     padding-inline: calc(0.65rem + 15px);
   }
 
-  /* The header stays one row (brand | scrollable nav | controls) at every
-     width, matching the mockup's primary-nav — it never drops to a second
-     row of its own. .curator-tabs already scrolls horizontally (see base
-     rule above), so the middle grid column just shrinks instead. */
   .curator-tabs .nav-link {
     white-space: nowrap;
   }
@@ -2383,7 +2429,6 @@
      (brand-word: none). Measured: without this, brand+controls alone ate
      278px of a 390px viewport, leaving the nav ~22px — room for a sliver
      of one pill, nothing scrollable in any useful sense. */
-  .curator-tagline,
   .curator-header h1 {
     display: none;
   }
@@ -2391,17 +2436,6 @@
   .curator-icon-button {
     height: 1.6rem;
     width: 1.6rem;
-  }
-
-  /* .curator-navigation's base rule (grid-column: 1 / -1; grid-row: 2)
-     always gives the nav its own full-width row below brand+controls —
-     fine with room to spare, but on a phone the mockup instead keeps nav
-     inline as a horizontally-scrollable strip between the brand and
-     controls, one row total. Only override the placement at this width;
-     the desktop two-row header is intentional and unaffected. */
-  .curator-navigation {
-    grid-column: 2;
-    grid-row: 1;
   }
 
   .curator-health-pill-label {
