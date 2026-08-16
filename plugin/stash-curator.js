@@ -10,8 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faDev } = libraries.FontAwesomeBrands;
-  const { faBalanceScale, faBroom, faBullseye, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -127,7 +126,7 @@
     {
       value: "profiling",
       label: "Profiling",
-      icon: faDev,
+      icon: faChartLine,
       maintenance: true,
       description: "Inspect render and query performance profiles captured during development.",
     },
@@ -1166,7 +1165,6 @@
     const [flash, setFlash] = React.useState(null); // {pairId, winner} while the outline shows
     const [picksUndo, setPicksUndo] = React.useState([]); // [{pairId, winner}] for Forward
     const FLASH_MS = 500;
-    const [curateTab, setCurateTab] = React.useState("pick");
     const [tags, setTags] = React.useState(null);
     const [suggestions, setSuggestions] = React.useState(null);
     const [suggestionError, setSuggestionError] = React.useState("");
@@ -1301,7 +1299,7 @@
       }
     }, [picksRound, picksAnswers]);
     React.useEffect(() => {
-      if (curateTab !== "pick" || !picksRound || picksVerdict || picksRound.pairs.length === 0) {
+      if (!picksRound || picksVerdict || picksRound.pairs.length === 0) {
         return;
       }
       const answeredCount = Object.keys(picksAnswers).length;
@@ -1329,7 +1327,7 @@
       }
       window.addEventListener("keydown", onKey);
       return () => window.removeEventListener("keydown", onKey);
-    }, [curateTab, picksRound, picksVerdict, picksAnswers, flash]);
+    }, [picksRound, picksVerdict, picksAnswers, flash]);
     async function submitPicks() {
       const entries = Object.entries(picksAnswers)
         .filter(([, winner]) => winner !== "similar")
@@ -1396,14 +1394,7 @@
       { className: "curator-curate", "aria-labelledby": "curator-curate-title" },
       React.createElement("h2", { id: "curator-curate-title" }, "Curate"),
       React.createElement("p", null, "Pick the scene you prefer in each pair — every choice teaches the model about all tags, performers, and studios the scenes carried."),
-      React.createElement(
-        "div",
-        { className: "curator-curate-tabs", role: "tablist", "aria-label": "Curate views" },
-        React.createElement(Button, { size: "sm", variant: curateTab === "pick" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "pick", onClick: () => setCurateTab("pick") }, "Pick"),
-        React.createElement(Button, { size: "sm", variant: curateTab === "tags" ? "primary" : "secondary", role: "tab", "aria-selected": curateTab === "tags", onClick: () => setCurateTab("tags") }, "Tag sentiment")
-      ),
-      curateTab === "tags" && React.createElement(TasteProfilePanel),
-      curateTab === "pick" && !picksRound && React.createElement(
+      !picksRound && React.createElement(
         "div",
         { className: "curator-curate-started" },
         React.createElement("h3", null, "Compare two scenes"),
@@ -1439,7 +1430,7 @@
           )
         )
       ),
-      curateTab === "pick" && picksRound && React.createElement(
+      picksRound && React.createElement(
         "div",
         { className: "curator-pick" },
         React.createElement(
@@ -3453,7 +3444,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, onProfiling, profilingActive, theme, onToggleTheme }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme }) {
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
@@ -3603,7 +3594,6 @@
           { className: "curator-task-buttons" },
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
-          React.createElement(Button, { className: "curator-icon-button curator-profiling-button", size: "sm", variant: profilingActive ? "primary" : "secondary", title: "Open performance profiles.", "aria-label": "Open performance profiles", "aria-pressed": profilingActive, onClick: onProfiling }, React.createElement(FontAwesomeIcon, { icon: faDev })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
           React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
         )
@@ -3954,7 +3944,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, onProfiling: () => openManage("profiling"), profilingActive: lane === "manage" && currentSection === "profiling", theme, onToggleTheme: toggleTheme })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",

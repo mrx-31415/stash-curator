@@ -427,9 +427,10 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    # Tag sentiment now lives as a tab under Curate.
-    assert '"Tag sentiment"' in source
-    assert "curateTab" in source
+    # Tag sentiment lives exclusively under Manage > Taste Profile now (GH
+    # #152 round 2) — Curate's old "Tag sentiment" tab duplicated it and was
+    # removed, since Taste Profile is Manage's default landing section.
+    assert 'function TasteProfilePanel({ embedded = false } = {})' in source
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -446,13 +447,13 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'if (sort !== "suggested")' in source
 
 
-def test_curate_lane_renders_picks_and_tag_sentiment() -> None:
+def test_curate_lane_renders_picks() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert 'value: "curate"' in source
-    assert '"Tag sentiment"' in source
-    assert 'role: "tablist"' in source
-    assert '"Pick"' in source
+    # No tab switcher any more — Curate is pair-comparison only now that its
+    # old "Tag sentiment" tab (a duplicate of Manage > Taste Profile) is gone.
+    assert "curateTab" not in source
     assert "Compare scenes in pairs to teach the model fast" in source
     assert "PickSceneCard" in source
     assert 'event.key === "ArrowLeft"' in source

@@ -88,6 +88,42 @@
   --curator-hue-prune: #7c838c;
 }
 
+/* Bare <button>s don't inherit color from their parent by default in most
+   browsers (the UA stylesheet gives them their own color: buttontext) — any
+   text inside one that doesn't set its own explicit color falls back to
+   near-black regardless of the surrounding dark background. Confirmed
+   reproducing on .curator-lane-card-name. Fix at the root rather than
+   patching each instance found. */
+.curator-page button {
+  color: inherit;
+}
+
+/* Plain Bootstrap <Button>s (Generate, Rebuild, Submit picks, etc.) only
+   ever picked up curator's design tokens where a hand-picked custom class
+   (.curator-icon-button and friends) happened to set them explicitly —
+   every other button on the page kept Stash's own default Bootstrap
+   radius, reading as a different, un-reskinned control next to anything
+   that did get a custom class. Scope the radius token to every button
+   under .curator-page so the whole page is visually one family. */
+.curator-page .btn {
+  border-radius: var(--curator-radius);
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.curator-page .btn:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-page .btn {
+    transition: none;
+  }
+
+  .curator-page .btn:active {
+    transform: none;
+  }
+}
+
 .curator-page {
   background: var(--curator-bg);
   color: var(--curator-text);
@@ -95,6 +131,7 @@
   box-sizing: border-box;
   margin: 0 auto;
   max-width: 112rem;
+  min-height: 100vh;
   min-width: 0;
   overflow-x: clip;
   padding: 0.55rem 1.25rem 2rem;
@@ -296,6 +333,7 @@
 }
 
 .curator-lane-card-name {
+  color: var(--curator-text);
   font-size: 0.85rem;
   font-weight: 700;
 }
@@ -553,7 +591,7 @@
 .curator-sentiment-range {
   appearance: none;
   -webkit-appearance: none;
-  background: linear-gradient(90deg, #212529, #212529 10%, #dc3545 12%, #fd7e14, #6c757d, #6b8e23, #198754);
+  background: var(--curator-card-border-strong);
   border-radius: var(--curator-radius-lg);
   display: block;
   height: 0.35rem;
@@ -820,10 +858,6 @@
   justify-content: center;
   padding: 0;
   width: 1.8rem;
-}
-
-.curator-profiling-button svg {
-  font-size: 0.78rem;
 }
 
 /* Health/sync status popover (GH #150 Package 3): replaces the always-open
@@ -2079,6 +2113,14 @@
   color: var(--curator-card-text);
 }
 
+.curator-curate-started {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  margin-top: 0.75rem;
+  padding: 1rem 1.1rem;
+}
+
 .curator-curate-started h3 {
   font-size: 1rem;
 }
@@ -2182,12 +2224,6 @@
     aspect-ratio: 16 / 9;
     max-height: 180px;
   }
-}
-
-.curator-curate-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
 }
 
 .curator-pick-compare {
