@@ -115,25 +115,40 @@ Artifacts:
 
 ## Buttons / icons
 
-- [ ] Add explicit `variant` to the ~26 buttons currently defaulting to
-      Bootstrap `primary` (see contrast item above — same root cause, listing
-      separately here as the styling-system fix vs. the accessibility bug).
-- [ ] Reconcile the two parallel icon-button patterns:
-      `.curator-icon-button` (header sync/rebuild/theme/settings — hardened
-      with `!important` to the muted "surface" look) vs.
-      `.curator-icon-action` (ExternalCard's row — no such override, silently
-      inherits whatever variant it was given). Currently "Copy StashDB ID" is
-      bright blue while its siblings "Open on StashDB" / "Add to shortlist"
-      in the same row are muted dark — one button group, two visual styles.
-- [ ] Unify the two "Save" button treatments: Feedback-history's inline
-      replace-row Save is `variant="link"` (text-only); the filter-bar Save
-      (Recommendations/Similar/Expand/Hunt) is a solid primary button. Same
-      action, different weight.
-- [ ] Drop the icon on **"Hide exact PHash matches"** toggle (Similar) — the
-      clone/copy icon doesn't intuitively map to "phash duplicate," label
-      alone is already clear.
-- [ ] Drop the icon on **"Local"** (include-owned) toggle — metaphor mismatch
-      (user-check icon ≠ "include library items").
+- [x] Add explicit `variant` to the ~26 buttons currently defaulting to
+      Bootstrap `primary`. Audited every `React.createElement(Button, ...)`
+      call site without an explicit `variant`. Kept `primary` only where a
+      screen genuinely has one true CTA (Curate's pick buttons and Submit,
+      the first-run "Sync and build recommendations", Search, Create
+      backup, Apply, Generate) — assigned `secondary` to utility/navigation
+      buttons (pagination Previous/Next, Profiling/Diagnostics Refresh/View/
+      Download/Copy/Export/Back-to-root, the filter-bar Save, the "minimal"
+      ExternalCard tag/performer/studio count popover trigger, which turned
+      out to have the same bug: no explicit variant meant `.btn-primary`'s
+      gradient — at higher specificity than Stash's own `.minimal` reset —
+      painted over what should read as a plain ghost trigger) and `link` to
+      Curate's "More" dropdown-menu items (Not now/Never show/Metadata is
+      wrong/Mark for pruning, previously solid primary blocks stacked in a
+      small popover).
+- [x] Reconcile the two parallel icon-button patterns:
+      `.curator-icon-button` (header sync/rebuild/theme/settings) vs.
+      `.curator-icon-action` (ExternalCard's row). "Copy StashDB ID" and
+      "Show this performer's scenes" had no explicit variant (defaulting to
+      bright-blue primary) while their siblings were explicitly secondary/
+      state-toggled — now `variant: "secondary"` on both, consistent with
+      "Open on StashDB" and the unselected state of "Add to shortlist"/
+      "Rate tags & terms". Verified via screenshot on Expand results.
+- [x] Unify the two "Save" button treatments: feedback-history's inline
+      replace-row Save stays `variant="link"` (correct for a compact table-
+      row micro-action alongside its "Undo" sibling); the filter-bar Save
+      changed from an implicit solid-primary default to explicit
+      `variant="secondary"` — neither now competes with each screen's real
+      primary action (Apply/Submit), even though the two treatments still
+      differ in weight (link vs. bordered button) since they sit in
+      genuinely different-density contexts.
+- [x] Drop the icon on **"Hide exact PHash matches"** toggle (Similar).
+- [x] Drop the icon on **"Local"** (include-owned) toggle. Removed the
+      now-unused `faUserCheck` import.
 - [ ] Redesign the **ExternalCard action row** (5 icon-only buttons —
       external-link, copy-ID, shortlist, rate-tags, refresh-Whisparr — on
       every Similar/Expand/Hunt result card, 20+ per page): no labels, same

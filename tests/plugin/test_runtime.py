@@ -675,7 +675,7 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     # Similar/Expand/Hunt share one FilterBar component (variant-gated), so
     # this markup now appears once in FilterBar's definition rather than
     # once per hand-duplicated filter panel.
-    assert source.count('" Hide exact PHash matches"') == 1
+    assert source.count('"Hide exact PHash matches"') == 1
     assert "function FilterBar({" in source
     assert 'React.createElement(FilterBar, {\n        variant: "similar"' in source
     assert 'React.createElement(FilterBar, {\n        variant: "hunt"' in source

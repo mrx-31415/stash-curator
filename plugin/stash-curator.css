@@ -2044,6 +2044,23 @@
   padding: 0 0.25rem;
 }
 
+/* This button gets no explicit `variant` prop, so React-Bootstrap's default
+   ("primary") still applies the .btn-primary class alongside Stash's own
+   .minimal utility (meant to strip background/border entirely) — and
+   .curator-page .btn-primary (0,2,0 specificity) beats .minimal (0,1,1),
+   so the gradient painted over what should read as a plain ghost icon+count
+   trigger. Force it back to transparent specifically for this button. */
+.curator-page .curator-external-popover-button.minimal {
+  background: none;
+  border-color: transparent;
+  color: var(--curator-text-muted);
+}
+
+.curator-page .curator-external-popover-button.minimal:hover {
+  background: var(--curator-wash-raised);
+  color: var(--curator-text);
+}
+
 .curator-external-popover-links {
   display: flex;
   gap: 0.3rem;

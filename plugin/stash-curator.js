@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faUserCheck, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -520,12 +520,12 @@
     return React.createElement(
       "nav",
       { className: "curator-pager", "aria-label": label },
-      React.createElement(Button, { size: "sm", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
       pagerPages(page, totalPages).map((value, index) => value === null
         ? React.createElement("span", { key: `ellipsis-${index}`, className: "curator-pager-ellipsis", "aria-hidden": "true" }, "…")
         : React.createElement(Button, { key: value, size: "sm", variant: value === page ? "primary" : "secondary", disabled: loading || value === page, onClick: () => onPage(value), "aria-label": `Page ${value}`, "aria-current": value === page ? "page" : undefined }, value)),
       React.createElement("span", { className: "curator-pager-summary" }, `Page ${page} of ${totalPages}`),
-      React.createElement(Button, { size: "sm", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
     );
   }
 
@@ -1716,10 +1716,10 @@
       "div",
       { className: "curator-prune-actions" },
       React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })),
-      React.createElement(Button, { className: "curator-icon-action", size: "sm", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: onCopy }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })),
+      React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: onCopy }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })),
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
-      kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
+      kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
       kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
       whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
@@ -1894,10 +1894,10 @@
         React.createElement(
           "div",
           { className: "curator-more-menu" },
-          React.createElement(Button, { size: "sm", title: "Hide this scene temporarily without treating it as a dislike.", onClick: () => send("not_now") }, "Not now"),
-          React.createElement(Button, { size: "sm", title: "Permanently exclude this scene from Curator.", onClick: () => send("never_show") }, "Never show"),
-          React.createElement(Button, { size: "sm", title: "Keep the scene, but do not learn from its current metadata.", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
-          React.createElement(Button, { size: "sm", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
+          React.createElement(Button, { size: "sm", variant: "link", title: "Hide this scene temporarily without treating it as a dislike.", onClick: () => send("not_now") }, "Not now"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Permanently exclude this scene from Curator.", onClick: () => send("never_show") }, "Never show"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Keep the scene, but do not learn from its current metadata.", onClick: () => send("metadata_wrong", "Do not train from this metadata") }, "Metadata is wrong"),
+          React.createElement(Button, { size: "sm", variant: "link", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
         )
       ),
       saved && React.createElement("small", { role: "status" }, saved)
@@ -2305,7 +2305,7 @@
       React.createElement("select", { value: "", onChange: (event) => { const value = saved.presets?.[event.target.value]; if (value) onApply(value); }, "aria-label": "Load saved filter" }, React.createElement("option", { value: "" }, "Saved filters…"), Object.keys(saved.presets || {}).sort().map((value) => React.createElement("option", { key: value, value }, `${value}${saved.default === value ? " · default" : ""}`))),
       React.createElement("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
       React.createElement("label", null, React.createElement("input", { type: "checkbox", checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }), " Default"),
-      React.createElement(Button, { size: "sm", disabled: !name.trim(), onClick: save }, "Save")
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: !name.trim(), onClick: save }, "Save")
     );
   }
 
@@ -2352,7 +2352,7 @@
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
         rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
-        rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Hide exact PHash matches"),
+        rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, "Hide exact PHash matches"),
         sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
         rankingOnly && sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
         applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
@@ -2609,7 +2609,7 @@
           React.createElement("input", { className: "form-control form-control-sm", value: query, onChange: (event) => setQuery(event.target.value), placeholder: `Search for a ${entityType}…`, "aria-label": `Search for a ${entityType}` }),
           React.createElement(Button, { size: "sm", type: "submit", disabled: !query.trim() }, "Search")
         ),
-        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, React.createElement(FontAwesomeIcon, { icon: faUserCheck }), " Local"),
+        source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
         React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
@@ -3222,7 +3222,7 @@
     const pprofSection = React.createElement("div", { className: "curator-pprof" },
       React.createElement("div", { className: "curator-profiling-toolbar" },
         React.createElement("h3", null, "CPU profiles"),
-        React.createElement(Button, { size: "sm", onClick: loadPprof }, "Refresh"),
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: loadPprof }, "Refresh"),
         React.createElement(Button, { size: "sm", variant: "danger", onClick: clearPprof, disabled: !pprofs?.items?.length }, "Clear"),
       ),
       !pprofs?.enabled && React.createElement("div", { className: "alert alert-info" }, "Capture is off. Enable \u201cCapture CPU profiles\u201d in the plugin settings, then run the operation to profile it."),
@@ -3234,13 +3234,13 @@
           React.createElement("td", null, item.name),
           React.createElement("td", null, formatSize(item.size_bytes)),
           React.createElement("td", null, new Date(item.modified_ms).toLocaleString()),
-          React.createElement("td", null, React.createElement(Button, { size: "sm", onClick: () => viewPprof(item.name) }, "View"), " ", React.createElement(Button, { size: "sm", onClick: () => downloadPprof(item.name) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download")),
+          React.createElement("td", null, React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => viewPprof(item.name) }, "View"), " ", React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => downloadPprof(item.name) }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download")),
         ))),
       ),
       pprofView && React.createElement("div", { className: "curator-pprof-detail" },
         React.createElement("div", { className: "curator-profiling-toolbar" },
           React.createElement("h4", null, pprofView.name),
-          flameRoot ? React.createElement(Button, { size: "sm", onClick: () => setFlameRoot(null) }, "Back to root") : null,
+          flameRoot ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => setFlameRoot(null) }, "Back to root") : null,
         ),
         React.createElement("p", null, `${pprofView.kind} · ${pprofView.unit_label} · ${pprofView.sample_count} samples · ${pprofView.total.toFixed(1)} ${pprofView.unit_label}${pprofView.duration_ms ? ` · ${pprofView.duration_ms} ms captured` : ""}`),
         flameHeight > 0 && React.createElement("svg", { viewBox: `0 0 1000 ${flameHeight}`, preserveAspectRatio: "xMidYMid meet", className: "curator-flamegraph" }, flameRects),
@@ -3308,13 +3308,13 @@
       { className: "curator-profiling", role: "tabpanel" },
       !profiles?.enabled && React.createElement("div", { className: "alert alert-info" }, "Profiling is disabled. Enable it in Curator's plugin settings to record new operations; saved profiles remain available."),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, "Recent profiles"), React.createElement(Button, { size: "sm", onClick: load, disabled: loading }, "Refresh"), React.createElement(Button, { size: "sm", variant: "danger", onClick: clear, disabled: !profiles?.items?.length }, "Clear")),
+      React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, "Recent profiles"), React.createElement(Button, { size: "sm", variant: "secondary", onClick: load, disabled: loading }, "Refresh"), React.createElement(Button, { size: "sm", variant: "danger", onClick: clear, disabled: !profiles?.items?.length }, "Clear")),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading profiles…"),
       profiles && !loading && profiles.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No profiles have been recorded yet."),
       profiles?.items?.length > 0 && React.createElement("div", { className: "curator-profile-layout" },
         React.createElement("div", { className: "curator-profile-list", role: "list" }, profiles.items.map((item) => React.createElement("button", { key: item.trace_id, type: "button", className: selected?.trace_id === item.trace_id ? "active" : "", onClick: () => inspect(item.trace_id) }, React.createElement("strong", null, item.operation), React.createElement("span", null, `${item.kind} · ${formatDuration(item.duration_us)}`), React.createElement("small", null, `${new Date(item.started_at_ms).toLocaleString()} · ${item.status}${item.truncated ? " · truncated" : ""}`)))),
         selected && React.createElement("div", { className: "curator-profile-detail" },
-          React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, selected.operation), React.createElement(Button, { size: "sm", onClick: exportTrace }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Export trace")),
+          React.createElement("div", { className: "curator-profiling-toolbar" }, React.createElement("h2", null, selected.operation), React.createElement(Button, { size: "sm", variant: "secondary", onClick: exportTrace }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Export trace")),
           React.createElement("p", null, `${formatDuration(selected.duration_us)} · ${selected.span_count} spans · ${selected.status}`),
           React.createElement("div", { className: "curator-profile-timeline", "aria-label": "Trace timeline" }, spans.slice(0, 100).map((event, index) => React.createElement("div", { key: `${event.name}-${index}`, title: `${event.cat}: ${event.name} (${formatDuration(event.dur)})` }, React.createElement("span", { className: `curator-profile-${event.cat}`, style: { marginLeft: `${Math.max(0, ((event.ts - root.ts) / total) * 100)}%`, width: `${Math.max(0.4, (event.dur / total) * 100)}%` } })))),
           spans.length > visibleSpans.length && React.createElement("small", null, `Showing the 500 longest of ${spans.length} spans; export contains all spans.`),
@@ -3367,9 +3367,9 @@
       React.createElement(
         "div",
         { className: "curator-profiling-toolbar" },
-        React.createElement(Button, { size: "sm", onClick: load }, "Refresh"),
-        React.createElement(Button, { size: "sm", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
-        React.createElement(Button, { size: "sm", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: load }, "Refresh"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: !report, onClick: copy }, React.createElement(FontAwesomeIcon, { icon: faCopy }), " Copy"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: !report, onClick: download }, React.createElement(FontAwesomeIcon, { icon: faDownload }), " Download JSON")
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, "Loading diagnostics…"),
       message && React.createElement("div", { className: "alert alert-success", role: "status" }, message),
