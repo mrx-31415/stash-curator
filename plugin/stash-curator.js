@@ -720,6 +720,13 @@
     const labels = {
       "appeal.performer_identity": "Performer match",
       "appeal.content_neighbor": "Similar content",
+      // The baseline reason present on every impression regardless of lane
+      // (core/slate.go, slate_greedy.go, score_review.go all seed reasonIDs
+      // with this) — richer reasons like the two above are appended after
+      // it when they apply, but plenty of items have no reason beyond this
+      // one. The naive fallback below (last dot-segment, title-cased) turns
+      // it into the confusing bare word "Lane".
+      "eligibility.lane": "Eligible for this lane",
     };
     const fallback = code.split(".").at(-1).replaceAll("_", " ");
     return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
@@ -2168,7 +2175,7 @@
           ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
           : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
       ),
-      React.createElement("td", null, laneByValue.get(item.lane)?.label || item.lane),
+      React.createElement("td", null, item.lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.lane)?.label || item.lane)),
       React.createElement(
         "td",
         null,

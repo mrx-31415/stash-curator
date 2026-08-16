@@ -167,15 +167,23 @@ Artifacts:
       rail entirely while scrolling. Fixes the symptom, not the cause;
       consider pagination/virtualization on Taste Profile instead (see UX
       suggestions).
-- [ ] **Raw enum leak regression**: Manage → Recently Recommended's "Lane"
-      column shows `score_review` verbatim for Sentiment-review-sourced rows,
-      while other rows correctly show "For You" etc. (Feedback-history/
-      Sentiment badges were already fixed for this class of bug — this is a
-      spot that was missed.)
-- [ ] **"Reason shown" column is dead** in Manage → Recently Recommended —
-      every row shows the literal string "Lane" regardless of scene, while
-      the adjacent "Why this now?" expandable text does show real per-scene
-      reasoning. Either wire it up or remove the column.
+- [x] **Raw enum leak regression**: Manage → Recently Recommended's "Lane"
+      column showed `score_review` verbatim for Sentiment-review-sourced
+      rows. `RecommendationHistoryRow` had its own separate lane→label
+      lookup (`laneByValue.get(item.lane)?.label || item.lane`) that never
+      got the `score_review` → "Sentiment review" special case already
+      applied elsewhere (e.g. the Sentiment-review card badge) — added it
+      here too. Verified via screenshot.
+- [x] **"Reason shown" column is dead** — not actually dead: every row
+      showing the literal string "Lane" was `reasonLabel()`'s naive fallback
+      (last dot-segment, title-cased) mangling `"eligibility.lane"`, the
+      baseline reason code every impression gets seeded with regardless of
+      lane (`core/slate.go`, `slate_greedy.go`, `score_review.go` all start
+      `reasonIDs` with it; richer reasons like `appeal.performer_identity`
+      are appended when they apply, but plenty of items have nothing beyond
+      the baseline). Added `"eligibility.lane": "Eligible for this lane"` to
+      the existing label map, same pattern as the other two entries.
+      Verified via screenshot — column now reads sensibly on every row.
 - [ ] **No loading affordance for slow async actions** (systemic gap, not
       just Curate): Generate has 4–8s of dead air (confirmed ~8s GraphQL
       round-trip via network trace) with only a subtly-dimmed button; Expand's
