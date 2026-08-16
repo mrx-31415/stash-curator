@@ -53,6 +53,11 @@ class CuratorAPI:
         now_ms: int | None = None,
         exclude_scene_ids: set[str] | None = None,
         exploration: float = 0,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_ids: tuple[str, ...] = (),
+        studio_ids: tuple[str, ...] = (),
+        gender: str = "",
     ) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
             raise ValueError("invalid recommendation page")
@@ -73,9 +78,13 @@ class CuratorAPI:
         start = (page - 1) * count
         end = page * count
         builder = SlateBuilder(self.connection, diversity_enabled=bool(config["diversity_enabled"]))
+        has_filters = bool(include_tags or exclude_tags or performer_ids or studio_ids or gender)
+        # A filtered request always recomputes total from a full candidate
+        # fetch, the same way an exploration request does, since the cached
+        # eligibility count doesn't know about filters.
         total = (
             builder.available_count(model_id, lane, exclude_scene_ids=excluded)
-            if exploration == 0
+            if exploration == 0 and not has_filters
             else None
         )
         if total is None:
@@ -99,7 +108,16 @@ class CuratorAPI:
             request_count = max(end + len(excluded), candidate_count + len(excluded))
         else:
             request_count = end + len(excluded)
-        built = builder.recommend(lane, request_count, exploration=exploration)
+        built = builder.recommend(
+            lane,
+            request_count,
+            exploration=exploration,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            performer_ids=performer_ids,
+            studio_ids=studio_ids,
+            gender=gender,
+        )
         available = tuple(item for item in built.items if item.scene_id not in excluded)
         if total is None:
             total = len(available)

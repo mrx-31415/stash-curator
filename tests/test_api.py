@@ -156,9 +156,30 @@ def test_slate_api_materializes_only_through_requested_page(
     requested_counts: list[int] = []
     recommend = SlateBuilder.recommend
 
-    def observed(self: SlateBuilder, lane: str, count: int, *, exploration: float = 0) -> Slate:
+    def observed(
+        self: SlateBuilder,
+        lane: str,
+        count: int,
+        *,
+        exploration: float = 0,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_ids: tuple[str, ...] = (),
+        studio_ids: tuple[str, ...] = (),
+        gender: str = "",
+    ) -> Slate:
         requested_counts.append(count)
-        return recommend(self, lane, count, exploration=exploration)
+        return recommend(
+            self,
+            lane,
+            count,
+            exploration=exploration,
+            include_tags=include_tags,
+            exclude_tags=exclude_tags,
+            performer_ids=performer_ids,
+            studio_ids=studio_ids,
+            gender=gender,
+        )
 
     monkeypatch.setattr(SlateBuilder, "recommend", observed)
 

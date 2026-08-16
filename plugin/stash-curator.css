@@ -1,18 +1,280 @@
-.curator-page {
-  box-sizing: border-box;
-  margin: 0 auto;
-  max-width: 112rem;
-  min-width: 0;
-  overflow-x: clip;
-  padding: 0.55rem 1.25rem 2rem;
-  width: 100%;
+/* Design tokens (GH #150 Package 1, revised GH #152 Package 5). Stash's own
+   chrome (navbar, page background) has no light theme at all, so these
+   tokens can't be driven by the viewer's prefers-color-scheme — a
+   light-calibrated accent sitting in Stash's permanently-dark navbar would
+   read as washed out, not "light mode". Dark stays the default (bare
+   :root, matching the app it's embedded in and every existing install);
+   light is an explicit opt-in via [data-theme="light"], flipped by the
+   header's theme toggle rather than by OS preference.
+   --curator-card-* backs Stash's native scene-card/performer-card
+   internals and curator's own adjacent card-body content — its colors
+   *are* theme-responsive (see the light block below), Stash's own
+   hardcoded card CSS just isn't, so that half needs direct selector
+   overrides instead of a token swap (see the .curator-card .card rules
+   below the light-theme block). */
+:root {
+  --curator-bg: #101216;
+  --curator-surface: #182126;
+  --curator-surface-raised: #252a30;
+  --curator-card-surface: #182126;
+  --curator-card-border: rgba(255, 255, 255, 0.12);
+  --curator-card-border-strong: rgba(255, 255, 255, 0.22);
+  --curator-card-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
+  --curator-card-shadow-lg: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+  --curator-card-text: #f8f9fa;
+  --curator-card-text-muted: #adb5bd;
+  --curator-border: rgba(255, 255, 255, 0.14);
+  --curator-border-strong: rgba(255, 255, 255, 0.22);
+  --curator-text: #f8f9fa;
+  --curator-text-muted: #adb5bd;
+  --curator-overlay: rgba(16, 18, 22, 0.82);
+  --curator-wash-raised: rgba(255, 255, 255, 0.04);
+  --curator-wash-recessed: rgba(0, 0, 0, 0.18);
+  --curator-shadow-color: rgba(0, 0, 0, 0.3);
+  --curator-glow-color: rgba(51, 154, 240, 0.24);
+
+  --curator-accent: #4f8ce0;
+  --curator-accent-secondary: #d59a52;
+
+  --curator-hue-for_you: #4f8ce0;
+  --curator-hue-similar: #6cc4dc;
+  --curator-hue-best_bets: #d59a52;
+  --curator-hue-hunt: #d98a9e;
+  --curator-hue-discover: #5cc19c;
+  --curator-hue-adventure: #e0824f;
+  --curator-hue-revisit: #b79ce0;
+  --curator-hue-expand: #e0645c;
+  --curator-hue-prune: #9aa1ab;
+
+  --curator-radius-sm: 4px;
+  --curator-radius: 7px;
+  --curator-radius-lg: 10px;
+
+  --curator-shadow-sm: 0 0.2rem 0.55rem var(--curator-shadow-color);
+  --curator-shadow-md: 0 0.25rem 0.8rem var(--curator-shadow-color);
+  --curator-shadow-lg: 0 0.4rem 1rem var(--curator-shadow-color);
+  --curator-shadow-glow: 0 0.25rem 0.8rem var(--curator-glow-color);
+
+  /* Deliberately NOT var(--curator-accent)/var(--curator-hue-similar) — those
+     vivid hues measure 3.41:1/1.99:1 against white text, both failing WCAG
+     AA (4.5:1). These are the same darker blue/teal already used as the
+     *light*-theme accent/hue-similar values (6.21:1/4.63:1) — reused here
+     as literals so dark theme's primary-button gradient passes AA too,
+     without darkening the vivid accent everywhere else it's used
+     (lane-hue dots, focus rings, etc). */
+  --curator-gradient-brand: linear-gradient(145deg, #1d5fb8, #1f7f96);
+
+  --curator-font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --curator-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --curator-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
 }
 
+.curator-page[data-theme="light"] {
+  --curator-bg: #f1f2f5;
+  --curator-surface: #ffffff;
+  --curator-surface-raised: #e9ebef;
+  --curator-card-surface: #ffffff;
+  --curator-card-border: rgba(16, 18, 22, 0.14);
+  --curator-card-border-strong: rgba(16, 18, 22, 0.24);
+  --curator-card-text: #16181c;
+  --curator-card-text-muted: #5b6470;
+  --curator-border: rgba(16, 18, 22, 0.14);
+  --curator-border-strong: rgba(16, 18, 22, 0.24);
+  --curator-text: #16181c;
+  --curator-text-muted: #5b6470;
+  --curator-overlay: rgba(16, 18, 22, 0.5);
+  --curator-wash-raised: rgba(16, 18, 22, 0.04);
+  --curator-wash-recessed: rgba(16, 18, 22, 0.06);
+  --curator-shadow-color: rgba(16, 18, 22, 0.16);
+  --curator-glow-color: rgba(29, 95, 184, 0.22);
+
+  --curator-accent: #1d5fb8;
+  --curator-accent-secondary: #a56f2a;
+
+  --curator-hue-for_you: #1d5fb8;
+  --curator-hue-similar: #1f7f96;
+  --curator-hue-best_bets: #a56f2a;
+  --curator-hue-hunt: #a34a63;
+  --curator-hue-discover: #2f8f68;
+  --curator-hue-adventure: #b85e33;
+  --curator-hue-revisit: #7452ad;
+  --curator-hue-expand: #b83f4c;
+  --curator-hue-prune: #7c838c;
+}
+
+/* Stash's own native scene/performer card (Api.components.SceneCard,
+   rendered inside .curator-card) was previously assumed un-themeable and
+   pinned dark to match — but its background/title-color rules are plain
+   CSS, not inline styles, so they're just as overridable as the
+   Bootstrap .btn-primary/.alert-* overrides above. Restyle the card body
+   (thumbnail + its own overlays are left alone — badges over arbitrary
+   video/image content should stay legible regardless of page theme, the
+   same convention this component already uses) for light mode. .text-muted
+   carries !important in Stash's own stylesheet, so the override needs it
+   too, not just higher specificity. */
+.curator-page[data-theme="light"] .curator-card .card {
+  background-color: var(--curator-surface);
+  color: var(--curator-text);
+}
+
+.curator-page[data-theme="light"] .curator-card .card-section-title {
+  color: var(--curator-text);
+}
+
+.curator-page[data-theme="light"] .curator-card .text-muted {
+  color: var(--curator-text-muted) !important;
+}
+
+.curator-page[data-theme="light"] .curator-card hr {
+  border-color: var(--curator-border);
+}
+
+/* Bare <button>s don't inherit color from their parent by default in most
+   browsers (the UA stylesheet gives them their own color: buttontext) — any
+   text inside one that doesn't set its own explicit color falls back to
+   near-black regardless of the surrounding dark background. Confirmed
+   reproducing on .curator-lane-card-name. Fix at the root rather than
+   patching each instance found. */
+.curator-page button {
+  color: inherit;
+}
+
+/* Plain Bootstrap <Button>s (Generate, Rebuild, Submit picks, etc.) only
+   ever picked up curator's design tokens where a hand-picked custom class
+   (.curator-icon-button and friends) happened to set them explicitly —
+   every other button on the page kept Stash's own default Bootstrap
+   radius, reading as a different, un-reskinned control next to anything
+   that did get a custom class. Scope the radius token to every button
+   under .curator-page so the whole page is visually one family. */
+.curator-page .btn {
+  border-radius: var(--curator-radius);
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.curator-page .btn:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-page .btn {
+    transition: none;
+  }
+
+  .curator-page .btn:active {
+    transform: none;
+  }
+}
+
+/* Bootstrap's stock .btn-primary/-secondary fills read heavier and flatter
+   than the mockup's palette: secondary there is just a bordered, --surface
+   button (color comes from the border/text, not a solid fill), and the
+   gradient treatment is reserved for the one true primary action per
+   screen rather than applied to every button that happens to default to
+   "primary". Restyle both to match. */
+.curator-page .btn-secondary,
+.curator-page .btn-outline-secondary {
+  background: var(--curator-surface);
+  border-color: var(--curator-border-strong);
+  color: var(--curator-text);
+}
+
+.curator-page .btn-secondary:hover,
+.curator-page .btn-outline-secondary:hover {
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-text-muted);
+}
+
+.curator-page .btn-primary {
+  background: var(--curator-gradient-brand);
+  border-color: var(--curator-accent);
+  color: #fff;
+}
+
+.curator-page .btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.curator-page {
+  background: var(--curator-bg);
+  color: var(--curator-text);
+  font-family: var(--curator-font-ui);
+  box-sizing: border-box;
+  /* Stash's own route wrapper (.main.container-fluid, outside anything
+     this stylesheet controls) carries a fixed 15px horizontal gutter *and*
+     a 7px top-padding gutter, both with a transparent background — Stash's
+     real page background (a different blue-grey, not --curator-bg) shows
+     through on all three edges: a thin grey bar between the navbar and
+     this page's own background at the top, and the same gutter bleed
+     horizontally, most visible on narrow/mobile widths where 15px is a
+     bigger fraction of the screen. Extend past the gutter on all three
+     sides with matching negative margin, matched by extra padding so the
+     visible content inset is unchanged.
+  */
+  margin: -7px auto 0;
+  margin-inline: -15px;
+  max-width: calc(112rem + 30px);
+  min-height: 100vh;
+  min-width: 0;
+  overflow-x: clip;
+  padding: calc(0.55rem + 7px) calc(1.25rem + 15px) 2rem;
+  width: calc(100% + 30px);
+}
+
+/* Bootstrap's stock .alert-* colors (35 call sites across every screen —
+   empty states, errors, confirmations) were never reskinned, so every one
+   of them renders as a light, un-themed box in an otherwise all-dark page.
+   Same tinted-dark-surface pattern already used for lane cards and
+   sentiment tiers, just applied at the page level since alerts appear
+   everywhere. */
+.curator-page .alert {
+  border-radius: var(--curator-radius);
+}
+
+.curator-page .alert-info {
+  background: color-mix(in srgb, var(--curator-accent) 14%, var(--curator-surface));
+  border-color: color-mix(in srgb, var(--curator-accent) 40%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-danger {
+  background: color-mix(in srgb, #e0645c 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #e0645c 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-warning {
+  background: color-mix(in srgb, #e0824f 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #e0824f 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-success {
+  background: color-mix(in srgb, #5cc19c 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #5cc19c 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-secondary {
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-border);
+  color: var(--curator-text);
+}
+
+.curator-page h1,
+.curator-page h2,
+.curator-page h3 {
+  font-family: var(--curator-font-display);
+}
+
+/* Single row (brand | scrollable nav | controls) at every width, matching
+   the design mockup's app-header-inner — previously a 2-row grid (brand +
+   controls on row 1, nav spanning full-width on row 2) above 36rem, which
+   the mockup never does. */
 .curator-header {
   align-items: center;
-  display: grid;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.5rem 1.5rem;
-  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .curator-header > *,
@@ -44,9 +306,9 @@
 
 .curator-brand-mark {
   align-items: center;
-  background: linear-gradient(145deg, #339af0, #7950f2);
-  border-radius: 0.65rem;
-  box-shadow: 0 0.25rem 0.8rem rgba(51, 154, 240, 0.22);
+  background: var(--curator-gradient-brand);
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-shadow-glow);
   display: inline-flex;
   font-size: 1.15rem;
   height: 2.35rem;
@@ -62,7 +324,7 @@
 
 .curator-tagline,
 .curator-feedback small {
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
 }
 
 .curator-tagline {
@@ -72,7 +334,7 @@
 
 .curator-view-guidance {
   align-items: center;
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
   display: flex;
   font-size: 0.82rem;
   gap: 0.75rem;
@@ -82,6 +344,26 @@
 
 .curator-view-copy {
   min-width: 0;
+}
+
+.curator-view-stats {
+  color: var(--curator-text);
+  display: block !important;
+  font-weight: 600;
+  margin-top: 0.3rem !important;
+}
+
+.curator-view-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+}
+
+.curator-view-copy h1 {
+  color: var(--curator-text);
+  font-size: 1.5rem;
+  margin: 0 0 0.2rem;
 }
 
 .curator-view-copy p {
@@ -101,11 +383,19 @@
 .curator-navigation {
   align-items: stretch;
   display: flex;
-  grid-column: 1 / -1;
-  grid-row: 2;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
+/* Bootstrap's own .nav-tabs rule (also applied here — the Nav component
+   renders className="curator-tabs nav nav-tabs") sets `margin: auto` then
+   `margin-bottom: 1.5rem`, i.e. an auto top margin plus a *fixed* 21px
+   bottom margin — that 21px doesn't get distributed as centering space
+   (there's no free space left to give the auto margin once the fixed
+   bottom margin claims its share), so the tabs strip sat flush against the
+   header's top edge with 21px of invisible margin below it instead of
+   being vertically centered like every other header control. `margin: 0`
+   here overrides both. */
 .curator-tabs {
   align-items: center;
   align-self: center;
@@ -114,7 +404,7 @@
   flex-wrap: nowrap;
   height: 3rem;
   justify-content: flex-start;
-  margin-inline: 0;
+  margin: 0;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -126,81 +416,290 @@
   display: none;
 }
 
+/* Collapsed primary nav (GH #150 Package 3): Recommendations / Curate /
+   Similar / Expand / Hunt / Manage — replaces the old flat PRIMARY_NAV_ITEMS
+   tab row (which surfaced all 5 recommendation lanes as separate top-level
+   tabs) and the <details> maintenance flyout below it. No full-pill (999px)
+   shapes, per the #150 design brief — rounded rectangles only. */
 .curator-tabs .nav-link {
   align-items: center;
+  border-radius: var(--curator-radius-sm);
   color: inherit;
   display: inline-flex;
   gap: 0.4rem;
   height: 100%;
   padding: 0.55rem 0.7rem;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.curator-tabs .curator-lane-similar {
-  border-left: 1px solid rgba(255, 255, 255, 0.18);
-  margin-left: 0.45rem;
+.curator-tabs .nav-link.active {
+  background: var(--curator-gradient-brand);
+  color: #fff;
 }
 
-.curator-tabs .curator-lane-prune {
-  border-left: 1px solid rgba(255, 255, 255, 0.18);
-  margin-left: 0.45rem;
+/* ---------- lane switcher (Recommendations tab, inside the page body) ---------- */
+.curator-lane-switcher {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.35rem 0 0.8rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
 }
 
-.curator-maintenance-menu {
-  flex: 0 0 auto;
-  position: relative;
-}
-
-.curator-maintenance-menu summary {
-  align-items: center;
-  color: inherit;
+.curator-lane-card {
+  --lc: var(--curator-accent);
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
   cursor: pointer;
   display: flex;
-  gap: 0.4rem;
-  height: 3rem;
-  list-style: none;
-  padding: 0.55rem 0.7rem;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.55rem 0.65rem 0.6rem;
+  text-align: left;
+  width: 13rem;
 }
 
-.curator-maintenance-menu summary::-webkit-details-marker {
-  display: none;
+.curator-lane-card:hover {
+  border-color: var(--curator-border-strong);
 }
 
-.curator-maintenance-menu summary.active,
-.curator-maintenance-menu[open] summary {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+.curator-lane-card[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--lc) 12%, var(--curator-surface));
+  border-color: var(--lc);
 }
 
-.curator-maintenance-items {
-  background: #343a40;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 0.3rem;
-  box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.35);
-  display: grid;
-  min-width: 13rem;
-  padding: 0.35rem;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 0.25rem);
-  z-index: 20;
-}
-
-.curator-maintenance-items button {
+.curator-lane-card-icon {
   align-items: center;
+  background: color-mix(in srgb, var(--lc) 18%, var(--curator-surface));
+  border-radius: var(--curator-radius-sm);
+  color: var(--lc);
+  display: inline-flex;
+  height: 1.6rem;
+  justify-content: center;
+  width: 1.6rem;
+}
+
+.curator-lane-card-name {
+  color: var(--curator-text);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.curator-lane-card-desc {
+  color: var(--curator-text-muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow: hidden;
+}
+
+/* ---------- Manage shell (two-pane list + detail) ---------- */
+.curator-manage-shell {
+  align-items: start;
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: 16rem 1fr;
+  margin-top: 0.5rem;
+}
+
+/* Neither the mockup nor this shell caps the detail pane's height — with
+   short demo content that never mattered, but a real section (e.g.
+   Sentiment review with many cards) can run tens of thousands of pixels
+   tall, pushing the section list off-screen and forcing a scroll-to-top
+   just to switch sections. Pin the list instead of trying to guess a
+   max-height for the detail pane. */
+.curator-manage-list {
+  position: sticky;
+  top: 0.75rem;
+}
+
+@media (max-width: 860px) {
+  .curator-manage-shell {
+    grid-template-columns: 1fr;
+  }
+
+  /* Below 860px the shell drops to one column — list and detail stack in
+     document order instead of sitting side by side, so a sticky list would
+     freeze partway down the page and visually overlap the detail content
+     scrolling underneath it (the sticky fix only makes sense for the
+     two-column layout it was built for). */
+  .curator-manage-list {
+    position: static;
+  }
+}
+
+.curator-manage-list {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  overflow: hidden;
+}
+
+.curator-manage-item {
+  align-items: flex-start;
   background: transparent;
   border: 0;
-  border-radius: 0.2rem;
-  color: #fff;
+  border-bottom: 1px solid var(--curator-border);
+  cursor: pointer;
   display: flex;
-  gap: 0.5rem;
-  padding: 0.5rem 0.65rem;
+  gap: 0.55rem;
+  padding: 0.65rem 0.7rem;
   text-align: left;
+  width: 100%;
 }
 
-.curator-maintenance-items button:hover,
-.curator-maintenance-items button:focus,
-.curator-maintenance-items button.active {
-  background: rgba(255, 255, 255, 0.12);
+.curator-manage-item:last-child {
+  border-bottom: 0;
+}
+
+.curator-manage-item:hover {
+  background: var(--curator-wash-raised);
+}
+
+/* Literal, not var(--curator-accent) — same WCAG AA failure as the old
+   .btn-primary gradient (dark theme's vivid #4f8ce0 measures 3.41:1 against
+   white text, below 4.5:1). Light theme's --curator-accent is already this
+   exact literal (#1d5fb8, 6.21:1), so hardcoding it fixes dark theme
+   without touching the token other UI (lane-hue dots, focus rings) still
+   relies on being vivid. */
+.curator-manage-item[aria-current="page"] {
+  background: #1d5fb8;
+  color: #fff;
+}
+
+.curator-manage-item-icon {
+  align-items: center;
+  background: var(--curator-wash-raised);
+  border-radius: var(--curator-radius-sm);
+  display: inline-flex;
+  flex: none;
+  height: 1.7rem;
+  justify-content: center;
+  width: 1.7rem;
+}
+
+.curator-manage-item[aria-current="page"] .curator-manage-item-icon {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.curator-manage-item-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.curator-manage-item-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.curator-manage-item-desc {
+  color: var(--curator-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.curator-manage-item[aria-current="page"] .curator-manage-item-desc {
+  /* 0.78 measured 4.46:1 against the new #1d5fb8 background, just under
+     AA's 4.5:1 — bumped to clear it with a small margin. */
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.curator-manage-detail {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  min-width: 0;
+  padding: 1rem 1.1rem;
+}
+
+.curator-manage-detail-head {
+  margin-bottom: 0.9rem;
+}
+
+.curator-manage-detail-head h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.2rem;
+}
+
+.curator-manage-detail-head p {
+  color: var(--curator-text-muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+/* Record list (Backups, Feedback history) — was a plain <table>, replaced
+   with the mockup's icon+title+meta row pattern (.record-row). */
+.curator-record-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.curator-record-row {
+  align-items: center;
+  border-bottom: 1px solid var(--curator-border);
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.65rem 0.1rem;
+}
+
+.curator-record-row:last-child {
+  border-bottom: 0;
+}
+
+.curator-record-icon {
+  align-items: center;
+  background: var(--curator-surface-raised);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text-muted);
+  display: inline-flex;
+  flex: none;
+  height: 1.9rem;
+  justify-content: center;
+  width: 1.9rem;
+}
+
+.curator-record-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.curator-record-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.curator-record-meta {
+  color: var(--curator-text-muted);
+  font-size: 0.72rem;
+  margin-top: 0.1rem;
+}
+
+.curator-record-row .btn {
+  color: var(--curator-accent);
+  flex: none;
+  font-weight: 700;
+}
+
+.curator-record-row .curator-record-destructive {
+  color: #e0645c;
+}
+
+.curator-feedback-row {
+  align-items: flex-start;
+}
+
+.curator-feedback-correction {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .curator-profiling {
@@ -236,9 +735,9 @@
 
 .curator-taste-item {
   align-items: center;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.4rem;
+  background: var(--curator-wash-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem 1rem;
@@ -251,12 +750,56 @@
   display: block;
 }
 
+.curator-taste-item strong a {
+  color: var(--curator-text);
+  text-decoration: none;
+}
+
+.curator-taste-item strong a:hover {
+  text-decoration: underline;
+}
+
 .curator-taste-item .badge {
   margin-left: 0.5rem;
 }
 
 .curator-taste-item small {
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
+}
+
+/* Design-mockup "confidence pips" (ConfidencePips) — 5 bars filled
+   left-to-right by how much viewing history backs the model's inference. */
+.curator-confidence-wrap {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.curator-confidence-label {
+  color: var(--curator-text-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.curator-confidence-pips {
+  display: flex;
+  gap: 3px;
+}
+
+.curator-confidence-pips span {
+  background: var(--curator-border-strong);
+  border-radius: 1px;
+  display: block;
+  height: 12px;
+  width: 5px;
+}
+
+.curator-confidence-pips span.on {
+  background: var(--curator-accent);
 }
 
 .curator-sentiment {
@@ -287,7 +830,7 @@
 .curator-sentiment-like,
 .curator-sentiment-love {
   background: transparent;
-  color: #fff;
+  color: var(--curator-text);
 }
 
 .curator-sentiment-never            { --sc: #212529; border-color: var(--sc); }
@@ -297,16 +840,233 @@
 .curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
 .curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
 
-.curator-sentiment-never.curator-sentiment-active,
-.curator-sentiment-danger.curator-sentiment-active,
-.curator-sentiment-warning.curator-sentiment-active,
-.curator-sentiment-neutral.curator-sentiment-active,
-.curator-sentiment-like.curator-sentiment-active,
-.curator-sentiment-love.curator-sentiment-active {
-  background: var(--sc);
-  border-color: var(--sc);
-  color: #fff;
+/* Taste Profile's belief badge ("I think you slightly/strongly like/
+   dislike this" / "I'm unsure") reuses these same tier classes for their
+   --sc value instead of Bootstrap's one-size-fits-all badge-info cyan,
+   which gave every tier identical color. All 5 sentiment tiers are listed
+   (not just love/danger/neutral) since the badge text is now the specific
+   nearest tier, not a plain like/dislike binary — warning/like badges were
+   only getting the tier's border-color (from the button-oriented rule
+   above) without this rule's tinted background/text, reading as half-
+   colored next to the fully-colored strong tiers. */
+.badge.curator-sentiment-love,
+.badge.curator-sentiment-like,
+.badge.curator-sentiment-neutral,
+.badge.curator-sentiment-warning,
+.badge.curator-sentiment-danger {
+  background: color-mix(in srgb, var(--sc) 18%, transparent);
+  border: 1px solid var(--sc);
+  color: var(--sc);
 }
+
+/* Shared themed look for every native <input type="range"> in the app
+   (Taste Profile sentiment, Similar/Expand "Minimum match", Prune
+   "aggressiveness", Sentiment-review "Appeal ≤" threshold) — apply
+   className="curator-range" to opt in. Stash's own global
+   `input[type="range"]` rule (element + [type] attribute = 0,1,1
+   specificity) and its `::-webkit-slider-thumb`/`::-webkit-slider-runnable-
+   track` pseudo-rules (0,1,2) beat a bare `.curator-range` class (0,1,0/1),
+   so every slider silently fell back to Stash's hardcoded dark
+   Bootstrap-blue look (solid rgb(0,123,255) track, rgb(57,75,89) thumb, both
+   theme-blind) regardless of curator's own light/dark theme — the .curator-
+   page prefix (an extra class) is what wins the specificity fight. Thumb
+   background reads var(--sc, ...) so the Taste Profile sentiment slider's
+   wrapping tier className (below) recolors it for free, with no separate
+   override rule needed. */
+.curator-page .curator-range {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  display: block;
+  height: 0.9rem;
+  outline: none;
+}
+
+.curator-page .curator-range::-webkit-slider-runnable-track {
+  background: var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
+  height: 0.35rem;
+}
+
+.curator-page .curator-range::-moz-range-track {
+  background: var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
+  height: 0.35rem;
+}
+
+.curator-page .curator-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  margin-top: -0.275rem;
+  width: 0.9rem;
+}
+
+.curator-page .curator-range::-moz-range-thumb {
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
+/* Sentiment slider (redesigned to match the GH #150 design mockup's
+   .rs-track/.rs-stop/.rs-thumb, which the original native-<input>-styled
+   version — round 15's specificity fix — never actually matched: that fix
+   made the native range render *something* coherent, but not the mockup's
+   compact fixed-width track with visible per-stop tick dots). The visible
+   rail (.curator-sentiment-rail/-stop/-thumb) is purely decorative; a fully
+   transparent native range input (.curator-sentiment-input) sits on top at
+   the same geometry, capturing clicks/drags/keyboard for free instead of
+   hand-rolling the mockup's manual pointer math. The wrapping label carries
+   the current tier's className (reusing the --sc custom property declared
+   above) so the active stop/thumb inherit the right color. */
+.curator-sentiment-range-wrap {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.curator-sentiment-current {
+  color: var(--curator-text);
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 5.2rem;
+}
+
+.curator-sentiment-never .curator-sentiment-current { color: #dc3545; }
+
+.curator-sentiment-track {
+  flex: 0 0 auto;
+  height: 1.2rem;
+  position: relative;
+  width: 10rem;
+}
+
+.curator-sentiment-rail {
+  background: var(--curator-border-strong);
+  border-radius: 2px;
+  height: 4px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.curator-sentiment-stop {
+  background: var(--curator-border-strong);
+  border-radius: 50%;
+  height: 6px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: background 0.15s ease, transform 0.15s ease;
+  width: 6px;
+}
+
+.curator-sentiment-stop-active {
+  background: var(--sc, var(--curator-accent));
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.curator-sentiment-stop-never {
+  background: color-mix(in srgb, #dc3545 55%, var(--curator-border-strong));
+  border-radius: 2px;
+  height: 8px;
+  width: 8px;
+}
+
+.curator-sentiment-stop-never.curator-sentiment-stop-active {
+  background: #dc3545;
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.curator-sentiment-thumb {
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--sc, var(--curator-accent));
+  height: 14px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+  width: 14px;
+}
+
+.curator-sentiment-never .curator-sentiment-thumb {
+  background: #dc3545;
+  box-shadow: 0 0 0 1px #dc3545;
+}
+
+/* The model's own continuous estimate (Taste Profile only — see
+   TagSentimentControl's inferredValue prop): a small tick in a third color
+   (the existing amber secondary accent — distinct from the blue direct-
+   rating thumb and the red "Never" stop) on the same track, so the two can
+   be compared without the model's read silently overriding what the user
+   set or being mistaken for another stop/thumb. */
+.curator-sentiment-model-dot {
+  background: var(--curator-accent-secondary);
+  border-radius: 50%;
+  height: 6px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  z-index: 1;
+}
+
+.curator-sentiment-input {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  height: 100%;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+/* The interactive input is fully transparent, so its own focus ring (which
+   would otherwise render invisibly along with the rest of it) needs to be
+   redirected onto the decorative thumb for keyboard users. The input has to
+   paint after (on top of) the rail to receive clicks, which rules out a
+   ~ sibling-combinator selector here (it only matches *later* siblings) —
+   :has() on the shared ancestor sidesteps the ordering requirement. An
+   unrated item has no thumb to ring (see TagSentimentControl — nothing
+   renders there until a real value exists), so the rail itself is the
+   fallback target for that case. */
+.curator-sentiment-track:has(.curator-sentiment-input:focus-visible) .curator-sentiment-thumb {
+  box-shadow: 0 0 0 1px var(--sc, var(--curator-accent)), 0 0 0 4px var(--curator-glow-color);
+}
+
+.curator-sentiment-track:has(.curator-sentiment-input:focus-visible) .curator-sentiment-rail {
+  box-shadow: 0 0 0 3px var(--curator-glow-color);
+}
+
+.curator-sentiment-compact .curator-sentiment-track {
+  width: 6rem;
+}
+
+/* TagSentimentControl renders in two different contexts: standalone on the
+   page (Taste Profile, Curate's suggestion detail — the base rules above
+   are theme-responsive for these) and nested inside ExternalCard's "Rate
+   tags & terms" panel (.curator-external-tag-rating), which sits on the
+   deliberately-always-dark --curator-card-surface. Force the pinned-dark
+   card tokens back on specifically for that nested case so the slider
+   doesn't go light-on-dark there in light mode. */
+.curator-external-tag-rating .curator-sentiment-current { color: var(--curator-card-text); }
+.curator-external-tag-rating .curator-sentiment-rail { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-stop { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-thumb { border-color: var(--curator-card-surface); }
 
 @media (max-width: 480px) {
   .curator-sentiment .btn-sm {
@@ -341,7 +1101,7 @@
 }
 
 .curator-external-tag-rating {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--curator-wash-raised);
   display: grid;
   gap: 0.5rem;
   padding: 0.6rem;
@@ -364,7 +1124,7 @@
 }
 
 .curator-external-tag-name {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted, var(--curator-card-text-muted));
   flex: 1 1 8rem;
   font-size: 0.82rem;
   min-width: 0;
@@ -387,7 +1147,7 @@
 }
 
 .curator-rating-section-title {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted, var(--curator-card-text-muted));
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -421,10 +1181,10 @@
 }
 
 .curator-profile-list button {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.35rem;
-  color: inherit;
+  background: var(--curator-wash-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  color: var(--curator-text);
   display: flex;
   flex-direction: column;
   padding: 0.45rem 0.6rem;
@@ -437,12 +1197,12 @@
 
 .curator-profile-list span,
 .curator-profile-list small {
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
 }
 
 .curator-profile-timeline {
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 0.35rem;
+  background: var(--curator-wash-recessed);
+  border-radius: var(--curator-radius);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -474,9 +1234,17 @@
 }
 
 .curator-profile-table td:last-child {
-  font-family: monospace;
+  font-family: var(--curator-font-mono);
   max-width: 32rem;
   overflow-wrap: anywhere;
+}
+
+.curator-mono {
+  /* Bootstrap's default <code> color (#e83e8c, alarm-colored magenta,
+     meant for inline code snippets) reads as an error/warning for what's
+     just an informational file path here. */
+  color: var(--curator-text-muted);
+  font-family: var(--curator-font-mono);
 }
 
 .curator-diagnostics-preview {
@@ -485,33 +1253,59 @@
   white-space: pre-wrap;
 }
 
-.curator-lane-for_you { --lane-color: #4dabf7; }
-.curator-lane-best_bets { --lane-color: #20c997; }
-.curator-lane-revisit { --lane-color: #b197fc; }
-.curator-lane-discover { --lane-color: #ffd43b; }
-.curator-lane-adventure { --lane-color: #ff922b; }
-.curator-lane-similar { --lane-color: #66d9e8; }
-.curator-lane-expand { --lane-color: #f783ac; }
-.curator-lane-hunt { --lane-color: #69db7c; }
-.curator-lane-prune { --lane-color: #ff6b6b; }
+.curator-lane-for_you { --lane-color: var(--curator-hue-for_you); }
+.curator-lane-best_bets { --lane-color: var(--curator-hue-best_bets); }
+.curator-lane-revisit { --lane-color: var(--curator-hue-revisit); }
+.curator-lane-discover { --lane-color: var(--curator-hue-discover); }
+.curator-lane-adventure { --lane-color: var(--curator-hue-adventure); }
+.curator-lane-similar { --lane-color: var(--curator-hue-similar); }
+.curator-lane-expand { --lane-color: var(--curator-hue-expand); }
+.curator-lane-hunt { --lane-color: var(--curator-hue-hunt); }
+.curator-lane-prune { --lane-color: var(--curator-hue-prune); }
 
-.curator-tabs .nav-link svg,
-.curator-source-badge svg {
+/* --lane-color (above) is the vivid dark-theme hue, used for icon color and
+   border accents where flat text-on-background contrast doesn't apply —
+   left as-is. .curator-source-badge (BEST BETS / DISCOVER / REVISIT /
+   ADVENTURE corner badges) pairs white text directly on a solid fill of
+   that hue, same shape of bug as the original --curator-gradient-brand fix:
+   every single lane hue measured 1.99–3.42:1 against white, all failing
+   AA (4.5:1) — Similar and Discover were the worst, below even the
+   original button-contrast bug's worst case. Per user request, applied
+   the *same technique* as that fix (a 145deg two-stop gradient of a
+   darker, independently-AA-passing color) rather than one flat solid, so
+   the badges also get the same visual depth as the logo mark/active nav
+   pill. Where the light-theme hue already passed 4.5:1 it's reused as the
+   lighter gradient stop (for_you/similar/hunt/revisit/expand); the other
+   four (best_bets/discover/adventure/prune) needed new darker literals —
+   light theme's own versions still fell short (3.83–4.48:1). Each
+   gradient's second stop is that first stop darkened ~22% further, which
+   can only raise contrast, never lower it. */
+.curator-lane-for_you { --lane-badge-gradient: linear-gradient(145deg, #1d5fb8, #174a90); }
+.curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #1f7f96, #186375); }
+.curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #976d3a, #76552d); }
+.curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #a34a63, #7f3a4d); }
+.curator-lane-discover { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
+.curator-lane-adventure { --lane-badge-gradient: linear-gradient(145deg, #ac643d, #864e30); }
+.curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #7452ad, #5a4087); }
+.curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #b83f4c, #90313b); }
+.curator-lane-prune { --lane-badge-gradient: linear-gradient(145deg, #72777f, #595d63); }
+
+.curator-tabs .nav-link svg {
   color: var(--lane-color);
+}
+
+.curator-source-badge svg {
+  color: #fff;
 }
 
 .curator-controls {
   align-items: center;
-  align-self: center;
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   gap: 0.35rem 0.6rem;
-  grid-column: 3;
-  grid-row: 1;
   height: 3rem;
-  justify-content: space-between;
-  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .curator-task-buttons {
@@ -520,8 +1314,16 @@
   gap: 0.4rem;
 }
 
+/* Icon buttons carried whatever Bootstrap variant they happened to be
+   given (mostly the unset default, "primary" — a solid blue fill) with no
+   override, so the header read as a row of heavy filled blocks instead of
+   the mockup's uniformly bordered, --surface-background .icon-btn. Force
+   the same subtle treatment here regardless of variant. */
 .curator-icon-button {
   align-items: center;
+  background: var(--curator-surface) !important;
+  border-color: var(--curator-border-strong) !important;
+  color: var(--curator-text-muted) !important;
   display: inline-flex;
   height: 1.8rem;
   justify-content: center;
@@ -529,23 +1331,114 @@
   width: 1.8rem;
 }
 
-.curator-profiling-button svg {
-  font-size: 0.78rem;
+.curator-icon-button:hover {
+  border-color: var(--curator-text-muted) !important;
+  color: var(--curator-text) !important;
 }
 
-.curator-status {
+/* Health/sync status popover (GH #150 Package 3): replaces the always-open
+   row of inline status spans with a single compact pill; full detail lives
+   in the HoverPopover content instead. */
+.curator-health-pill {
   align-items: center;
-  color: var(--text-muted, #adb5bd);
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 0.78rem;
-  gap: 0.25rem 0.65rem;
-}
-
-.curator-status > span:not(.curator-task-indicator) {
-  align-items: center;
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text-muted);
   display: inline-flex;
-  gap: 0.25rem;
+  font-size: 0.78rem;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem 0.3rem 0.55rem;
+}
+
+.curator-health-pulse {
+  border-radius: 50%;
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.curator-health-pulse-ready {
+  background: #4fb08a;
+  box-shadow: 0 0 0 0.18rem rgba(79, 176, 138, 0.18);
+}
+
+.curator-health-pulse-running {
+  background: var(--curator-accent);
+  box-shadow: 0 0 0 0.18rem var(--curator-glow-color);
+}
+
+.curator-health-pulse-failed {
+  background: #e0645c;
+  box-shadow: 0 0 0 0.18rem rgba(224, 100, 92, 0.2);
+}
+
+.curator-health-pulse-idle {
+  background: var(--curator-border-strong);
+}
+
+.curator-health-pulse-pending,
+.curator-health-pulse-rebuilding {
+  background: var(--curator-accent-secondary);
+  box-shadow: 0 0 0 0.18rem color-mix(in srgb, var(--curator-accent-secondary) 22%, transparent);
+}
+
+.curator-health-panel {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  box-shadow: var(--curator-shadow-lg);
+  color: var(--curator-text);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 14rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.curator-health-row {
+  align-items: center;
+  display: flex;
+  font-size: 0.75rem;
+  gap: 0.6rem;
+  justify-content: space-between;
+}
+
+.curator-health-row b {
+  color: var(--curator-text);
+  font-weight: 600;
+  text-align: right;
+}
+
+.curator-card-size-panel {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  box-shadow: var(--curator-shadow-lg);
+  color: var(--curator-text);
+  min-width: 11rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.curator-card-size-head {
+  align-items: center;
+  display: flex;
+  font-size: 0.75rem;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.curator-card-size-head label {
+  font-weight: 600;
+  margin: 0;
+}
+
+.curator-card-size-head span {
+  color: var(--curator-text-muted);
+}
+
+.curator-card-size-panel .curator-range {
+  width: 100%;
 }
 
 .curator-task-indicator {
@@ -575,13 +1468,13 @@
 }
 
 .curator-task-progress-meta strong {
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
   font-size: 0.72rem;
 }
 
 .curator-task-progress-meta span,
 .curator-task-progress-detail {
-  color: var(--text-muted, #adb5bd);
+  color: var(--curator-text-muted);
   font-size: 0.65rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -589,8 +1482,8 @@
 }
 
 .curator-task-progress-track {
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
+  background: var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
   display: block;
   height: 0.32rem;
   overflow: hidden;
@@ -655,9 +1548,15 @@
 }
 
 .curator-header-message {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text-muted);
+  font-size: 0.78rem;
   grid-column: 1 / -1;
   margin: 0;
   order: 3;
+  padding: 0.35rem 0.6rem;
 }
 
 .curator-setup-checklist {
@@ -697,28 +1596,54 @@
   min-width: 16rem;
 }
 
+/* Shared loading indicator for every async panel (Similar/Expand/
+   Recommendations/Prune/Sentiment review/Backups/Profiling/Diagnostics) —
+   previously text-only, with no visual cue that something was actually
+   happening while a card grid populated or refreshed. */
 .curator-loading {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
   margin: 1rem 0;
   max-width: 28rem;
 }
 
-.curator-loading > span {
-  color: var(--text-muted, #adb5bd);
-  display: block;
-  margin-bottom: 0.4rem;
+.curator-loading::before {
+  animation: curator-spin 0.7s linear infinite;
+  border: 2px solid var(--curator-border-strong);
+  border-radius: 50%;
+  border-top-color: var(--curator-accent);
+  content: "";
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
 }
 
+@keyframes curator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.curator-loading > span {
+  color: var(--curator-text-muted);
+}
+
+/* --curator-card-min-width is set inline on .curator-page (see the header's
+   card-size button, CuratorPage's cardSize state) — Compact/Comfortable/
+   Spacious just change this one variable, cycling through 16rem/22rem/
+   28rem. */
 .curator-grid {
   display: grid;
   gap: 0.8rem;
-  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--curator-card-min-width, 22rem), 1fr));
 }
 
 .curator-card {
-  background: #182126;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.55rem;
-  box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
+  background: var(--curator-card-surface);
+  border: 1px solid var(--curator-card-border);
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-card-shadow);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -727,24 +1652,16 @@
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.curator-source-best_bets { --lane-color: #20c997; }
-.curator-source-revisit { --lane-color: #b197fc; }
-.curator-source-discover { --lane-color: #ffd43b; }
-.curator-source-adventure { --lane-color: #ff922b; }
-
 .curator-card:hover {
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
+  border-color: var(--curator-card-border-strong);
+  box-shadow: var(--curator-card-shadow-lg);
 }
 
-.curator-card[class*="curator-source-"] {
-  border-left: 3px solid var(--lane-color, rgba(255, 255, 255, 0.12));
-}
 
-.curator-similar { --surface-color: #4dabf7; }
-.curator-expand { --surface-color: #ff922b; }
-.curator-hunt { --surface-color: #69db7c; }
-.curator-prune-page { --surface-color: #fa5252; }
+.curator-similar { --surface-color: var(--curator-hue-similar); }
+.curator-expand { --surface-color: var(--curator-hue-expand); }
+.curator-hunt { --surface-color: var(--curator-hue-hunt); }
+.curator-prune-page { --surface-color: var(--curator-hue-prune); }
 
 .curator-similar .curator-card,
 .curator-expand .curator-card,
@@ -754,7 +1671,7 @@
 }
 
 .curator-card > .scene-card {
-  background: #182126;
+  background: var(--curator-card-surface);
   border: 0;
   border-radius: 0;
   margin: 0;
@@ -763,7 +1680,7 @@
 }
 
 .curator-card .card-section {
-  background: #182126;
+  background: var(--curator-card-surface);
   padding-bottom: 0.35rem;
 }
 
@@ -771,8 +1688,17 @@
   display: none;
 }
 
+/* bottom is tuned to vertically center these against .scene-card__date in
+   the same row, not against the card as a whole — the two aren't siblings
+   (card-popovers is a direct child of .scene-card; the date lives inside
+   .scene-card__details, nested under a sibling .card-section), so there's
+   no flex/grid relationship to align them automatically. Stable in
+   practice because .curator-card-description below is hidden (0 height)
+   and both the title (.card-section-title) and details row have fixed
+   min-heights regardless of content, so this row's position relative to
+   the card's bottom edge doesn't shift with title wrapping. */
 .curator-card .card-popovers {
-  bottom: 0.2rem;
+  bottom: 0.92rem;
   flex-wrap: nowrap;
   justify-content: flex-end;
   left: 7.5rem;
@@ -783,6 +1709,31 @@
 
 .curator-card .card-popovers .btn {
   padding-inline: 0.35rem;
+}
+
+/* Same root cause as .curator-external-popover-button below: these native
+   SceneCard overlay buttons (tag/performer count, organized toggle) get no
+   explicit variant, so Bootstrap's "primary" default fights Stash's own
+   .minimal utility (meant to strip background/border) and .curator-page
+   .btn-primary wins on specificity, painting a solid gradient pill over
+   what's meant to be a quiet on-image icon+count trigger — reads as
+   shouting for attention on every single card. First attempt used a dark
+   translucent overlay treatment, which read as "solid black" rather than
+   discreet; matches the actual .btn-secondary look used elsewhere (e.g. the
+   "More" menu trigger) instead. .minimal's own `border: none` shorthand
+   still collapses border-width/style even once border-color is overridden
+   here — border-color alone is invisible without them — so the border has
+   to be respecified in full, not just recolored. */
+.curator-page .curator-card .card-popovers .btn.minimal {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border-strong);
+  color: var(--curator-text);
+}
+
+.curator-page .curator-card .card-popovers .btn.minimal:hover {
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-text-muted);
+  color: var(--curator-text);
 }
 
 .curator-card .card-popovers .fa-icon {
@@ -807,8 +1758,8 @@
 }
 
 .curator-card-body {
-  background: #182126;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--curator-card-surface);
+  border-top: 1px solid var(--curator-card-border);
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -817,16 +1768,21 @@
 
 .curator-source-badge {
   align-items: center;
-  background: rgba(18, 24, 28, 0.88);
-  border-radius: 0.3rem;
+  background: var(--lane-badge-gradient, var(--curator-overlay));
+  border-radius: var(--curator-radius-sm);
+  color: #fff;
   display: inline-flex;
-  font-size: 0.9rem;
-  height: 1.8rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  gap: 0.3rem;
+  height: auto;
   justify-content: center;
   left: 0.5rem;
+  letter-spacing: 0.03em;
+  padding: 0.3rem 0.5rem;
   position: absolute;
   top: 0.5rem;
-  width: 1.8rem;
+  width: auto;
   z-index: 3;
 }
 
@@ -873,7 +1829,7 @@
 }
 
 .curator-score-children {
-  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  border-left: 1px solid var(--curator-card-border);
   margin-left: 0.4rem;
   padding-left: 0.7rem;
 }
@@ -898,7 +1854,7 @@
 .curator-feedback-button.btn-link {
   background: transparent;
   border: 0;
-  color: #fff;
+  color: var(--curator-card-text);
   padding: 0.2rem 0.35rem;
 }
 
@@ -939,7 +1895,7 @@
 }
 
 .curator-similar-feedback {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--curator-card-border);
   padding: 0.35rem 0.7rem;
 }
 
@@ -982,7 +1938,7 @@
 }
 
 .curator-prune-actions {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--curator-card-border);
   padding: 0.4rem 0.7rem;
 }
 
@@ -1010,9 +1966,9 @@
 
 .curator-toolbar-select {
   align-items: center;
-  background: #343a40;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 0.25rem;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   display: inline-flex;
   gap: 0.35rem;
   height: 2.15rem;
@@ -1024,7 +1980,7 @@
 .curator-toolbar-select select {
   background: transparent;
   border: 0;
-  color: #fff;
+  color: var(--curator-text);
   height: 100%;
   padding: 0 1.7rem 0 0.15rem;
   width: auto;
@@ -1036,20 +1992,20 @@
 }
 
 .curator-toolbar-select option {
-  background: #343a40;
-  color: #fff;
+  background: var(--curator-surface-raised);
+  color: var(--curator-text);
 }
 
 .curator-shortlist-tab {
-  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-left: 1px solid var(--curator-border);
   margin-left: 0.35rem;
 }
 
-.curator-expand-filters {
+.curator-filter-panel-body {
   margin: 0.4rem 0 0.8rem;
 }
 
-.curator-expand-filters > div {
+.curator-filter-panel-body > div {
   align-items: end;
   display: grid;
   gap: 0.5rem;
@@ -1057,7 +2013,7 @@
   margin-top: 0.5rem;
 }
 
-.curator-expand-filters label {
+.curator-filter-panel-body label {
   font-size: 0.78rem;
   margin: 0;
 }
@@ -1074,9 +2030,9 @@
 
 .curator-token-input {
   align-items: center;
-  background: #344550;
-  border: 1px solid #53636e;
-  border-radius: 0.25rem;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius-sm);
   display: flex;
   flex-wrap: wrap;
   gap: 0.2rem;
@@ -1085,10 +2041,10 @@
 }
 
 .curator-token-input button {
-  background: #495057;
+  background: var(--curator-surface-raised);
   border: 0;
-  border-radius: 0.2rem;
-  color: #fff;
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text);
   font-size: 0.75rem;
 }
 
@@ -1098,25 +2054,40 @@
   flex: 1 1 5rem;
   min-width: 4rem;
   outline: 0;
-  color: #fff;
+  color: var(--curator-text);
 }
 
 .curator-page .form-control,
 .curator-saved-filters input:not([type="checkbox"]),
 .curator-saved-filters select {
-  background: #344550;
-  border: 1px solid #53636e;
-  color: #fff;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border-strong);
+  color: var(--curator-text);
 }
 
 .curator-page input::placeholder {
-  color: #aab4ba;
+  color: var(--curator-text-muted);
 }
 
 .curator-filter-panel {
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 0.35rem;
+  background: var(--curator-wash-recessed);
+  border-radius: var(--curator-radius);
   padding: 0.55rem;
+}
+
+.curator-filter-count {
+  align-items: center;
+  background: var(--curator-accent);
+  border-radius: var(--curator-radius-sm);
+  color: #fff;
+  display: inline-flex;
+  font-size: 0.68rem;
+  font-weight: 700;
+  height: 1rem;
+  justify-content: center;
+  margin-left: 0.3rem;
+  min-width: 1rem;
+  padding: 0 0.25rem;
 }
 
 .curator-saved-filters {
@@ -1129,7 +2100,7 @@
 
 .curator-saved-filters input:not([type="checkbox"]),
 .curator-saved-filters select {
-  border-radius: 0.25rem;
+  border-radius: var(--curator-radius-sm);
   min-height: 2rem;
   padding: 0.25rem 0.45rem;
 }
@@ -1141,9 +2112,9 @@
 }
 
 .curator-token-options {
-  background: #252a30;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 0.25rem;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   display: flex;
   flex-direction: column;
   left: 0;
@@ -1158,13 +2129,13 @@
 .curator-token-options button {
   background: transparent;
   border: 0;
-  color: inherit;
+  color: var(--curator-text);
   padding: 0.35rem 0.5rem;
   text-align: left;
 }
 
 .curator-token-options button:hover {
-  background: #343a40;
+  background: var(--curator-surface-raised);
 }
 
 .curator-match-filter input {
@@ -1228,10 +2199,10 @@
 
 .curator-source-reference {
   align-items: center;
-  background: #182126;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 0.45rem;
-  color: inherit;
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  color: var(--curator-text);
   display: flex;
   gap: 0.7rem;
   min-height: 4.5rem;
@@ -1241,8 +2212,8 @@
 }
 
 .curator-source-reference:hover {
-  border-color: #339af0;
-  color: inherit;
+  border-color: var(--curator-accent);
+  color: var(--curator-text);
   text-decoration: none;
 }
 
@@ -1273,13 +2244,13 @@
 }
 
 .curator-source-reference small {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted, var(--curator-text-muted));
   margin-top: 0.2rem;
 }
 
 .curator-external-thumbnail {
   aspect-ratio: 16 / 9;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--curator-wash-recessed);
   overflow: hidden;
   position: relative;
 }
@@ -1312,7 +2283,7 @@
 
 .curator-external-details,
 .curator-external-card .scene-card__details {
-  color: var(--text-muted, #adb5bd);
+  color: var(--text-muted, var(--curator-card-text-muted));
   display: flex;
   justify-content: space-between;
   min-height: 1.4rem;
@@ -1323,7 +2294,7 @@
 }
 
 .curator-external-card .card-section a {
-  color: inherit;
+  color: var(--curator-card-text);
   text-decoration: none;
 }
 
@@ -1349,6 +2320,23 @@
   font-size: 0.85rem;
   height: 1.65rem;
   padding: 0 0.25rem;
+}
+
+/* This button gets no explicit `variant` prop, so React-Bootstrap's default
+   ("primary") still applies the .btn-primary class alongside Stash's own
+   .minimal utility (meant to strip background/border entirely) — and
+   .curator-page .btn-primary (0,2,0 specificity) beats .minimal (0,1,1),
+   so the gradient painted over what should read as a plain ghost icon+count
+   trigger. Force it back to transparent specifically for this button. */
+.curator-page .curator-external-popover-button.minimal {
+  background: none;
+  border-color: transparent;
+  color: var(--curator-text-muted);
+}
+
+.curator-page .curator-external-popover-button.minimal:hover {
+  background: var(--curator-wash-raised);
+  color: var(--curator-text);
 }
 
 .curator-external-popover-links {
@@ -1407,7 +2395,7 @@
 
 .curator-wildcard-badge {
   background: #e67700;
-  border-radius: 0.3rem;
+  border-radius: var(--curator-radius-sm);
   font-size: 0.75rem;
   padding: 0.25rem 0.4rem;
   position: absolute;
@@ -1418,7 +2406,7 @@
 
 .curator-phash-badge {
   background: #2b8a3e;
-  border-radius: 0.3rem;
+  border-radius: var(--curator-radius-sm);
   font-size: 0.75rem;
   left: 0.5rem;
   padding: 0.25rem 0.4rem;
@@ -1429,7 +2417,7 @@
 
 .curator-local-badge {
   background: #2b8a3e;
-  border-radius: 0.3rem;
+  border-radius: var(--curator-radius-sm);
   font-size: 0.7rem;
   left: 0.5rem;
   padding: 0.2rem 0.35rem;
@@ -1450,17 +2438,17 @@
 }
 
 .curator-context-link {
-  background: linear-gradient(145deg, #339af0, #7950f2) !important;
-  border-radius: 0.5rem;
-  box-shadow: 0 0.2rem 0.55rem rgba(51, 154, 240, 0.24);
-  color: var(--text-color, #f8f9fa);
+  background: var(--curator-gradient-brand) !important;
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-shadow-glow);
+  color: var(--curator-text);
   height: 1.9rem;
   padding: 0;
   width: 1.9rem;
 }
 
 .curator-card > .performer-card {
-  background: #182126;
+  background: var(--curator-card-surface);
   border: 0;
   margin: 0;
   padding-bottom: 0;
@@ -1476,9 +2464,9 @@
 }
 
 .curator-more-menu {
-  background: #252a30;
-  border-radius: 0.3rem;
-  box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.4);
+  background: var(--curator-surface-raised);
+  border-radius: var(--curator-radius-sm);
+  box-shadow: var(--curator-shadow-lg);
   bottom: calc(100% + 0.35rem);
   display: flex;
   flex-direction: column;
@@ -1492,45 +2480,18 @@
 
 @media (max-width: 75rem) {
   .curator-page {
-    padding-inline: 0.65rem;
-  }
-
-  .curator-header {
-    grid-template-columns: 1fr;
-  }
-
-  .curator-navigation {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .curator-tabs {
-    flex-basis: 100%;
-    overflow-x: auto;
-    width: 100%;
+    padding-inline: calc(0.65rem + 15px);
   }
 
   .curator-tabs .nav-link {
     white-space: nowrap;
   }
 
-  .curator-controls {
-    align-items: center;
-    flex-direction: row;
-    flex-wrap: wrap;
-    height: auto;
-    grid-column: 1;
-    grid-row: auto;
-    justify-content: flex-start;
-    margin-left: 0;
-    width: 100%;
-  }
-
   .curator-grid {
     grid-template-columns: 1fr;
   }
 
-  .curator-expand-filters > div {
+  .curator-filter-panel-body > div {
     grid-template-columns: 1fr;
   }
 
@@ -1545,27 +2506,70 @@
     flex-direction: column;
   }
 
+  /* Brand shrinks to its icon mark only, freeing width for the scrollable
+     nav strip next to it — same trade the mockup makes at this width
+     (brand-word: none). Measured: without this, brand+controls alone ate
+     278px of a 390px viewport, leaving the nav ~22px — room for a sliver
+     of one pill, nothing scrollable in any useful sense. */
+  .curator-header h1 {
+    display: none;
+  }
+
+  .curator-icon-button {
+    height: 1.6rem;
+    width: 1.6rem;
+  }
+
+  .curator-health-pill-label {
+    display: none;
+  }
+
+  /* Shrink, don't strip: the mockup's primary-nav keeps every pill's text
+     label at every width, relying on horizontal scroll (plus this fade
+     mask at the edges) rather than going icon-only. Icon-only pills lose
+     their visual anchor once the background/border is gone on the
+     inactive ones — they read as disconnected floating icons instead of
+     a nav row, which is exactly what looked broken here before. */
+  .curator-tabs {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 1rem, #000 calc(100% - 1rem), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 1rem, #000 calc(100% - 1rem), transparent);
+  }
+
+  /* The fade mask alone isn't a strong enough affordance when the active
+     pill happens to fill the visible strip edge-to-edge (no sliver of the
+     next pill peeks through to hint "more here") — a narrow first-load
+     viewport with only "Recommendations" visible reads as the complete nav,
+     not a scrollable one. A persistent chevron makes the affordance
+     unambiguous regardless of scroll position or which pill is active. */
+  .curator-navigation {
+    position: relative;
+  }
+
+  .curator-navigation::after {
+    border-right: 2px solid var(--curator-text-muted);
+    border-top: 2px solid var(--curator-text-muted);
+    content: "";
+    height: 0.4rem;
+    opacity: 0.65;
+    pointer-events: none;
+    position: absolute;
+    right: 0.2rem;
+    top: 50%;
+    transform: translateY(-50%) rotate(45deg);
+    width: 0.4rem;
+  }
+
   .curator-tabs .nav-link {
-    justify-content: center;
-    padding-inline: 0.45rem;
+    font-size: 0.78rem;
+    padding: 0.4rem 0.55rem;
   }
 
-  .curator-tabs .nav-link span {
-    display: none;
+  .curator-lane-switcher {
+    gap: 0.4rem;
   }
 
-  .curator-maintenance-menu summary {
-    justify-content: center;
-    padding-inline: 0.45rem;
-  }
-
-  .curator-maintenance-menu summary span {
-    display: none;
-  }
-
-  .curator-tabs .curator-lane-similar,
-  .curator-tabs .curator-lane-prune {
-    margin-left: 0;
+  .curator-lane-card {
+    width: 10.5rem;
   }
 
   .curator-similar-search form {
@@ -1574,10 +2578,39 @@
 }
 
 /* ---- Score bar ---- */
+.curator-match-row {
+  align-items: center;
+  display: flex;
+  flex: 1 1 100%;
+  gap: 0.5rem;
+  margin: 0.3rem 0;
+  width: 100%;
+}
+
+.curator-match-label {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.curator-match-value {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+}
+
+.curator-match-row .curator-score-bar {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
 .curator-score-bar {
   display: flex;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--curator-radius-sm);
   overflow: hidden;
   margin: 6px 0 4px;
   background: var(--bs-secondary-bg, #333);
@@ -1587,9 +2620,11 @@
   height: 100%;
   transition: width 0.3s ease;
 }
-.curator-score-sim { background: #4a90d9; }
 .curator-score-app { background: #50b86c; }
-.curator-score-mh { background: #9b59b6; }
+
+.curator-score-bar-clipped {
+  background: repeating-linear-gradient(45deg, #50b86c, #50b86c 4px, #d59a52 4px, #d59a52 8px);
+}
 
 /* ---- Relationship chips ---- */
 .curator-chips {
@@ -1601,14 +2636,25 @@
   display: inline-block;
   font-size: 0.75rem;
   padding: 2px 7px;
-  border-radius: 10px;
+  border-radius: var(--curator-radius-lg);
   white-space: nowrap;
 }
-.curator-chip-same_performer      { background: #4a90d9; color: #fff; }
-.curator-chip-similar_performer   { background: #4a90d9aa; color: #fff; }
-.curator-chip-shared_content      { background: #50b86c; color: #fff; }
-.curator-chip-similar_structure   { background: #50b86caa; color: #fff; }
-.curator-chip-same_studio         { background: #e67e22; color: #fff; }
+/* Literal (not alpha-blended) colors, each independently measured against
+   white text — the previous versions used a base hue at full opacity for
+   "same_X" and the identical hue at ~67% alpha for "similar_X" to convey
+   "weaker match" via transparency. That let the "same_X" solids fail WCAG
+   AA outright (3.34:1/2.50:1/2.85:1 measured for blue/green/orange) and
+   made "similar_X" contrast depend on whatever's behind the chip (a card
+   surface that's white in light theme), which can't be guaranteed to pass
+   at all. Darker solids for "same_X", and a lighter-but-still-AA-passing
+   solid of the same hue for "similar_X" (instead of alpha) keep the same
+   visual distinction with contrast that holds regardless of backdrop.
+   multi_hop already passed (4.67:1) and is unchanged. */
+.curator-chip-same_performer      { background: #1d5fb8; color: #fff; }
+.curator-chip-similar_performer   { background: #316bb0; color: #fff; }
+.curator-chip-shared_content      { background: #1e7e34; color: #fff; }
+.curator-chip-similar_structure   { background: #278041; color: #fff; }
+.curator-chip-same_studio         { background: #a0530a; color: #fff; }
 .curator-chip-multi_hop           { background: #9b59b6; color: #fff; }
 .curator-chip-tags                { background: #555; color: #ddd; }
 
@@ -1699,12 +2745,12 @@
 
 .curator-curate-rated {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
 }
 
 .curator-curate-policy {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
   margin: 0.25rem 0 0;
 }
 
@@ -1717,17 +2763,25 @@
 .curator-curate-verdict {
   margin-top: 1rem;
   padding: 0.75rem;
-  border: 1px solid #444;
-  border-radius: 0.25rem;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
 }
 
 .curator-curate-verdict {
-  color: #e6e6e6;
+  color: var(--curator-text);
 }
 
 .curator-curate-verdict h3 {
   font-size: 1rem;
-  color: #fff;
+  color: var(--curator-text);
+}
+
+.curator-curate-started {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  margin-top: 0.75rem;
+  padding: 1rem 1.1rem;
 }
 
 .curator-curate-started h3 {
@@ -1760,7 +2814,7 @@
 }
 
 .curator-curate-suggestion-text small {
-  color: #6c757d;
+  color: var(--curator-text-muted);
 }
 
 .curator-curate-custom {
@@ -1781,7 +2835,7 @@
 
 .curator-curate-meta {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
   display: flex;
   gap: 0.5rem;
 }
@@ -1803,13 +2857,13 @@
 .curator-curate-preview {
   position: absolute;
   inset: 0;
-  background: #000;
+  background: var(--curator-wash-recessed);
   cursor: pointer;
 }
 
 .curator-curate-details {
   font-size: 0.8rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -1835,12 +2889,6 @@
   }
 }
 
-.curator-curate-tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
-}
-
 .curator-pick-compare {
   display: flex;
   flex-direction: column;
@@ -1851,6 +2899,33 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.6rem;
+  position: relative;
+}
+
+.curator-pick-vs {
+  align-items: center;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: 50%;
+  color: var(--curator-text-muted);
+  display: flex;
+  font-size: 0.7rem;
+  font-weight: 700;
+  height: 1.9rem;
+  justify-content: center;
+  left: 50%;
+  position: absolute;
+  text-transform: uppercase;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1.9rem;
+  z-index: 1;
+}
+
+@media (max-width: 576px) {
+  .curator-pick-vs {
+    display: none;
+  }
 }
 
 @media (max-width: 576px) {
@@ -1864,8 +2939,8 @@
   flex-direction: column;
   gap: 0.25rem;
   background: transparent;
-  border: 2px solid #444;
-  border-radius: 0.25rem;
+  border: 2px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   padding: 0;
   overflow: hidden;
   text-align: left;
@@ -1888,7 +2963,7 @@
   flex-wrap: wrap;
   gap: 0.25rem;
   font-size: 0.75rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
   padding: 0 0.4rem;
 }
 
@@ -1898,7 +2973,7 @@
 
 .curator-pick-tally {
   font-size: 0.85rem;
-  color: #6c757d;
+  color: var(--curator-text-muted);
 }
 
 .curator-pick-controls {
@@ -1913,7 +2988,7 @@
   gap: 0.25rem;
   margin-right: 0.75rem;
   padding-right: 0.75rem;
-  border-right: 1px solid #444;
+  border-right: 1px solid var(--curator-border);
 }
 
 .curator-pick-answer-group {
@@ -1929,8 +3004,8 @@
 }
 
 .curator-pick-verdict-card {
-  border: 1px solid #444;
-  border-radius: 0.25rem;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   padding: 0.35rem;
   display: flex;
   flex-direction: column;
@@ -1939,13 +3014,13 @@
 
 .curator-pick-verdict-label {
   font-size: 0.8rem;
-  color: #e6e6e6;
+  color: var(--curator-text);
 }
 
 .curator-pick-verdict-track {
   height: 0.4rem;
-  background: #333;
-  border-radius: 2px;
+  background: var(--curator-wash-recessed);
+  border-radius: var(--curator-radius-sm);
   overflow: hidden;
 }
 
@@ -1956,25 +3031,11 @@
 
 .curator-pick-verdict-count {
   font-size: 0.7rem;
-  color: #b8b8b8;
-}
-
-.curator-pick-media {
-  position: relative;
-}
-
-.curator-pick-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  background: #000;
-  pointer-events: none;
+  color: var(--curator-text-muted);
 }
 
 .curator-pick-title {
-  color: #fff;
+  color: var(--curator-text);
 }
 
 .curator-pick-performers {
@@ -1987,7 +3048,7 @@
 
 .curator-pick-details {
   font-size: 0.78rem;
-  color: #c8c8c8;
+  color: var(--curator-text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1998,6 +3059,7 @@
 .curator-pick-media {
   position: relative;
   aspect-ratio: 16 / 9;
+  max-height: 13rem;
   overflow: hidden;
 }
 
@@ -2006,7 +3068,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  background: #000;
+  background: var(--curator-wash-recessed);
   pointer-events: none;
 }
 
@@ -2021,8 +3083,8 @@
   width: 5rem;
   height: 3.5rem;
   object-fit: cover;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--curator-radius-sm);
+  border: 1px solid var(--curator-border-strong);
   flex-shrink: 0;
 }
 
@@ -2035,53 +3097,36 @@
 
 .curator-pick-verdict-summary {
   font-size: 0.85rem;
-  color: #b8b8b8;
+  color: var(--curator-text-muted);
   margin: 0.25rem 0 0.5rem;
 }
 
 .curator-pick-verdict-note {
   font-size: 0.8rem;
-  color: #b8b8b8;
+  color: var(--curator-text-muted);
   margin-top: 0.5rem;
 }
 
 .curator-pick-flag {
   font-size: 0.7rem;
-  color: #e0b25a;
+  color: var(--curator-accent-secondary);
   cursor: pointer;
   align-self: flex-start;
   margin: 0.2rem 0.4rem 0.3rem;
   border: 1px solid rgba(216, 162, 74, 0.45);
-  border-radius: 3px;
+  border-radius: var(--curator-radius-sm);
   padding: 0.1rem 0.35rem;
   background: rgba(216, 162, 74, 0.08);
 }
 
 .curator-pick-flag:hover {
   background: rgba(216, 162, 74, 0.18);
-  border-color: #d8a24a;
-}
-
-.curator-pick-hint {
-  font-size: 0.72rem;
-  color: #8a8a8a;
-  margin-left: 0.4rem;
-}
-
-.curator-pick-hint kbd {
-  font-family: inherit;
-  font-size: 0.68rem;
-  background: #2c2c2c;
-  border: 1px solid #555;
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  padding: 0.05rem 0.3rem;
-  color: #d0d0d0;
+  border-color: var(--curator-accent-secondary);
 }
 
 .curator-pick-verdict-headline {
   font-size: 1rem;
-  color: #fff;
+  color: var(--curator-text);
   font-weight: 600;
   margin: 0 0 0.6rem;
 }
@@ -2102,7 +3147,7 @@
 
 .curator-pick-verdict-row-label {
   font-size: 0.85rem;
-  color: #e6e6e6;
+  color: var(--curator-text);
 }
 
 .curator-pick-verdict-row .curator-pick-verdict-count {
@@ -2116,7 +3161,7 @@
   align-items: center;
   gap: 0.75rem;
   border: 1px solid rgba(107, 142, 35, 0.5);
-  border-radius: 0.4rem;
+  border-radius: var(--curator-radius);
   background: linear-gradient(90deg, rgba(107, 142, 35, 0.12), rgba(107, 142, 35, 0.03));
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
@@ -2136,7 +3181,7 @@
 .curator-curate-nudge-body p {
   margin: 0.15rem 0 0;
   font-size: 0.85rem;
-  color: #b8b8b8;
+  color: var(--curator-text-muted);
 }
 
 /* ── Impact report (verdict) ────────────────────────────────────────────── */
@@ -2144,7 +3189,7 @@
 .curator-impact {
   margin-top: 1.25rem;
   padding-top: 1rem;
-  border-top: 1px solid #444;
+  border-top: 1px solid var(--curator-border);
 }
 
 .curator-impact-heading {
@@ -2154,7 +3199,7 @@
 
 .curator-impact-ago {
   font-size: 0.8rem;
-  color: #8a8a8a;
+  color: var(--curator-text-muted);
   margin: 0 0 0.75rem;
 }
 
@@ -2168,7 +3213,7 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8a8a8a;
+  color: var(--curator-text-muted);
   margin-bottom: 0.4rem;
 }
 
@@ -2208,25 +3253,25 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid #444;
-  border-radius: 0.3rem;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   padding: 0.35rem;
   color: inherit;
   text-decoration: none;
 }
 
 .curator-impact-scene:hover {
-  border-color: #666;
-  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--curator-border-strong);
+  background: var(--curator-wash-raised);
 }
 
 .curator-impact-thumb {
   width: 3.2rem;
   height: 2rem;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: var(--curator-radius-sm);
   flex-shrink: 0;
-  background: #111;
+  background: var(--curator-wash-recessed);
 }
 
 .curator-impact-scene-body {
@@ -2236,7 +3281,7 @@
 
 .curator-impact-scene-title {
   font-size: 0.8rem;
-  color: #e6e6e6;
+  color: var(--curator-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2244,7 +3289,7 @@
 
 .curator-impact-scene-meta {
   font-size: 0.68rem;
-  color: #8a8a8a;
+  color: var(--curator-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2254,16 +3299,16 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid #444;
-  border-radius: 0.3rem;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
   padding: 0.3rem 0.45rem;
   color: inherit;
   text-decoration: none;
 }
 
 .curator-impact-person:hover {
-  border-color: #666;
-  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--curator-border-strong);
+  background: var(--curator-wash-raised);
 }
 
 .curator-impact-avatar {
@@ -2272,14 +3317,14 @@
   object-fit: cover;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #111;
+  background: var(--curator-wash-recessed);
 }
 
 .curator-impact-person-name {
   flex: 1;
   min-width: 0;
   font-size: 0.8rem;
-  color: #e6e6e6;
+  color: var(--curator-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2289,8 +3334,8 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  border: 1px solid #444;
-  border-radius: 999px;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-lg);
   padding: 0.15rem 0.5rem;
   color: inherit;
   text-decoration: none;
@@ -2298,13 +3343,13 @@
 }
 
 .curator-impact-tag:hover {
-  border-color: #666;
-  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--curator-border-strong);
+  background: var(--curator-wash-raised);
 }
 
 .curator-impact-tag-name {
   font-size: 0.78rem;
-  color: #e6e6e6;
+  color: var(--curator-text);
 }
 
 .curator-impact-delta {
@@ -2324,7 +3369,7 @@
 
 .curator-impact-scene-why {
   font-size: 0.68rem;
-  color: #8a8a8a;
+  color: var(--curator-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2332,7 +3377,7 @@
 
 .curator-impact-weak {
   font-size: 0.75rem;
-  color: #b8985a;
+  color: var(--curator-accent-secondary);
   margin: 0 0 0.4rem;
 }
 
@@ -2340,15 +3385,15 @@
   align-self: flex-start;
   background: transparent;
   border: none;
-  color: #8a8a8a;
+  color: var(--curator-text-muted);
   cursor: pointer;
   font-size: 0.85rem;
   padding: 0.2rem 0.3rem;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--curator-radius-sm);
 }
 
 .curator-curate-nudge-dismiss:hover {
-  color: #e6e6e6;
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--curator-text);
+  background: var(--curator-wash-raised);
 }

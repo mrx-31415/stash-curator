@@ -22,6 +22,7 @@ from curator.model.curves import scene_recovery
 from curator.profiling import record_duration
 from curator.ranking.policy import LANES, LaneClassification, LanePolicy
 from curator.storage import transaction
+from curator.taxonomy import equivalent_tag_names
 
 FAMILIAR_PATTERN = (
     "best_bets",
@@ -406,7 +407,18 @@ class SlateBuilder:
                 push(affected)
         return ordered
 
-    def recommend(self, lane: str, count: int, *, exploration: float = 0) -> Slate:
+    def recommend(
+        self,
+        lane: str,
+        count: int,
+        *,
+        exploration: float = 0,
+        include_tags: tuple[str, ...] = (),
+        exclude_tags: tuple[str, ...] = (),
+        performer_ids: tuple[str, ...] = (),
+        studio_ids: tuple[str, ...] = (),
+        gender: str = "",
+    ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
         if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
@@ -418,12 +430,15 @@ class SlateBuilder:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
+        scene_filter = self._scene_filter(
+            include_tags, exclude_tags, performer_ids, studio_ids, gender
+        )
         if exploration == 0:
-            materialized = self._load_materialized_slate(model_id, lane, count)
+            materialized = self._load_materialized_slate(model_id, lane, count, scene_filter)
             if materialized is not None:
                 return materialized
         prepared_slate = None
-        if exploration == 0:
+        if exploration == 0 and scene_filter is None:
             prepared_slate = self._load_prepared_slate(model_id, lane, count)
             if prepared_slate is not None and len(prepared_slate.items) >= count:
                 return prepared_slate
@@ -489,6 +504,7 @@ class SlateBuilder:
                 candidate.classification.lane == "revisit"
                 and candidate.classification.scene_id in unrecovered_direct_plays
             )
+            and (scene_filter is None or scene_filter(candidate.classification.scene_id))
         )
         self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)
         timings["eligibility"] = round((time.perf_counter() - stage_started) * 1000)
@@ -648,11 +664,17 @@ class SlateBuilder:
         record_duration("python", "ranking.items", timings["items"])
         timings["total"] = round((time.perf_counter() - started) * 1000)
         slate = Slate(model_id, lane, tuple(items), tuple(diagnostics), timings)
-        if exploration == 0:
+        if exploration == 0 and scene_filter is None:
             self._save_prepared_slate(slate)
         return slate
 
-    def _load_materialized_slate(self, model_id: str, lane: str, count: int) -> Slate | None:
+    def _load_materialized_slate(
+        self,
+        model_id: str,
+        lane: str,
+        count: int,
+        scene_filter: Callable[[str], bool] | None = None,
+    ) -> Slate | None:
         started = time.perf_counter()
         if not self.connection.execute(
             "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
@@ -699,7 +721,7 @@ class SlateBuilder:
                 row
                 for row in rows
                 if self._materialized_row_is_eligible(
-                    row, eligibility, direct_plays, unrecovered_direct_plays
+                    row, eligibility, direct_plays, unrecovered_direct_plays, scene_filter
                 )
             )
             if len(rows) < chunk_size:
@@ -1042,12 +1064,92 @@ class SlateBuilder:
         }
         return direct_plays, unrecovered_direct_plays
 
+    def _scene_filter(
+        self,
+        include_tags: tuple[str, ...],
+        exclude_tags: tuple[str, ...],
+        performer_ids: tuple[str, ...],
+        studio_ids: tuple[str, ...],
+        gender: str,
+    ) -> Callable[[str], bool] | None:
+        """A predicate for get_slate's include/exclude tag, performer,
+        studio, and gender filters, or None when none are set. Mirrors the
+        corresponding per-candidate checks in SimilarityService.scenes
+        (curator/similarity.py), narrowed to the fields that make sense for a
+        lane that's already been classified by the model: no
+        minimum-similarity or favorite-only knob, since those are about
+        ranking a candidate against a source entity, not about narrowing a
+        pre-picked set.
+        """
+        if not (include_tags or exclude_tags or performer_ids or studio_ids or gender):
+            return None
+        performers = self._scene_performers()
+        genders = self._performer_genders() if gender else {}
+        studios = self._studios() if studio_ids else {}
+        included = equivalent_tag_names(self.connection, include_tags)
+        excluded = equivalent_tag_names(self.connection, exclude_tags)
+        filter_names = set().union(*included, *excluded)
+        scene_tags = self._scene_tags(filter_names) if filter_names else {}
+        performer_id_set = set(performer_ids)
+        studio_id_set = set(studio_ids)
+
+        def matches(scene_id: str) -> bool:
+            candidate_performers = performers.get(scene_id, set())
+            if gender and not any(genders.get(value) == gender for value in candidate_performers):
+                return False
+            candidate_tags = scene_tags.get(scene_id, set())
+            if any(not group & candidate_tags for group in included):
+                return False
+            if any(group & candidate_tags for group in excluded):
+                return False
+            if performer_id_set and not performer_id_set <= candidate_performers:
+                return False
+            return not (studio_id_set and studios.get(scene_id) not in studio_id_set)
+
+        return matches
+
+    def _performer_genders(self) -> dict[str, str]:
+        return {
+            str(row["performer_id"]): str(row["gender"] or "")
+            for row in self.connection.execute("SELECT performer_id, gender FROM source_performer")
+        }
+
+    def _scene_performers(self) -> dict[str, set[str]]:
+        result: dict[str, set[str]] = {}
+        for row in self.connection.execute(
+            "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, performer_id"
+        ):
+            result.setdefault(str(row["scene_id"]), set()).add(str(row["performer_id"]))
+        return result
+
+    def _scene_tags(self, names: set[str]) -> dict[str, set[str]]:
+        result: dict[str, set[str]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT st.scene_id, t.name FROM scene_tag st
+            JOIN source_tag t USING(tag_id) WHERE lower(t.name) IN
+            ({",".join("?" for _ in names)})
+            """,
+            sorted(names),
+        ):
+            result.setdefault(str(row["scene_id"]), set()).add(str(row["name"]).casefold())
+        return result
+
+    def _studios(self) -> dict[str, str]:
+        return {
+            str(row["scene_id"]): str(row["studio_id"])
+            for row in self.connection.execute(
+                "SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL"
+            )
+        }
+
     @staticmethod
     def _materialized_row_is_eligible(
         row: sqlite3.Row,
         eligibility: dict[str, dict[str, object]],
         direct_plays: dict[str, int],
         unrecovered_direct_plays: set[str],
+        scene_filter: Callable[[str], bool] | None = None,
     ) -> bool:
         scene_id = str(row["scene_id"])
         source_lane = str(row["source_lane"])
@@ -1055,6 +1157,7 @@ class SlateBuilder:
             bool(eligibility.get(scene_id, {}).get("eligible", False))
             and not (source_lane == "best_bets" and scene_id in direct_plays)
             and not (source_lane == "revisit" and scene_id in unrecovered_direct_plays)
+            and (scene_filter is None or scene_filter(scene_id))
         )
 
     def _save_prepared_slate(self, slate: Slate) -> None:
