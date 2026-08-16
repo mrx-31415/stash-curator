@@ -170,6 +170,24 @@ Artifacts:
          "this is fake" affordance and repurposing "Neutral"'s own gray for
          both meanings would just move the ambiguity elsewhere. Verified
          all five via screenshot/computed-value checks on live data.
+- [x] **Follow-up 3 (user feedback on the round-27 fixes)**: three more.
+      1. "I think you slightly dislike/like this" badges were only
+         half-colored — the badge-coloring rule listed love/danger/neutral
+         (from when the badge was still binary) but not warning/like, which
+         round 27 added as real badge outcomes. They still got a tinted
+         *border* from the separate button-oriented tier rule, just not the
+         matching background/text, reading as inconsistent next to the
+         fully-colored strong tiers. Added the two missing tiers.
+      2. The "blue dot" turned out to be a second bug beyond round 27's
+         thumb fix: the *tick* at stop 3 ("Neutral") was rendering with the
+         `-active` (accent-colored) treatment purely because
+         `stopIndex === stop` for the unrated placeholder position too,
+         independent of whether the item was actually rated — the active-
+         stop highlight needed `rated &&`, not just a position match.
+      3. Taste Profile's tag name is now a link to `/tags/{tag_id}` (same
+         `NavLink` pattern used for scene titles elsewhere), so you can jump
+         straight to that tag's scenes instead of round-tripping through
+         Stash's own Tags page. Verified the link navigates correctly.
 
 ## Buttons / icons
 

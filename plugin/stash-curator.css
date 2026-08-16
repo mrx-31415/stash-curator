@@ -730,6 +730,15 @@
   display: block;
 }
 
+.curator-taste-item strong a {
+  color: var(--curator-text);
+  text-decoration: none;
+}
+
+.curator-taste-item strong a:hover {
+  text-decoration: underline;
+}
+
 .curator-taste-item .badge {
   margin-left: 0.5rem;
 }
@@ -811,13 +820,20 @@
 .curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
 .curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
 
-/* Taste Profile's belief badge ("I think you like/dislike this" / "I'm
-   unsure") reuses these same tier classes for their --sc value instead of
-   Bootstrap's one-size-fits-all badge-info cyan, which gave "like" and
-   "dislike" (the one signal worth scanning 949 rows for) identical color. */
+/* Taste Profile's belief badge ("I think you slightly/strongly like/
+   dislike this" / "I'm unsure") reuses these same tier classes for their
+   --sc value instead of Bootstrap's one-size-fits-all badge-info cyan,
+   which gave every tier identical color. All 5 sentiment tiers are listed
+   (not just love/danger/neutral) since the badge text is now the specific
+   nearest tier, not a plain like/dislike binary — warning/like badges were
+   only getting the tier's border-color (from the button-oriented rule
+   above) without this rule's tinted background/text, reading as half-
+   colored next to the fully-colored strong tiers. */
 .badge.curator-sentiment-love,
-.badge.curator-sentiment-danger,
-.badge.curator-sentiment-neutral {
+.badge.curator-sentiment-like,
+.badge.curator-sentiment-neutral,
+.badge.curator-sentiment-warning,
+.badge.curator-sentiment-danger {
   background: color-mix(in srgb, var(--sc) 18%, transparent);
   border: 1px solid var(--sc);
   color: var(--sc);

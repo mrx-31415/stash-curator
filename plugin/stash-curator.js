@@ -843,7 +843,7 @@
             { className: "curator-sentiment-rail", "aria-hidden": "true" },
             [0, 1, 2, 3, 4, 5].map((stop) => React.createElement("span", {
               key: stop,
-              className: `curator-sentiment-stop${stop === 0 ? " curator-sentiment-stop-never" : ""}${stopIndex === stop ? " curator-sentiment-stop-active" : ""}`,
+              className: `curator-sentiment-stop${stop === 0 ? " curator-sentiment-stop-never" : ""}${rated && stopIndex === stop ? " curator-sentiment-stop-active" : ""}`,
               style: { left: `${(stop / 5) * 100}%` },
             })),
             hasModelEstimate && React.createElement("span", {
@@ -1124,7 +1124,7 @@
             "article",
             { key: item.tag_id, className: "curator-taste-item" },
             React.createElement("div", null,
-              React.createElement("strong", null, item.name),
+              React.createElement("strong", null, React.createElement(NavLink, { to: `/tags/${item.tag_id}`, title: `Review scenes tagged ${item.name}` }, item.name)),
               item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? nearestSentiment(item.inferred_value)[2] : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? beliefSentence(item.inferred_value) : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
