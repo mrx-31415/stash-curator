@@ -81,19 +81,37 @@ Artifacts:
 
 ## Sliders
 
-- [ ] **All 4 sliders render as plain unstyled native browser range inputs**
+- [x] **All 4 sliders render as plain unstyled native browser range inputs**
       (Taste Profile sentiment, Similar/Expand "Minimum match", Prune
-      "aggressiveness", Sentiment-review "Appeal ≤" threshold) — generic
-      Bootstrap-blue fill, near-invisible thumb, no differentiation between
-      filled/unfilled track. Root cause for the sentiment slider specifically:
-      Stash's own global `input[type="range"] { background-color: transparent;
-      ... }` (specificity 0,0,1,1) beats the plugin's
-      `.curator-sentiment-range { background: ... }` (0,0,1,0) — the intended
-      themed styling (thin bordered track, per-sentiment-colored 0.9rem
-      thumb) exists in CSS but never actually applies. The other 3 sliders
-      have essentially zero styling rules at all (only `width` is set).
-- [ ] **Taste Profile slider shows unrated items as already-filled** (~60%
-      blue) — misleading, reads as "already answered" when it isn't.
+      "aggressiveness", Sentiment-review "Appeal ≤" threshold). Root cause
+      was broader than the sentiment slider's own specificity fight: Stash's
+      global `input[type="range"]` base rule *and* its
+      `::-webkit-slider-thumb`/`::-webkit-slider-runnable-track` pseudo-
+      element rules all beat a bare `.curator-sentiment-range` class — and
+      critically, curator's CSS never had `::-webkit-slider-runnable-track`/
+      `::-moz-range-track` rules at all (only a base `background` that
+      WebKit ignores for track rendering), so the intended thin bordered
+      track never rendered in Chrome/Safari even before the specificity
+      question. The other 3 sliders (Minimum match, Prune aggressiveness,
+      Appeal ≤ threshold) had zero color/track/thumb styling of their own —
+      only `width`.
+      **Fix**: introduced a shared `.curator-page .curator-range` class
+      (opt-in via `className="curator-range"`) covering base/track/thumb for
+      both WebKit and Gecko, applied to all 4 sliders. Thumb color reads
+      `var(--sc, var(--curator-accent))` so the sentiment slider's existing
+      tier-color wrapper (`--sc`) recolors it for free with no separate
+      override rule. Verified via computed-style dump (confirms Stash's
+      rules no longer win) and screenshots of all 4 sliders in both themes.
+- [x] **Taste Profile slider shows unrated items as already-filled** (~60%
+      blue) — resolved as a side effect of the fix above: the "filled" look
+      was Stash's own saturated `rgb(0,123,255)` track color rendering
+      identically regardless of value/rated-state (native range tracks don't
+      show a filled/unfilled split), combined with the unrated default
+      thumb position (stop 3 of 5, i.e. ~60%). Now that curator's own neutral
+      `--curator-border-strong` track and dimmed (`opacity: 0.45`,
+      previously inert) unrated thumb actually render, an unrated slider
+      reads as neutral/unanswered rather than pre-filled — confirmed via
+      screenshot.
 
 ## Buttons / icons
 

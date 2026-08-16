@@ -776,12 +776,69 @@
 .curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
 .curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
 
+/* Shared themed look for every native <input type="range"> in the app
+   (Taste Profile sentiment, Similar/Expand "Minimum match", Prune
+   "aggressiveness", Sentiment-review "Appeal ≤" threshold) — apply
+   className="curator-range" to opt in. Stash's own global
+   `input[type="range"]` rule (element + [type] attribute = 0,1,1
+   specificity) and its `::-webkit-slider-thumb`/`::-webkit-slider-runnable-
+   track` pseudo-rules (0,1,2) beat a bare `.curator-range` class (0,1,0/1),
+   so every slider silently fell back to Stash's hardcoded dark
+   Bootstrap-blue look (solid rgb(0,123,255) track, rgb(57,75,89) thumb, both
+   theme-blind) regardless of curator's own light/dark theme — the .curator-
+   page prefix (an extra class) is what wins the specificity fight. Thumb
+   background reads var(--sc, ...) so the Taste Profile sentiment slider's
+   wrapping tier className (below) recolors it for free, with no separate
+   override rule needed. */
+.curator-page .curator-range {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  display: block;
+  height: 0.9rem;
+  outline: none;
+}
+
+.curator-page .curator-range::-webkit-slider-runnable-track {
+  background: var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
+  height: 0.35rem;
+}
+
+.curator-page .curator-range::-moz-range-track {
+  background: var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
+  height: 0.35rem;
+}
+
+.curator-page .curator-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  margin-top: -0.275rem;
+  width: 0.9rem;
+}
+
+.curator-page .curator-range::-moz-range-thumb {
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-text);
+  border-radius: 50%;
+  cursor: pointer;
+  height: 0.9rem;
+  width: 0.9rem;
+}
+
 /* Sentiment slider: a single 6-stop track, "Never" at position 0 then the
    5-point spectrum from curator-sentiment-danger to -love. The wrapping
    label carries the current tier's className (reusing the --sc custom
-   property declared above) so the thumb inherits the right color; when the
-   tier classes above are used here, their border-color assignment is a
-   harmless no-op since this wrapper draws no border. */
+   property declared above) so the thumb inherits the right color via the
+   shared .curator-range rules above; when the tier classes above are used
+   here, their border-color assignment is a harmless no-op since this
+   wrapper draws no border. */
 .curator-sentiment-range-wrap {
   align-items: center;
   display: flex;
@@ -814,34 +871,7 @@
 }
 
 .curator-sentiment-range {
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--curator-border-strong);
-  border-radius: var(--curator-radius-lg);
-  display: block;
-  height: 0.35rem;
-  outline: none;
   width: 100%;
-}
-
-.curator-sentiment-range::-webkit-slider-thumb {
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--sc, var(--curator-accent));
-  border: 2px solid var(--curator-text);
-  border-radius: 50%;
-  cursor: pointer;
-  height: 0.9rem;
-  width: 0.9rem;
-}
-
-.curator-sentiment-range::-moz-range-thumb {
-  background: var(--sc, var(--curator-accent));
-  border: 2px solid var(--curator-text);
-  border-radius: 50%;
-  cursor: pointer;
-  height: 0.9rem;
-  width: 0.9rem;
 }
 
 .curator-sentiment-range-unset::-webkit-slider-thumb {
@@ -879,7 +909,8 @@
 .curator-external-tag-rating .curator-sentiment-love { color: var(--curator-card-text); }
 .curator-external-tag-rating .curator-sentiment-current { color: var(--curator-card-text-muted); }
 .curator-external-tag-rating .curator-sentiment-divider { background: var(--curator-card-border-strong); }
-.curator-external-tag-rating .curator-sentiment-range { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-range::-webkit-slider-runnable-track { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-range::-moz-range-track { background: var(--curator-card-border-strong); }
 .curator-external-tag-rating .curator-sentiment-range::-webkit-slider-thumb { border-color: var(--curator-card-text); }
 .curator-external-tag-rating .curator-sentiment-range::-moz-range-thumb { border-color: var(--curator-card-text); }
 
