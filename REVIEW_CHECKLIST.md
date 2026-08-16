@@ -230,8 +230,11 @@ Artifacts:
 - [ ] Similar's free-text scene search results render as a bare, unstyled
       inline list of link-colored text — no card/border/container, visually
       inconsistent with the app's card-heavy aesthetic elsewhere.
-- [ ] Minor: Backups' directory path uses an alarm-colored magenta/pink
-      `curator-mono` style for what's just informational text.
+- [x] Minor: Backups' directory path uses an alarm-colored magenta/pink
+      `curator-mono` style for what's just informational text. Root cause:
+      `.curator-mono` only ever set `font-family`, so Bootstrap's default
+      `code{color:#e83e8c}` (meant for inline code snippets) showed through
+      unopposed. Added `color: var(--curator-text-muted)`.
 
 ## UX suggestions (independent judgment, not defects — discuss before building)
 

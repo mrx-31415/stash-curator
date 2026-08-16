@@ -1098,6 +1098,10 @@
 }
 
 .curator-mono {
+  /* Bootstrap's default <code> color (#e83e8c, alarm-colored magenta,
+     meant for inline code snippets) reads as an error/warning for what's
+     just an informational file path here. */
+  color: var(--curator-text-muted);
   font-family: var(--curator-font-mono);
 }
 
