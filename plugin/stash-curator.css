@@ -138,6 +138,46 @@
   width: 100%;
 }
 
+/* Bootstrap's stock .alert-* colors (35 call sites across every screen —
+   empty states, errors, confirmations) were never reskinned, so every one
+   of them renders as a light, un-themed box in an otherwise all-dark page.
+   Same tinted-dark-surface pattern already used for lane cards and
+   sentiment tiers, just applied at the page level since alerts appear
+   everywhere. */
+.curator-page .alert {
+  border-radius: var(--curator-radius);
+}
+
+.curator-page .alert-info {
+  background: color-mix(in srgb, var(--curator-accent) 14%, var(--curator-surface));
+  border-color: color-mix(in srgb, var(--curator-accent) 40%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-danger {
+  background: color-mix(in srgb, #e0645c 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #e0645c 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-warning {
+  background: color-mix(in srgb, #e0824f 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #e0824f 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-success {
+  background: color-mix(in srgb, #5cc19c 16%, var(--curator-surface));
+  border-color: color-mix(in srgb, #5cc19c 45%, transparent);
+  color: var(--curator-text);
+}
+
+.curator-page .alert-secondary {
+  background: var(--curator-surface-raised);
+  border-color: var(--curator-border);
+  color: var(--curator-text);
+}
+
 .curator-page h1,
 .curator-page h2,
 .curator-page h3 {
