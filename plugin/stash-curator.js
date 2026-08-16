@@ -924,7 +924,7 @@
     );
   }
 
-  function TasteProfilePanel() {
+  function TasteProfilePanel({ embedded = false } = {}) {
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
@@ -960,9 +960,9 @@
     }
     return React.createElement(
       "section",
-      { className: "curator-taste", "aria-labelledby": "curator-taste-title" },
-      React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
-      React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
+      { className: "curator-taste", "aria-labelledby": embedded ? undefined : "curator-taste-title" },
+      !embedded && React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
+      !embedded && React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
       React.createElement(
         "div",
         { className: "curator-taste-toolbar" },
@@ -3701,7 +3701,7 @@
   // mounted unmodified — this is pure relocation, not a rebuild.
   const MANAGE_BODIES = {
     feedback: () => React.createElement(FeedbackHistoryPanel),
-    taste: () => React.createElement(TasteProfilePanel),
+    taste: () => React.createElement(TasteProfilePanel, { embedded: true }),
     sentiment: () => React.createElement(ScoreReviewPanel),
     history: () => React.createElement(RecommendationHistoryPanel),
     backups: () => React.createElement(BackupPanel),
@@ -3977,7 +3977,7 @@
           React.createElement("span", { className: "curator-lane-card-desc" }, laneItem.description)
         ))
       ),
-      laneOption && React.createElement(
+      laneOption && lane !== "curate" && React.createElement(
         "div",
         { className: "curator-view-guidance" },
         React.createElement(
