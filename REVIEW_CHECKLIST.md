@@ -209,9 +209,16 @@ Artifacts:
       `.curator-tabs` is horizontally scrollable with the scrollbar hidden and
       no fade/chevron hint; only "Recommendations" is visible on load at a
       420px viewport.
-- [ ] **Prune still shows plain text** ("Appeal −0.94 · confidence 0.99")
+- [x] **Prune still shows plain text** ("Appeal −0.94 · confidence 0.99")
       where Recommendations/Sentiment review show a MATCH bar for the same
-      underlying data — cross-surface inconsistency.
+      underlying data. Swapped to the shared `EvidenceScore`/`utilityBar`
+      used elsewhere (`item.appeal` is the same raw-appeal value
+      score_review's bar already renders, confirming this was genuinely
+      the same underlying data): the evidence line ("Low predicted Appeal
+      with supporting evidence") stays always-visible above the card body
+      as before, appeal now gets the MATCH bar row, and confidence moved
+      into the "Score breakdown" collapsible. Verified via screenshot,
+      including the expanded breakdown.
 - [ ] **No inline sentiment slider on the Curate pair-comparison screen** —
       mockup has a rate-strip directly under the pair; live only exposes tag
       sentiment via the separate Taste Profile panel. (Old handover #6,

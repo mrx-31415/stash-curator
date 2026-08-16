@@ -2766,7 +2766,12 @@
             { key: item.scene_id, className: "curator-card" },
             item.tagged && React.createElement("span", { className: "curator-prune-badge", title: `Tagged ${data.tag_name}`, "aria-label": `Tagged ${data.tag_name}` }, React.createElement(FontAwesomeIcon, { icon: faBroom })),
             React.createElement(SceneCard, { scene }),
-            React.createElement("div", { className: "curator-card-body" }, React.createElement("p", { className: "curator-similarity-reason" }, item.evidence.join(" · ")), item.appeal !== null && React.createElement("small", null, `Appeal ${item.appeal.toFixed(2)} · confidence ${item.confidence.toFixed(2)}`)),
+            React.createElement("div", { className: "curator-card-body" }, React.createElement("p", { className: "curator-similarity-reason" }, item.evidence.join(" · ")), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, {
+              evidenceContent: null,
+              scoreBarContent: item.appeal !== null ? utilityBar(item.appeal) : null,
+              scoreSummary: item.appeal !== null ? item.appeal.toFixed(2) : "—",
+              scoreContent: React.createElement("p", null, `Confidence ${item.confidence.toFixed(2)}`),
+            }))),
             React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && item.suspect && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
           );
         })
