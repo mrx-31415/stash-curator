@@ -552,6 +552,74 @@
   margin: 0;
 }
 
+/* Record list (Backups, Feedback history) — was a plain <table>, replaced
+   with the mockup's icon+title+meta row pattern (.record-row). */
+.curator-record-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.curator-record-row {
+  align-items: center;
+  border-bottom: 1px solid var(--curator-border);
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.65rem 0.1rem;
+}
+
+.curator-record-row:last-child {
+  border-bottom: 0;
+}
+
+.curator-record-icon {
+  align-items: center;
+  background: var(--curator-surface-raised);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text-muted);
+  display: inline-flex;
+  flex: none;
+  height: 1.9rem;
+  justify-content: center;
+  width: 1.9rem;
+}
+
+.curator-record-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.curator-record-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.curator-record-meta {
+  color: var(--curator-text-muted);
+  font-size: 0.72rem;
+  margin-top: 0.1rem;
+}
+
+.curator-record-row .btn {
+  color: var(--curator-accent);
+  flex: none;
+  font-weight: 700;
+}
+
+.curator-record-row .curator-record-destructive {
+  color: #e0645c;
+}
+
+.curator-feedback-row {
+  align-items: flex-start;
+}
+
+.curator-feedback-correction {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
 .curator-profiling {
   margin-top: 1rem;
 }

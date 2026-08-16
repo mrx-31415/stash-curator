@@ -1921,36 +1921,36 @@
       }
     }
     return React.createElement(
-      "tr",
-      null,
+      "div",
+      { className: "curator-record-row curator-feedback-row" },
+      React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp })),
       React.createElement(
-        "td",
-        null,
-        scene
-          ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
-          : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+        "div",
+        { className: "curator-record-main" },
+        React.createElement(
+          "div",
+          { className: "curator-record-title" },
+          scene
+            ? React.createElement(NavLink, { to: `/scenes/${item.scene_id}` }, scene.title || `Scene ${item.scene_id}`)
+            : React.createElement("span", { className: "text-muted" }, "Scene removed from Stash")
+        ),
+        React.createElement("div", { className: "curator-record-meta" }, `${FEEDBACK_LABELS[item.feedback_type] || item.feedback_type} · ${new Date(item.occurred_at_ms).toLocaleString()}`)
       ),
-      React.createElement("td", null, FEEDBACK_LABELS[item.feedback_type] || item.feedback_type),
-      React.createElement("td", null, new Date(item.occurred_at_ms).toLocaleString()),
-      React.createElement(
-        "td",
-        null,
-        item.reversed_by_id
-          ? React.createElement("span", { className: "text-muted" }, "Corrected")
-          : React.createElement(
-              "div",
-              { className: "curator-feedback-correction" },
-              React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => correct(null) }, "Undo"),
-              React.createElement(
-                "select",
-                { className: "form-control form-control-sm", value: replacement, disabled: busy, onChange: (event) => setReplacement(event.target.value), "aria-label": "Replacement feedback" },
-                React.createElement("option", { value: "" }, "Replace with…"),
-                Object.entries(FEEDBACK_LABELS).map(([value, label]) => React.createElement("option", { key: value, value }, label))
-              ),
-              React.createElement(Button, { size: "sm", disabled: busy || !replacement, onClick: () => correct(replacement) }, "Save"),
-              error && React.createElement("small", { className: "text-danger" }, error)
-            )
-      )
+      item.reversed_by_id
+        ? React.createElement("span", { className: "text-muted" }, "Corrected")
+        : React.createElement(
+            "div",
+            { className: "curator-feedback-correction" },
+            React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => correct(null) }, "Undo"),
+            React.createElement(
+              "select",
+              { className: "form-control form-control-sm", value: replacement, disabled: busy, onChange: (event) => setReplacement(event.target.value), "aria-label": "Replacement feedback" },
+              React.createElement("option", { value: "" }, "Replace with…"),
+              Object.entries(FEEDBACK_LABELS).map(([value, label]) => React.createElement("option", { key: value, value }, label))
+            ),
+            React.createElement(Button, { size: "sm", variant: "link", disabled: busy || !replacement, onClick: () => correct(replacement) }, "Save"),
+            error && React.createElement("small", { className: "text-danger" }, error)
+          )
     );
   }
 
@@ -1991,13 +1991,8 @@
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No feedback has been recorded yet."),
       data && data.items.length > 0 && React.createElement(
         "div",
-        { className: "table-responsive" },
-        React.createElement(
-          "table",
-          { className: "table" },
-          React.createElement("thead", null, React.createElement("tr", null, ["Scene", "Action", "Time", "Correction"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
-          React.createElement("tbody", null, data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) })))
-        )
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) }))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
     );
@@ -3060,20 +3055,20 @@
       data && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No Curator backups found."),
       data && data.items.length > 0 && React.createElement(
         "div",
-        { className: "table-responsive" },
-        React.createElement(
-          "table",
-          { className: "table" },
-          React.createElement("thead", null, React.createElement("tr", null, ["Created", "Size", "File", "Action"].map((label) => React.createElement("th", { key: label, scope: "col" }, label)))),
-          React.createElement("tbody", null, data.items.map((item) => React.createElement(
-            "tr",
-            { key: item.id },
-            React.createElement("td", null, new Date(item.created_at_ms).toLocaleString()),
-            React.createElement("td", null, `${(item.size_bytes / 1048576).toFixed(1)} MB`),
-            React.createElement("td", null, item.id),
-            React.createElement("td", null, React.createElement(Button, { size: "sm", disabled: busy, onClick: () => restore(item) }, "Restore"), " ", React.createElement(Button, { size: "sm", variant: "danger", disabled: busy, onClick: () => remove(item) }, "Delete"))
-          )))
-        )
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(
+          "div",
+          { key: item.id, className: "curator-record-row" },
+          React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: faDatabase })),
+          React.createElement(
+            "div",
+            { className: "curator-record-main" },
+            React.createElement("div", { className: "curator-record-title" }, item.id),
+            React.createElement("div", { className: "curator-record-meta" }, `${new Date(item.created_at_ms).toLocaleString()} · ${(item.size_bytes / 1048576).toFixed(1)} MB`)
+          ),
+          React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => restore(item) }, "Restore"),
+          React.createElement(Button, { size: "sm", variant: "link", className: "curator-record-destructive", disabled: busy, onClick: () => remove(item) }, "Delete")
+        ))
       )
     );
   }
