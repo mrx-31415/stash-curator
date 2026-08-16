@@ -740,11 +740,39 @@
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
+  // The 5-point spectrum spans stops 1-5 of the 6-stop track (stop 0 is
+  // "Never"), i.e. positions 20%/40%/60%/80%/100% — a continuous value in
+  // [-1, 1] (Taste Profile's model-inferred sentiment) maps onto that same
+  // linear scale, skipping the "Never" slot since inference has no opinion
+  // on hard exclusion.
+  function sentimentValueToTrackPct(value) {
+    return 20 + (Math.max(-1, Math.min(1, value)) + 1) * 40;
+  }
+  function nearestSentimentLabel(value) {
+    let best = SENTIMENTS[0];
+    let bestDistance = Infinity;
+    for (const entry of SENTIMENTS) {
+      const distance = Math.abs(entry[0] - value);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = entry;
+      }
+    }
+    return best[1];
+  }
+
   // A single 6-stop control: "Never" is stop 0 on the same track as the 5
   // sentiment levels (not a separate toggle) — set apart visually with its
-  // own color and a divider line, per the #150 design brief, but still one
-  // continuous range input rather than a track plus an out-of-band button.
-  function TagSentimentControl({ tag, value, blocked, onChange, compact = false }) {
+  // own color, per the #150 design brief. The visible track/stops/thumb are
+  // a purely decorative rail; a fully transparent native range input sits
+  // on top capturing clicks/drags/keyboard, so the control stays as
+  // accessible as a plain <input type="range"> without hand-rolling pointer
+  // math the way the original design mockup's static-HTML version did.
+  // `inferredValue`, when given (only Taste Profile has this — it's the
+  // model's own continuous estimate, distinct from the user's discrete
+  // direct rating), renders as a small hollow ring on the same track so the
+  // two can be compared at a glance.
+  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null }) {
     const rated = (value !== null && value !== undefined) || blocked;
     const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
     const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
@@ -754,29 +782,44 @@
       if (index === 0) onChange({ value: null, blocked: true });
       else onChange({ value: SENTIMENTS[index - 1][0], blocked: false });
     }
+    const hasModelEstimate = inferredValue !== null && inferredValue !== undefined;
     return React.createElement(
       "div",
       { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
       React.createElement(
         "label",
         { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
-        !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel),
         React.createElement(
           "span",
           { className: "curator-sentiment-track" },
-          React.createElement("span", { className: "curator-sentiment-divider", "aria-hidden": "true" }),
+          React.createElement(
+            "span",
+            { className: "curator-sentiment-rail", "aria-hidden": "true" },
+            [0, 1, 2, 3, 4, 5].map((stop) => React.createElement("span", {
+              key: stop,
+              className: `curator-sentiment-stop${stop === 0 ? " curator-sentiment-stop-never" : ""}${stopIndex === stop ? " curator-sentiment-stop-active" : ""}`,
+              style: { left: `${(stop / 5) * 100}%` },
+            })),
+            hasModelEstimate && React.createElement("span", {
+              className: "curator-sentiment-model-dot",
+              style: { left: `${sentimentValueToTrackPct(inferredValue)}%` },
+              title: `Model estimate: ${nearestSentimentLabel(inferredValue)} (${inferredValue.toFixed(2)})`,
+            }),
+            React.createElement("span", { className: `curator-sentiment-thumb${!rated ? " curator-sentiment-thumb-unset" : ""}`, style: { left: `${(stopIndex / 5) * 100}%` } })
+          ),
           React.createElement("input", {
             type: "range",
             min: "0",
             max: "5",
             step: "1",
-            className: `curator-range curator-sentiment-range${!rated ? " curator-sentiment-range-unset" : ""}${blocked ? " curator-sentiment-range-blocked" : ""}`,
+            className: "curator-sentiment-input",
             value: stopIndex,
             "aria-label": `Sentiment for ${tag.name}`,
             "aria-valuetext": currentLabel,
             onChange: handleChange,
           })
-        )
+        ),
+        !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
       ),
       (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
@@ -1038,7 +1081,7 @@
               item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? (item.inferred_value >= 0 ? "curator-sentiment-love" : "curator-sentiment-danger") : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
-            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
+            React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, inferredValue: item.inferred_value, onChange: (value) => answer(item.tag_id, value) })
           )
         )
       ),

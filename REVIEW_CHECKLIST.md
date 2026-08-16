@@ -112,6 +112,31 @@ Artifacts:
       previously inert) unrated thumb actually render, an unrated slider
       reads as neutral/unanswered rather than pre-filled — confirmed via
       screenshot.
+- [x] **Follow-up (user feedback, post-round-15): sentiment slider still
+      didn't match the design mockup** — the round-15 fix made the native
+      `<input type="range">` render *something* coherent, but the mockup
+      (`.rs-track`/`.rs-stop`/`.rs-thumb` — a compact ~10rem fixed-width
+      track with visible per-stop tick dots, not a full-row-width plain bar)
+      was never actually built; that gap is what "no ticks, line too wide"
+      was pointing at. Rebuilt `TagSentimentControl` per the mockup: a
+      decorative rail (`.curator-sentiment-rail`) with 6 tick-stop dots
+      (`.curator-sentiment-stop`, the "Never" stop distinctly shaped/
+      colored) and a 14px thumb, fixed-width (10rem standalone / 6rem
+      compact) instead of stretching to fill the row. A fully transparent
+      native range input sits on top at the same geometry so clicking/
+      dragging/keyboard/screen-reader semantics stay free (no hand-rolled
+      pointer math like the mockup's own static-HTML JS), with a
+      `:focus-visible` ring redirected onto the decorative thumb since the
+      real input is invisible. Also adds a feature beyond the mockup itself:
+      Taste Profile's model-inferred sentiment (`item.inferred_value`,
+      previously only shown as text) now renders as a small hollow ring on
+      the same track (`.curator-sentiment-model-dot`), distinct from the
+      solid direct-rating thumb, so the two can be compared at a glance —
+      the other two `TagSentimentControl` call sites (ExternalCard's "Rate
+      tags & terms", Curate's thumbs-down follow-up) don't have an inferred
+      value available client-side, so no dot renders there, gracefully.
+      Verified via screenshot in both themes, compact and standalone modes,
+      mouse-click and keyboard interaction.
 
 ## Buttons / icons
 

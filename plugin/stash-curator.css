@@ -844,66 +844,140 @@
   width: 0.9rem;
 }
 
-/* Sentiment slider: a single 6-stop track, "Never" at position 0 then the
-   5-point spectrum from curator-sentiment-danger to -love. The wrapping
-   label carries the current tier's className (reusing the --sc custom
-   property declared above) so the thumb inherits the right color via the
-   shared .curator-range rules above; when the tier classes above are used
-   here, their border-color assignment is a harmless no-op since this
-   wrapper draws no border. */
+/* Sentiment slider (redesigned to match the GH #150 design mockup's
+   .rs-track/.rs-stop/.rs-thumb, which the original native-<input>-styled
+   version — round 15's specificity fix — never actually matched: that fix
+   made the native range render *something* coherent, but not the mockup's
+   compact fixed-width track with visible per-stop tick dots). The visible
+   rail (.curator-sentiment-rail/-stop/-thumb) is purely decorative; a fully
+   transparent native range input (.curator-sentiment-input) sits on top at
+   the same geometry, capturing clicks/drags/keyboard for free instead of
+   hand-rolling the mockup's manual pointer math. The wrapping label carries
+   the current tier's className (reusing the --sc custom property declared
+   above) so the active stop/thumb inherit the right color. */
 .curator-sentiment-range-wrap {
   align-items: center;
   display: flex;
-  flex: 1 1 auto;
-  gap: 0.4rem;
-  min-width: 6rem;
+  gap: 0.6rem;
 }
 
 .curator-sentiment-current {
-  color: var(--curator-text-muted);
+  color: var(--curator-text);
   flex: 0 0 auto;
-  font-size: 0.72rem;
-  min-width: 5.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-width: 5.2rem;
 }
+
+.curator-sentiment-never .curator-sentiment-current { color: #dc3545; }
 
 .curator-sentiment-track {
-  flex: 1 1 auto;
-  min-width: 4rem;
+  flex: 0 0 auto;
+  height: 1.2rem;
   position: relative;
+  width: 10rem;
 }
 
-.curator-sentiment-divider {
+.curator-sentiment-rail {
   background: var(--curator-border-strong);
-  bottom: 0;
-  left: 10%;
+  border-radius: 2px;
+  height: 4px;
+  left: 0;
   position: absolute;
-  top: 0;
-  transform: translateX(-1px);
-  width: 2px;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
-.curator-sentiment-range {
+.curator-sentiment-stop {
+  background: var(--curator-border-strong);
+  border-radius: 50%;
+  height: 6px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: background 0.15s ease, transform 0.15s ease;
+  width: 6px;
+}
+
+.curator-sentiment-stop-active {
+  background: var(--sc, var(--curator-accent));
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.curator-sentiment-stop-never {
+  background: color-mix(in srgb, #dc3545 55%, var(--curator-border-strong));
+  border-radius: 2px;
+  height: 8px;
+  width: 8px;
+}
+
+.curator-sentiment-stop-never.curator-sentiment-stop-active {
+  background: #dc3545;
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.curator-sentiment-thumb {
+  background: var(--sc, var(--curator-accent));
+  border: 2px solid var(--curator-surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--sc, var(--curator-accent));
+  height: 14px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.18s cubic-bezier(0.34, 1.4, 0.64, 1);
+  width: 14px;
+}
+
+.curator-sentiment-thumb-unset {
+  opacity: 0.5;
+}
+
+.curator-sentiment-never .curator-sentiment-thumb {
+  background: #dc3545;
+  box-shadow: 0 0 0 1px #dc3545;
+}
+
+/* The model's own continuous estimate (Taste Profile only — see
+   TagSentimentControl's inferredValue prop), shown as a small hollow ring
+   distinct from the solid direct-rating thumb so the two can be compared
+   without the model's read silently overriding what the user set. */
+.curator-sentiment-model-dot {
+  background: var(--curator-surface);
+  border: 1.5px solid var(--curator-text-muted);
+  border-radius: 50%;
+  height: 7px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px;
+}
+
+.curator-sentiment-input {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  height: 100%;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
   width: 100%;
 }
 
-.curator-sentiment-range-unset::-webkit-slider-thumb {
-  opacity: 0.45;
-}
-
-.curator-sentiment-range-unset::-moz-range-thumb {
-  opacity: 0.45;
-}
-
-.curator-sentiment-range-blocked {
-  opacity: 0.4;
-}
-
-.curator-sentiment-compact .curator-sentiment-range-wrap {
-  min-width: 4rem;
+/* The interactive input is fully transparent, so its own focus ring (which
+   would otherwise render invisibly along with the rest of it) needs to be
+   redirected onto the decorative thumb for keyboard users. The input has to
+   paint after (on top of) the rail to receive clicks, which rules out a
+   ~ sibling-combinator selector here (it only matches *later* siblings) —
+   :has() on the shared ancestor sidesteps the ordering requirement. */
+.curator-sentiment-track:has(.curator-sentiment-input:focus-visible) .curator-sentiment-thumb {
+  box-shadow: 0 0 0 1px var(--sc, var(--curator-accent)), 0 0 0 4px var(--curator-glow-color);
 }
 
 .curator-sentiment-compact .curator-sentiment-track {
-  min-width: 3rem;
+  width: 6rem;
 }
 
 /* TagSentimentControl renders in two different contexts: standalone on the
@@ -913,18 +987,11 @@
    deliberately-always-dark --curator-card-surface. Force the pinned-dark
    card tokens back on specifically for that nested case so the slider
    doesn't go light-on-dark there in light mode. */
-.curator-external-tag-rating .curator-sentiment-never,
-.curator-external-tag-rating .curator-sentiment-danger,
-.curator-external-tag-rating .curator-sentiment-warning,
-.curator-external-tag-rating .curator-sentiment-neutral,
-.curator-external-tag-rating .curator-sentiment-like,
-.curator-external-tag-rating .curator-sentiment-love { color: var(--curator-card-text); }
-.curator-external-tag-rating .curator-sentiment-current { color: var(--curator-card-text-muted); }
-.curator-external-tag-rating .curator-sentiment-divider { background: var(--curator-card-border-strong); }
-.curator-external-tag-rating .curator-sentiment-range::-webkit-slider-runnable-track { background: var(--curator-card-border-strong); }
-.curator-external-tag-rating .curator-sentiment-range::-moz-range-track { background: var(--curator-card-border-strong); }
-.curator-external-tag-rating .curator-sentiment-range::-webkit-slider-thumb { border-color: var(--curator-card-text); }
-.curator-external-tag-rating .curator-sentiment-range::-moz-range-thumb { border-color: var(--curator-card-text); }
+.curator-external-tag-rating .curator-sentiment-current { color: var(--curator-card-text); }
+.curator-external-tag-rating .curator-sentiment-rail { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-stop { background: var(--curator-card-border-strong); }
+.curator-external-tag-rating .curator-sentiment-thumb { border-color: var(--curator-card-surface); }
+.curator-external-tag-rating .curator-sentiment-model-dot { background: var(--curator-card-surface); border-color: var(--curator-card-text-muted); }
 
 @media (max-width: 480px) {
   .curator-sentiment .btn-sm {
