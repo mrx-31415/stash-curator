@@ -220,6 +220,20 @@
   min-width: 0;
 }
 
+.curator-view-stats {
+  color: var(--curator-text);
+  display: block !important;
+  font-weight: 600;
+  margin-top: 0.3rem !important;
+}
+
+.curator-view-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+}
+
 .curator-view-copy h1 {
   font-size: 1.5rem;
   margin: 0 0 0.2rem;
@@ -1912,13 +1926,18 @@
   }
 
   /* Brand shrinks to its icon mark only, freeing width for the scrollable
-     nav strip next to it — same trade the mockup makes at this width. */
-  .curator-tagline {
+     nav strip next to it — same trade the mockup makes at this width
+     (brand-word: none). Measured: without this, brand+controls alone ate
+     278px of a 390px viewport, leaving the nav ~22px — room for a sliver
+     of one pill, nothing scrollable in any useful sense. */
+  .curator-tagline,
+  .curator-header h1 {
     display: none;
   }
 
-  .curator-header h1 {
-    font-size: 1.1rem;
+  .curator-icon-button {
+    height: 1.6rem;
+    width: 1.6rem;
   }
 
   /* .curator-navigation's base rule (grid-column: 1 / -1; grid-row: 2)
@@ -1936,13 +1955,20 @@
     display: none;
   }
 
-  .curator-tabs .nav-link {
-    justify-content: center;
-    padding-inline: 0.45rem;
+  /* Shrink, don't strip: the mockup's primary-nav keeps every pill's text
+     label at every width, relying on horizontal scroll (plus this fade
+     mask at the edges) rather than going icon-only. Icon-only pills lose
+     their visual anchor once the background/border is gone on the
+     inactive ones — they read as disconnected floating icons instead of
+     a nav row, which is exactly what looked broken here before. */
+  .curator-tabs {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 1rem, #000 calc(100% - 1rem), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 1rem, #000 calc(100% - 1rem), transparent);
   }
 
-  .curator-tabs .nav-link span {
-    display: none;
+  .curator-tabs .nav-link {
+    font-size: 0.78rem;
+    padding: 0.4rem 0.55rem;
   }
 
   .curator-lane-switcher {

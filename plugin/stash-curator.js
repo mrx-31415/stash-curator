@@ -3761,6 +3761,17 @@
       ? route.get("section") || (MAINTENANCE_ITEMS.some((item) => item.value === requestedView) ? requestedView : MAINTENANCE_ITEMS[0].value)
       : null;
     const [slate, setSlate] = React.useState(null);
+    const [headerTaskBusy, setHeaderTaskBusy] = React.useState(false);
+    async function runHeaderTask(taskName) {
+      setHeaderTaskBusy(true);
+      try {
+        await runTask(taskName);
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setHeaderTaskBusy(false);
+      }
+    }
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
     const [refreshKey, setRefreshKey] = React.useState(0);
@@ -3975,22 +3986,29 @@
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
-          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability.")
+          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability."),
+          laneByValue.has(lane) && slate && React.createElement("p", { className: "curator-view-stats" }, `${slate.total} in rotation`)
         ),
-        laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
-          Button,
-          {
-            className: "curator-diversity-toggle",
-            size: "sm",
-            variant: diversityEnabled ? "primary" : "secondary",
-            disabled: diversitySaving,
-            "aria-pressed": diversityEnabled,
-            "aria-label": diversityEnabled ? "Disable recommendation variety" : "Enable recommendation variety",
-            title: diversityEnabled ? "Switch to the model's score-first order" : "Vary performers, studios, and similar content",
-            onClick: toggleDiversity,
-          },
-          React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
-          diversityEnabled ? " Balanced" : " Score-first"
+        React.createElement(
+          "div",
+          { className: "curator-view-actions" },
+          laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: "secondary", disabled: headerTaskBusy, onClick: () => runHeaderTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild"),
+          laneByValue.has(lane) && React.createElement(Button, { size: "sm", disabled: headerTaskBusy, onClick: () => runHeaderTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync library"),
+          laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
+            Button,
+            {
+              className: "curator-diversity-toggle",
+              size: "sm",
+              variant: diversityEnabled ? "primary" : "secondary",
+              disabled: diversitySaving,
+              "aria-pressed": diversityEnabled,
+              "aria-label": diversityEnabled ? "Disable recommendation variety" : "Enable recommendation variety",
+              title: diversityEnabled ? "Switch to the model's score-first order" : "Vary performers, studios, and similar content",
+              onClick: toggleDiversity,
+            },
+            React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
+            diversityEnabled ? " Balanced" : " Score-first"
+          )
         )
       ),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
