@@ -193,10 +193,14 @@ Artifacts:
       `1.17`/`1.16`/`1.15` render at essentially the same bar width as `0.95`.
       Either normalize fill to the actual observed max or drop the bar and
       show only the number for these cases.
-- [ ] **Sentiment badges carry no color signal** — "I think you like this,"
-      "I think you dislike this," and "I'm unsure" all render in identical
-      cyan `badge-info`, removing the one signal (like vs. dislike) that
-      would most help scanning a 949-row Taste Profile list.
+- [x] **Sentiment badges carry no color signal** — reused the existing
+      sentiment-tier classes (`.curator-sentiment-love`/`-danger`/`-neutral`,
+      which already set `--sc`) on the badge instead of Bootstrap's
+      `badge-info`, plus one small CSS rule giving `.badge` context a tinted
+      background/border/text from `--sc` (those classes previously only had
+      a button treatment: transparent fill, border-only). Like now reads
+      green, dislike red, unsure gray — no new design work, per the UX
+      suggestion below. Verified via screenshot.
 - [ ] **Mobile primary nav hides 5 of 6 tabs off-screen with no affordance** —
       `.curator-tabs` is horizontally scrollable with the scrollbar hidden and
       no fade/chevron hint; only "Recommendations" is visible on load at a
@@ -223,9 +227,9 @@ Artifacts:
 - [ ] Move **Profiling** out of the primary Manage nav rail behind a debug
       flag / `?debug=1` — it exposes raw `.pprof` CPU-trace downloads, which
       reads as developer tooling leaking into end-user navigation.
-- [ ] Color-code sentiment badges using the sentiment-tier color system the
-      slider thumb already has (`--sc` custom property) — reuse, not new
-      design work.
+- [x] Color-code sentiment badges using the sentiment-tier color system the
+      slider thumb already has (`--sc` custom property) — done, see the
+      "Other bugs / quirks" entry above.
 - [ ] Add pagination or virtualization to Taste Profile (fixes the Manage
       height problem at the root).
 - [ ] Add loading skeletons for lane switches and Curate generation.

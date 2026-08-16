@@ -1023,7 +1023,7 @@
             { key: item.tag_id, className: "curator-taste-item" },
             React.createElement("div", null,
               React.createElement("strong", null, item.name),
-              item.prompt && React.createElement("span", { className: "badge badge-info" }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
+              item.prompt && React.createElement("span", { className: `badge ${item.prompt === "belief" ? (item.inferred_value >= 0 ? "curator-sentiment-love" : "curator-sentiment-danger") : "curator-sentiment-neutral"}` }, item.prompt === "belief" ? `I think you ${item.inferred_value >= 0 ? "like" : "dislike"} this` : "I'm unsure"),
               React.createElement("small", null, `Inferred ${item.inferred_value.toFixed(2)} · confidence ${item.confidence.toFixed(2)} · support ${item.support.toFixed(1)} · ${item.scene_count} local scene${item.scene_count === 1 ? "" : "s"}`)
             ),
             React.createElement(TagSentimentControl, { tag: item, value: item.direct_value, blocked: item.direct_blocked, onChange: (value) => answer(item.tag_id, value) })
