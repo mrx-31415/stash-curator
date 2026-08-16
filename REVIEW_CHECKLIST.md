@@ -188,6 +188,19 @@ Artifacts:
          `NavLink` pattern used for scene titles elsewhere), so you can jump
          straight to that tag's scenes instead of round-tripping through
          Stash's own Tags page. Verified the link navigates correctly.
+- [x] **Follow-up 4 (user feedback: row alignment + Clear answer styling)**:
+      standalone (non-compact) rows only rendered a "Clear answer" button
+      when `rated` — unlike compact mode, which already reserved layout
+      space with an invisible placeholder for exactly this reason, the
+      standalone path omitted the element entirely when unrated, so rated
+      and unrated rows had different widths and misaligned. Always render
+      the button now (both compact and standalone), applying the existing
+      `.curator-sentiment-clear-placeholder` (`visibility: hidden`, space
+      still reserved) whenever unrated. Also changed the button from
+      `variant="link"` (plain underlined text) to `variant="secondary"`
+      (the bordered/outline treatment used elsewhere in the app) per
+      request. Verified row alignment and button styling via screenshot in
+      both standalone and compact contexts.
 
 ## Buttons / icons
 

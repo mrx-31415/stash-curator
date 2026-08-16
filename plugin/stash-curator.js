@@ -868,7 +868,7 @@
         ),
         !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
       ),
-      (rated || compact) && React.createElement(Button, { size: "sm", variant: "link", className: compact && !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
+      React.createElement(Button, { size: "sm", variant: "secondary", className: !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
   }
 
