@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.13.0](https://github.com/mrx-31415/stash-curator/compare/v0.12.0...v0.13.0) (2026-08-17)
+
+
+### Features
+
+* automatic model updates and play sync in the background worker ([802ac0d](https://github.com/mrx-31415/stash-curator/commit/802ac0d18d6d8eadd54533d7716f068034bcca7c))
+* background task worker with queue, detached daemon, and live progress ([2e30e6a](https://github.com/mrx-31415/stash-curator/commit/2e30e6aaf71d0d8c82956bdf5f991c84dc83a8e7))
+* **plugin:** in-plugin Settings panel under Manage ([#158](https://github.com/mrx-31415/stash-curator/issues/158)) ([fc0c1a2](https://github.com/mrx-31415/stash-curator/commit/fc0c1a2d37f264cfffbafbca9fcbe79908ed2d05))
+* schedule hour-of-day anchors, Manage list scroll, and text-in-toggle switches ([63bfb17](https://github.com/mrx-31415/stash-curator/commit/63bfb174fd6128f919f43b2ab47dd83d96498ffe))
+* scheduled background tasks for expand refresh, sync-build, and backup ([042cf65](https://github.com/mrx-31415/stash-curator/commit/042cf65d3865a6bf478c984444ef53b58f8d1a2f))
+
+
+### Bug Fixes
+
+* **plugin:** Curator Tasks section as the worker task-feedback surface ([cf26775](https://github.com/mrx-31415/stash-curator/commit/cf2677529be2f21a03b1012a9dbc0f5bbe40db44))
+* **plugin:** let Enter add the top match in tag/performer/studio filter inputs ([#156](https://github.com/mrx-31415/stash-curator/issues/156)) ([adf6a11](https://github.com/mrx-31415/stash-curator/commit/adf6a11ac9e332a86c6c2921cc0a99a0b1e25847))
+* **plugin:** resolve routeLocation scope in CuratorControls ([675e3ed](https://github.com/mrx-31415/stash-curator/commit/675e3ed93c8dc7db2e4338af84d141531107131a))
+* **plugin:** scale card icons/text with card-size slider ([c2895ba](https://github.com/mrx-31415/stash-curator/commit/c2895ba291d90e7d381d434e40ee1e20f686c29f))
+
 ## [0.12.0](https://github.com/mrx-31415/stash-curator/compare/v0.11.0...v0.12.0) (2026-08-16)
 
 
