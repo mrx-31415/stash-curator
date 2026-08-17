@@ -155,7 +155,10 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
     worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     try:
         row = run_go_task_via_worker(
-            host_binary, worker_dir, installed / "data" / "curator.sqlite3", "backup",
+            host_binary,
+            worker_dir,
+            installed / "data" / "curator.sqlite3",
+            "backup",
             "http://127.0.0.1:1",
         )
         assert row["state"] == "complete", row
@@ -1243,10 +1246,13 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     source = (root / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     css = (root / "plugin" / "stash-curator.css").read_text(encoding="utf-8")
 
-    assert "function CuratorTaskIndicator({ activeJobs, activities, failure, doneJob })" in source
+    assert (
+        "function CuratorTaskIndicator({ activeJobs, activities, failure, doneJob, tasksHref })"
+        in source
+    )
     assert "curator-task-indicator-done" in css
     assert "health?.active_jobs" in source
-    assert 'to: "/settings?tab=tasks"' in source
+    assert "?view=manage&section=tasks" in source
     assert "curatorTaskStage(job)" in source
     assert '"Synchronizing library metadata"' in source
     assert '"Building the recommendation model"' in source
@@ -1255,6 +1261,14 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "showTaskDetails" in source
     assert 'running || state === "failed" || state === "done"' in source
     assert '"No active tasks"' not in source
+    # Worker-owned task status surface (decision 004): the Manage Tasks
+    # section is where task feedback lives, since Stash's own Tasks tab only
+    # ever sees the instant enqueue jobs.
+    assert "function TasksPanel" in source
+    assert 'value: "tasks"' in source
+    assert "tasks: () => React.createElement(TasksPanel)" in source
+    assert "Manage → Tasks" in source
+    assert "curator-tasks-list" in source
     assert "Querying StashDB" not in source
     assert 'className: "curator-loading", role: "status"' in source
     assert 'className: "curator-progress"' not in source
