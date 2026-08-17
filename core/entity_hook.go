@@ -69,6 +69,7 @@ func runEntityHook(pluginDir string, payload jVal) jVal {
 		return neutralHookResult(err)
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	now := nowMs()
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()

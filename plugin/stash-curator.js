@@ -4036,6 +4036,7 @@
         { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
         { key: "modelUpdateMaxWaitMinutes", configKey: "model_update_max_wait_minutes", type: "NUMBER", label: "Maximum model update delay (minutes)", description: "Rebuild pending preference changes after this delay. Default 30." },
         { key: "modelUpdateMinIntervalMinutes", configKey: "model_update_min_interval_minutes", type: "NUMBER", label: "Minimum model update interval (minutes)", description: "Minimum time between automatic preference-model rebuilds. Default 60." },
+        { key: "autoTasksEnabled", configKey: "auto_tasks_enabled", type: "BOOLEAN", label: "Automatic background tasks", description: "Let the background worker apply pending model updates and sync recent plays on its own, without needing a browser tab open." },
       ],
     },
     {

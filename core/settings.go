@@ -25,6 +25,7 @@ var defaultPluginConfig = jvObj(
 	jvKey("expand_horizon_days", jvInt(90)),
 	jvKey("expand_gender", jvStr("FEMALE")),
 	jvKey("expand_wildcard", jvBool(false)),
+	jvKey("auto_tasks_enabled", jvBool(false)),
 )
 
 type settingConv int
@@ -52,6 +53,7 @@ var settingMapping = []struct {
 	{"expandHorizonDays", "expand_horizon_days", convInt},
 	{"expandGender", "expand_gender", convStr},
 	{"expandWildcard", "expand_wildcard", convBool},
+	{"autoTasksEnabled", "auto_tasks_enabled", convBool},
 }
 
 func convertSetting(v jVal, conv settingConv) (jVal, error) {
