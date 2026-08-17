@@ -1668,6 +1668,12 @@
 }
 
 .curator-card {
+  /* Ratio of the current card width to the 22rem default, clamped so cards
+     smaller than default shrink their icon/text overlays proportionally
+     but cards larger than default don't grow them (nothing asked for
+     that, and it'd make big cards look cartoonish) — see the badge/
+     card-popovers/scene-specs-overlay rules below that consume this. */
+  --curator-card-text-scale: clamp(0.72, calc(var(--curator-card-min-width, 22rem) / 22rem), 1);
   background: var(--curator-card-surface);
   border: 1px solid var(--curator-card-border);
   border-radius: var(--curator-radius-lg);
@@ -1716,6 +1722,15 @@
   display: none;
 }
 
+/* Stash core ships .scene-specs-overlay (the resolution/duration corner
+   badge) with no font-size of its own — it just inherits ambient size, so
+   at the smallest card widths it reads as oversized against the shrunk
+   thumbnail. calc() base matches its current unscaled look so default-size
+   cards render identically. */
+.curator-card .scene-specs-overlay {
+  font-size: calc(1rem * var(--curator-card-text-scale, 1));
+}
+
 /* bottom is tuned to vertically center these against .scene-card__date in
    the same row, not against the card as a whole — the two aren't siblings
    (card-popovers is a direct child of .scene-card; the date lives inside
@@ -1729,14 +1744,24 @@
   bottom: 0.92rem;
   flex-wrap: nowrap;
   justify-content: flex-end;
-  left: 7.5rem;
+  /* left shrinks with the same scale as the button row itself (below) —
+     otherwise this reserved gap stays 7.5rem regardless of card width and
+     the sibling date text (padding-right below) is left with almost no
+     room to breathe on narrow cards. */
+  left: calc(7.5rem * var(--curator-card-text-scale, 1));
   margin: 0;
   position: absolute;
   right: 0.4rem;
 }
 
 .curator-card .card-popovers .btn {
-  padding-inline: 0.35rem;
+  /* Bootstrap's default .btn font-size (1rem) drives both the label and
+     the FontAwesomeIcon glyph next to it (the icon renders at 1em with no
+     fixed size prop) — scaling it is what keeps icon+count on one line
+     instead of wrapping into a stacked icon-over-number block once the
+     card gets narrow. */
+  font-size: calc(1rem * var(--curator-card-text-scale, 1));
+  padding-inline: calc(0.35rem * var(--curator-card-text-scale, 1));
 }
 
 /* Same root cause as .curator-external-popover-button below: these native
@@ -1765,16 +1790,25 @@
 }
 
 .curator-card .card-popovers .fa-icon {
-  margin-right: 0.3rem;
+  margin-right: calc(0.3rem * var(--curator-card-text-scale, 1));
 }
 
 .curator-card .scene-card__details {
   min-height: 1.9rem;
-  padding-right: 10rem;
+  /* Reserves room so the date doesn't sit under the absolutely-positioned
+     .card-popovers row (see its `left` above) — has to shrink in lockstep
+     with that row's own width or the date gets squeezed onto two lines
+     well before the buttons actually need the space. */
+  padding-right: calc(10rem * var(--curator-card-text-scale, 1));
+  font-size: calc(1rem * var(--curator-card-text-scale, 1));
 }
 
 .curator-card .card-section-title {
   min-height: 2.4em;
+  /* Bootstrap's h5 default (1.25rem) is what this element renders at
+     without an explicit override — kept as the calc() base so default-size
+     cards look unchanged and only smaller cards shrink the title. */
+  font-size: calc(1.25rem * var(--curator-card-text-scale, 1));
 }
 
 .curator-card .scene-card__description {
@@ -1800,14 +1834,14 @@
   border-radius: var(--curator-radius-sm);
   color: #fff;
   display: inline-flex;
-  font-size: 0.65rem;
+  font-size: calc(0.65rem * var(--curator-card-text-scale, 1));
   font-weight: 700;
-  gap: 0.3rem;
+  gap: calc(0.3rem * var(--curator-card-text-scale, 1));
   height: auto;
   justify-content: center;
   left: 0.5rem;
   letter-spacing: 0.03em;
-  padding: 0.3rem 0.5rem;
+  padding: calc(0.3rem * var(--curator-card-text-scale, 1)) calc(0.5rem * var(--curator-card-text-scale, 1));
   position: absolute;
   top: 0.5rem;
   width: auto;
