@@ -244,7 +244,16 @@ it Curator-side:
   worker exists (`ensureAutoWorker`), and the daemon stays resident while a
   model update is pending or plays are unsynced — so the max-wait backstop
   fires with no browser open. Toggle exposed in Manage → Settings.
-- **Phase 2b**: `scheduled_task` table + scheduler loop for daily `sync-build`
-  / `backup` schedules + yml `schedule*` settings.
+- **Phase 2b implemented (2026-08-17)**: time-based schedules in the same daemon
+  scheduler. Migration 0032 adds the durable `scheduled_task` table
+  (`next_run_at_ms`/`last_run_at_ms`); `schedule*` settings (default **off**)
+  enable a daily-cadence `expand-refresh` (StashDB candidate freshness),
+  `sync-build`, and `backup` — backup runs first when both are due so a rebuild
+  never touches an unprotected sidecar. First enablement seeds `next_run` one
+  interval out (never fires immediately); late runs catch up. Any enabled
+  schedule keeps the daemon resident (a daily task must not depend on a browser
+  respawning it). Enabling a schedule spawns the daemon via the settings write
+  (`update_config`) and via the frontend's constant polls (`health`,
+  `get_job_status`, `get_config` all ensure the worker).
 - Phase 3 UX: task-indicator Cancel buttons; schedule config in the Settings
-  panel.
+  panel (the Scheduling group is already rendered there).
