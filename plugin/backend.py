@@ -554,44 +554,16 @@ def _open(  # type: ignore[no-untyped-def]
 def _health(payload: dict[str, Any]) -> dict[str, object]:
     settings = _settings(payload)
     stash = _client(payload).execute(RUNTIME_QUERY)
-    task_names = {
-        "Sync and build recommendations",
-        "Full sync and build recommendations",
-        "Rebuild recommendation model",
-        "Apply recent Curator feedback",
-        "Prepare recommendation pages",
-        "Sync recent plays",
-        "Backup Curator data",
-        "Compact legacy Curator data",
-        "Vacuum compacted Curator data",
-        "Refresh Expand cache",
-        "Install optional dependencies",
-    }
-    active_jobs = [
-        job
-        for job in (stash.get("jobQueue") or [])
-        if any(name in str(job.get("description") or "") for name in task_names)
-        and str(job.get("status") or "").casefold() in {"waiting", "running"}
-    ]
-    active_job = active_jobs[0] if active_jobs else None
     connection = _open(payload, settings)
     try:
         now_ms = time.time_ns() // 1_000_000
-        if active_job is None:
-            interrupted = connection.execute(
-                "SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms<? LIMIT 1",
-                (now_ms - 120_000,),
-            ).fetchone()
-            if interrupted:
-                with transaction(connection):
-                    connection.execute(
-                        """
-                    UPDATE curator_job SET state='failed', finished_at_ms=?,
-                        error='interrupted before task completion'
-                    WHERE state='running' AND started_at_ms<?
-                    """,
-                        (now_ms, now_ms - 120_000),
-                    )
+        # Worker-owned liveness: fail running rows whose executing process is
+        # gone (heartbeat stale or legacy pre-heartbeat age), replacing the
+        # old Stash-job-list + 120s heuristic that no longer applies once
+        # tasks run in the detached worker instead of a live Stash job.
+        _recover_orphan_jobs(connection, now_ms)
+        active_jobs = _active_curator_jobs(connection)
+        active_job = active_jobs[0] if active_jobs else None
         migration = MigrationRunner(connection).status()
         current = connection.execute(
             "SELECT model_id FROM model_version WHERE status='published'"
@@ -659,7 +631,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "model_pending": model_update.pending,
         "model_pending_events": model_update.pending_count,
         "model_update_ready": model_update_ready,
-        "model_rebuilding": model_rebuilding is not None and active_job is not None,
+        "model_rebuilding": model_rebuilding is not None,
         "active_job": active_job,
         "active_jobs": active_jobs,
         "last_sync_at_ms": int(last_sync[0]) if last_sync else None,
@@ -1009,6 +981,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.update_config(values)
         if operation == "get_job_status":
             return _job_status(connection)
+        if operation == "cancel_job":
+            return _cancel_job(connection, args)
         if operation == "get_diagnostics":
             return _diagnostics(connection)
         if operation == "list_profiles":
@@ -1074,6 +1048,8 @@ def _job_status(connection: Any) -> dict[str, object]:
             "finished_at_ms": int(row["finished_at_ms"]) if row["finished_at_ms"] else None,
             "summary": json.loads(row["summary_json"]),
             "error": str(row["error"]) if row["error"] else None,
+            "queued_at_ms": int(row["queued_at_ms"]) if row["queued_at_ms"] else None,
+            "progress": float(row["progress"]) if row["progress"] is not None else None,
         }
         for row in rows
     ]
@@ -1092,6 +1068,111 @@ DIAGNOSTIC_JOB_TYPES = {
     "vacuum",
     "expand-refresh",
 }
+
+# Task mode → yml display name, mirroring the Go side's taskDisplayNames so
+# health synthesizes the Stash-style job description the frontend consumes.
+TASK_DISPLAY_NAMES = {
+    "sync-build": "Sync and build recommendations",
+    "full-sync-build": "Full sync and build recommendations",
+    "build": "Rebuild recommendation model",
+    "update-model": "Apply recent Curator feedback",
+    "sync-plays": "Sync recent plays",
+    "prepare": "Prepare recommendation pages",
+    "backup": "Backup Curator data",
+    "compact": "Compact legacy Curator data",
+    "vacuum": "Vacuum compacted Curator data",
+    "expand-refresh": "Refresh Expand cache",
+}
+
+
+def _recover_orphan_jobs(connection: Any, now_ms: int) -> None:
+    """Fail running rows whose executing process is gone: heartbeat stale (a
+    daemon or inline runner died) or, for pre-heartbeat rows, older than the
+    legacy 6h stale window. Mirrors the Go worker's recoverOrphanJobs."""
+    with transaction(connection):
+        connection.execute(
+            """
+            UPDATE curator_job SET state='failed', finished_at_ms=?, error='interrupted'
+            WHERE state='running' AND heartbeat_at_ms IS NOT NULL AND heartbeat_at_ms<=?
+            """,
+            (now_ms, now_ms - 5 * 60_000),
+        )
+        connection.execute(
+            """
+            UPDATE curator_job SET state='failed', finished_at_ms=?, error='interrupted'
+            WHERE state='running' AND heartbeat_at_ms IS NULL AND started_at_ms<=?
+            """,
+            (now_ms, now_ms - 6 * 3_600_000),
+        )
+        connection.execute(
+            """
+            UPDATE model_update_state SET last_error='interrupted before task completion'
+            WHERE last_started_at_ms IS NOT NULL
+            AND last_started_at_ms>COALESCE(last_finished_at_ms, -1)
+            AND last_error IS NULL
+            """
+        )
+
+
+def _active_curator_jobs(connection: Any) -> list[dict[str, object]]:
+    """Queued + running curator_job rows in the Stash job shape the frontend
+    task indicator consumes ({id, description, progress})."""
+    rows = connection.execute(
+        "SELECT job_id, job_type, progress FROM curator_job "
+        "WHERE state IN ('queued', 'running') ORDER BY started_at_ms DESC LIMIT 10"
+    )
+    return [
+        {
+            "id": str(row["job_id"]),
+            "description": "Running plugin task: "
+            + str(TASK_DISPLAY_NAMES.get(str(row["job_type"]), row["job_type"])),
+            "progress": float(row["progress"]) if row["progress"] is not None else None,
+        }
+        for row in rows
+    ]
+
+
+def _cancel_job(connection: Any, args: dict[str, Any]) -> dict[str, object]:
+    job_id = str(args.get("job_id") or "")
+    if not job_id:
+        raise ValueError("job_id is required")
+    now_ms = time.time_ns() // 1_000_000
+    cursor = connection.execute(
+        """
+        UPDATE curator_job SET state='cancelled', finished_at_ms=?
+        WHERE job_id=? AND state='queued'
+        """,
+        (now_ms, job_id),
+    )
+    if cursor.rowcount > 0:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "job_id": job_id,
+            "cancelled": True,
+            "state": "cancelled",
+        }
+    cursor = connection.execute(
+        """
+        UPDATE curator_job SET cancel_requested=1
+        WHERE job_id=? AND state='running'
+        """,
+        (job_id,),
+    )
+    if cursor.rowcount > 0:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "job_id": job_id,
+            "cancelled": True,
+            "state": "running",
+            "cancel_requested": True,
+        }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "job_id": job_id,
+        "cancelled": False,
+        "error": "no active job with that id",
+    }
+
 
 # Stash entity hooks that trigger a targeted one-entity sync. Tag merges are left to the
 # next regular sync: a merge re-links many scenes that a single tag upsert cannot refresh.

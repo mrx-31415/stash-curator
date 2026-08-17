@@ -14,6 +14,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from http.server import HTTPServer
@@ -31,6 +32,7 @@ from tests.core.test_backend import (
     make_sidecar,
     run_backend,
 )
+from tests.core.worker import run_go_task_via_worker, stop_worker
 
 FEATURE_ID = "fv-" + "a" * 20
 MODEL_ID = "model-" + "b" * 20
@@ -217,50 +219,75 @@ def assert_task_identical(
     mode: str,
     *,
     normalize: tuple[str, ...] = (),
-) -> tuple[subprocess.CompletedProcess[bytes], subprocess.CompletedProcess[bytes]]:
+) -> None:
+    """Run the task through the Python backend inline and through the Go
+    backend's background worker (docs/decisions/004). The Go invocation
+    returns a queued marker, so the comparison moved from invocation stdout
+    to the completed job's durable summary — the same mode bodies, the same
+    sidecar effects."""
     run_dir = sidecar.parent / f"{sidecar.stem}-task-run"
-    run_db = run_dir / sidecar.name
-    outputs: list[subprocess.CompletedProcess[bytes]] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        shutil.copy2(sidecar, run_db)
-        derived_src = sidecar.parent / f"{sidecar.stem}-derived"
-        if derived_src.is_dir():
-            shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-        try:
-            outputs.append(
-                run_backend(
-                    runner,
-                    PLUGIN_DIR,
-                    _with_db(_task_payload(sidecar, "http://127.0.0.1:1"), run_db),
-                    mode,
-                )
-            )
-        finally:
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    python_result: subprocess.CompletedProcess[bytes] | None = None
+    go_row: dict[str, object] | None = None
+    try:
+        for runner in (None, binary):
             shutil.rmtree(run_dir, ignore_errors=True)
-    python_result, go_result = outputs
-    assert go_result.returncode == python_result.returncode, (
-        python_result.stdout + python_result.stderr + go_result.stdout + go_result.stderr
-    )
+            run_dir.mkdir()
+            run_db = run_dir / sidecar.name
+            shutil.copy2(sidecar, run_db)
+            derived_src = sidecar.parent / f"{sidecar.stem}-derived"
+            if derived_src.is_dir():
+                shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+            if runner is None:
+                python_result = run_backend(
+                    runner, PLUGIN_DIR, _task_payload(run_db, "http://127.0.0.1:1"), mode
+                )
+            else:
+                go_row = run_go_task_via_worker(
+                    binary, worker_dir, run_db, mode, "http://127.0.0.1:1"
+                )
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        shutil.rmtree(worker_dir, ignore_errors=True)
+    assert python_result is not None and go_row is not None
     py_out = json.loads(python_result.stdout)
-    go_out = json.loads(go_result.stdout)
-    if python_result.returncode != 0:
-        assert_equivalent(py_out, go_out)
-        return outputs
-    a, b = py_out["output"], go_out["output"]
-    for field in normalize:
-        _strip_key(a, field)
-        _strip_key(b, field)
-    (
-        assert_equivalent(a, b),
+    if go_row["state"] == "already_running":
+        a, b = py_out["output"], go_row["output"]
+        for field in (*normalize, "job_id"):
+            _strip_key(a, field)
+            _strip_key(b, field)
         (
-            "outputs differ:\n"
-            f"python: {json.dumps(a, separators=(',', ':'))}\n"
-            f"go:     {json.dumps(b, separators=(',', ':'))}"
+            assert_equivalent(a, b),
+            (
+                "already_running responses differ:\n"
+                f"python: {json.dumps(a, separators=(',', ':'))}\n"
+                f"go:     {json.dumps(b, separators=(',', ':'))}"
+            ),
+        )
+        return
+    if python_result.returncode != 0:
+        assert go_row["state"] == "failed", go_row
+        (
+            assert_equivalent(json.loads(python_result.stdout)["error"], go_row["error"]),
+            "task errors differ",
+        )
+        return
+    assert go_row["state"] == "complete", go_row
+    py_summary = py_out["output"]
+    for field in ("job_id", "schema_version", *normalize):
+        _strip_key(py_summary, field)
+    go_summary = dict(go_row["summary"] or {})
+    for field in ("job_id", *normalize):
+        _strip_key(go_summary, field)
+    (
+        assert_equivalent(py_summary, go_summary),
+        (
+            "job summaries differ:\n"
+            f"python: {json.dumps(py_summary, separators=(',', ':'))}\n"
+            f"go:     {json.dumps(go_summary, separators=(',', ':'))}"
         ),
     )
-    return outputs
 
 
 def test_compact_task_byte_identical(compact_sidecar: Path, binary: Path, stub_stash: str) -> None:
@@ -271,40 +298,45 @@ def test_compact_task_state_parity(compact_sidecar: Path, binary: Path, stub_sta
     """Compaction leaves identical derived-row counts, the same
     legacy_compaction blob, and a complete curator_job summary."""
     run_dir = compact_sidecar.parent / f"{compact_sidecar.stem}-compact-state"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     states: list[dict[str, object]] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        run_db = run_dir / compact_sidecar.name
-        shutil.copy2(compact_sidecar, run_db)
-        derived_src = compact_sidecar.parent / f"{compact_sidecar.stem}-derived"
-        shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-        result = run_backend(
-            runner,
-            PLUGIN_DIR,
-            _with_db(_task_payload(compact_sidecar, "http://127.0.0.1:1"), run_db),
-            "compact",
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        connection = sqlite3.connect(run_db)
-        try:
-            states.append(
-                {
-                    "derived_remaining": connection.execute(
-                        "SELECT count(*) FROM model_scene_score WHERE model_id IN (?, ?)",
-                        (MODEL_ID, RETIRED_MODEL_ID),
-                    ).fetchone()[0],
-                    "compaction_blob": connection.execute(
-                        "SELECT value FROM application_meta WHERE key='legacy_compaction'"
-                    ).fetchone(),
-                    "job": connection.execute(
-                        "SELECT job_type, state, summary_json FROM curator_job ORDER BY started_at_ms DESC LIMIT 1"  # noqa: E501
-                    ).fetchone(),
-                }
-            )
-        finally:
-            connection.close()
-        shutil.rmtree(run_dir, ignore_errors=True)
+    try:
+        for runner in (None, binary):
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / compact_sidecar.name
+            shutil.copy2(compact_sidecar, run_db)
+            derived_src = compact_sidecar.parent / f"{compact_sidecar.stem}-derived"
+            shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+            if runner is None:
+                result = run_backend(
+                    runner, PLUGIN_DIR, _task_payload(run_db, "http://127.0.0.1:1"), "compact"
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+            else:
+                run_go_task_via_worker(binary, worker_dir, run_db, "compact", "http://127.0.0.1:1")
+            connection = sqlite3.connect(run_db)
+            try:
+                states.append(
+                    {
+                        "derived_remaining": connection.execute(
+                            "SELECT count(*) FROM model_scene_score WHERE model_id IN (?, ?)",
+                            (MODEL_ID, RETIRED_MODEL_ID),
+                        ).fetchone()[0],
+                        "compaction_blob": connection.execute(
+                            "SELECT value FROM application_meta WHERE key='legacy_compaction'"
+                        ).fetchone(),
+                        "job": connection.execute(
+                            "SELECT job_type, state, summary_json FROM curator_job ORDER BY started_at_ms DESC LIMIT 1"  # noqa: E501
+                        ).fetchone(),
+                    }
+                )
+            finally:
+                connection.close()
+            shutil.rmtree(run_dir, ignore_errors=True)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     assert_equivalent(states[0], states[1])
 
 
@@ -357,48 +389,53 @@ def test_backup_task_file_parity(compact_sidecar: Path, binary: Path, stub_stash
     """The backup task produces a valid Curator backup of the same size on
     both backends."""
     run_dir = compact_sidecar.parent / f"{compact_sidecar.stem}-backup-task"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     sizes: list[int] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        run_db = run_dir / compact_sidecar.name
-        shutil.copy2(compact_sidecar, run_db)
-        derived_src = compact_sidecar.parent / f"{compact_sidecar.stem}-derived"
-        shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-        result = run_backend(
-            runner,
-            PLUGIN_DIR,
-            _with_db(_task_payload(compact_sidecar, "http://127.0.0.1:1"), run_db),
-            "backup",
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        backups = sorted(run_dir.glob("curator-*.sqlite3.backup"))
-        assert len(backups) == 1
-        backup = backups[0]
-        connection = sqlite3.connect(backup)
-        connection.row_factory = sqlite3.Row
-        try:
-            assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-            assert connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migration'"
-            ).fetchone()
-            MigrationRunner(connection).status()
-        finally:
-            connection.close()
-        sizes.append(backup.stat().st_size)
-        shutil.rmtree(run_dir, ignore_errors=True)
+    try:
+        for runner in (None, binary):
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / compact_sidecar.name
+            shutil.copy2(compact_sidecar, run_db)
+            derived_src = compact_sidecar.parent / f"{compact_sidecar.stem}-derived"
+            shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+            if runner is None:
+                result = run_backend(
+                    runner, PLUGIN_DIR, _task_payload(run_db, "http://127.0.0.1:1"), "backup"
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+            else:
+                run_go_task_via_worker(binary, worker_dir, run_db, "backup", "http://127.0.0.1:1")
+            backups = sorted(run_dir.glob("curator-*.sqlite3.backup"))
+            assert len(backups) == 1
+            backup = backups[0]
+            connection = sqlite3.connect(backup)
+            connection.row_factory = sqlite3.Row
+            try:
+                assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+                assert connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migration'"
+                ).fetchone()
+                MigrationRunner(connection).status()
+            finally:
+                connection.close()
+            sizes.append(backup.stat().st_size)
+            shutil.rmtree(run_dir, ignore_errors=True)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     assert sizes[0] == sizes[1]
 
 
 def test_task_already_running(compact_sidecar: Path, binary: Path, stub_stash: str) -> None:
-    """A second task while one is running reports already_running with the
-    existing job id (uuid4s differ; strip)."""
+    """A second task of the same type while one is running coalesces into
+    already_running with the existing job id (uuid4s differ; strip)."""
     connection = sqlite3.connect(compact_sidecar)
     try:
         connection.execute(
             """
             INSERT INTO curator_job(job_id, job_type, state, started_at_ms, summary_json)
-            VALUES ('job-running', 'build', 'running', ?, '{}')
+            VALUES ('job-running', 'backup', 'running', ?, '{}')
             """,
             (int(time.time() * 1000),),
         )
