@@ -3716,6 +3716,7 @@
   }
 
   function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize }) {
+    const routeLocation = useLocation();
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
     const [message, setMessage] = React.useState("");
