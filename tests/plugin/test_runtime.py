@@ -683,6 +683,10 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     assert (
         "function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
     )
+    assert (
+        'configKey: "auto_tasks_enabled", type: "BOOLEAN", label: "Automatic background tasks"'
+        in source
+    )
     assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
     assert (
         "React.createElement(ManagePanel, { section: currentSection, "

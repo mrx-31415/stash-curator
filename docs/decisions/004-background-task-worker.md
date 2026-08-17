@@ -234,8 +234,17 @@ it Curator-side:
 
 ## 9. Remaining for Phase 2
 
-- `scheduled_task` table + scheduler loop in the daemon; `update-model`
-  wake-up gated by `ModelUpdateCoordinator.ready()`; `sync-plays`,
-  `sync-build`, `backup` schedules; yml `schedule*` settings.
-- Phase 3 UX: task-indicator queued state + Cancel buttons; schedule config
-  in the #151 Settings panel.
+- **Phase 2a implemented (2026-08-17)**: the daemon's event-driven auto-scheduler
+  (`core/autotasks.go`) — replaces the browser-tab wake-up loop. With the new
+  `autoTasksEnabled` setting on: `update-model` is enqueued when the existing
+  `ModelUpdateCoordinator` gating (`modelUpdate*` settings) is ready and nothing
+  is rebuilding; `sync-plays` is enqueued when plays newer than the last sync
+  have been quiet for ~60 s. The dirtying operations (feedback, corrections,
+  tag/term preferences, events, prune decisions, entity hooks) ensure the
+  worker exists (`ensureAutoWorker`), and the daemon stays resident while a
+  model update is pending or plays are unsynced — so the max-wait backstop
+  fires with no browser open. Toggle exposed in Manage → Settings.
+- **Phase 2b**: `scheduled_task` table + scheduler loop for daily `sync-build`
+  / `backup` schedules + yml `schedule*` settings.
+- Phase 3 UX: task-indicator Cancel buttons; schedule config in the Settings
+  panel.

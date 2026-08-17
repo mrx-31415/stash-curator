@@ -35,6 +35,7 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "expand_horizon_days": 90,
     "expand_gender": "FEMALE",
     "expand_wildcard": False,
+    "auto_tasks_enabled": False,
 }
 
 
@@ -1180,6 +1181,7 @@ class CuratorAPI:
             "expand_horizon_days",
             "expand_gender",
             "expand_wildcard",
+            "auto_tasks_enabled",
         }
         unknown = set(values) - allowed
         if unknown:

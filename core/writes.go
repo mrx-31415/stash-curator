@@ -220,6 +220,7 @@ func submitFeedbackBody(pluginDir string, payload, settings jVal) (jVal, error) 
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	inserted := int64(0)
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
@@ -294,6 +295,7 @@ func correctFeedbackBody(pluginDir string, payload, settings jVal) (jVal, error)
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
 		var sceneID, originalType string
@@ -457,6 +459,7 @@ func submitTagPreferencesBody(pluginDir string, payload, settings jVal) (jVal, e
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	normalized := make([]tagPreferenceEntry, len(entries.arr))
 	for i, entry := range entries.arr {
 		item, err := normalizeTagPreferenceEntry(db, entry)
@@ -615,6 +618,7 @@ func submitTermPreferencesBody(pluginDir string, payload, settings jVal) (jVal, 
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	normalized := make([]termPreferenceEntry, len(entries.arr))
 	for i, entry := range entries.arr {
 		item, err := normalizeTermPreferenceEntry(entry)
@@ -751,6 +755,7 @@ func submitEventsBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	qualified, err := qualifyImpressions(db, impressions)
 	if err != nil {
 		return jvNull(), err
