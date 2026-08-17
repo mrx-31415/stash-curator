@@ -36,6 +36,12 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "expand_gender": "FEMALE",
     "expand_wildcard": False,
     "auto_tasks_enabled": False,
+    "schedule_expand_refresh_enabled": False,
+    "schedule_expand_refresh_interval_hours": 24,
+    "schedule_sync_build_enabled": False,
+    "schedule_sync_build_interval_hours": 24,
+    "schedule_backup_enabled": False,
+    "schedule_backup_interval_hours": 24,
 }
 
 
@@ -1182,6 +1188,12 @@ class CuratorAPI:
             "expand_gender",
             "expand_wildcard",
             "auto_tasks_enabled",
+            "schedule_expand_refresh_enabled",
+            "schedule_expand_refresh_interval_hours",
+            "schedule_sync_build_enabled",
+            "schedule_sync_build_interval_hours",
+            "schedule_backup_enabled",
+            "schedule_backup_interval_hours",
         }
         unknown = set(values) - allowed
         if unknown:

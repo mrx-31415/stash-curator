@@ -4040,6 +4040,17 @@
       ],
     },
     {
+      title: "Scheduling",
+      fields: [
+        { key: "scheduleExpandRefreshEnabled", configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", label: "Scheduled Expand refresh", description: "Refresh the StashDB candidate cache daily so Expand and Performer Hunt stay current. Off by default; keeps the background worker resident while on." },
+        { key: "scheduleExpandRefreshIntervalHours", configKey: "schedule_expand_refresh_interval_hours", type: "NUMBER", label: "Expand refresh interval (hours)", description: "How often the scheduled Expand refresh runs. Default 24." },
+        { key: "scheduleSyncBuildEnabled", configKey: "schedule_sync_build_enabled", type: "BOOLEAN", label: "Scheduled sync and build", description: "Run a full sync and recommendation build on a schedule. Off by default." },
+        { key: "scheduleSyncBuildIntervalHours", configKey: "schedule_sync_build_interval_hours", type: "NUMBER", label: "Sync and build interval (hours)", description: "How often the scheduled sync and build runs. Default 24." },
+        { key: "scheduleBackupEnabled", configKey: "schedule_backup_enabled", type: "BOOLEAN", label: "Scheduled backup", description: "Create a sidecar backup on a schedule, just before a scheduled sync and build when both are due. Off by default." },
+        { key: "scheduleBackupIntervalHours", configKey: "schedule_backup_interval_hours", type: "NUMBER", label: "Backup interval (hours)", description: "How often the scheduled backup runs. Default 24." },
+      ],
+    },
+    {
       title: "Discovery",
       fields: [
         { key: "expandWildcard", configKey: "expand_wildcard", type: "BOOLEAN", label: "Expand popularity wildcard", description: "Include a small trending/popular sample outside preference-derived seeds." },
