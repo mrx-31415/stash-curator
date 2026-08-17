@@ -46,9 +46,10 @@ var (
 // re-read by the daemon (which has none): where the sidecar lives and how to
 // reach Stash for the per-job settings fetch.
 type workerState struct {
-	DatabasePath string            `json:"database_path"`
-	StashBase    string            `json:"stash_base"`
-	StashHeaders map[string]string `json:"stash_headers"`
+	DatabasePath     string            `json:"database_path"`
+	StashBase        string            `json:"stash_base"`
+	StashHeaders     map[string]string `json:"stash_headers"`
+	ServerConnection string            `json:"server_connection,omitempty"`
 }
 
 func workerStatePath(pluginDir string) string {
@@ -134,6 +135,22 @@ func spawnWorker(pluginDir string) error {
 	return nil
 }
 
+// ensureAutoWorker spawns the daemon from event-driven operations when
+// automatic tasks are enabled. The coordinator's dirty signals (feedback,
+// plays, prune decisions) arrive as plugin invocations, and the daemon must
+// exist to act on them — without this, auto tasks would only ever start
+// after a task invocation.
+func ensureAutoWorker(pluginDir string, payload jVal, settings jVal, db dbx) {
+	cfg, err := sidecarConfig(db)
+	if err != nil {
+		return
+	}
+	if !cfg.get("config").get("auto_tasks_enabled").truthy() {
+		return
+	}
+	_ = ensureWorker(pluginDir, payload, settings)
+}
+
 // recoverOrphanJobs fails running rows whose executing process is gone:
 // heartbeat stale (a daemon or inline runner died) or, for pre-heartbeat
 // rows, older than the legacy 6h stale window. It also records the same
@@ -160,11 +177,13 @@ AND last_error IS NULL`)
 // an un-migrated database path.
 func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 	base, headers := stashConnection(payload)
+	serverConn, _ := marshalJVal(payload.get("server_connection"))
 	if pid, ok := readWorkerPid(pluginDir); ok && pidAlive(pid) {
 		if err := writeWorkerState(pluginDir, workerState{
-			DatabasePath: databasePath(pluginDir, payload, settings),
-			StashBase:    base,
-			StashHeaders: headers,
+			DatabasePath:     databasePath(pluginDir, payload, settings),
+			StashBase:        base,
+			StashHeaders:     headers,
+			ServerConnection: serverConn,
 		}); err != nil {
 			return fmt.Errorf("could not write worker state: %w", err)
 		}
@@ -185,9 +204,10 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 		return nil // nothing to run; the caller handles its own row inline
 	}
 	if err := writeWorkerState(pluginDir, workerState{
-		DatabasePath: databasePath(pluginDir, payload, settings),
-		StashBase:    base,
-		StashHeaders: headers,
+		DatabasePath:     databasePath(pluginDir, payload, settings),
+		StashBase:        base,
+		StashHeaders:     headers,
+		ServerConnection: serverConn,
 	}); err != nil {
 		return fmt.Errorf("could not write worker state: %w", err)
 	}
@@ -232,6 +252,8 @@ func runDaemon(pluginDir string) {
 	}()
 
 	recoverOrphanJobs(loop, nowMs())
+	autoPayload := autoPayloadFromState(state)
+	lastTick := nowMs()
 	idleSince := nowMs()
 	for {
 		// Re-read the worker state each pass so a databasePath change (or a
@@ -248,6 +270,18 @@ func runDaemon(pluginDir string) {
 					loopPath = path
 				}
 			}
+			autoPayload = autoPayloadFromState(fresh)
+		}
+		now := nowMs()
+		if now-lastTick >= autoTickMs {
+			lastTick = now
+			if enqueued, err := schedulerTick(loop, autoPayload, now); err != nil {
+				errorLog("auto-scheduler failed: " + err.Error())
+			} else {
+				for _, mode := range enqueued {
+					infoLog("auto-enqueued task " + mode)
+				}
+			}
 		}
 		jobID, startedAtMs, payload, mode, err := claimQueuedJob(loop)
 		if err != nil {
@@ -260,7 +294,14 @@ func runDaemon(pluginDir string) {
 			runWorkerJob(pluginDir, loop, jobID, startedAtMs, payload, mode)
 			continue
 		}
-		if nowMs()-idleSince > idleExitMs {
+		// Idle-exit only when nothing is queued AND the auto-scheduler has no
+		// pending work (a dirty model or unsynced plays keep the daemon alive
+		// so the gated update fires without a browser tab).
+		stayAlive, stayErr := schedulerStayAlive(loop, nowMs())
+		if stayErr != nil {
+			errorLog("stay-alive check failed: " + stayErr.Error())
+		}
+		if !stayAlive && nowMs()-idleSince > idleExitMs {
 			infoLog("daemon idle; exiting")
 			return
 		}

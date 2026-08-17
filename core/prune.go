@@ -428,6 +428,7 @@ func updatePruningBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	now := nowMs()
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
@@ -511,11 +512,12 @@ func reverseExclusionBody(pluginDir string, payload, settings jVal) (jVal, error
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	now := nowMs()
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
-		res, err := conn.ExecContext(ctx, `
-UPDATE exclusion SET reversed_at_ms=?
+		res, err := conn.ExecContext(ctx,
+			`UPDATE exclusion SET reversed_at_ms=?
 WHERE entity_type='scene' AND entity_id=? AND exclusion_type='never_show'
   AND reversed_at_ms IS NULL`, now, sceneID)
 		if err != nil {
