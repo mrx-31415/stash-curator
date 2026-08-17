@@ -3859,8 +3859,7 @@
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
-          cardSizeControl,
-          React.createElement(NavLink, { className: "btn btn-secondary btn-sm curator-icon-button", title: "Open Curator's plugin settings.", "aria-label": "Plugin settings", to: "/settings?tab=plugins" }, React.createElement(FontAwesomeIcon, { icon: faCog }))
+          cardSizeControl
         )
       ),
       setupChecklist,
