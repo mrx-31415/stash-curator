@@ -25,6 +25,7 @@ from uuid import uuid4
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.model.builder import PreferenceModelBuilder
+from curator.model.updates import ModelUpdateCoordinator
 from curator.storage import transaction
 from curator.storage.artifacts import artifact_path, database_path
 
@@ -797,6 +798,10 @@ PAIR_SCENE_CAP = 2  # a scene appears in at most this many pairs per round
 PAIR_DIMENSION_FIT_SHARE = 0.5
 PAIR_ELO_K = 16.0
 PAIR_ELO_INITIAL = 1500.0
+# Beta prior strength for verdict win rates: 4 pseudo-comparisons split evenly,
+# so a 2-of-2 sweep reports 0.67 rather than a meaningless 1.00.
+PAIR_VERDICT_PRIOR = 4.0
+VERDICT_QUERY_CHUNK = 400
 PAIR_PICK_VALUES = ("a", "b", "skip", "flag")
 
 
@@ -1135,6 +1140,12 @@ def submit_picks(
     now_ms = time.time_ns() // 1_000_000
     accepted = 0
     skipped = 0
+    # Picks write feedback rows like every other interaction, so they mark the
+    # model dirty too; without this the round never reaches a build and "What
+    # your picks moved" keeps reporting the previous build's diff. One request
+    # per pick, not per call: the pending count is weighed against the update
+    # threshold, and a round is many feedback events, not one.
+    coordinator = ModelUpdateCoordinator(connection)
     with transaction(connection):
         for pair_id, winner, scene in normalized:
             row = by_id[pair_id]
@@ -1156,6 +1167,7 @@ def submit_picks(
                         """,
                         (f"{now_ms}-{uuid4().hex}", flagged_scene, now_ms),
                     )
+                    coordinator.request("curation_picks")
                 skipped += 1
                 continue
             scene_a = str(row["scene_a"])
@@ -1197,6 +1209,7 @@ def submit_picks(
                 (winner, now_ms, pair_id),
             )
             _update_elo(connection, scene_a, scene_b, winner, now_ms)
+            coordinator.request("curation_picks")
             accepted += 1
     return {
         "schema_version": 1,
@@ -1247,23 +1260,84 @@ def _round_payload(connection: sqlite3.Connection, round_id: str) -> dict[str, o
     return cast(dict[str, object], json.loads(str(row["payload_json"]) or "{}"))
 
 
+def _shrunk_rate(wins: int, appearances: int) -> float:
+    """Win rate pulled toward 0.5 by a symmetric Beta prior.
+
+    A single round answers ~10 comparisons, so raw rates are dominated by
+    2-of-2 sweeps that read as "100% preferred" and mean nothing. Shrinking
+    makes the number honest at small n and converges on the raw rate as
+    comparisons accumulate.
+    """
+    if appearances <= 0:
+        return 0.5
+    half = PAIR_VERDICT_PRIOR / 2.0
+    return (wins + half) / (appearances + PAIR_VERDICT_PRIOR)
+
+
+def _answered_pairs(connection: sqlite3.Connection, dimension: str) -> list[sqlite3.Row]:
+    """Every answered pair of this dimension, across all rounds.
+
+    Verdicts accumulate: a hypothesis re-tested over several rounds should
+    compound rather than restart from zero each time.
+    """
+    return connection.execute(
+        """SELECT pair_id, round_id, scene_a, scene_b, winner, payload_json
+           FROM curation_pair
+           WHERE dimension=? AND status='answered' AND winner IN ('a', 'b')
+           ORDER BY pair_id""",
+        (dimension,),
+    ).fetchall()
+
+
+def _scene_tag_map(
+    connection: sqlite3.Connection, scene_ids: set[str]
+) -> dict[str, frozenset[str]]:
+    """Tags for the given scenes, in chunked queries rather than one per scene."""
+    collected: dict[str, set[str]] = {sid: set() for sid in scene_ids}
+    ordered = sorted(collected)
+    for start in range(0, len(ordered), VERDICT_QUERY_CHUNK):
+        chunk = ordered[start : start + VERDICT_QUERY_CHUNK]
+        placeholders = ",".join("?" * len(chunk))
+        for row in connection.execute(
+            f"SELECT scene_id, tag_id FROM scene_tag WHERE scene_id IN ({placeholders})"
+            " ORDER BY scene_id, tag_id",
+            chunk,
+        ):
+            collected[str(row["scene_id"])].add(str(row["tag_id"]))
+    return {sid: frozenset(tags) for sid, tags in collected.items()}
+
+
 def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, object]:
     if not round_id:
         raise ValueError("round_id is required")
     rows = _pair_rows(connection, round_id)
     if not rows:
         raise ValueError(f"unknown round: {round_id}")
-    answered = [
+    round_answered = [
         row for row in rows if str(row["status"]) == "answered" and str(row["winner"]) in ("a", "b")
     ]
     dimension = str(rows[0]["dimension"])
     base_tag = str(_round_payload(connection, round_id).get("base_tag_id") or "")
     context_tag = str(_round_payload(connection, round_id).get("context_tag_id") or "")
+    answered = _answered_pairs(connection, dimension)
+    if dimension == "tag":
+        # Only the pairs testing this same hypothesis accumulate together.
+        matching = []
+        for row in answered:
+            row_payload = json.loads(str(row["payload_json"]) or "{}")
+            if (
+                str(row_payload.get("base_tag_id") or "") == base_tag
+                and str(row_payload.get("context_tag_id") or "") == context_tag
+            ):
+                matching.append(row)
+        answered = matching
+    pair_scenes = {str(row["scene_a"]) for row in answered} | {
+        str(row["scene_b"]) for row in answered
+    }
+    scene_tags = _scene_tag_map(connection, pair_scenes)
 
     def cell_of(scene_id: str) -> str:
-        tags = set()
-        for row in connection.execute("SELECT tag_id FROM scene_tag WHERE scene_id=?", (scene_id,)):
-            tags.add(str(row["tag_id"]))
+        tags = scene_tags.get(scene_id, frozenset())
         has_base = base_tag and base_tag in tags
         has_ctx = context_tag and context_tag in tags
         if has_base and has_ctx:
@@ -1296,6 +1370,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
             "cells": cells,
             "contrast": contrast,
             "n_answered": len(answered),
+            "n_round": len(round_answered),
         }
 
     if dimension == "performer":
@@ -1319,7 +1394,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
                 "performer_id": pid,
                 "wins": perf_wins.get(pid, 0),
                 "appearances": perf_appearances[pid],
-                "win_rate": perf_wins.get(pid, 0) / perf_appearances[pid],
+                "win_rate": _shrunk_rate(perf_wins.get(pid, 0), perf_appearances[pid]),
             }
             for pid in perf_appearances
             if perf_appearances[pid] >= 2
@@ -1336,6 +1411,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
             "dimension": dimension,
             "items": items,
             "n_answered": len(answered),
+            "n_round": len(round_answered),
         }
 
     if dimension == "studio":
@@ -1368,7 +1444,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
                 "studio": name,
                 "wins": studio_wins.get(name, 0),
                 "appearances": studio_appearances[name],
-                "win_rate": studio_wins.get(name, 0) / studio_appearances[name],
+                "win_rate": _shrunk_rate(studio_wins.get(name, 0), studio_appearances[name]),
             }
             for name in studio_appearances
             if studio_appearances[name] >= 2
@@ -1380,25 +1456,17 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
             "dimension": dimension,
             "items": items,
             "n_answered": len(answered),
+            "n_round": len(round_answered),
         }
 
     # orthogonal: tag win-share over symmetric-difference appearances.
     orth_appearances: dict[str, int] = {}
     orth_wins: dict[str, int] = {}
-
-    def scene_tags_of(scene_id: str) -> set[str]:
-        return {
-            str(r["tag_id"])
-            for r in connection.execute(
-                "SELECT tag_id FROM scene_tag WHERE scene_id=?", (scene_id,)
-            )
-        }
-
     for row in answered:
         winner_scene = str(row["scene_a"]) if str(row["winner"]) == "a" else str(row["scene_b"])
         loser_scene = str(row["scene_b"]) if str(row["winner"]) == "a" else str(row["scene_a"])
-        tags_w = scene_tags_of(winner_scene)
-        tags_l = scene_tags_of(loser_scene)
+        tags_w = scene_tags.get(winner_scene, frozenset())
+        tags_l = scene_tags.get(loser_scene, frozenset())
         for tag_id in tags_w - tags_l:
             orth_wins[tag_id] = orth_wins.get(tag_id, 0) + 1
             orth_appearances[tag_id] = orth_appearances.get(tag_id, 0) + 1
@@ -1414,7 +1482,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
             "name": names.get(tag_id, tag_id),
             "wins": orth_wins.get(tag_id, 0),
             "appearances": orth_appearances[tag_id],
-            "win_rate": orth_wins.get(tag_id, 0) / orth_appearances[tag_id],
+            "win_rate": _shrunk_rate(orth_wins.get(tag_id, 0), orth_appearances[tag_id]),
         }
         for tag_id in orth_appearances
         if orth_appearances[tag_id] >= 2
@@ -1426,6 +1494,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
         "dimension": dimension,
         "items": items,
         "n_answered": len(answered),
+        "n_round": len(round_answered),
     }
 
 

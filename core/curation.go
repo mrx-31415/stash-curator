@@ -1565,6 +1565,8 @@ const (
 	pairDimensionFitShare  = 0.5
 	pairEloK               = 16.0
 	pairEloInitial         = 1500.0
+	// pairVerdictPrior mirrors curation.PAIR_VERDICT_PRIOR.
+	pairVerdictPrior = 4.0
 )
 
 var pairDimensions = map[string]bool{
@@ -2114,6 +2116,50 @@ FROM curation_pair WHERE round_id=? ORDER BY pair_id`, roundID)
 	return out, rows.Err()
 }
 
+// answeredPairs mirrors curation._answered_pairs: every answered pair of this
+// dimension, across all rounds, so verdicts accumulate instead of restarting.
+func answeredPairs(db dbx, dimension string) ([]pairRow, error) {
+	rows, err := db.Query(`
+SELECT pair_id, scene_a, scene_b, winner, payload_json
+FROM curation_pair
+WHERE dimension=? AND status='answered' AND winner IN ('a', 'b')
+ORDER BY pair_id`, dimension)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []pairRow
+	for rows.Next() {
+		var r pairRow
+		var winner sql.NullString
+		var payloadJSON string
+		if err := rows.Scan(&r.pairID, &r.sceneA, &r.sceneB, &winner, &payloadJSON); err != nil {
+			return nil, err
+		}
+		r.dimension = dimension
+		r.status = "answered"
+		if winner.Valid {
+			r.winner = winner.String
+		}
+		payload, err := parseJSON([]byte(payloadJSON))
+		if err != nil {
+			payload = jvObj()
+		}
+		r.payload = payload
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// shrunkRate mirrors curation._shrunk_rate.
+func shrunkRate(wins, appearances int) float64 {
+	if appearances <= 0 {
+		return 0.5
+	}
+	half := pairVerdictPrior / 2.0
+	return (float64(wins) + half) / (float64(appearances) + pairVerdictPrior)
+}
+
 func updateElo(conn *sql.Conn, sceneA, sceneB, winner string, now int64) error {
 	current := func(sceneID string) float64 {
 		var elo sql.NullFloat64
@@ -2206,6 +2252,11 @@ func submitPicks(db dbx, roundID string, picks jVal) (jVal, error) {
 	}
 	now := nowMs()
 	accepted, skipped := 0, 0
+	// Picks write feedback rows like every other interaction, so they mark the
+	// model dirty too; without this the round never reaches a build and "What
+	// your picks moved" keeps reporting the previous build's diff. One request
+	// per pick, not per call: the pending count is weighed against the update
+	// threshold, and a round is many feedback events, not one.
 	err = withTxn(db, func(conn *sql.Conn) error {
 		for _, p := range normalized {
 			row := byID[p.pairID]
@@ -2225,6 +2276,9 @@ INSERT INTO feedback(
     reversed_by_id, impression_id, payload_json
 ) VALUES (?, ?, 'metadata_wrong', NULL, ?, NULL, NULL, '{}')`,
 						nowStrID(now), flaggedScene, now); err != nil {
+						return err
+					}
+					if err := coordinatorRequest(conn, "curation_picks", now); err != nil {
 						return err
 					}
 				}
@@ -2273,6 +2327,9 @@ INSERT INTO feedback(
 				return err
 			}
 			if err := updateElo(conn, row.sceneA, row.sceneB, p.winner, now); err != nil {
+				return err
+			}
+			if err := coordinatorRequest(conn, "curation_picks", now); err != nil {
 				return err
 			}
 			accepted++
@@ -2356,21 +2413,37 @@ func pairVerdict(db dbx, roundID string) (jVal, error) {
 	if len(rows) == 0 {
 		return jvNull(), fmt.Errorf("unknown round: %s", roundID)
 	}
-	answered := []pairRow{}
+	roundAnswered := 0
 	for _, row := range rows {
 		if row.status == "answered" && (row.winner == "a" || row.winner == "b") {
-			answered = append(answered, row)
+			roundAnswered++
 		}
 	}
 	dimension := rows[0].dimension
 	payload := roundPayload(db, roundID)
 	baseTag := pythonStrOrEmpty(payload.get("base_tag_id"))
 	contextTag := pythonStrOrEmpty(payload.get("context_tag_id"))
+	answered, err := answeredPairs(db, dimension)
+	if err != nil {
+		return jvNull(), err
+	}
+	if dimension == "tag" {
+		// Only the pairs testing this same hypothesis accumulate together.
+		matching := []pairRow{}
+		for _, row := range answered {
+			if pythonStrOrEmpty(row.payload.get("base_tag_id")) == baseTag &&
+				pythonStrOrEmpty(row.payload.get("context_tag_id")) == contextTag {
+				matching = append(matching, row)
+			}
+		}
+		answered = matching
+	}
 	base := jvObj(
 		jvKey("schema_version", jvInt(1)),
 		jvKey("round_id", jvStr(roundID)),
 		jvKey("dimension", jvStr(dimension)),
 		jvKey("n_answered", jvInt(int64(len(answered)))),
+		jvKey("n_round", jvInt(int64(roundAnswered))),
 	)
 	if dimension == "tag" {
 		wins := map[string]int{}
@@ -2469,14 +2542,14 @@ func pairVerdict(db dbx, roundID string) (jVal, error) {
 				jvKey("performer_id", jvStr(key)),
 				jvKey("wins", jvInt(int64(wins[key]))),
 				jvKey("appearances", jvInt(int64(appearances[key]))),
-				jvKey("win_rate", jvFloat(float64(wins[key])/float64(appearances[key]))),
+				jvKey("win_rate", jvFloat(shrunkRate(wins[key], appearances[key]))),
 			)
 		case "studio":
 			entry = jvObj(
 				jvKey("studio", jvStr(key)),
 				jvKey("wins", jvInt(int64(wins[key]))),
 				jvKey("appearances", jvInt(int64(appearances[key]))),
-				jvKey("win_rate", jvFloat(float64(wins[key])/float64(appearances[key]))),
+				jvKey("win_rate", jvFloat(shrunkRate(wins[key], appearances[key]))),
 			)
 		default: // orthogonal
 			name := key
@@ -2488,7 +2561,7 @@ func pairVerdict(db dbx, roundID string) (jVal, error) {
 				jvKey("name", jvStr(name)),
 				jvKey("wins", jvInt(int64(wins[key]))),
 				jvKey("appearances", jvInt(int64(appearances[key]))),
-				jvKey("win_rate", jvFloat(float64(wins[key])/float64(appearances[key]))),
+				jvKey("win_rate", jvFloat(shrunkRate(wins[key], appearances[key]))),
 			)
 		}
 		items.arr = append(items.arr, entry)
