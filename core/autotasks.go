@@ -115,6 +115,79 @@ WHERE job_type='sync-plays' AND state='complete' ORDER BY finished_at_ms DESC LI
 	}, nil
 }
 
+// scheduleSpec describes one time-based scheduled task (Phase 2b). The run
+// order matters: backup before sync-build so a rebuild never runs on an
+// unprotected sidecar; expand-refresh last (cheapest, network-bound).
+type scheduleSpec struct {
+	mode          string
+	enabled       bool
+	intervalHours float64
+}
+
+func scheduleSpecs(config jVal) []scheduleSpec {
+	return []scheduleSpec{
+		{"backup", config.get("schedule_backup_enabled").truthy(), pythonFloatOr(config.get("schedule_backup_interval_hours"), 24)},
+		{"sync-build", config.get("schedule_sync_build_enabled").truthy(), pythonFloatOr(config.get("schedule_sync_build_interval_hours"), 24)},
+		{"expand-refresh", config.get("schedule_expand_refresh_enabled").truthy(), pythonFloatOr(config.get("schedule_expand_refresh_interval_hours"), 24)},
+	}
+}
+
+// anyScheduleEnabled reports whether any time-based schedule is on — the
+// daemon must stay resident then, or a daily task would never fire on an
+// idle system (nothing else spawns it without a browser).
+func anyScheduleEnabled(config jVal) bool {
+	for _, spec := range scheduleSpecs(config) {
+		if spec.enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// runDueSchedules enqueues scheduled tasks whose next_run_at_ms has passed,
+// then advances the durable row. A task with no row yet (first enable) is
+// seeded with next_run = now + interval — never fired immediately. Late
+// catch-up is free: an overdue row stays due until the daemon runs.
+func runDueSchedules(db dbx, payload jVal, config jVal, now int64) ([]string, error) {
+	var enqueued []string
+	for _, spec := range scheduleSpecs(config) {
+		if !spec.enabled {
+			continue
+		}
+		intervalMs := int64(pyRound(spec.intervalHours * 3_600_000))
+		if intervalMs <= 0 {
+			intervalMs = 24 * 3_600_000
+		}
+		var next sql.NullInt64
+		err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type=?`, spec.mode).Scan(&next)
+		if err == sql.ErrNoRows {
+			if _, err := db.Exec(`INSERT INTO scheduled_task(task_type, next_run_at_ms) VALUES (?, ?)`,
+				spec.mode, now+intervalMs); err != nil {
+				return enqueued, err
+			}
+			continue
+		}
+		if err != nil {
+			return enqueued, err
+		}
+		if !next.Valid || next.Int64 > now {
+			continue
+		}
+		ok, err := enqueueAutoTask(db, spec.mode, payload, now)
+		if err != nil {
+			return enqueued, err
+		}
+		if ok {
+			enqueued = append(enqueued, spec.mode)
+		}
+		if _, err := db.Exec(`UPDATE scheduled_task SET next_run_at_ms=?, last_run_at_ms=? WHERE task_type=?`,
+			now+intervalMs, now, spec.mode); err != nil {
+			return enqueued, err
+		}
+	}
+	return enqueued, nil
+}
+
 // schedulerTick runs one auto-scheduler pass: enqueue update-model when the
 // coordinator is ready and nothing is rebuilding, and sync-plays when new
 // plays have been quiet for the debounce window. Returns the modes enqueued.
@@ -124,10 +197,16 @@ func schedulerTick(db dbx, payload jVal, now int64) ([]string, error) {
 		return nil, err
 	}
 	config := cfg.get("config")
-	if !config.get("auto_tasks_enabled").truthy() {
-		return nil, nil
-	}
 	var enqueued []string
+	// Time-based schedules (2b) are independent of auto_tasks_enabled.
+	scheduled, err := runDueSchedules(db, payload, config, now)
+	if err != nil {
+		return enqueued, err
+	}
+	enqueued = append(enqueued, scheduled...)
+	if !config.get("auto_tasks_enabled").truthy() {
+		return enqueued, nil
+	}
 	status, err := modelUpdateStatus(db)
 	if err != nil {
 		return nil, err
@@ -166,15 +245,19 @@ func schedulerTick(db dbx, payload jVal, now int64) ([]string, error) {
 	return enqueued, nil
 }
 
-// schedulerStayAlive reports whether the daemon should stay resident for the
-// auto-scheduler: a dirty (pending) model or unsynced plays. The claim loop
-// already keeps it alive while jobs are queued.
+// schedulerStayAlive reports whether the daemon should stay resident: an
+// enabled time-based schedule (2b), a dirty (pending) model, or unsynced
+// plays. The claim loop already keeps it alive while jobs are queued.
 func schedulerStayAlive(db dbx, now int64) (bool, error) {
 	cfg, err := sidecarConfig(db)
 	if err != nil {
 		return false, err
 	}
-	if !cfg.get("config").get("auto_tasks_enabled").truthy() {
+	config := cfg.get("config")
+	if anyScheduleEnabled(config) {
+		return true, nil
+	}
+	if !config.get("auto_tasks_enabled").truthy() {
 		return false, nil
 	}
 	status, err := modelUpdateStatus(db)

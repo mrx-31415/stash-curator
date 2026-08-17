@@ -172,6 +172,7 @@ func opGetJobStatus(pluginDir string, payload jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	rows, err := db.Query(`SELECT * FROM curator_job ORDER BY started_at_ms DESC LIMIT 10`)
 	if err != nil {
 		return jvNull(), err
@@ -394,6 +395,7 @@ func getConfigBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	result, err := sidecarConfig(db)
 	if err != nil {
 		return jvNull(), err
@@ -489,6 +491,7 @@ func opHealth(pluginDir string, payload jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	now := nowMs()
 	// Worker-owned liveness: fail running rows whose executing process is
 	// gone (heartbeat stale or legacy pre-heartbeat age). This replaces the

@@ -687,6 +687,11 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
         'configKey: "auto_tasks_enabled", type: "BOOLEAN", label: "Automatic background tasks"'
         in source
     )
+    assert 'title: "Scheduling"' in source
+    assert (
+        'configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", '
+        'label: "Scheduled Expand refresh"' in source
+    )
     assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
     assert (
         "React.createElement(ManagePanel, { section: currentSection, "

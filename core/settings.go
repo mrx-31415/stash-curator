@@ -26,6 +26,12 @@ var defaultPluginConfig = jvObj(
 	jvKey("expand_gender", jvStr("FEMALE")),
 	jvKey("expand_wildcard", jvBool(false)),
 	jvKey("auto_tasks_enabled", jvBool(false)),
+	jvKey("schedule_expand_refresh_enabled", jvBool(false)),
+	jvKey("schedule_expand_refresh_interval_hours", jvInt(24)),
+	jvKey("schedule_sync_build_enabled", jvBool(false)),
+	jvKey("schedule_sync_build_interval_hours", jvInt(24)),
+	jvKey("schedule_backup_enabled", jvBool(false)),
+	jvKey("schedule_backup_interval_hours", jvInt(24)),
 )
 
 type settingConv int
@@ -54,6 +60,12 @@ var settingMapping = []struct {
 	{"expandGender", "expand_gender", convStr},
 	{"expandWildcard", "expand_wildcard", convBool},
 	{"autoTasksEnabled", "auto_tasks_enabled", convBool},
+	{"scheduleExpandRefreshEnabled", "schedule_expand_refresh_enabled", convBool},
+	{"scheduleExpandRefreshIntervalHours", "schedule_expand_refresh_interval_hours", convFloat},
+	{"scheduleSyncBuildEnabled", "schedule_sync_build_enabled", convBool},
+	{"scheduleSyncBuildIntervalHours", "schedule_sync_build_interval_hours", convFloat},
+	{"scheduleBackupEnabled", "schedule_backup_enabled", convBool},
+	{"scheduleBackupIntervalHours", "schedule_backup_interval_hours", convFloat},
 }
 
 func convertSetting(v jVal, conv settingConv) (jVal, error) {

@@ -135,20 +135,36 @@ func spawnWorker(pluginDir string) error {
 	return nil
 }
 
-// ensureAutoWorker spawns the daemon from event-driven operations when
-// automatic tasks are enabled. The coordinator's dirty signals (feedback,
-// plays, prune decisions) arrive as plugin invocations, and the daemon must
-// exist to act on them — without this, auto tasks would only ever start
-// after a task invocation.
+// ensureAutoWorker spawns the daemon when schedules or auto tasks are
+// enabled and none is running. Unlike ensureWorker (task-driven, only spawns
+// when a job is queued), this must spawn even with an empty queue — the
+// scheduler inside the daemon seeds and runs the schedules itself. Called
+// from every API-sidecar open, so any Curator activity (including the
+// Settings panel's own reload after a toggle) spawns or keeps the worker.
 func ensureAutoWorker(pluginDir string, payload jVal, settings jVal, db dbx) {
 	cfg, err := sidecarConfig(db)
 	if err != nil {
 		return
 	}
-	if !cfg.get("config").get("auto_tasks_enabled").truthy() {
+	config := cfg.get("config")
+	if !config.get("auto_tasks_enabled").truthy() && !anyScheduleEnabled(config) {
 		return
 	}
-	_ = ensureWorker(pluginDir, payload, settings)
+	if pid, ok := readWorkerPid(pluginDir); ok && pidAlive(pid) {
+		return
+	}
+	recoverOrphanJobs(db, nowMs())
+	base, headers := stashConnection(payload)
+	serverConn, _ := marshalJVal(payload.get("server_connection"))
+	if err := writeWorkerState(pluginDir, workerState{
+		DatabasePath:     databasePath(pluginDir, payload, settings),
+		StashBase:        base,
+		StashHeaders:     headers,
+		ServerConnection: serverConn,
+	}); err != nil {
+		return
+	}
+	_ = spawnWorkerFn(pluginDir)
 }
 
 // recoverOrphanJobs fails running rows whose executing process is gone:

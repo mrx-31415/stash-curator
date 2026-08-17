@@ -1184,17 +1184,24 @@ func optStrValue(value string, has bool) jVal {
 
 // allowedConfigKeys mirrors api.py's update_config allowed set.
 var allowedConfigKeys = map[string]bool{
-	"page_size":                         true,
-	"diversity_enabled":                 true,
-	"sync_page_size":                    true,
-	"debounce_ms":                       true,
-	"model_update_event_threshold":      true,
-	"model_update_max_wait_minutes":     true,
-	"model_update_min_interval_minutes": true,
-	"prune_tag_name":                    true,
-	"expand_horizon_days":               true,
-	"expand_gender":                     true,
-	"expand_wildcard":                   true,
+	"page_size":                              true,
+	"diversity_enabled":                      true,
+	"sync_page_size":                         true,
+	"debounce_ms":                            true,
+	"model_update_event_threshold":           true,
+	"model_update_max_wait_minutes":          true,
+	"model_update_min_interval_minutes":      true,
+	"prune_tag_name":                         true,
+	"expand_horizon_days":                    true,
+	"expand_gender":                          true,
+	"expand_wildcard":                        true,
+	"auto_tasks_enabled":                     true,
+	"schedule_expand_refresh_enabled":        true,
+	"schedule_expand_refresh_interval_hours": true,
+	"schedule_sync_build_enabled":            true,
+	"schedule_sync_build_interval_hours":     true,
+	"schedule_backup_enabled":                true,
+	"schedule_backup_interval_hours":         true,
 }
 
 // pythonListRepr renders a []string like Python's repr of a list of strings.
@@ -1248,5 +1255,8 @@ func updateConfigBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	}); err != nil {
 		return jvNull(), err
 	}
+	// A settings change may enable schedules or auto tasks — the worker must
+	// exist to act on them; it reads the just-written config on its next tick.
+	ensureAutoWorker(pluginDir, payload, settings, db)
 	return sidecarConfig(db)
 }
