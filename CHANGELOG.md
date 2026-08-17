@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/mrx-31415/stash-curator/compare/v0.11.0...v0.12.0) (2026-08-16)
+
+
+### Features
+
+* curation loop with pairwise picks and ELO-style feedback ([#147](https://github.com/mrx-31415/stash-curator/issues/147)) ([4375240](https://github.com/mrx-31415/stash-curator/commit/43752402c6c221eb2f15a3bc988876d8d74b3bda))
+* **plugin:** close the [#150](https://github.com/mrx-31415/stash-curator/issues/150)/[#152](https://github.com/mrx-31415/stash-curator/issues/152) visual and UX redesign gap ([#155](https://github.com/mrx-31415/stash-curator/issues/155)) ([9ff74ea](https://github.com/mrx-31415/stash-curator/commit/9ff74eab5a02b5bd5d3bd7273b9bbd0d20364911))
+
 ## [0.11.0](https://github.com/mrx-31415/stash-curator/compare/v0.10.0...v0.11.0) (2026-08-13)
 
 
