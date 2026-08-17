@@ -21,6 +21,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 from http.server import HTTPServer
 from pathlib import Path
@@ -39,6 +40,7 @@ from tests.core.test_backend import (
     payload,
     run_backend,
 )
+from tests.core.worker import run_go_task_via_worker, stop_worker
 
 REPO_ROOT = Path(__file__).parents[2]
 BACKEND = PLUGIN_DIR / "backend.py"
@@ -569,24 +571,15 @@ def test_backup_task_mirrors_derived_artifacts(
     shutil.copy2(derived_backup_sidecar, run_db)
     derived_src = derived_backup_sidecar.parent / f"{derived_backup_sidecar.stem}-derived"
     shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-    raw = json.dumps(
-        {
-            "server_connection": {
-                "Host": "127.0.0.1",
-                "Port": int(stub_stash.rsplit(":", 1)[1]),
-                "Scheme": "http",
-                "SessionCookie": {},
-            },
-            "args": {"database_path": str(run_db)},
-        },
-        separators=(",", ":"),
-    ).encode()
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     _StubStash.plugin_settings = {"backupPath": str(storage)}
     try:
-        result = run_backend(binary, PLUGIN_DIR, raw, "backup")
+        row = run_go_task_via_worker(binary, worker_dir, run_db, "backup", stub_stash)
+        assert row["state"] == "complete", row
     finally:
         _StubStash.plugin_settings = {}
-    assert result.returncode == 0, result.stdout + result.stderr
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     assert len(list(storage.glob("curator-*.sqlite3.backup"))) == 1
     assert sorted(p.name for p in (storage / "derived").iterdir()) == [
         "feature-fv-aaaaaaaaaaaaaaaaaaaa.sqlite3",

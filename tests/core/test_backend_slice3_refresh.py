@@ -18,6 +18,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -36,6 +37,7 @@ from tests.core.test_backend_slice2 import (
     _cast,
     make_expand_sidecar,
 )
+from tests.core.worker import run_go_task_via_worker, stop_worker
 
 FRESH_SCENES = [
     {
@@ -244,46 +246,61 @@ def assert_refresh_identical(
     stash_url: str,
     *,
     normalize: tuple[str, ...] = ("job_id",),
-) -> tuple[subprocess.CompletedProcess[bytes], subprocess.CompletedProcess[bytes]]:
+) -> None:
     run_dir = sidecar.parent / f"{sidecar.stem}-refresh-run"
-    run_db = run_dir / sidecar.name
-    outputs: list[subprocess.CompletedProcess[bytes]] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        shutil.copy2(sidecar, run_db)
-        derived_src = sidecar.parent / f"{sidecar.stem}-derived"
-        if derived_src.is_dir():
-            shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-        try:
-            result = _run_refresh_backend(
-                runner, PLUGIN_DIR, _with_db(_task_payload(sidecar, stash_url), run_db), stash_url
-            )
-        finally:
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    env = dict(os.environ)
+    env["CURATOR_STASHDB_ENDPOINT"] = stash_url
+    python_result: subprocess.CompletedProcess[bytes] | None = None
+    go_row: dict[str, object] | None = None
+    try:
+        for runner in (None, binary):
             shutil.rmtree(run_dir, ignore_errors=True)
-        outputs.append(result)
-    python_result, go_result = outputs
-    assert go_result.returncode == python_result.returncode, (
-        python_result.stdout + python_result.stderr + go_result.stdout + go_result.stderr
-    )
+            run_dir.mkdir()
+            run_db = run_dir / sidecar.name
+            shutil.copy2(sidecar, run_db)
+            derived_src = sidecar.parent / f"{sidecar.stem}-derived"
+            if derived_src.is_dir():
+                shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+            if runner is None:
+                python_result = _run_refresh_backend(
+                    runner,
+                    PLUGIN_DIR,
+                    _with_db(_task_payload(sidecar, stash_url), run_db),
+                    stash_url,
+                )
+            else:
+                go_row = run_go_task_via_worker(
+                    binary, worker_dir, run_db, "expand-refresh", stash_url, env=env
+                )
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        shutil.rmtree(worker_dir, ignore_errors=True)
+    assert python_result is not None and go_row is not None
     py_out = json.loads(python_result.stdout)
-    go_out = json.loads(go_result.stdout)
     if python_result.returncode != 0:
-        assert_equivalent(py_out, go_out)
-        return outputs
-    a, b = py_out["output"], go_out["output"]
-    for field in normalize:
+        assert go_row["state"] == "failed", go_row
+        (
+            assert_equivalent(json.loads(python_result.stdout)["error"], go_row["error"]),
+            "task errors differ",
+        )
+        return
+    assert go_row["state"] == "complete", go_row
+    a = py_out["output"]
+    for field in ("job_id", "schema_version", *normalize):
         _strip_key(a, field)
+    b = dict(go_row["summary"] or {})
+    for field in ("job_id", *normalize):
         _strip_key(b, field)
     (
         assert_equivalent(a, b),
         (
-            "outputs differ:\n"
+            "job summaries differ:\n"
             f"python: {json.dumps(a, separators=(',', ':'))}\n"
             f"go:     {json.dumps(b, separators=(',', ':'))}"
         ),
     )
-    return outputs
 
 
 def test_expand_refresh_byte_identical(
@@ -298,39 +315,51 @@ def test_expand_refresh_state_parity(refresh_sidecar: Path, binary: Path, stub_s
     out, and the pool rescored against the published model."""
 
     run_dir = refresh_sidecar.parent / f"{refresh_sidecar.stem}-refresh-state"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    env = dict(os.environ)
+    env["CURATOR_STASHDB_ENDPOINT"] = stub_stash
     states: list[dict[str, object]] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        run_db = run_dir / refresh_sidecar.name
-        shutil.copy2(refresh_sidecar, run_db)
-        derived_src = refresh_sidecar.parent / f"{refresh_sidecar.stem}-derived"
-        shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
-        result = _run_refresh_backend(
-            runner,
-            PLUGIN_DIR,
-            _with_db(_task_payload(refresh_sidecar, stub_stash), run_db),
-            stub_stash,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        connection = sqlite3.connect(run_db)
-        try:
-            states.append(
-                {
-                    "external_entity": connection.execute(
-                        "SELECT entity_type, external_id, score, sources_json, pool"
-                        " FROM external_entity ORDER BY entity_type, external_id"
-                    ).fetchall(),
-                    "expand_cache": connection.execute(
-                        "SELECT model_id, scene_count, performer_count FROM expand_cache"
-                    ).fetchone(),
-                    "job": connection.execute(
-                        "SELECT job_type, state FROM curator_job"
-                        " ORDER BY started_at_ms DESC LIMIT 1"
-                    ).fetchone(),
-                }
-            )
-        finally:
-            connection.close()
-        shutil.rmtree(run_dir, ignore_errors=True)
+    try:
+        for runner in (None, binary):
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / refresh_sidecar.name
+            shutil.copy2(refresh_sidecar, run_db)
+            derived_src = refresh_sidecar.parent / f"{refresh_sidecar.stem}-derived"
+            shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
+            if runner is None:
+                result = _run_refresh_backend(
+                    runner,
+                    PLUGIN_DIR,
+                    _with_db(_task_payload(refresh_sidecar, stub_stash), run_db),
+                    stub_stash,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+            else:
+                run_go_task_via_worker(
+                    binary, worker_dir, run_db, "expand-refresh", stub_stash, env=env
+                )
+            connection = sqlite3.connect(run_db)
+            try:
+                states.append(
+                    {
+                        "external_entity": connection.execute(
+                            "SELECT entity_type, external_id, score, sources_json, pool"
+                            " FROM external_entity ORDER BY entity_type, external_id"
+                        ).fetchall(),
+                        "expand_cache": connection.execute(
+                            "SELECT model_id, scene_count, performer_count FROM expand_cache"
+                        ).fetchone(),
+                        "job": connection.execute(
+                            "SELECT job_type, state FROM curator_job"
+                            " ORDER BY started_at_ms DESC LIMIT 1"
+                        ).fetchone(),
+                    }
+                )
+            finally:
+                connection.close()
+            shutil.rmtree(run_dir, ignore_errors=True)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     assert_equivalent(states[0], states[1])

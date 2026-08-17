@@ -57,6 +57,12 @@ func marshalJSONString(s string) string {
 
 func runBackend(pluginDir, mode string) {
 	pluginDir = resolvePluginDir(pluginDir)
+	if mode == "daemon" {
+		// Worker mode is not a Stash request: no stdin protocol, no output.
+		// The daemon exits on its own after an idle period.
+		runDaemon(pluginDir)
+		return
+	}
 	payloadBytes, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		writeError("could not read plugin input: " + err.Error())
@@ -237,6 +243,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetCurationImpact(pluginDir, payload)
 	case "reset":
 		return opReset(pluginDir, payload)
+	case "cancel_job":
+		return opCancelJob(pluginDir, payload)
 	default:
 		return jvNull(), fmt.Errorf("unknown Curator API operation: %s", operation)
 	}

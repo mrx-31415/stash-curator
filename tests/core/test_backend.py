@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -39,6 +40,7 @@ from curator.storage.artifacts import (
     create_artifact,
     publish_file,
 )
+from tests.core.worker import run_go_task_via_worker, stop_worker
 
 REPO_ROOT = Path(__file__).parents[2]
 PLUGIN_DIR = REPO_ROOT / "plugin"
@@ -389,7 +391,7 @@ def test_migration_parity_python_accepts_go(tmp_path: Path, binary: Path) -> Non
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
     finally:
         connection.close()
-    assert status.current_version == status.latest_version == 30
+    assert status.current_version == status.latest_version == 31
     assert not status.pending_versions
     assert integrity == "ok"
 
@@ -581,16 +583,21 @@ def test_fallback_entity_hook(tmp_path: Path, binary: Path, stub_stash: str) -> 
 
 
 def test_fallback_task_mode(tmp_path: Path, binary: Path, stub_stash: str) -> None:
-    """Task modes are unported; prepare on a model-less sidecar fails with the
-    same deterministic error through the fallback."""
+    """prepare on a model-less sidecar fails with the same deterministic
+    error through the worker's failed job (the invocation queues, the daemon
+    runs the mode body, and the row records the Python-identical error)."""
     sidecar = tmp_path / "sidecar.sqlite3"
     make_sidecar(sidecar, with_jobs=False)
-    raw = payload("prepare", sidecar, stub_stash)
-    direct = run_backend(None, PLUGIN_DIR, raw, mode="prepare")
-    fallback = run_backend(binary, PLUGIN_DIR, raw, mode="prepare")
-    assert fallback.stdout == direct.stdout
-    assert fallback.returncode == direct.returncode == 1
-    assert json.loads(fallback.stdout)["error"] == "no published model; build recommendations first"
+    direct = run_backend(None, PLUGIN_DIR, payload("prepare", sidecar, stub_stash), mode="prepare")
+    assert direct.returncode == 1
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    try:
+        row = run_go_task_via_worker(binary, worker_dir, sidecar, "prepare", stub_stash)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
+    assert row["state"] == "failed", row
+    assert row["error"] == json.loads(direct.stdout)["error"]
 
 
 # ── wire shape ──────────────────────────────────────────────────────────────

@@ -17,9 +17,16 @@ import (
 )
 
 // progressLog mirrors backend.py's _progress: a stderr progress marker with
-// the value clamped to [0, 1] and %.4f formatting.
+// the value clamped to [0, 1] and %.4f formatting, plus the active job's
+// sidecar progress sink (debounced) when one is attached.
 func progressLog(value float64) {
 	fmt.Fprintf(os.Stderr, "\x01p\x02%.4f\n", math.Max(0.0, math.Min(value, 1.0)))
+	progressSinkMu.Lock()
+	sink := activeProgressSink
+	progressSinkMu.Unlock()
+	if sink != nil {
+		sink.report(value)
+	}
 }
 
 func infoLog(message string) {
@@ -48,40 +55,43 @@ func runTask(pluginDir string, payload jVal, mode string) (jVal, error) {
 		func(settings jVal) (jVal, error) { return runTaskBody(pluginDir, payload, mode, settings) })
 }
 
-// runTaskBody mirrors backend.py's _run_task_body.
+// runTaskBody posts the task to the Curator-owned worker queue and returns
+// immediately, freeing Stash's single-slot job queue (docs/decisions/004).
+// Same-type queued/running jobs coalesce into the existing already_running
+// response. If the worker cannot run (unusual platform), the task executes
+// inline exactly as before so behavior never silently regresses.
 func runTaskBody(pluginDir string, payload jVal, mode string, settings jVal) (jVal, error) {
+	if !taskModeNative(mode) {
+		return jvNull(), fmt.Errorf("unknown Curator task: %s", mode)
+	}
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
 		return jvNull(), err
 	}
 	defer db.Close()
 	jobID := uuid4()
-	startedAtMs := nowMs()
-	staleBefore := nowMs() - 6*3_600_000
+	now := nowMs()
+	staleBefore := now - 6*3_600_000
 	var existingJobID, existingJobType string
+	// Recover dead-owner running rows first (idempotent, independent of the
+	// enqueue below) so a crashed worker's rows do not block the queue.
+	recoverOrphanJobs(db, now)
 	err = withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
-		if _, err := conn.ExecContext(ctx, `
-UPDATE curator_job SET state='failed', finished_at_ms=?, error='interrupted'
-WHERE state='running' AND started_at_ms<=?`, nowMs(), staleBefore); err != nil {
-			return err
-		}
 		var existingID, existingType string
 		err := conn.QueryRowContext(ctx, `
-SELECT job_id, job_type FROM curator_job WHERE state='running'
-AND started_at_ms>? ORDER BY started_at_ms DESC LIMIT 1`, staleBefore).Scan(&existingID, &existingType)
+SELECT job_id, job_type FROM curator_job WHERE state IN ('queued', 'running')
+AND job_type=? AND started_at_ms>? ORDER BY started_at_ms DESC LIMIT 1`,
+			mode, staleBefore).Scan(&existingID, &existingType)
 		if err == sql.ErrNoRows {
-			if _, err := conn.ExecContext(ctx, `
-UPDATE model_update_state SET last_error='interrupted before task completion'
-WHERE last_started_at_ms IS NOT NULL
-AND last_started_at_ms>COALESCE(last_finished_at_ms, -1)
-AND last_error IS NULL`); err != nil {
-				return err
+			payloadRaw, merr := marshalJVal(payload)
+			if merr != nil {
+				return merr
 			}
-			_, err := conn.ExecContext(ctx, `
-INSERT INTO curator_job(job_id, job_type, state, started_at_ms)
-VALUES (?, ?, 'running', ?)`, jobID, mode, startedAtMs)
-			return err
+			_, ierr := conn.ExecContext(ctx, `
+INSERT INTO curator_job(job_id, job_type, state, started_at_ms, queued_at_ms, payload_json)
+VALUES (?, ?, 'queued', ?, ?, ?)`, jobID, mode, now, now, payloadRaw)
+			return ierr
 		}
 		if err != nil {
 			return err
@@ -100,24 +110,78 @@ VALUES (?, ?, 'running', ?)`, jobID, mode, startedAtMs)
 			jvKey("job_type", jvStr(existingJobType)),
 		), nil
 	}
-	if mode == "compact" || mode == "vacuum" {
-		// Compaction requires a core-only connection; vacuum runs without the
-		// attached artifact views, matching Python's reopen.
-		db.Close()
-		db, err = openSidecar(pluginDir, payload, settings, false)
-		if err != nil {
+	if workerErr := ensureWorker(pluginDir, payload, settings); workerErr != nil {
+		// No worker: fall back to inline execution (pre-worker behavior) so
+		// the task still completes. The queued row is promoted to running.
+		infoLog(fmt.Sprintf("Stash Curator %s running inline (worker unavailable: %v)", mode, workerErr))
+		if err := execImmediate(db, `UPDATE curator_job SET state='running', heartbeat_at_ms=?
+WHERE job_id=? AND state='queued'`, now, jobID); err != nil {
 			return jvNull(), err
 		}
-		defer db.Close()
+		work, oerr := openTaskSidecar(pluginDir, payload, settings, mode)
+		if oerr != nil {
+			return jvNull(), oerr
+		}
+		defer work.Close()
+		return executeClaimedJob(work, pluginDir, payload, mode, settings, jobID, now)
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("job_id", jvStr(jobID)),
+		jvKey("queued", jvBool(true)),
+		jvKey("job_type", jvStr(mode)),
+	), nil
+}
+
+// openTaskSidecar opens the sidecar with artifact attaches on for every mode
+// except compact/vacuum, which require a core-only connection (matching
+// backend.py's reopen).
+func openTaskSidecar(pluginDir string, payload jVal, settings jVal, mode string) (dbx, error) {
+	attach := mode != "compact" && mode != "vacuum"
+	return openSidecar(pluginDir, payload, settings, attach)
+}
+
+// marshalJVal serializes a payload for the queue snapshot.
+func marshalJVal(v jVal) (string, error) {
+	var b strings.Builder
+	v.writeJSON(&b)
+	return b.String(), nil
+}
+
+// executeClaimedJob runs one claimed (state='running') job to completion:
+// heartbeat + progress through the sidecar, the mode body, and guarded state
+// transitions. Shared by the inline fallback and the daemon.
+func executeClaimedJob(db dbx, pluginDir string, payload jVal, mode string, settings jVal, jobID string, startedAtMs int64) (jVal, error) {
+	done := make(chan struct{})
+	defer close(done)
+	go heartbeatLoop(db, jobID, done)
+	// The sink writes on its own connection (the execution pool is pinned to
+	// one conn), so progress updates never block behind the mode's own
+	// statements — or deadlock when a marker fires inside one of its txns.
+	var prev *progressSink
+	sink, sinkErr := newProgressSink(databasePath(pluginDir, payload, settings), jobID)
+	if sinkErr != nil {
+		infoLog(fmt.Sprintf("progress sink unavailable: %v", sinkErr))
+	} else {
+		prev = setProgressSink(sink)
+		defer func() {
+			setProgressSink(prev)
+			sink.close()
+		}()
 	}
 	infoLog(fmt.Sprintf("Stash Curator %s started", mode))
 	progressLog(0.01)
 	summary, taskErr := runTaskMode(db, pluginDir, payload, mode, settings, startedAtMs)
+	// Land the last progress value before the terminal transition removes the
+	// state='running' guard the sink writes under.
+	if sink != nil {
+		sink.flush()
+	}
 	if taskErr != nil {
 		txnErr := withTxn(db, func(conn *sql.Conn) error {
 			_, err := conn.ExecContext(context.Background(), `
 UPDATE curator_job SET state='failed', finished_at_ms=?, error=?
-WHERE job_id=?`, nowMs(), truncateString(taskErr.Error(), 2000), jobID)
+WHERE job_id=? AND state='running'`, nowMs(), truncateString(taskErr.Error(), 2000), jobID)
 			return err
 		})
 		if txnErr != nil {
@@ -126,17 +190,20 @@ WHERE job_id=?`, nowMs(), truncateString(taskErr.Error(), 2000), jobID)
 		errorLog(fmt.Sprintf("Stash Curator %s failed: %s", mode, taskErr.Error()))
 		return jvNull(), taskErr
 	}
+	progressLog(1.0)
+	if sink != nil {
+		sink.flush()
+	}
 	txnErr := withTxn(db, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(context.Background(), `
 UPDATE curator_job SET state='complete', finished_at_ms=?, summary_json=?
-WHERE job_id=?`, nowMs(), summary.marshalSortedKeys(), jobID)
+WHERE job_id=? AND state='running'`, nowMs(), summary.marshalSortedKeys(), jobID)
 		return err
 	})
 	if txnErr != nil {
 		return jvNull(), txnErr
 	}
 	infoLog(fmt.Sprintf("Stash Curator %s completed", mode))
-	progressLog(1.0)
 	out := jvObj(
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
 		jvKey("job_id", jvStr(jobID)),
