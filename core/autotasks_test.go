@@ -4,7 +4,9 @@
 package main
 
 import (
+	"fmt"
 	"testing"
+	"time"
 )
 
 // enableAutoTasks flips the stored config so sidecarConfig merges
@@ -383,6 +385,120 @@ VALUES ('e1', 'expand-refresh', 'queued', ?)`, now-10_000); err != nil {
 		}
 		if next != now+24*3_600_000 {
 			t.Fatalf("schedule must advance past a coalesced slot: %d", next)
+		}
+	})
+}
+
+func TestSchedulerAnchorAtHour(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	now := int64(1_000_000_000_000)
+	pinTime(t, now, func() {
+		// Anchor the sync-build to an hour a few hours ahead of "now" — the
+		// seeded run must be the next wall-clock occurrence of that hour.
+		nowTime := time.UnixMilli(now)
+		targetHour := int64((nowTime.Hour() + 3) % 24)
+		cfg := fmt.Sprintf(`{"schedule_sync_build_enabled": true,
+			"schedule_sync_build_interval_hours": 24,
+			"schedule_sync_build_at_hour": %d}`, targetHour)
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`, cfg, now); err != nil {
+			t.Fatal(err)
+		}
+		if enqueued, err := schedulerTick(db, jvObj(), now); err != nil {
+			t.Fatal(err)
+		} else if len(enqueued) != 0 {
+			t.Fatalf("seeding must not enqueue: %v", enqueued)
+		}
+		var next int64
+		if err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type='sync-build'`).Scan(&next); err != nil {
+			t.Fatal(err)
+		}
+		nextTime := time.UnixMilli(next)
+		if nextTime.Hour() != int(targetHour) {
+			t.Fatalf("anchored run must land at hour %d, got %d", targetHour, nextTime.Hour())
+		}
+		if next <= now || next > now+24*3_600_000 {
+			t.Fatalf("anchored run must be the next occurrence within 24h: next=%d now=%d", next, now)
+		}
+	})
+}
+
+func TestSchedulerAnchorRecomputesOnConfigChange(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	now := int64(1_000_000_000_000)
+	pinTime(t, now, func() {
+		// Seed interval-relative first...
+		cfg := `{"schedule_sync_build_enabled": true, "schedule_sync_build_interval_hours": 24}`
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`, cfg, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := schedulerTick(db, jvObj(), now); err != nil {
+			t.Fatal(err)
+		}
+		var seeded int64
+		if err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type='sync-build'`).Scan(&seeded); err != nil {
+			t.Fatal(err)
+		}
+		if seeded != now+24*3_600_000 {
+			t.Fatalf("interval-relative seed expected: %d", seeded)
+		}
+		// ...then set the anchor: the next tick must re-phase the row.
+		nowTime := time.UnixMilli(now)
+		targetHour := int64((nowTime.Hour() + 3) % 24)
+		anchored := fmt.Sprintf(`{"schedule_sync_build_enabled": true,
+			"schedule_sync_build_interval_hours": 24,
+			"schedule_sync_build_at_hour": %d}`, targetHour)
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`, anchored, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := schedulerTick(db, jvObj(), now); err != nil {
+			t.Fatal(err)
+		}
+		var rephased int64
+		if err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type='sync-build'`).Scan(&rephased); err != nil {
+			t.Fatal(err)
+		}
+		if time.UnixMilli(rephased).Hour() != int(targetHour) {
+			t.Fatalf("anchor change must re-phase next_run to hour %d, got %d", targetHour, time.UnixMilli(rephased).Hour())
+		}
+	})
+}
+
+func TestSchedulerAnchorCatchUp(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	now := int64(1_000_000_000_000)
+	pinTime(t, now, func() {
+		cfg := `{"schedule_sync_build_enabled": true, "schedule_sync_build_interval_hours": 24,
+			"schedule_sync_build_at_hour": 4}`
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`, cfg, now); err != nil {
+			t.Fatal(err)
+		}
+		// The row is overdue (the 04:00 pass was missed while the daemon was
+		// down) — the anchored schedule must still catch up, not skip ahead.
+		if _, err := db.Exec(`INSERT INTO scheduled_task(task_type, next_run_at_ms) VALUES ('sync-build', ?)`, now-3_600_000); err != nil {
+			t.Fatal(err)
+		}
+		enqueued, err := schedulerTick(db, jvObj(), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(enqueued) != 1 || enqueued[0] != "sync-build" {
+			t.Fatalf("overdue anchored schedule must catch up: %v", enqueued)
+		}
+		var next int64
+		if err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type='sync-build'`).Scan(&next); err != nil {
+			t.Fatal(err)
+		}
+		if time.UnixMilli(next).Hour() != 4 {
+			t.Fatalf("advanced run must stay anchored at hour 4, got %d", time.UnixMilli(next).Hour())
 		}
 	})
 }

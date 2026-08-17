@@ -28,10 +28,13 @@ var defaultPluginConfig = jvObj(
 	jvKey("auto_tasks_enabled", jvBool(false)),
 	jvKey("schedule_expand_refresh_enabled", jvBool(false)),
 	jvKey("schedule_expand_refresh_interval_hours", jvInt(24)),
+	jvKey("schedule_expand_refresh_at_hour", jvNull()),
 	jvKey("schedule_sync_build_enabled", jvBool(false)),
 	jvKey("schedule_sync_build_interval_hours", jvInt(24)),
+	jvKey("schedule_sync_build_at_hour", jvNull()),
 	jvKey("schedule_backup_enabled", jvBool(false)),
 	jvKey("schedule_backup_interval_hours", jvInt(24)),
+	jvKey("schedule_backup_at_hour", jvNull()),
 )
 
 type settingConv int
@@ -62,10 +65,13 @@ var settingMapping = []struct {
 	{"autoTasksEnabled", "auto_tasks_enabled", convBool},
 	{"scheduleExpandRefreshEnabled", "schedule_expand_refresh_enabled", convBool},
 	{"scheduleExpandRefreshIntervalHours", "schedule_expand_refresh_interval_hours", convFloat},
+	{"scheduleExpandRefreshAtHour", "schedule_expand_refresh_at_hour", convInt},
 	{"scheduleSyncBuildEnabled", "schedule_sync_build_enabled", convBool},
 	{"scheduleSyncBuildIntervalHours", "schedule_sync_build_interval_hours", convFloat},
+	{"scheduleSyncBuildAtHour", "schedule_sync_build_at_hour", convInt},
 	{"scheduleBackupEnabled", "schedule_backup_enabled", convBool},
 	{"scheduleBackupIntervalHours", "schedule_backup_interval_hours", convFloat},
+	{"scheduleBackupAtHour", "schedule_backup_at_hour", convInt},
 }
 
 func convertSetting(v jVal, conv settingConv) (jVal, error) {
@@ -214,6 +220,15 @@ func sidecarConfig(db dbx) (jVal, error) {
 func validateConfig(values jVal) error {
 	if v := values.get("diversity_enabled"); v.kind != jNull && v.kind != jBool {
 		return fmt.Errorf("diversity_enabled must be true or false")
+	}
+	for _, key := range []string{"schedule_expand_refresh_at_hour", "schedule_sync_build_at_hour", "schedule_backup_at_hour"} {
+		v := values.get(key)
+		if v.kind == jNull {
+			continue
+		}
+		if !isJSONInt(v) || pythonInt(v) < 0 || pythonInt(v) > 23 {
+			return fmt.Errorf("%s must be an integer from 0 to 23", key)
+		}
 	}
 	for _, key := range []string{"page_size", "sync_page_size"} {
 		v := values.get(key)
