@@ -130,6 +130,13 @@
       maintenance: true,
       description: "Inspect render and query performance profiles captured during development.",
     },
+    {
+      value: "settings",
+      label: "Settings",
+      icon: faCog,
+      maintenance: true,
+      description: "Sync, discovery, prune, and Whisparr integration settings, without leaving Curator.",
+    },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
   const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
@@ -144,7 +151,7 @@
     value: "manage",
     label: "Manage",
     icon: faWrench,
-    description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, and profiling.",
+    description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
   };
   const TOP_NAV_ITEMS = [
     RECOMMENDATIONS_NAV_ITEM,
@@ -627,6 +634,26 @@
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
     return payload.data.configurePlugin;
+  }
+
+  // Curator's own get_config operation only echoes curator_config (the
+  // subset of settings synced into the sidecar DB); raw plugin settings
+  // like whisparrApiKey never pass through it. Query Stash directly for
+  // those, mirroring plugin/backend.py's SETTINGS_QUERY.
+  async function getPluginSettings() {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: 'query CuratorPluginSettings { configuration { plugins(include: ["stash-curator"]) } }',
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors) {
+      throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    }
+    return payload.data.configuration.plugins["stash-curator"] || {};
   }
 
   function formatTimeAgo(ms) {
@@ -3924,6 +3951,212 @@
     );
   }
 
+  // GH #151: settings a first version needs, grouped for the panel below.
+  // Each entry's `key` is the camelCase name configurePlugin/stash-curator.yml
+  // use; `configKey` (when present) is the snake_case name the same setting
+  // is echoed back under from get_config's curator_config-backed `config`
+  // object. Fields without a `configKey` aren't mirrored into curator_config
+  // (see plugin/backend.py's _apply_plugin_settings) and are read back via
+  // getPluginSettings() instead.
+  const SETTINGS_GENDER_OPTIONS = [
+    { value: "FEMALE", label: "Female" },
+    { value: "MALE", label: "Male" },
+    { value: "TRANSGENDER_FEMALE", label: "Trans female" },
+    { value: "TRANSGENDER_MALE", label: "Trans male" },
+    { value: "", label: "All genders" },
+  ];
+  const SETTINGS_FIELD_GROUPS = [
+    {
+      title: "Sync & model timing",
+      fields: [
+        { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20." },
+        { key: "syncPageSize", configKey: "sync_page_size", type: "NUMBER", label: "Sync page size", description: "Number of Stash records fetched per synchronization request. Default 250." },
+        { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
+        { key: "modelUpdateMaxWaitMinutes", configKey: "model_update_max_wait_minutes", type: "NUMBER", label: "Maximum model update delay (minutes)", description: "Rebuild pending preference changes after this delay. Default 30." },
+        { key: "modelUpdateMinIntervalMinutes", configKey: "model_update_min_interval_minutes", type: "NUMBER", label: "Minimum model update interval (minutes)", description: "Minimum time between automatic preference-model rebuilds. Default 60." },
+      ],
+    },
+    {
+      title: "Discovery",
+      fields: [
+        { key: "expandWildcard", configKey: "expand_wildcard", type: "BOOLEAN", label: "Expand popularity wildcard", description: "Include a small trending/popular sample outside preference-derived seeds." },
+        { key: "expandGender", configKey: "expand_gender", type: "SELECT", options: SETTINGS_GENDER_OPTIONS, label: "External performer gender", description: "Default StashDB gender filter for Expand and Similar. Default Female; choose All genders for no filter." },
+        { key: "expandHorizonDays", configKey: "expand_horizon_days", type: "NUMBER", label: "Expand recent-release horizon (days)", description: "Recent-release window used by Expand. Default 90." },
+      ],
+    },
+    {
+      title: "Prune",
+      fields: [
+        { key: "pruneTagName", configKey: "prune_tag_name", type: "STRING", label: "Prune tag", description: "Tag applied by the Prune page. Default [Prune]." },
+      ],
+    },
+    {
+      title: "Whisparr integration",
+      fields: [
+        { key: "whisparrUrl", type: "STRING", label: "Whisparr v3 URL", description: "Optional Whisparr base URL used by Expand scene actions." },
+        { key: "whisparrApiKey", type: "PASSWORD", label: "Whisparr API key", description: "Optional Whisparr API key. It is used only by the plugin backend." },
+        { key: "whisparrRootFolder", type: "STRING", label: "Whisparr root folder override", description: "Optional. Leave empty to use Whisparr's first configured root folder." },
+        { key: "whisparrQualityProfileId", type: "NUMBER", optional: true, label: "Whisparr quality profile ID override", description: "Optional. Leave empty to use Whisparr's fallback (or first) quality profile." },
+        { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "Start a release search after adding a scene. Enabled by default." },
+      ],
+    },
+  ];
+
+  function SettingsField({ field, value, saving, error, onSave }) {
+    const [draft, setDraft] = React.useState(value ?? "");
+    React.useEffect(() => { setDraft(value ?? ""); }, [value]);
+    const inputId = `curator-setting-${field.key}`;
+    function commitText() {
+      const trimmed = String(draft).trim();
+      const current = String(value ?? "");
+      if (trimmed === current) return;
+      if (field.type === "NUMBER") {
+        if (trimmed === "") {
+          if (field.optional) onSave("");
+          else setDraft(current);
+          return;
+        }
+        const num = Number(trimmed);
+        if (Number.isNaN(num)) { setDraft(current); return; }
+        onSave(num);
+        return;
+      }
+      onSave(trimmed);
+    }
+    let control;
+    if (field.type === "BOOLEAN") {
+      control = React.createElement(
+        "div",
+        { className: "custom-control custom-switch" },
+        React.createElement("input", { type: "checkbox", className: "custom-control-input", id: inputId, checked: Boolean(value), disabled: saving, onChange: (event) => onSave(event.target.checked) }),
+        React.createElement("label", { className: "custom-control-label", htmlFor: inputId }, value ? "On" : "Off")
+      );
+    } else if (field.type === "SELECT") {
+      control = React.createElement(
+        "select",
+        { id: inputId, className: "form-control form-control-sm curator-settings-control", value: value ?? "", disabled: saving, onChange: (event) => onSave(event.target.value) },
+        field.options.map((option) => React.createElement("option", { key: option.value, value: option.value }, option.label))
+      );
+    } else {
+      control = React.createElement("input", {
+        id: inputId,
+        type: field.type === "PASSWORD" ? "password" : field.type === "NUMBER" ? "number" : "text",
+        className: "form-control form-control-sm curator-settings-control",
+        value: draft,
+        disabled: saving,
+        onChange: (event) => setDraft(event.target.value),
+        onBlur: commitText,
+        onKeyDown: (event) => { if (event.key === "Enter") event.target.blur(); },
+      });
+    }
+    return React.createElement(
+      "div",
+      { className: "curator-record-row curator-settings-field" },
+      React.createElement(
+        "div",
+        { className: "curator-record-main" },
+        React.createElement("label", { className: "curator-record-title", htmlFor: inputId }, field.label),
+        React.createElement("p", { className: "curator-record-meta" }, field.description),
+        error && React.createElement("p", { className: "curator-record-meta curator-settings-field-error" }, error)
+      ),
+      control,
+      saving && React.createElement("span", { className: "curator-settings-saving" }, "Saving…")
+    );
+  }
+
+  function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity }) {
+    const [config, setConfig] = React.useState(null);
+    const [raw, setRaw] = React.useState(null);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState("");
+    const [savingKeys, setSavingKeys] = React.useState(() => new Set());
+    const [fieldErrors, setFieldErrors] = React.useState({});
+    useCuratorActivity("settings", loading, "Loading settings…");
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([operation({ operation: "get_config" }), getPluginSettings()])
+        .then(([configData, settingsData]) => {
+          if (cancelled) return;
+          setConfig(configData.config);
+          setRaw(settingsData);
+        })
+        .catch((failure) => { if (!cancelled) setError(failure.message); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+      return () => { cancelled = true; };
+    }, []);
+    async function saveField(field, value) {
+      setSavingKeys((current) => new Set(current).add(field.key));
+      setFieldErrors((current) => ({ ...current, [field.key]: "" }));
+      try {
+        await configurePlugin({ [field.key]: value });
+        if (field.configKey) {
+          const data = await operation({ operation: "get_config" });
+          cachedConfigUpdatedAtMs = data.updated_at_ms;
+          setConfig(data.config);
+        } else {
+          setRaw(await getPluginSettings());
+        }
+      } catch (failure) {
+        setFieldErrors((current) => ({ ...current, [field.key]: failure.message }));
+      } finally {
+        setSavingKeys((current) => { const next = new Set(current); next.delete(field.key); return next; });
+      }
+    }
+    if (loading) return React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading settings…"));
+    if (!config || !raw) return React.createElement("div", { className: "alert alert-danger" }, error || "Unable to load settings.");
+    return React.createElement(
+      "section",
+      { className: "curator-settings-panel" },
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      onToggleDiversity && diversityEnabled !== null && React.createElement(
+        "div",
+        { className: "curator-settings-group" },
+        React.createElement("h3", null, "Recommendations"),
+        React.createElement(
+          "div",
+          { className: "curator-record-row curator-settings-field" },
+          React.createElement(
+            "div",
+            { className: "curator-record-main" },
+            React.createElement("span", { className: "curator-record-title" }, "Recommendation variety"),
+            React.createElement("p", { className: "curator-record-meta" }, "Vary performers, studios, and similar content instead of pure score-first ordering.")
+          ),
+          React.createElement(
+            Button,
+            {
+              size: "sm",
+              variant: diversityEnabled ? "primary" : "secondary",
+              disabled: diversitySaving,
+              "aria-pressed": diversityEnabled,
+              onClick: onToggleDiversity,
+            },
+            React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
+            diversityEnabled ? " Balanced" : " Score-first"
+          )
+        )
+      ),
+      SETTINGS_FIELD_GROUPS.map((group) => React.createElement(
+        "div",
+        { key: group.title, className: "curator-settings-group" },
+        React.createElement("h3", null, group.title),
+        group.fields.map((field) => {
+          const rawValue = raw ? raw[field.key] : undefined;
+          const value = field.configKey
+            ? config[field.configKey]
+            : (rawValue === undefined || rawValue === null || rawValue === "") && field.default !== undefined ? field.default : rawValue;
+          return React.createElement(SettingsField, {
+            key: field.key,
+            field,
+            value,
+            saving: savingKeys.has(field.key),
+            error: fieldErrors[field.key],
+            onSave: (next) => saveField(field, next),
+          });
+        })
+      ))
+    );
+  }
+
   // Manage shell (GH #150 Package 3): a two-pane list/detail view that hosts
   // every maintenance-flagged NAV_ITEMS entry plus Profiling. Each panel is
   // mounted unmodified — this is pure relocation, not a rebuild.
@@ -3936,9 +4169,10 @@
     diagnostics: () => React.createElement(DiagnosticsPanel),
     prune: () => React.createElement(PrunePanel),
     profiling: () => React.createElement(ProfilingPanel),
+    settings: (extra) => React.createElement(SettingsPanel, extra),
   };
 
-  function ManagePanel({ section, onSelectSection }) {
+  function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity }) {
     const items = MAINTENANCE_ITEMS;
     const active = items.find((item) => item.value === section) || items[0];
     const body = MANAGE_BODIES[active.value];
@@ -3976,7 +4210,7 @@
           React.createElement("h2", null, active.label),
           React.createElement("p", null, active.description)
         ),
-        body && body()
+        body && body({ diversityEnabled, diversitySaving, onToggleDiversity })
       )
     );
   }
@@ -4304,7 +4538,7 @@
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
-      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage }),
+      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
