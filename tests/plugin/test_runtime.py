@@ -7,6 +7,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
 import tomllib
 import zipfile
 from hashlib import sha256
@@ -145,18 +147,27 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
             "UPDATE model_update_state SET last_started_at_ms=2, "
             "last_finished_at_ms=1, last_error=NULL"
         )
-    task = subprocess.run(
-        [str(host_binary), str(installed), "backup"],
-        input=json.dumps(_payload(installed)),
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    assert json.loads(task.stdout)["output"]["backup"].endswith(".sqlite3.backup")
-    assert "Stash Curator backup completed" in task.stderr
-    assert "\x01p\x020.0500" in task.stderr
-    assert "\x01p\x020.9500" in task.stderr
-    assert "\x01p\x021.0000" in task.stderr
+    # The shipped binary enqueues tasks to its own daemon (decision 004):
+    # prove the extracted artifact spawns the worker and completes a real
+    # backup through it, with progress in the daemon log.
+    from tests.core.worker import run_go_task_via_worker, stop_worker
+
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    try:
+        row = run_go_task_via_worker(
+            host_binary, worker_dir, installed / "data" / "curator.sqlite3", "backup",
+            "http://127.0.0.1:1",
+        )
+        assert row["state"] == "complete", row
+        assert row["summary"]["backup"].endswith(".sqlite3.backup")
+        log = (worker_dir / "data" / "curator-daemon.log").read_text(encoding="utf-8")
+        assert "Stash Curator backup completed" in log
+        assert "\x01p\x020.0500" in log
+        assert "\x01p\x020.9500" in log
+        assert "\x01p\x021.0000" in log
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     with sqlite3.connect(installed / "data" / "curator.sqlite3") as connection:
         assert connection.execute("SELECT last_error FROM model_update_state").fetchone()[0]
 
@@ -1182,36 +1193,6 @@ def test_health_reports_all_running_curator_tasks(
     spec.loader.exec_module(module)
     runtime = {
         "version": {"version": "0.31.0"},
-        "jobQueue": [
-            {
-                "id": "sync-job",
-                "status": "RUNNING",
-                "description": "Sync and build recommendations",
-                "progress": 0.42,
-                "startTime": "2026-08-08T00:00:00Z",
-            },
-            {
-                "id": "expand-job",
-                "status": "WAITING",
-                "description": "Refresh Expand cache",
-                "progress": 0,
-                "startTime": "2026-08-08T00:01:00Z",
-            },
-            {
-                "id": "deps-job",
-                "status": "RUNNING",
-                "description": "Install optional dependencies",
-                "progress": 0.3,
-                "startTime": "2026-08-08T00:02:00Z",
-            },
-            {
-                "id": "finished-job",
-                "status": "FINISHED",
-                "description": "Backup Curator data",
-                "progress": 1,
-                "startTime": "2026-08-07T00:00:00Z",
-            },
-        ],
         "configuration": {"general": {"stashBoxes": []}},
     }
     monkeypatch.setattr(module, "_settings", lambda _payload: {})
@@ -1221,10 +1202,40 @@ def test_health_reports_all_running_curator_tasks(
         lambda _payload: SimpleNamespace(execute=lambda *_args: runtime),
     )
 
-    health = module._health({"args": {"database_path": str(tmp_path / "curator.sqlite3")}})
+    sidecar = tmp_path / "curator.sqlite3"
+    now_ms = int(time.time() * 1000)
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.row_factory = sqlite3.Row
+        from curator.storage import MigrationRunner
 
-    assert [job["id"] for job in health["active_jobs"]] == ["sync-job", "expand-job", "deps-job"]
-    assert health["active_job"]["id"] == "sync-job"
+        MigrationRunner(connection).migrate(applied_at_ms=1)
+        connection.execute(
+            """
+            INSERT INTO curator_job(
+                job_id, job_type, state, started_at_ms, heartbeat_at_ms, progress
+            )
+            VALUES ('job-queued', 'sync-build', 'queued', ?, NULL, NULL),
+                   ('job-running', 'expand-refresh', 'running', ?, ?, 0.42)
+            """,
+            (now_ms - 10, now_ms - 5, now_ms),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # active_jobs comes from the worker-owned curator_job rows (decision 004),
+    # not Stash's job queue: queued + running, newest first, with the
+    # Stash-style description the frontend stage mapping matches.
+    health = module._health({"args": {"database_path": str(sidecar)}})
+
+    assert [job["id"] for job in health["active_jobs"]] == ["job-running", "job-queued"]
+    assert health["active_job"]["id"] == "job-running"
+    assert (
+        health["active_jobs"][1]["description"]
+        == "Running plugin task: Sync and build recommendations"
+    )
+    assert health["active_jobs"][0]["progress"] == 0.42
 
 
 def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts() -> None:

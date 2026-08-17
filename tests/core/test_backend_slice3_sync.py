@@ -16,6 +16,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -25,6 +26,7 @@ import pytest
 from curator.core import core_binary
 from tests.core.test_backend import PLUGIN_DIR
 from tests.core.test_backend_slice3_featurebuild import make_feature_sidecar
+from tests.core.worker import run_go_task_via_worker, stop_worker
 
 
 def _tag(tag_id: str, name: str) -> dict[str, object]:
@@ -316,21 +318,30 @@ def _run_sync_both(
     sidecar: Path,
     stash_url: str,
     mode: str,
-) -> list[subprocess.CompletedProcess[bytes]]:
+) -> tuple[subprocess.CompletedProcess[bytes], dict[str, object]]:
+    """Python inline result + the Go worker's completed job row."""
     run_dir = sidecar.parent / f"{sidecar.stem}-sync-run"
-    run_db = run_dir / sidecar.name
-    outputs: list[subprocess.CompletedProcess[bytes]] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        shutil.copy2(sidecar, run_db)
-        try:
-            outputs.append(
-                _run_backend(runner, _with_db(_task_payload(sidecar, stash_url), run_db), mode)
-            )
-        finally:
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    python_result: subprocess.CompletedProcess[bytes] | None = None
+    go_row: dict[str, object] | None = None
+    try:
+        for runner in (None, binary):
             shutil.rmtree(run_dir, ignore_errors=True)
-    return outputs
+            run_dir.mkdir()
+            run_db = run_dir / sidecar.name
+            shutil.copy2(sidecar, run_db)
+            if runner is None:
+                python_result = _run_backend(
+                    runner, _with_db(_task_payload(sidecar, stash_url), run_db), mode
+                )
+            else:
+                go_row = run_go_task_via_worker(binary, worker_dir, run_db, mode, stash_url)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        shutil.rmtree(worker_dir, ignore_errors=True)
+    assert python_result is not None and go_row is not None
+    return python_result, go_row
 
 
 def _run_backend(runner: Path | None, raw: bytes, mode: str) -> subprocess.CompletedProcess[bytes]:
@@ -371,17 +382,17 @@ STAGE_TIMING_KEYS = (
 
 
 def test_sync_build_byte_identical(sync_sidecar: Path, binary: Path, stub_stash: str) -> None:
-    python_result, go_result = _run_sync_both(binary, sync_sidecar, stub_stash, "sync-build")
-    assert go_result.returncode == python_result.returncode, (
-        python_result.stdout + python_result.stderr + go_result.stdout + go_result.stderr
-    )
+    python_result, go_row = _run_sync_both(binary, sync_sidecar, stub_stash, "sync-build")
+    assert python_result.returncode == 0, python_result.stdout + python_result.stderr
+    assert go_row["state"] == "complete", go_row
     py_out = json.loads(python_result.stdout)
-    go_out = json.loads(go_result.stdout)
+    go_out = {"output": dict(go_row["summary"] or {})}
     for doc in (py_out, go_out):
         output = doc.get("output", {})
         # peak_rss_kb is a Go-build-only field (issue #124 memory capture);
-        # the Python backend does not emit it.
-        for key in ("job_id", "sync_run_id", "stage_timings_ms", "peak_rss_kb"):
+        # the Python backend does not emit it. schema_version is a transport
+        # field on the inline response, absent from the durable summary.
+        for key in ("job_id", "schema_version", "sync_run_id", "stage_timings_ms", "peak_rss_kb"):
             output.pop(key, None)
     from tests.core.compare import assert_equivalent
 
@@ -392,36 +403,45 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
     """The sync-build leaves identical published-model state on both
     backends: one published model with the same artifact tables."""
     run_dir = sync_sidecar.parent / f"{sync_sidecar.stem}-sync-state"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     states: list[dict[str, object]] = []
     artifact_diffs: list[str] = []
-    for runner in (None, binary):
-        shutil.rmtree(run_dir, ignore_errors=True)
-        run_dir.mkdir()
-        run_db = run_dir / sync_sidecar.name
-        shutil.copy2(sync_sidecar, run_db)
-        result = _run_backend(
-            None if runner is None else runner,
-            _with_db(_task_payload(sync_sidecar, stub_stash), run_db),
-            "sync-build",
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        connection = sqlite3.connect(run_db)
-        try:
-            model_id = connection.execute(
-                "SELECT model_id FROM model_version WHERE status='published'"
-            ).fetchone()
-            job = connection.execute(
-                "SELECT job_type, state FROM curator_job ORDER BY started_at_ms DESC LIMIT 1"
-            ).fetchone()
-        finally:
-            connection.close()
-        assert model_id is not None
-        artifact = run_dir / f"{run_db.stem}-derived" / f"{model_id[0]}.sqlite3"
-        states.append({"model_id": model_id[0], "job": job})
-        from tests.core.compare import artifact_tolerant_diff
+    try:
+        for runner in (None, binary):
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / sync_sidecar.name
+            shutil.copy2(sync_sidecar, run_db)
+            if runner is None:
+                result = _run_backend(
+                    None,
+                    _with_db(_task_payload(sync_sidecar, stub_stash), run_db),
+                    "sync-build",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+            else:
+                row = run_go_task_via_worker(binary, worker_dir, run_db, "sync-build", stub_stash)
+                assert row["state"] == "complete", row
+            connection = sqlite3.connect(run_db)
+            try:
+                model_id = connection.execute(
+                    "SELECT model_id FROM model_version WHERE status='published'"
+                ).fetchone()
+                job = connection.execute(
+                    "SELECT job_type, state FROM curator_job ORDER BY started_at_ms DESC LIMIT 1"
+                ).fetchone()
+            finally:
+                connection.close()
+            assert model_id is not None
+            artifact = run_dir / f"{run_db.stem}-derived" / f"{model_id[0]}.sqlite3"
+            states.append({"model_id": model_id[0], "job": job})
+            from tests.core.compare import artifact_tolerant_diff
 
-        artifact_diffs.append(artifact_tolerant_diff(artifact, artifact))
-        shutil.rmtree(run_dir, ignore_errors=True)
+            artifact_diffs.append(artifact_tolerant_diff(artifact, artifact))
+            shutil.rmtree(run_dir, ignore_errors=True)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
     assert states[0] == states[1]
     assert artifact_diffs == ["", ""]
 
@@ -429,22 +449,21 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
 def test_go_build_task_stage_timings_and_peak_rss(
     sync_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
-    """The Go build task output carries the full 22-key Python-era
+    """The Go build task summary carries the full 22-key Python-era
     stage_timings_ms set (issue #124) and the final peak RSS."""
     run_dir = sync_sidecar.parent / f"{sync_sidecar.stem}-stage-keys"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     run_dir.mkdir()
     run_db = run_dir / sync_sidecar.name
     shutil.copy2(sync_sidecar, run_db)
     try:
-        result = _run_backend(
-            binary,
-            _with_db(_task_payload(sync_sidecar, stub_stash), run_db),
-            "sync-build",
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        output = json.loads(result.stdout).get("output", {})
-        assert set(output.get("stage_timings_ms", {})) == set(STAGE_TIMING_KEYS)
-        assert output["stage_timings_ms"]["total"] > 0
-        assert output["peak_rss_kb"] > 0
+        row = run_go_task_via_worker(binary, worker_dir, run_db, "sync-build", stub_stash)
+        assert row["state"] == "complete", row
+        summary = dict(row["summary"] or {})
+        assert set(summary.get("stage_timings_ms", {})) == set(STAGE_TIMING_KEYS)
+        assert summary["stage_timings_ms"]["total"] > 0
+        assert summary["peak_rss_kb"] > 0
     finally:
+        stop_worker(worker_dir)
         shutil.rmtree(run_dir, ignore_errors=True)
+        shutil.rmtree(worker_dir, ignore_errors=True)

@@ -22,20 +22,54 @@ const apiSchemaVersion = 1
 // stashdbEndpoint mirrors curator/expand.py STASHDB.
 const stashdbEndpoint = "https://stashdb.org/graphql"
 
-// healthTaskNames mirrors backend.py's task_names used to detect active
-// Curator jobs in Stash's queue.
-var healthTaskNames = []string{
-	"Sync and build recommendations",
-	"Full sync and build recommendations",
-	"Rebuild recommendation model",
-	"Apply recent Curator feedback",
-	"Prepare recommendation pages",
-	"Sync recent plays",
-	"Backup Curator data",
-	"Compact legacy Curator data",
-	"Vacuum compacted Curator data",
-	"Refresh Expand cache",
-	"Install optional dependencies",
+// taskDisplayNames maps the yml task mode to its display name so health can
+// synthesize the Stash-style job description the frontend's task indicator
+// and stage mapping consume (mirrors backend.py's TASK_DISPLAY_NAMES).
+var taskDisplayNames = map[string]string{
+	"sync-build":      "Sync and build recommendations",
+	"full-sync-build": "Full sync and build recommendations",
+	"build":           "Rebuild recommendation model",
+	"update-model":    "Apply recent Curator feedback",
+	"sync-plays":      "Sync recent plays",
+	"prepare":         "Prepare recommendation pages",
+	"backup":          "Backup Curator data",
+	"compact":         "Compact legacy Curator data",
+	"vacuum":          "Vacuum compacted Curator data",
+	"expand-refresh":  "Refresh Expand cache",
+}
+
+// activeCuratorJobs renders the queued + running curator_job rows in the
+// Stash job shape the frontend's task indicator consumes ({id, description,
+// progress}), with the Stash-style description the stage mapping matches.
+func activeCuratorJobs(db dbx) ([]jVal, error) {
+	rows, err := db.Query(`SELECT job_id, job_type, progress FROM curator_job
+WHERE state IN ('queued', 'running') ORDER BY started_at_ms DESC LIMIT 10`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []jVal
+	for rows.Next() {
+		var jobID, jobType string
+		var progress sql.NullFloat64
+		if err := rows.Scan(&jobID, &jobType, &progress); err != nil {
+			return nil, err
+		}
+		name, ok := taskDisplayNames[jobType]
+		if !ok {
+			name = jobType
+		}
+		progressVal := jvNull()
+		if progress.Valid {
+			progressVal = jvFloat(progress.Float64)
+		}
+		jobs = append(jobs, jvObj(
+			jvKey("id", jvStr(jobID)),
+			jvKey("description", jvStr("Running plugin task: "+name)),
+			jvKey("progress", progressVal),
+		))
+	}
+	return jobs, rows.Err()
 }
 
 func opRoundTrip(pluginDir string, payload jVal) (jVal, error) {
@@ -169,6 +203,8 @@ func opGetJobStatus(pluginDir string, payload jVal) (jVal, error) {
 			jvKey("finished_at_ms", dbOptionalInt(row["finished_at_ms"])),
 			jvKey("summary", dbSummary(row["summary_json"])),
 			jvKey("error", dbOptionalString(row["error"])),
+			jvKey("queued_at_ms", dbOptionalInt(row["queued_at_ms"])),
+			jvKey("progress", dbOptionalFloat(row["progress"])),
 		)
 		jobs.arr = append(jobs.arr, job)
 	}
@@ -178,6 +214,65 @@ func opGetJobStatus(pluginDir string, payload jVal) (jVal, error) {
 	return jvObj(
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
 		jvKey("jobs", jobs),
+	), nil
+}
+
+// opCancelJob cancels a queued job instantly and requests cooperative cancel
+// of a running one (the worker marks it cancelled at its next heartbeat
+// tick). A finished or unknown job reports cancelled: false.
+func opCancelJob(pluginDir string, payload jVal) (jVal, error) {
+	args := payload.get("args")
+	jobID := args.get("job_id").asString()
+	if jobID == "" {
+		return jvNull(), fmt.Errorf("job_id is required")
+	}
+	settings := pluginSettings(payload)
+	db, err := openSidecar(pluginDir, payload, settings, true)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	now := nowMs()
+	result, err := db.Exec(`UPDATE curator_job SET state='cancelled', finished_at_ms=?
+WHERE job_id=? AND state='queued'`, now, jobID)
+	if err != nil {
+		return jvNull(), err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return jvNull(), err
+	}
+	if affected > 0 {
+		return jvObj(
+			jvKey("schema_version", jvInt(apiSchemaVersion)),
+			jvKey("job_id", jvStr(jobID)),
+			jvKey("cancelled", jvBool(true)),
+			jvKey("state", jvStr("cancelled")),
+		), nil
+	}
+	result, err = db.Exec(`UPDATE curator_job SET cancel_requested=1
+WHERE job_id=? AND state='running'`, jobID)
+	if err != nil {
+		return jvNull(), err
+	}
+	affected, err = result.RowsAffected()
+	if err != nil {
+		return jvNull(), err
+	}
+	if affected > 0 {
+		return jvObj(
+			jvKey("schema_version", jvInt(apiSchemaVersion)),
+			jvKey("job_id", jvStr(jobID)),
+			jvKey("cancelled", jvBool(true)),
+			jvKey("state", jvStr("running")),
+			jvKey("cancel_requested", jvBool(true)),
+		), nil
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("job_id", jvStr(jobID)),
+		jvKey("cancelled", jvBool(false)),
+		jvKey("error", jvStr("no active job with that id")),
 	), nil
 }
 
@@ -241,6 +336,21 @@ func dbOptionalInt(v any) jVal {
 
 // dbOptionalString mirrors Python's `str(v) if v else None`: null and empty
 // both become None.
+func dbOptionalFloat(v any) jVal {
+	if v == nil {
+		return jvNull()
+	}
+	switch n := v.(type) {
+	case float64:
+		return jvFloat(n)
+	case int64:
+		return jvFloat(float64(n))
+	case int:
+		return jvFloat(float64(n))
+	}
+	return jvNull()
+}
+
 func dbOptionalString(v any) jVal {
 	switch t := v.(type) {
 	case nil:
@@ -374,42 +484,24 @@ func opHealth(pluginDir string, payload jVal) (jVal, error) {
 	if err != nil {
 		return jvNull(), err
 	}
-	jobQueue := stash.get("jobQueue")
-	var activeJobs []jVal
-	if jobQueue.kind == jArr {
-		for _, job := range jobQueue.arr {
-			if healthTaskMatches(job) {
-				activeJobs = append(activeJobs, job)
-			}
-		}
-	}
-	var activeJob jVal = jvNull()
-	if len(activeJobs) > 0 {
-		activeJob = activeJobs[0]
-	}
-
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
 		return jvNull(), err
 	}
 	defer db.Close()
 	now := nowMs()
-	if activeJob.kind == jNull {
-		var interrupted int
-		err := db.QueryRow(
-			`SELECT 1 FROM curator_job WHERE state='running' AND started_at_ms<? LIMIT 1`,
-			now-120_000,
-		).Scan(&interrupted)
-		if err == nil {
-			if err := execImmediate(db,
-				`UPDATE curator_job SET state='failed', finished_at_ms=?, error='interrupted before task completion'
-WHERE state='running' AND started_at_ms<?`,
-				now, now-120_000); err != nil {
-				return jvNull(), err
-			}
-		} else if err != sql.ErrNoRows {
-			return jvNull(), err
-		}
+	// Worker-owned liveness: fail running rows whose executing process is
+	// gone (heartbeat stale or legacy pre-heartbeat age). This replaces the
+	// old Stash-job-list + 120s heuristic, which no longer applies once
+	// tasks run in the detached worker instead of a live Stash job.
+	recoverOrphanJobs(db, now)
+	activeJobs, err := activeCuratorJobs(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	var activeJob jVal = jvNull()
+	if len(activeJobs) > 0 {
+		activeJob = activeJobs[0]
 	}
 	migration, err := queryMigrationStatus(db)
 	if err != nil {
@@ -483,7 +575,7 @@ WHERE state='running' AND started_at_ms>? AND job_type IN (
 		jvKey("model_pending", jvBool(modelUpdate.pending())),
 		jvKey("model_pending_events", jvInt(modelUpdate.pendingCount())),
 		jvKey("model_update_ready", jvBool(modelUpdateReady)),
-		jvKey("model_rebuilding", jvBool(rebuilding && activeJob.kind != jNull)),
+		jvKey("model_rebuilding", jvBool(rebuilding)),
 		jvKey("active_job", activeJob),
 		jvKey("active_jobs", jvArr(activeJobs...)),
 		jvKey("last_sync_at_ms", lastSyncMs),
@@ -497,22 +589,6 @@ func requireKey(v jVal, key string) (jVal, error) {
 		return jvNull(), fmt.Errorf("'%s'", key)
 	}
 	return v.get(key), nil
-}
-
-func healthTaskMatches(job jVal) bool {
-	description := job.get("description").asString()
-	matched := false
-	for _, name := range healthTaskNames {
-		if strings.Contains(description, name) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return false
-	}
-	status := strings.ToLower(job.get("status").asString())
-	return status == "waiting" || status == "running"
 }
 
 func stashdbConfigured(boxes jVal) bool {
