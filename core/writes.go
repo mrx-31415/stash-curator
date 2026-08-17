@@ -1198,10 +1198,13 @@ var allowedConfigKeys = map[string]bool{
 	"auto_tasks_enabled":                     true,
 	"schedule_expand_refresh_enabled":        true,
 	"schedule_expand_refresh_interval_hours": true,
+	"schedule_expand_refresh_at_hour":        true,
 	"schedule_sync_build_enabled":            true,
 	"schedule_sync_build_interval_hours":     true,
+	"schedule_sync_build_at_hour":            true,
 	"schedule_backup_enabled":                true,
 	"schedule_backup_interval_hours":         true,
+	"schedule_backup_at_hour":                true,
 }
 
 // pythonListRepr renders a []string like Python's repr of a list of strings.
