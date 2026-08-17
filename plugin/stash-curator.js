@@ -703,6 +703,39 @@
     );
   }
 
+  // Curate's impact report diffs the two newest model builds, so it is only
+  // meaningful once a build has actually consumed the picks just submitted.
+  // Kick the update immediately (no debounce — the user is waiting on it) and
+  // resolve when a different model is published, or when the wait times out.
+  const MODEL_REFRESH_POLL_MS = 2000;
+  const MODEL_REFRESH_TIMEOUT_MS = 180000;
+  async function applyFeedbackAndAwaitBuild() {
+    const before = await operation({ operation: "health" }).catch(() => null);
+    const previousModelId = before && before.model_id;
+    if (!before || (!before.model_update_ready && !before.model_rebuilding)) {
+      // Below the update threshold: nothing will build, so don't stall on it.
+      return false;
+    }
+    if (!before.model_rebuilding) {
+      await runTask("Apply recent Curator feedback").catch(() => {});
+    }
+    const deadline = Date.now() + MODEL_REFRESH_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, MODEL_REFRESH_POLL_MS));
+      const health = await operation({ operation: "health" }).catch(() => null);
+      if (!health) continue;
+      if (health.model_id && health.model_id !== previousModelId) {
+        clearSlateCache();
+        return true;
+      }
+      if (!health.model_rebuilding && !health.model_update_ready) {
+        // The build finished without changing the published model.
+        return false;
+      }
+    }
+    return false;
+  }
+
   // Stash records plays without bumping scenes.updated_at, so only the play pass can bring
   // cooldown and recovery context up to date. It is cheap (a watermark query since the last
   // sync) and runs as an async Stash job, so coalesce bursts before firing it.
@@ -1530,11 +1563,16 @@
         });
         setPicksVerdict(result);
         bumpCurateRounds();
+        // The picks are only reflected in the impact diff once a build has
+        // consumed them; fetching it before that reports the previous build.
+        setPicksImpact({ pending: true });
         try {
+          await applyFeedbackAndAwaitBuild();
           const impact = await operation({ operation: "get_curation_impact" });
           setPicksImpact(impact);
         } catch (_) {
           // Impact is best-effort: it needs two model builds and their artifacts.
+          setPicksImpact(null);
         }
       } catch (failure) {
         setPicksError(failure.message);
@@ -1624,7 +1662,9 @@
           { className: "curator-curate-verdict" },
           React.createElement("h3", null, picksVerdict.dimension === "tag" ? "Pick verdict" : "Round verdict"),
           React.createElement("p", { className: "curator-pick-verdict-summary" },
-            `${picksVerdict.n_answered} comparisons · left ${Object.values(picksAnswers).filter((w) => w === "a").length} · right ${Object.values(picksAnswers).filter((w) => w === "b").length}`,
+            `${picksVerdict.n_answered} comparisons`,
+            picksVerdict.n_round < picksVerdict.n_answered && ` (${picksVerdict.n_round} this round)`,
+            ` · left ${Object.values(picksAnswers).filter((w) => w === "a").length} · right ${Object.values(picksAnswers).filter((w) => w === "b").length}`,
             picksVerdict.dimension === "orthogonal" && " · win rates for the tags that differed between scenes"
           ),
           picksVerdict.dimension === "tag" && (() => {
@@ -1699,11 +1739,12 @@
                 `Picks were one-sided (left ${leftCount} · right ${rightCount}) — win rates mostly reflect the side you favored, so tags can't be discriminated yet. Varied picks will separate them.`
               ),
               !lopsided && answered > 0 && React.createElement("p", { className: "curator-pick-verdict-note" },
-                `Evenly split (left ${leftCount} · right ${rightCount}) — most tags won every comparison they appeared in, so these rates are still coarse. Keep comparing; each round sharpens them.`
+                `Evenly split (left ${leftCount} · right ${rightCount}). Rates cover every comparison you have answered and start near 50% until enough of them accumulate.`
               )
             );
           })(),
           picksVerdict.dimension !== "tag" && picksVerdict.items.length === 0 && React.createElement("p", null, "No tag had enough appearances to report yet."),
+          picksImpact && picksImpact.pending && React.createElement("p", { className: "curator-impact-weak", role: "status" }, "Applying your picks to the model — the impact report appears once the build finishes."),
           picksImpact && picksImpact.available && React.createElement(ImpactReport, { impact: picksImpact })
         ),
         !picksVerdict && picksRound.pairs.length === 0 && React.createElement("p", null, "No candidate pairs above zero information — try a different dimension or rate more scenes first."),

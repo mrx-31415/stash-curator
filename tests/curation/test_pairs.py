@@ -227,6 +227,93 @@ def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) 
         )
 
 
+def test_submit_picks_marks_the_model_dirty(sidecar: Path, tmp_path: Path) -> None:
+    """Picks write feedback like every other interaction, so they have to
+    request a model update — otherwise the round never reaches a build and the
+    impact report keeps reporting the previous build's diff."""
+    conn = _fresh_selection(sidecar, tmp_path)
+
+    def generation() -> int:
+        row = conn.execute(
+            "SELECT requested_generation FROM model_update_state WHERE singleton=1"
+        ).fetchone()
+        return int(row["requested_generation"])
+
+    round_data = create_pair_round(conn, "orthogonal", 4)
+    round_id = str(round_data["round_id"])
+    pairs = round_data["pairs"]  # type: ignore[union-attr]
+    # A bare skip changes nothing the model reads.
+    before = generation()
+    submit_picks(conn, round_id, [{"pair_id": pairs[0]["pair_id"], "winner": "skip"}])
+    assert generation() == before
+    # One request per pick, not per call: the pending count is weighed against
+    # the update threshold, so a round has to register as many events.
+    submit_picks(
+        conn,
+        round_id,
+        [
+            {"pair_id": pairs[1]["pair_id"], "winner": "a"},
+            {"pair_id": pairs[2]["pair_id"], "winner": "b"},
+        ],
+    )
+    assert generation() == before + 2
+    row = conn.execute("SELECT last_cause FROM model_update_state WHERE singleton=1").fetchone()
+    assert str(row["last_cause"]) == "curation_picks"
+    # A flag writes metadata_wrong, which also changes the training set.
+    conn.execute(
+        """
+        INSERT INTO curation_pair(
+            pair_id, round_id, scene_a, scene_b, dimension,
+            selection_probability, status, winner, occurred_at_ms, payload_json
+        ) VALUES ('dirty-1', 'dirty-round', ?, ?, 'orthogonal', 0.5, 'open', NULL, NULL, '{}')
+        """,
+        (pairs[0]["scene_a"]["scene_id"], pairs[0]["scene_b"]["scene_id"]),
+    )
+    conn.commit()
+    before = generation()
+    submit_picks(conn, "dirty-round", [{"pair_id": "dirty-1", "winner": "flag", "scene": "a"}])
+    assert generation() == before + 1
+
+
+def test_pair_verdict_accumulates_across_rounds_and_shrinks(sidecar: Path, tmp_path: Path) -> None:
+    """Win rates span every answered pair of the dimension, shrunk toward 0.5
+    so a 2-of-2 sweep stops reading as a 100% preference."""
+    conn = _fresh_selection(sidecar, tmp_path)
+    first = create_pair_round(conn, "orthogonal", 4)
+    first_pairs = first["pairs"]  # type: ignore[union-attr]
+    submit_picks(
+        conn, str(first["round_id"]), [{"pair_id": first_pairs[0]["pair_id"], "winner": "a"}]
+    )
+    after_first = pair_verdict(conn, str(first["round_id"]))
+    assert after_first["n_answered"] == 1
+    assert after_first["n_round"] == 1
+    # A second round over the same scenes: generation retires every scene it has
+    # already offered, so the corpus cannot produce one on its own.
+    conn.execute(
+        """
+        INSERT INTO curation_pair(
+            pair_id, round_id, scene_a, scene_b, dimension,
+            selection_probability, status, winner, occurred_at_ms, payload_json
+        ) VALUES ('acc-1', 'acc-round', ?, ?, 'orthogonal', 0.5, 'open', NULL, NULL, '{}')
+        """,
+        (first_pairs[1]["scene_a"]["scene_id"], first_pairs[1]["scene_b"]["scene_id"]),
+    )
+    conn.commit()
+    submit_picks(conn, "acc-round", [{"pair_id": "acc-1", "winner": "b"}])
+    after_second = pair_verdict(conn, "acc-round")
+    # The second round answered one pair but the verdict counts both rounds.
+    assert after_second["n_round"] == 1
+    assert after_second["n_answered"] == 2
+    # Every reported rate is strictly inside (0, 1): the prior rules out
+    # "won everything it appeared in" at these sample sizes.
+    rates = [float(item["win_rate"]) for item in after_second["items"]]  # type: ignore[union-attr]
+    assert rates
+    assert all(0.0 < rate < 1.0 for rate in rates)
+    for item in after_second["items"]:  # type: ignore[union-attr]
+        wins, appearances = int(item["wins"]), int(item["appearances"])
+        assert item["win_rate"] == pytest.approx((wins + 2.0) / (appearances + 4.0))
+
+
 def test_submit_picks_validation_errors(conn: sqlite3.Connection) -> None:
     with pytest.raises(ValueError, match="unknown round"):
         submit_picks(conn, "nope", [{"pair_id": "x", "winner": "a"}])

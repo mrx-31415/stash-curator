@@ -824,8 +824,10 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	componentTotal := sumFloats(componentValues)
 	general := clamp(componentTotal)
 	direct := c.labels[sceneID]
-	exactConfidence := directConfidenceOf(direct.effectiveEvidence)
-	appeal := blendAppealOf(general, direct.outcome, exactConfidence)
+	// Absolute channel only: a pairwise pick is evidence about the features
+	// that differed, not a verdict on this scene's own appeal.
+	exactConfidence := directConfidenceOf(direct.absoluteEvidence)
+	appeal := blendAppealOf(general, direct.absoluteOutcome, exactConfidence)
 	last, played := c.lastPlayed[sceneID]
 	var recovery float64
 	if !played {
@@ -878,11 +880,13 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 		directSignals.arr = append(directSignals.arr, jvStr(signal))
 	}
 	components.set("direct", jvObj(
-		jvKey("value", jvFloat(direct.outcome)),
+		jvKey("value", jvFloat(direct.absoluteOutcome)),
 		jvKey("confidence", jvFloat(exactConfidence)),
-		jvKey("effective_evidence", jvFloat(direct.effectiveEvidence)),
+		jvKey("effective_evidence", jvFloat(direct.absoluteEvidence)),
 		jvKey("signals", directSignals),
-		jvKey("residual", jvFloat(clampValue(direct.outcome-general, -2, 2))),
+		jvKey("residual", jvFloat(clampValue(direct.absoluteOutcome-general, -2, 2))),
+		jvKey("learning_outcome", jvFloat(direct.outcome)),
+		jvKey("learning_evidence", jvFloat(direct.effectiveEvidence)),
 	))
 	components.set("fit", jvObj(
 		jvKey("cooldown", jvFloat(-cooldown)),
@@ -904,7 +908,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	return buildModelScore{
 		sceneID:            sceneID,
 		generalAppeal:      general,
-		directAppeal:       direct.outcome,
+		directAppeal:       direct.absoluteOutcome,
 		directConfidence:   exactConfidence,
 		appeal:             appeal,
 		currentFit:         currentFit,

@@ -193,6 +193,45 @@ def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
     assert winner.confidence == pytest.approx(1 - math.exp(-0.7))
 
 
+def test_curation_pair_labels_never_become_absolute_sentiment(tmp_path: Path) -> None:
+    """A pick is relative evidence about the features that differed. It trains
+    affinities through the full-signal channel, but must not materialize as the
+    scene's own appeal — otherwise losing one comparison against a better scene
+    marks a scene strongly disliked in Sentiment review and Prune."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cpw-3', 'unseen-good', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "p3", "round_id": "r3", "dimension": "tag",
+                  "predicted_winner": 0.1, "predicted_loser": 0.3,
+                  "selection_probability": 1.0}'),
+               ('cpl-3', 'disliked', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "p3", "round_id": "r3", "dimension": "tag",
+                  "predicted_winner": 0.1, "predicted_loser": 0.3,
+                  "selection_probability": 1.0}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    winner = labels["unseen-good"]
+    # Learning channel keeps the ±1 gradient and its evidence.
+    assert winner.outcome == pytest.approx(1.0)
+    assert winner.effective_evidence > 0
+    # Absolute channel sees no non-pair signal at all, so the scene keeps the
+    # model's own prediction rather than a fabricated 10/10.
+    assert winner.absolute_outcome == pytest.approx(0.0)
+    assert winner.absolute_evidence == pytest.approx(0.0)
+    # A scene carrying its own feedback keeps that as its absolute sentiment,
+    # with only the learning channel moved by the pick it took part in.
+    thumbed = labels["disliked"]
+    assert "curation_pair_loser" in thumbed.signal_types
+    assert thumbed.absolute_outcome == pytest.approx(-1.0)
+    assert thumbed.absolute_evidence < thumbed.effective_evidence
+
+
 def test_curation_pair_labels_ips_confidence_clamped(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     # Confirming pick (pred_winner 0.3 > pred_loser 0.1 -> surprise 0) at a low

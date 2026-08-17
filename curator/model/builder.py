@@ -43,6 +43,9 @@ from curator.storage.retention import prune_snapshots
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
 MODEL_BUILD_VERSION = 4
+# Pairwise-pick signals train feature affinities but never stand in for a
+# scene's own absolute sentiment; see _SceneLabel.
+PAIR_SIGNAL_TYPES = frozenset({"curation_pair_winner", "curation_pair_loser"})
 
 
 @dataclass(frozen=True)
@@ -57,10 +60,25 @@ class ModelBuildResult:
 
 @dataclass(frozen=True)
 class _SceneLabel:
+    """A scene's aggregated feedback, split into two channels.
+
+    ``outcome``/``confidence``/``effective_evidence`` cover every signal and
+    drive feature-affinity learning: pairwise picks belong here, where the
+    ±1 winner/loser conversion is the Bradley-Terry gradient.
+
+    ``absolute_*`` excludes pairwise picks. A pick says "this beat that", not
+    "this is a 10/10" — materializing it as absolute sentiment made a scene
+    that lost one comparison against a better scene read as strongly disliked
+    everywhere appeal is surfaced (Sentiment review, Prune). Ratings stay the
+    absolute anchors, per docs/workpackage-pairwise-picks.md.
+    """
+
     outcome: float
     confidence: float
     effective_evidence: float
     signal_types: tuple[str, ...]
+    absolute_outcome: float = 0.0
+    absolute_evidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -482,11 +500,25 @@ class PreferenceModelBuilder:
             if evidence <= 0:
                 continue
             outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
+            absolute_signals = [
+                signal for signal in scene_signals if signal[2] not in PAIR_SIGNAL_TYPES
+            ]
+            # float(): sum() over no absolute signals returns int 0, which the
+            # fingerprint would serialize as "0" where the Go core writes "0.0".
+            absolute_evidence = float(sum(confidence for _, confidence, _ in absolute_signals))
+            absolute_outcome = (
+                sum(value * confidence for value, confidence, _ in absolute_signals)
+                / absolute_evidence
+                if absolute_evidence > 0
+                else 0.0
+            )
             labels[scene_id] = _SceneLabel(
                 _clamp(outcome),
                 1 - math.exp(-evidence),
                 evidence,
                 tuple(signal for _, _, signal in scene_signals),
+                _clamp(absolute_outcome),
+                absolute_evidence,
             )
         return labels
 
@@ -512,6 +544,8 @@ class PreferenceModelBuilder:
                 label.confidence,
                 label.effective_evidence,
                 label.signal_types,
+                label.absolute_outcome,
+                label.absolute_evidence,
             )
             for scene_id, label in sorted(labels.items())
         ]
@@ -974,10 +1008,10 @@ class PreferenceModelBuilder:
             )
             general = _clamp(component_total)
             direct = labels.get(scene_id, _SceneLabel(0.0, 0.0, 0.0, ()))
-            exact_confidence = direct_confidence(
-                direct.effective_evidence, config=self.config.model
-            )
-            appeal = blend_appeal(general, direct.outcome, exact_confidence)
+            # Absolute channel only: a pairwise pick is evidence about the
+            # features that differed, not a verdict on this scene's own appeal.
+            exact_confidence = direct_confidence(direct.absolute_evidence, config=self.config.model)
+            appeal = blend_appeal(general, direct.absolute_outcome, exact_confidence)
             last = last_played.get(scene_id)
             recovery = self._recovery(last, reference_at_ms)
             cooldown = max(0.0, appeal) * (1 - recovery)
@@ -1013,11 +1047,13 @@ class PreferenceModelBuilder:
                 1,
             )
             components["direct"] = {
-                "value": direct.outcome,
+                "value": direct.absolute_outcome,
                 "confidence": exact_confidence,
-                "effective_evidence": direct.effective_evidence,
+                "effective_evidence": direct.absolute_evidence,
                 "signals": list(direct.signal_types),
-                "residual": _clamp(direct.outcome - general, -2, 2),
+                "residual": _clamp(direct.absolute_outcome - general, -2, 2),
+                "learning_outcome": direct.outcome,
+                "learning_evidence": direct.effective_evidence,
             }
             components["fit"] = {
                 "cooldown": -cooldown,
@@ -1029,7 +1065,7 @@ class PreferenceModelBuilder:
                 _Score(
                     scene_id,
                     general,
-                    direct.outcome,
+                    direct.absolute_outcome,
                     exact_confidence,
                     appeal,
                     current_fit,
@@ -1479,11 +1515,11 @@ class PreferenceModelBuilder:
                     (
                         model_id,
                         scene_id,
-                        label.outcome,
-                        label.effective_evidence,
-                        direct_confidence(label.effective_evidence, config=self.config.model),
+                        label.absolute_outcome,
+                        label.absolute_evidence,
+                        direct_confidence(label.absolute_evidence, config=self.config.model),
                         _clamp(
-                            label.outcome - scores_by_scene[scene_id].general_appeal,
+                            label.absolute_outcome - scores_by_scene[scene_id].general_appeal,
                             -2,
                             2,
                         ),

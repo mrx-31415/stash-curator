@@ -26,12 +26,22 @@ const (
 	modelBuildVersion                 = 4
 )
 
-// sceneLabel mirrors _SceneLabel.
+// sceneLabel mirrors _SceneLabel: outcome/confidence/effectiveEvidence cover
+// every signal and drive affinity learning; the absolute* fields exclude
+// pairwise picks and are what materializes as a scene's own appeal.
 type sceneLabel struct {
 	outcome           float64
 	confidence        float64
 	effectiveEvidence float64
 	signalTypes       []string
+	absoluteOutcome   float64
+	absoluteEvidence  float64
+}
+
+// pairSignalTypes mirrors builder.PAIR_SIGNAL_TYPES.
+var pairSignalTypes = map[string]bool{
+	"curation_pair_winner": true,
+	"curation_pair_loser":  true,
 }
 
 // storedFeature mirrors features.store.StoredFeature.
@@ -224,9 +234,15 @@ ORDER BY scene_id, occurred_at_ms`)
 	for sceneID, sceneSignals := range signals {
 		confidences := make([]float64, 0, len(sceneSignals))
 		products := make([]float64, 0, len(sceneSignals))
+		absoluteConfidences := make([]float64, 0, len(sceneSignals))
+		absoluteProducts := make([]float64, 0, len(sceneSignals))
 		for _, item := range sceneSignals {
 			confidences = append(confidences, item.confidence)
 			products = append(products, item.value*item.confidence)
+			if !pairSignalTypes[item.signalType] {
+				absoluteConfidences = append(absoluteConfidences, item.confidence)
+				absoluteProducts = append(absoluteProducts, item.value*item.confidence)
+			}
 		}
 		evidence := sumFloats(confidences)
 		if evidence <= 0 {
@@ -237,11 +253,18 @@ ORDER BY scene_id, occurred_at_ms`)
 		for _, item := range sceneSignals {
 			types = append(types, item.signalType)
 		}
+		absoluteEvidence := sumFloats(absoluteConfidences)
+		absoluteOutcome := 0.0
+		if absoluteEvidence > 0 {
+			absoluteOutcome = sumFloats(absoluteProducts) / absoluteEvidence
+		}
 		labels[sceneID] = sceneLabel{
 			outcome:           clamp(weighted / evidence),
 			confidence:        1 - math.Exp(-evidence),
 			effectiveEvidence: evidence,
 			signalTypes:       types,
+			absoluteOutcome:   clamp(absoluteOutcome),
+			absoluteEvidence:  absoluteEvidence,
 		}
 	}
 	return labels, nil
@@ -305,6 +328,7 @@ func modelEvidenceFingerprint(db dbx, labels map[string]sceneLabel) (string, err
 		labelRows.arr = append(labelRows.arr, jvArr(
 			jvStr(sceneID), jvFloat(label.outcome), jvFloat(label.confidence),
 			jvFloat(label.effectiveEvidence), types,
+			jvFloat(label.absoluteOutcome), jvFloat(label.absoluteEvidence),
 		))
 	}
 	feedbackState := jvArr()
