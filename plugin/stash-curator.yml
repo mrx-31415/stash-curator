@@ -70,6 +70,10 @@ settings:
     displayName: Expand refresh interval (hours)
     description: How often the scheduled Expand refresh runs. Default 24 (daily).
     type: NUMBER
+  scheduleExpandRefreshAtHour:
+    displayName: Expand refresh hour of day
+    description: Run at this hour (0-23, local time) instead of relative to when the schedule was enabled. Leave empty for interval-relative. Default 4 (04:00).
+    type: NUMBER
   scheduleSyncBuildEnabled:
     displayName: Scheduled sync and build
     description: Run a full sync and recommendation build on a schedule. Disabled by default.
@@ -78,6 +82,10 @@ settings:
     displayName: Sync and build interval (hours)
     description: How often the scheduled sync and build runs. Default 24 (daily).
     type: NUMBER
+  scheduleSyncBuildAtHour:
+    displayName: Sync and build hour of day
+    description: Run at this hour (0-23, local time) instead of relative to when the schedule was enabled. Leave empty for interval-relative. Default 4 (04:00).
+    type: NUMBER
   scheduleBackupEnabled:
     displayName: Scheduled backup
     description: Create a sidecar backup on a schedule, just before a scheduled sync and build when both are due. Disabled by default.
@@ -85,6 +93,10 @@ settings:
   scheduleBackupIntervalHours:
     displayName: Backup interval (hours)
     description: How often the scheduled backup runs. Default 24 (daily).
+    type: NUMBER
+  scheduleBackupAtHour:
+    displayName: Backup hour of day
+    description: Run at this hour (0-23, local time) instead of relative to when the schedule was enabled. Leave empty for interval-relative. Default 3 (03:00), just before a default 04:00 sync.
     type: NUMBER
   pruneTagName:
     displayName: Prune tag

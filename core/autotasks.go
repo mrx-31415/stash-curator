@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 var (
@@ -118,18 +119,62 @@ WHERE job_type='sync-plays' AND state='complete' ORDER BY finished_at_ms DESC LI
 // scheduleSpec describes one time-based scheduled task (Phase 2b). The run
 // order matters: backup before sync-build so a rebuild never runs on an
 // unprotected sidecar; expand-refresh last (cheapest, network-bound).
+// atHour anchors the schedule to a wall-clock hour (0-23) when set (-1 =
+// interval-relative, the pre-anchor behavior).
 type scheduleSpec struct {
 	mode          string
 	enabled       bool
 	intervalHours float64
+	atHour        int64
 }
 
 func scheduleSpecs(config jVal) []scheduleSpec {
 	return []scheduleSpec{
-		{"backup", config.get("schedule_backup_enabled").truthy(), pythonFloatOr(config.get("schedule_backup_interval_hours"), 24)},
-		{"sync-build", config.get("schedule_sync_build_enabled").truthy(), pythonFloatOr(config.get("schedule_sync_build_interval_hours"), 24)},
-		{"expand-refresh", config.get("schedule_expand_refresh_enabled").truthy(), pythonFloatOr(config.get("schedule_expand_refresh_interval_hours"), 24)},
+		{"backup", config.get("schedule_backup_enabled").truthy(), pythonFloatOr(config.get("schedule_backup_interval_hours"), 24), configHour(config, "schedule_backup_at_hour")},
+		{"sync-build", config.get("schedule_sync_build_enabled").truthy(), pythonFloatOr(config.get("schedule_sync_build_interval_hours"), 24), configHour(config, "schedule_sync_build_at_hour")},
+		{"expand-refresh", config.get("schedule_expand_refresh_enabled").truthy(), pythonFloatOr(config.get("schedule_expand_refresh_interval_hours"), 24), configHour(config, "schedule_expand_refresh_at_hour")},
 	}
+}
+
+// configHour reads an optional 0-23 hour setting; -1 when unset.
+func configHour(config jVal, key string) int64 {
+	value := config.get(key)
+	if value.kind == jNull {
+		return -1
+	}
+	return pythonInt(value)
+}
+
+// nextRunFor computes the next run time: the next wall-clock occurrence of
+// the anchor hour when one is set (e.g. daily 04:00), else interval-relative.
+func nextRunFor(spec scheduleSpec, now int64, intervalMs int64) int64 {
+	if spec.atHour >= 0 && spec.atHour <= 23 {
+		return nextAnchoredRun(now, spec.atHour, spec.intervalHours)
+	}
+	return now + intervalMs
+}
+
+// nextAnchoredRun returns the next wall-clock occurrence of the anchor hour,
+// advanced by whole days when the interval is longer than 24h (48h = every
+// other day at the same hour; anything under 24h is daily at the hour).
+func nextAnchoredRun(nowMs int64, hour int64, intervalHours float64) int64 {
+	base := nextOccurrenceOfHour(nowMs, hour)
+	days := int64(intervalHours / 24)
+	if days < 1 {
+		days = 1
+	}
+	return base + (days-1)*24*3_600_000
+}
+
+// nextOccurrenceOfHour returns the next local-time instant at the given hour
+// (today if it is still ahead, otherwise tomorrow).
+func nextOccurrenceOfHour(nowMs int64, hour int64) int64 {
+	nowTime := time.UnixMilli(nowMs)
+	next := time.Date(nowTime.Year(), nowTime.Month(), nowTime.Day(), int(hour), 0, 0, 0, nowTime.Location())
+	if !next.After(nowTime) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next.UnixMilli()
 }
 
 // anyScheduleEnabled reports whether any time-based schedule is on — the
@@ -162,13 +207,26 @@ func runDueSchedules(db dbx, payload jVal, config jVal, now int64) ([]string, er
 		err := db.QueryRow(`SELECT next_run_at_ms FROM scheduled_task WHERE task_type=?`, spec.mode).Scan(&next)
 		if err == sql.ErrNoRows {
 			if _, err := db.Exec(`INSERT INTO scheduled_task(task_type, next_run_at_ms) VALUES (?, ?)`,
-				spec.mode, now+intervalMs); err != nil {
+				spec.mode, nextRunFor(spec, now, intervalMs)); err != nil {
 				return enqueued, err
 			}
 			continue
 		}
 		if err != nil {
 			return enqueued, err
+		}
+		// Anchored schedules keep their wall-clock phase: recompute the next
+		// occurrence each tick (unless already overdue, so catch-up still
+		// fires) — this also applies an at_hour change to an existing row.
+		if spec.atHour >= 0 && spec.atHour <= 23 && (!next.Valid || next.Int64 > now) {
+			expected := nextAnchoredRun(now, spec.atHour, spec.intervalHours)
+			if !next.Valid || next.Int64 != expected {
+				if _, err := db.Exec(`UPDATE scheduled_task SET next_run_at_ms=? WHERE task_type=?`,
+					expected, spec.mode); err != nil {
+					return enqueued, err
+				}
+				next = sql.NullInt64{Int64: expected, Valid: true}
+			}
 		}
 		if !next.Valid || next.Int64 > now {
 			continue
@@ -181,7 +239,7 @@ func runDueSchedules(db dbx, payload jVal, config jVal, now int64) ([]string, er
 			enqueued = append(enqueued, spec.mode)
 		}
 		if _, err := db.Exec(`UPDATE scheduled_task SET next_run_at_ms=?, last_run_at_ms=? WHERE task_type=?`,
-			now+intervalMs, now, spec.mode); err != nil {
+			nextRunFor(spec, now, intervalMs), now, spec.mode); err != nil {
 			return enqueued, err
 		}
 	}

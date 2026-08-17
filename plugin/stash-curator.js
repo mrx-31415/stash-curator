@@ -4042,12 +4042,15 @@
     {
       title: "Scheduling",
       fields: [
-        { key: "scheduleExpandRefreshEnabled", configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", label: "Scheduled Expand refresh", description: "Refresh the StashDB candidate cache daily so Expand and Performer Hunt stay current. Off by default; keeps the background worker resident while on." },
+        { key: "scheduleExpandRefreshEnabled", configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", label: "Scheduled Expand refresh", description: "Refresh the StashDB candidate cache so Expand and Performer Hunt stay current. Off by default; keeps the background worker resident while on." },
         { key: "scheduleExpandRefreshIntervalHours", configKey: "schedule_expand_refresh_interval_hours", type: "NUMBER", label: "Expand refresh interval (hours)", description: "How often the scheduled Expand refresh runs. Default 24." },
+        { key: "scheduleExpandRefreshAtHour", configKey: "schedule_expand_refresh_at_hour", type: "NUMBER", optional: true, label: "Expand refresh hour of day", description: "Run at this hour (0-23, local time). Leave empty to run relative to when the schedule was enabled. Default 4 (04:00)." },
         { key: "scheduleSyncBuildEnabled", configKey: "schedule_sync_build_enabled", type: "BOOLEAN", label: "Scheduled sync and build", description: "Run a full sync and recommendation build on a schedule. Off by default." },
         { key: "scheduleSyncBuildIntervalHours", configKey: "schedule_sync_build_interval_hours", type: "NUMBER", label: "Sync and build interval (hours)", description: "How often the scheduled sync and build runs. Default 24." },
+        { key: "scheduleSyncBuildAtHour", configKey: "schedule_sync_build_at_hour", type: "NUMBER", optional: true, label: "Sync and build hour of day", description: "Run at this hour (0-23, local time). Leave empty to run relative to enablement. Default 4 (04:00)." },
         { key: "scheduleBackupEnabled", configKey: "schedule_backup_enabled", type: "BOOLEAN", label: "Scheduled backup", description: "Create a sidecar backup on a schedule, just before a scheduled sync and build when both are due. Off by default." },
         { key: "scheduleBackupIntervalHours", configKey: "schedule_backup_interval_hours", type: "NUMBER", label: "Backup interval (hours)", description: "How often the scheduled backup runs. Default 24." },
+        { key: "scheduleBackupAtHour", configKey: "schedule_backup_at_hour", type: "NUMBER", optional: true, label: "Backup hour of day", description: "Run at this hour (0-23, local time). Leave empty to run relative to enablement. Default 3 (03:00), just before a default 04:00 sync." },
       ],
     },
     {
@@ -4100,10 +4103,10 @@
     let control;
     if (field.type === "BOOLEAN") {
       control = React.createElement(
-        "div",
-        { className: "custom-control custom-switch" },
-        React.createElement("input", { type: "checkbox", className: "custom-control-input", id: inputId, checked: Boolean(value), disabled: saving, onChange: (event) => onSave(event.target.checked) }),
-        React.createElement("label", { className: "custom-control-label", htmlFor: inputId }, value ? "On" : "Off")
+        "button",
+        { type: "button", role: "switch", "aria-checked": Boolean(value), className: `curator-switch${value ? " curator-switch-on" : ""}`, disabled: saving, onClick: () => onSave(!value), title: value ? "On" : "Off" },
+        React.createElement("span", { className: "curator-switch-thumb", "aria-hidden": "true" }),
+        React.createElement("span", { className: "curator-switch-text", "aria-hidden": "true" }, value ? "On" : "Off")
       );
     } else if (field.type === "SELECT") {
       control = React.createElement(

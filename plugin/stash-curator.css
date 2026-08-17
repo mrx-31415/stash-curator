@@ -510,9 +510,11 @@
    short demo content that never mattered, but a real section (e.g.
    Sentiment review with many cards) can run tens of thousands of pixels
    tall, pushing the section list off-screen and forcing a scroll-to-top
-   just to switch sections. Pin the list instead of trying to guess a
-   max-height for the detail pane. */
+   just to switch sections. Pin the list and let it scroll internally (the
+   list itself can be taller than the viewport with ten sections). */
 .curator-manage-list {
+  max-height: calc(100vh - 7rem);
+  overflow-y: auto;
   position: sticky;
   top: 0.75rem;
 }
@@ -536,7 +538,7 @@
   background: var(--curator-surface);
   border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius);
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 .curator-manage-item {
@@ -693,6 +695,61 @@
 
 .curator-settings-group + .curator-settings-group {
   margin-top: 1.4rem;
+}
+
+/* Pill switch with the state text inside (Settings boolean fields). */
+.curator-switch {
+  --curator-switch-knob: 1.25rem;
+  align-items: center;
+  background: var(--curator-border);
+  border: 1px solid var(--curator-text-muted);
+  border-radius: 999px;
+  display: inline-flex;
+  height: 1.65rem;
+  justify-content: center;
+  min-width: 3.5rem;
+  padding: 0 0.3rem;
+  position: relative;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.curator-switch:hover:not(:disabled) {
+  border-color: var(--curator-text);
+}
+.curator-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.curator-switch-on {
+  background: var(--curator-accent);
+  border-color: var(--curator-accent);
+}
+.curator-switch-thumb {
+  background: #fff;
+  border-radius: 50%;
+  height: var(--curator-switch-knob);
+  left: 0.15rem;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: left 0.15s ease;
+  width: var(--curator-switch-knob);
+}
+.curator-switch-on .curator-switch-thumb {
+  left: calc(100% - var(--curator-switch-knob) - 0.15rem);
+}
+.curator-switch-text {
+  color: var(--curator-text-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding-left: calc(var(--curator-switch-knob) + 0.3rem);
+  text-transform: uppercase;
+  transition: color 0.15s ease, padding 0.15s ease;
+}
+.curator-switch-on .curator-switch-text {
+  color: #fff;
+  padding-left: 0;
+  padding-right: calc(var(--curator-switch-knob) + 0.3rem);
 }
 
 .curator-settings-group h3 {

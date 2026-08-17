@@ -38,10 +38,13 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "auto_tasks_enabled": False,
     "schedule_expand_refresh_enabled": False,
     "schedule_expand_refresh_interval_hours": 24,
+    "schedule_expand_refresh_at_hour": None,
     "schedule_sync_build_enabled": False,
     "schedule_sync_build_interval_hours": 24,
+    "schedule_sync_build_at_hour": None,
     "schedule_backup_enabled": False,
     "schedule_backup_interval_hours": 24,
+    "schedule_backup_at_hour": None,
 }
 
 
@@ -1190,10 +1193,13 @@ class CuratorAPI:
             "auto_tasks_enabled",
             "schedule_expand_refresh_enabled",
             "schedule_expand_refresh_interval_hours",
+            "schedule_expand_refresh_at_hour",
             "schedule_sync_build_enabled",
             "schedule_sync_build_interval_hours",
+            "schedule_sync_build_at_hour",
             "schedule_backup_enabled",
             "schedule_backup_interval_hours",
+            "schedule_backup_at_hour",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -1217,6 +1223,14 @@ class CuratorAPI:
         diversity = values.get("diversity_enabled")
         if diversity is not None and not isinstance(diversity, bool):
             raise ValueError("diversity_enabled must be true or false")
+        for key in (
+            "schedule_expand_refresh_at_hour",
+            "schedule_sync_build_at_hour",
+            "schedule_backup_at_hour",
+        ):
+            value = values.get(key)
+            if value is not None and (not isinstance(value, int) or not 0 <= value <= 23):
+                raise ValueError(f"{key} must be an integer from 0 to 23")
         for key in ("page_size", "sync_page_size"):
             value = values.get(key)
             if value is not None and (not isinstance(value, int) or not 1 <= value <= 500):

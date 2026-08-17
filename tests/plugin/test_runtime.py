@@ -692,6 +692,8 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
         'configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", '
         'label: "Scheduled Expand refresh"' in source
     )
+    assert "curator-switch" in source and 'role: "switch"' in source
+    assert "schedule_expand_refresh_at_hour" in source
     assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
     assert (
         "React.createElement(ManagePanel, { section: currentSection, "
