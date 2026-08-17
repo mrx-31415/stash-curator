@@ -40,7 +40,16 @@ func opReplaceItem(pluginDir string, payload jVal) (jVal, error) {
 // openAPISidecar mirrors _api's connection: migrate, apply settings, attach
 // the published artifacts.
 func openAPISidecar(pluginDir string, payload, settings jVal) (dbx, error) {
-	return openSidecar(pluginDir, payload, settings, true)
+	db, err := openSidecar(pluginDir, payload, settings, true)
+	if err != nil {
+		return nil, err
+	}
+	// The settings were just applied to the sidecar; if schedules or auto
+	// tasks are enabled the worker must exist to act on them. This is the
+	// single point covering every op, so any Curator activity (including the
+	// Settings panel's own reload after a toggle) spawns or keeps the daemon.
+	ensureAutoWorker(pluginDir, payload, settings, db)
+	return db, nil
 }
 
 // getSlateBody mirrors backend.py's get_slate dispatch + CuratorAPI.get_slate.

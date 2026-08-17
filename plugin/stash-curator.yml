@@ -62,6 +62,30 @@ settings:
     displayName: Automatic background tasks
     description: Let the background worker apply pending model updates and sync recent plays on its own, without needing a browser tab open. Uses the model-update timing settings above.
     type: BOOLEAN
+  scheduleExpandRefreshEnabled:
+    displayName: Scheduled Expand refresh
+    description: Refresh the StashDB candidate cache on a schedule so Expand and Performer Hunt stay current. Off by default.
+    type: BOOLEAN
+  scheduleExpandRefreshIntervalHours:
+    displayName: Expand refresh interval (hours)
+    description: How often the scheduled Expand refresh runs. Default 24 (daily).
+    type: NUMBER
+  scheduleSyncBuildEnabled:
+    displayName: Scheduled sync and build
+    description: Run a full sync and recommendation build on a schedule. Disabled by default.
+    type: BOOLEAN
+  scheduleSyncBuildIntervalHours:
+    displayName: Sync and build interval (hours)
+    description: How often the scheduled sync and build runs. Default 24 (daily).
+    type: NUMBER
+  scheduleBackupEnabled:
+    displayName: Scheduled backup
+    description: Create a sidecar backup on a schedule, just before a scheduled sync and build when both are due. Disabled by default.
+    type: BOOLEAN
+  scheduleBackupIntervalHours:
+    displayName: Backup interval (hours)
+    description: How often the scheduled backup runs. Default 24 (daily).
+    type: NUMBER
   pruneTagName:
     displayName: Prune tag
     description: Tag applied by the Prune page. Default [Prune].
