@@ -691,6 +691,34 @@
   color: #e0645c;
 }
 
+.curator-settings-group + .curator-settings-group {
+  margin-top: 1.4rem;
+}
+
+.curator-settings-group h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.2rem;
+}
+
+.curator-settings-field {
+  align-items: flex-start;
+}
+
+.curator-settings-control {
+  flex: none;
+  width: 12rem;
+}
+
+.curator-settings-saving {
+  color: var(--curator-text-muted);
+  flex: none;
+  font-size: 0.72rem;
+}
+
+.curator-settings-field-error {
+  color: #e0645c;
+}
+
 .curator-feedback-row {
   align-items: flex-start;
 }

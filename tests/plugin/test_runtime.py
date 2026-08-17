@@ -657,6 +657,69 @@ def test_recommendation_variety_toggle_updates_native_setting_and_cache() -> Non
     assert 'diversityEnabled ? " Balanced" : " Score-first"' in source
 
 
+def test_settings_panel_reads_and_saves_every_configured_field() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+
+    # Manage-shell wiring (GH #151): a maintenance nav entry plus a
+    # MANAGE_BODIES factory, following the same three-touch-point pattern
+    # as every other maintenance panel.
+    assert 'value: "settings"' in source
+    assert "icon: faCog,\n      maintenance: true" in source
+    assert "settings: (extra) => React.createElement(SettingsPanel, extra)," in source
+    assert (
+        "function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
+    )
+    assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
+    assert (
+        "React.createElement(ManagePanel, { section: currentSection, "
+        "onSelectSection: openManage, diversityEnabled, diversitySaving, "
+        "onToggleDiversity: toggleDiversity })" in source
+    )
+
+    # Raw plugin settings (Whisparr fields) aren't in curator_config, so the
+    # panel reads them straight from Stash rather than through get_config.
+    assert (
+        'query CuratorPluginSettings { configuration { plugins(include: ["stash-curator"]) } }'
+        in source
+    )
+    assert 'payload.data.configuration.plugins["stash-curator"] || {}' in source
+
+    # One configurePlugin call per field, on change, matching the
+    # toggleDiversity precedent this panel reuses for the diversity toggle
+    # instead of re-implementing its cache-busting side effects.
+    assert "await configurePlugin({ [field.key]: value });" in source
+
+    # Every setting the issue calls out as in scope for v1 is represented,
+    # with the config-backed ones mapped to their curator_config key and the
+    # Whisparr-only ones left to read back via getPluginSettings().
+    expected_fields = {
+        "pageSize": "page_size",
+        "syncPageSize": "sync_page_size",
+        "modelUpdateEventThreshold": "model_update_event_threshold",
+        "modelUpdateMaxWaitMinutes": "model_update_max_wait_minutes",
+        "modelUpdateMinIntervalMinutes": "model_update_min_interval_minutes",
+        "expandWildcard": "expand_wildcard",
+        "expandGender": "expand_gender",
+        "expandHorizonDays": "expand_horizon_days",
+        "pruneTagName": "prune_tag_name",
+    }
+    for key, config_key in expected_fields.items():
+        assert f'key: "{key}", configKey: "{config_key}"' in source
+    for key in (
+        "whisparrUrl",
+        "whisparrApiKey",
+        "whisparrRootFolder",
+        "whisparrQualityProfileId",
+        "whisparrSearchImmediately",
+    ):
+        assert f'key: "{key}"' in source
+
+    # whisparrApiKey renders as a masked input, matching the issue's "mask
+    # like a password field" requirement; nothing else in the panel does.
+    assert '{ key: "whisparrApiKey", type: "PASSWORD"' in source
+    assert 'field.type === "PASSWORD" ? "password"' in source
+
+
 def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
 
