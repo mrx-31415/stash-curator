@@ -130,9 +130,9 @@ INSERT INTO feature_affinity(
 			continue
 		}
 		stateRows = append(stateRows, []any{
-			modelID, sceneID, label.outcome, label.effectiveEvidence,
-			directConfidenceOf(label.effectiveEvidence),
-			clampValue(label.outcome-score.generalAppeal, -2, 2),
+			modelID, sceneID, label.absoluteOutcome, label.absoluteEvidence,
+			directConfidenceOf(label.absoluteEvidence),
+			clampValue(label.absoluteOutcome-score.generalAppeal, -2, 2),
 		})
 	}
 	if err := insertArtifactRows(artifact, `
