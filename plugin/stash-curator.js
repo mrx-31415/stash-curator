@@ -137,6 +137,13 @@
       maintenance: true,
       description: "Sync, discovery, prune, and Whisparr integration settings, without leaving Curator.",
     },
+    {
+      value: "tasks",
+      label: "Tasks",
+      icon: faList,
+      maintenance: true,
+      description: "Live status of background Curator jobs: queue position, progress, and results.",
+    },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
   const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
@@ -3050,8 +3057,8 @@
         return;
       }
       try {
-        const id = await runTask("Refresh Expand cache");
-        setMessage(`Started Stash job ${id}. Progress is available in Tasks.`);
+        await runTask("Refresh Expand cache");
+        setMessage("Expand refresh started — progress and results appear in Manage → Tasks.");
       } catch (failure) { setError(failure.message); }
     }
     function selectHuntPerformer(values) {
@@ -3604,7 +3611,7 @@
   // at 100% ("Done") until it ages out (issue #110: the final 1.0 marker
   // leaves Stash's queue before the 5 s poll can catch it, so the bar used
   // to freeze at the last sub-100% value and then revert to idle).
-  function CuratorTaskIndicator({ activeJobs, activities, failure, doneJob }) {
+  function CuratorTaskIndicator({ activeJobs, activities, failure, doneJob, tasksHref }) {
     const running = activeJobs.length > 0 || activities.length > 0;
     const doneTask = !running && doneJob
       ? { key: `done-${doneJob.job_id}`, label: taskModeLabel(doneJob), progress: 1, stage: "Done" }
@@ -3633,7 +3640,7 @@
           : "Curator is idle";
     return React.createElement(
       NavLink,
-      { className: `curator-task-indicator curator-task-indicator-${state}`, to: "/settings?tab=tasks", title: `${label}. Open Tasks`, "aria-label": `${label}. Open Tasks` },
+      { className: `curator-task-indicator curator-task-indicator-${state}`, to: tasksHref, title: `${label}. Open Tasks`, "aria-label": `${label}. Open Tasks` },
       React.createElement(
         "span",
         { className: "curator-task-progress", "aria-hidden": "true" },
@@ -3649,6 +3656,61 @@
           React.createElement("span", { className: "curator-task-progress-fill", style: (running || doneTask) && progress !== null ? { width: `${Math.round(progress * 100)}%` } : undefined })
         ),
         showTaskDetails && React.createElement("span", { className: "curator-task-progress-detail" }, running ? primary?.stage : doneTask ? "Done" : failure.error || "Open Tasks for details")
+      )
+    );
+  }
+
+  // TasksPanel lists the worker-owned curator_job rows (decision 004): the
+  // real status surface for background tasks, since Stash's own Tasks tab
+  // only ever sees the instant enqueue jobs now.
+  function TasksPanel() {
+    const [jobs, setJobs] = React.useState([]);
+    const [error, setError] = React.useState("");
+    function refresh() {
+      operation({ operation: "get_job_status" }).then(
+        (result) => { setError(""); setJobs(result.jobs || []); },
+        (failure) => setError(failure.message)
+      );
+    }
+    React.useEffect(() => {
+      refresh();
+      const timer = setInterval(refresh, 5000);
+      return () => clearInterval(timer);
+    }, []);
+    return React.createElement(
+      "div",
+      { className: "curator-tasks-panel" },
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      React.createElement("p", null, "Tasks run in Curator's own background worker, so they keep going even after the Stash-side job completes — progress and results are shown here."),
+      jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
+      React.createElement(
+        "ul",
+        { className: "curator-tasks-list" },
+        jobs.map((job) => {
+          const label = TASK_MODE_LABELS[job.job_type] || job.job_type;
+          const pct = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null;
+          return React.createElement(
+            "li",
+            { key: job.job_id, className: `curator-task curator-task-${job.state}` },
+            React.createElement(
+              "div",
+              { className: "curator-task-head" },
+              React.createElement("strong", null, label),
+              React.createElement("span", { className: "curator-task-state" }, job.state)
+            ),
+            React.createElement(
+              "div",
+              { className: "curator-task-progress-track" },
+              React.createElement("span", { className: "curator-task-progress-fill", style: pct !== null ? { width: `${Math.round(pct * 100)}%` } : undefined })
+            ),
+            React.createElement(
+              "div",
+              { className: "curator-task-meta" },
+              pct !== null ? `${Math.round(pct * 100)}%` : job.state === "running" ? "Working" : job.state,
+              job.error && React.createElement("span", { className: "curator-task-error" }, job.error)
+            )
+          );
+        })
       )
     );
   }
@@ -3691,8 +3753,8 @@
 
     async function start(taskName) {
       try {
-        const id = await runTask(taskName);
-        setMessage(`Started Stash job ${id}`);
+        await runTask(taskName);
+        setMessage("Task started — progress and results appear in Manage → Tasks.");
         setTimeout(refreshStatus, 1000);
       } catch (error) {
         setMessage(error.message);
@@ -3801,7 +3863,7 @@
               "div",
               { className: "curator-health-panel", role: "status" },
               React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Sync"), React.createElement("b", null, running ? `Running ${running.job_type}` : hasSynced ? "Synced" : "Not synced")),
-              React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob }),
+              React.createElement(CuratorTaskIndicator, { activeJobs, activities, failure: latestFailure, doneJob, tasksHref: `${routeLocation.pathname}?view=manage&section=tasks` }),
               React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Model"), React.createElement("b", null, health?.model_pending ? `${health.model_pending_events} waiting` : modelStatus)),
               React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Playback sessions captured"), React.createElement("b", null, health?.capture?.direct_playback_sessions || 0)),
               health?.last_sync_at_ms && React.createElement("div", { className: "curator-health-row" }, React.createElement("span", null, "Last sync"), React.createElement("b", null, new Date(health.last_sync_at_ms).toLocaleString()))
@@ -4169,6 +4231,7 @@
     prune: () => React.createElement(PrunePanel),
     profiling: () => React.createElement(ProfilingPanel),
     settings: (extra) => React.createElement(SettingsPanel, extra),
+    tasks: () => React.createElement(TasksPanel),
   };
 
   function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity }) {
