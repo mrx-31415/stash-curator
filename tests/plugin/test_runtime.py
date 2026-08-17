@@ -666,13 +666,22 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     assert 'value: "settings"' in source
     assert "icon: faCog,\n      maintenance: true" in source
     assert "settings: (extra) => React.createElement(SettingsPanel, extra)," in source
-    assert "function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
+    assert (
+        "function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
+    )
     assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
-    assert "React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity })" in source
+    assert (
+        "React.createElement(ManagePanel, { section: currentSection, "
+        "onSelectSection: openManage, diversityEnabled, diversitySaving, "
+        "onToggleDiversity: toggleDiversity })" in source
+    )
 
     # Raw plugin settings (Whisparr fields) aren't in curator_config, so the
     # panel reads them straight from Stash rather than through get_config.
-    assert 'query CuratorPluginSettings { configuration { plugins(include: ["stash-curator"]) } }' in source
+    assert (
+        'query CuratorPluginSettings { configuration { plugins(include: ["stash-curator"]) } }'
+        in source
+    )
     assert 'payload.data.configuration.plugins["stash-curator"] || {}' in source
 
     # One configurePlugin call per field, on change, matching the
