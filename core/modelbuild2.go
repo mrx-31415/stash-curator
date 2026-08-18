@@ -272,6 +272,31 @@ func studioPriors(db dbx) (map[string]modelPrior, error) {
 	return result, nil
 }
 
+// studioNames mirrors the studio_names map builder.py builds inline in
+// build_scores: studio_id -> display name, used to name Stretch's studio
+// candidates.
+func studioNames(db dbx) (map[string]string, error) {
+	rows, err := db.Query(`SELECT studio_id, name FROM source_studio`)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]string{}
+	for rows.Next() {
+		var studioID string
+		var name sql.NullString
+		if err := rows.Scan(&studioID, &name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		result[studioID] = name.String
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // asymmetric mirrors _asymmetric.
 func asymmetric(values []float64) float64 {
 	var positives []float64
@@ -530,6 +555,98 @@ func sceneEligibilityBuild(db dbx, referenceAtMs int64) (map[string]jVal, error)
 	return out, nil
 }
 
+// confirmedTagCandidates mirrors _confirmed_tag_candidates: content-family
+// contributions restricted to StashDB-confirmed tags. Description terms and
+// unconfirmed tags cannot be named as a Stretch taste dimension — see
+// docs/workpackage-lane-redesign.md ("Facets, not tags").
+func confirmedTagCandidates(contributions jVal) jVal {
+	candidates := jvArr()
+	for _, item := range contributions.arr {
+		metadata := item.get("metadata")
+		if metadata.kind != jObj || !metadata.has("tag_id") {
+			continue
+		}
+		if !strings.HasPrefix(metadata.get("role_reason").asString(), "stashdb_") {
+			continue
+		}
+		name := metadata.get("tag_name").asString()
+		if name == "" {
+			name = item.get("name").asString()
+		}
+		candidates.arr = append(candidates.arr, jvObj(
+			jvKey("feature_id", item.get("feature_id")),
+			jvKey("name", jvStr(name)),
+			jvKey("facet_type", jvStr("tag")),
+			jvKey("value", item.get("value")),
+			jvKey("affinity", item.get("affinity")),
+			jvKey("confidence", item.get("confidence")),
+			jvKey("effective_support", item.get("effective_support")),
+		))
+	}
+	return candidates
+}
+
+var stretchContributorFields = []string{
+	"feature_id", "name", "facet_type", "value", "affinity", "confidence", "effective_support",
+}
+
+// stretchContributorPayload mirrors _stretch_contributor_payload: the bounded
+// positive/negative contributor list for the Stretch lane, combining the
+// confirmed-tag and studio candidates computed alongside the content/studio
+// components.
+func stretchContributorPayload(components jVal, count int) jVal {
+	var pool []jVal
+	for _, family := range []string{"content", "studio"} {
+		component := components.get(family)
+		if component.kind == jObj {
+			pool = append(pool, component.get("stretch_candidates").arr...)
+		}
+	}
+	var positive, negative []jVal
+	for _, item := range pool {
+		if numberValue(item.get("value")) > 0 {
+			positive = append(positive, item)
+		} else if numberValue(item.get("value")) < 0 {
+			negative = append(negative, item)
+		}
+	}
+	sort.SliceStable(positive, func(i, j int) bool {
+		vi, vj := numberValue(positive[i].get("value")), numberValue(positive[j].get("value"))
+		if vi != vj {
+			return vi > vj
+		}
+		return positive[i].get("name").asString() < positive[j].get("name").asString()
+	})
+	sort.SliceStable(negative, func(i, j int) bool {
+		vi, vj := numberValue(negative[i].get("value")), numberValue(negative[j].get("value"))
+		if vi != vj {
+			return vi < vj
+		}
+		return negative[i].get("name").asString() < negative[j].get("name").asString()
+	})
+	if len(positive) > count {
+		positive = positive[:count]
+	}
+	if len(negative) > count {
+		negative = negative[:count]
+	}
+	project := func(items []jVal) jVal {
+		out := jvArr()
+		for _, item := range items {
+			pairs := make([]jPair, 0, len(stretchContributorFields))
+			for _, key := range stretchContributorFields {
+				pairs = append(pairs, jvKey(key, item.get(key)))
+			}
+			out.arr = append(out.arr, jvObj(pairs...))
+		}
+		return out
+	}
+	return jvObj(
+		jvKey("positive", project(positive)),
+		jvKey("negative", project(negative)),
+	)
+}
+
 // classificationPayload mirrors _classification_payload.
 func classificationPayload(components jVal) jVal {
 	payload := jvObj()
@@ -552,6 +669,10 @@ func classificationPayload(components jVal) jVal {
 		}
 	}
 	payload.set("direct", jvObj(jvKey("signals", signals)))
+	// stretch_contributor_count default (RankingConfig); the Go port hardcodes
+	// config defaults rather than threading a runtime config object, matching
+	// every other ranking constant in this file.
+	payload.set("stretch_contributors", stretchContributorPayload(components, 3))
 	return payload
 }
 
@@ -571,6 +692,7 @@ type scoringContext struct {
 	affinities          map[string]modelAffinity
 	performerPriors     map[string]modelPrior
 	studioPriors        map[string]modelPrior
+	studioNames         map[string]string
 	performerSimilarity jVal
 	neighbors           map[string]neighborEvidence
 	labels              map[string]sceneLabel
@@ -624,6 +746,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 				jvKey("value", jvFloat(value)),
 				jvKey("affinity", jvFloat(affinity.affinity)),
 				jvKey("confidence", jvFloat(affinity.confidence)),
+				jvKey("effective_support", jvFloat(affinity.support)),
 				jvKey("metadata", feature.metadata),
 				jvKey("affinity_metadata", affinity.contexts),
 			))
@@ -660,21 +783,21 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 			sorted = sorted[:5]
 		}
 		top := jvArr(sorted...)
-		if len(contributionValues) == 0 {
-			components.set(family.name, jvObj(
-				jvKey("raw", jvInt(0)),
-				jvKey("value", jvInt(0)),
-				jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
-				jvKey("top", top),
-			))
-		} else {
-			components.set(family.name, jvObj(
+		pairs := []jPair{jvKey("raw", jvInt(0)), jvKey("value", jvInt(0))}
+		if len(contributionValues) != 0 {
+			pairs = []jPair{
 				jvKey("raw", jvFloat(raw)),
 				jvKey("value", jvFloat(softBound(raw, family.bound))),
-				jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
-				jvKey("top", top),
-			))
+			}
 		}
+		pairs = append(pairs,
+			jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
+			jvKey("top", top),
+		)
+		if family.name == "content" {
+			pairs = append(pairs, jvKey("stretch_candidates", confirmedTagCandidates(contributions)))
+		}
+		components.set(family.name, jvObj(pairs...))
 	}
 	var performerItems []storedFeature
 	for _, feature := range features {
@@ -744,6 +867,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	))
 	var studioItems jVal = jvArr()
 	var studioConfidence float64
+	stretchStudioCandidates := jvArr()
 	for _, feature := range features {
 		if feature.family != "studio" {
 			continue
@@ -767,6 +891,25 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 			jvKey("confidence", jvFloat(confidence)),
 		))
 		studioConfidence = math.Max(studioConfidence, confidence)
+		// A studio only qualifies as a Stretch dimension when the model has an
+		// actual feature_affinity row for it — mirrors builder.py's
+		// stretch_studio_candidates gate. See docs/workpackage-lane-redesign.md
+		// defect 8.
+		if hasAffinity {
+			name := c.studioNames[studioID]
+			if name == "" {
+				name = feature.name
+			}
+			stretchStudioCandidates.arr = append(stretchStudioCandidates.arr, jvObj(
+				jvKey("feature_id", jvStr(feature.featureID)),
+				jvKey("name", jvStr(name)),
+				jvKey("facet_type", jvStr("studio")),
+				jvKey("value", jvFloat(learned)),
+				jvKey("affinity", jvFloat(affinity.affinity)),
+				jvKey("confidence", jvFloat(affinity.confidence)),
+				jvKey("effective_support", jvFloat(affinity.support)),
+			))
+		}
 	}
 	studioValues := make([]float64, 0, len(studioItems.arr))
 	for _, item := range studioItems.arr {
@@ -780,6 +923,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 			jvKey("value", jvInt(0)),
 			jvKey("studios", studioItems),
 			jvKey("evidence_confidence", jvFloat(studioConfidence)),
+			jvKey("stretch_candidates", stretchStudioCandidates),
 		))
 	} else {
 		components.set("studio", jvObj(
@@ -787,6 +931,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 			jvKey("value", jvFloat(softBound(studioRaw, 0.12))),
 			jvKey("studios", studioItems),
 			jvKey("evidence_confidence", jvFloat(studioConfidence)),
+			jvKey("stretch_candidates", stretchStudioCandidates),
 		))
 	}
 	neighborData, hasNeighbors := c.neighbors[sceneID]
@@ -1005,6 +1150,10 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	if err != nil {
 		return nil, jvNull(), nil, err
 	}
+	studioNames, err := studioNames(db)
+	if err != nil {
+		return nil, jvNull(), nil, err
+	}
 	profiles, err := performerProfileIDs(db, featureVersion)
 	if err != nil {
 		return nil, jvNull(), nil, err
@@ -1017,6 +1166,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 			affinities:          affinities,
 			performerPriors:     performerPriors,
 			studioPriors:        studioPriors,
+			studioNames:         studioNames,
 			performerSimilarity: performerSimilarity,
 			neighbors:           neighbors,
 			labels:              labels,

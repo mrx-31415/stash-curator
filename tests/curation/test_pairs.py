@@ -16,6 +16,7 @@ import pytest
 from curator.curation import (
     ORTHOGONAL_CANDIDATE_MULTIPLIER,
     CurationContext,
+    _group_clean_scenes,
     _orthogonal_pairs,
     _pair_score,
     _pair_unlabeled,
@@ -64,7 +65,14 @@ def test_create_round_tag_pairs_across_contrast_cells(sidecar: Path, tmp_path: P
     round_a = create_pair_round(conn, "tag", 4, "t1", "t2")
     pairs_a = round_a["pairs"]  # type: ignore[union-attr]
     # Unlabeled contrast cells: L&T = {s1, s7}, L&!T = {s2} -> two candidates.
+    # s21 (lesbian, 3 performers, no threesome tag) is excluded from L&!T by
+    # group-cell hygiene: a 3-performer scene is likely an untagged threesome.
     assert len(pairs_a) == 2
+    pair_scenes = set()
+    for pair in pairs_a:
+        pair_scenes.add(pair["scene_a"]["scene_id"])
+        pair_scenes.add(pair["scene_b"]["scene_id"])
+    assert "s21" not in pair_scenes
     assert round_a["base_tag"] == {"tag_id": "t1", "name": "lesbian"}
     assert round_a["context_tag"] == {"tag_id": "t2", "name": "threesome"}
     # Deterministic selection: the same request on fresh state repeats exactly.
@@ -483,3 +491,19 @@ def test_pair_verdict_error_paths(conn: sqlite3.Connection) -> None:
         pair_verdict(conn, "nope")
     with pytest.raises(ValueError, match="round_id is required"):
         pair_verdict(conn, "")
+
+
+def test_group_clean_scenes(sidecar: Path, tmp_path: Path) -> None:
+    """The hygiene helper: 3+ performer scenes are excluded from the 'without
+    tag' pool for group tags, and kept for non-group tags."""
+    conn = _fresh_selection(sidecar, tmp_path)
+    context = curation_context(conn)
+    scenes = ["s2", "s21", "s7"]
+    # For the group tag t2 (Group Makeup in the fixture taxonomy), the
+    # 3-performer scene s21 cannot serve as a clean negative; s2/s7 have
+    # fewer performers and are kept.
+    cleaned = _group_clean_scenes(context, scenes, "t2")
+    assert "s21" not in cleaned
+    assert set(cleaned) == {"s2", "s7"}
+    # Non-group tag (t3, category Acts): no exclusion.
+    assert _group_clean_scenes(context, scenes, "t3") == scenes

@@ -9,7 +9,7 @@ from tests.ranking.test_slate import _database
 
 
 def test_unknown_exploration_subtype_has_no_card_reason() -> None:
-    item = SimpleNamespace(subtype=None)
+    item = SimpleNamespace(source_lane="adventure", subtype=None)
     assert ExplanationService._exploration_code(item) is None  # type: ignore[arg-type]
 
 
@@ -100,8 +100,8 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
     connection = _database(tmp_path / "curator.sqlite3")
     item = next(
         item
-        for item in SlateBuilder(connection).recommend("discover", 10).items
-        if item.subtype == "stretch"
+        for item in SlateBuilder(connection).recommend("stretch", 10).items
+        if item.subtype == "untested"
     )
 
     explanation = ExplanationService(connection).explain_recommendation(item)
@@ -111,12 +111,11 @@ def test_recommendation_explanation_names_the_exploration_tradeoff(tmp_path: Pat
         reason for reason in explanation.all_reasons if reason.code == "explore.challenge"
     )
     assert challenge.provenance == "lane_policy"
-    assert challenge.detail["challenged_assumption"] == "studio"
-    assert "studio" in explanation.summary
-    assert any(
-        phrase in explanation.summary
-        for phrase in ("less familiar studio", "usual pattern", "outweigh")
-    )
+    challenged_feature = challenge.detail["challenged_feature"]
+    assert isinstance(challenged_feature, dict)
+    assert challenged_feature["facet_type"] == "studio"
+    assert challenged_feature["name"] == "Untested Studio E"
+    assert "Untested Studio E" in explanation.summary
     assert any(reason.code.startswith("diversity.") for reason in explanation.all_reasons)
     assert all(not reason.code.startswith("diversity.") for reason in explanation.selected_reasons)
 
@@ -250,7 +249,7 @@ def test_every_recommended_item_has_versioned_structured_reasons(tmp_path: Path)
     connection = _database(tmp_path / "curator.sqlite3")
     service = ExplanationService(connection)
 
-    for lane in ("for_you", "best_bets", "revisit", "discover", "adventure"):
+    for lane in ("for_you", "best_bets", "revisit", "stretch", "adventure"):
         for item in SlateBuilder(connection).recommend(lane, 20).items:
             explanation = service.explain_recommendation(item)
             assert explanation.summary

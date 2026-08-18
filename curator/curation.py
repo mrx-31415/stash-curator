@@ -312,6 +312,17 @@ def _item_tags(context: CurationContext, scene_id: str) -> list[dict[str, str | 
     ]
 
 
+def _group_clean_scenes(context: CurationContext, scenes: list[str], tag: str) -> list[str]:
+    """Scenes missing `tag` that can serve as clean negative examples.
+
+    For group tags (taxonomy category Group Makeup), a scene with 3+ performers
+    is likely the untagged group activity (threesomes often lack the tag), so
+    it cannot vouch for "without tag" — exclude it."""
+    if context.tag_cat.get(tag) != "Group Makeup":
+        return scenes
+    return [sid for sid in scenes if len(context.scene_performers.get(sid, ())) < 3]
+
+
 def select_hypothesis(
     context: CurationContext, base_tag: str, context_tag: str, budget: int
 ) -> tuple[list[tuple[str, str, bool]], dict[str, int]]:
@@ -320,7 +331,9 @@ def select_hypothesis(
     all_scenes = context.scene_ids
     pools = {
         "L&T": _unlabeled_pool(context, base & ctx),
-        "L&!T": _unlabeled_pool(context, base - ctx),
+        "L&!T": _unlabeled_pool(
+            context, set(_group_clean_scenes(context, list(base - ctx), context_tag))
+        ),
         "!L&T": _unlabeled_pool(context, ctx - base),
         "!L&!T": _unlabeled_pool(context, all_scenes - base - ctx),
     }
@@ -757,7 +770,12 @@ def tag_context_candidates(
             continue  # weak-interaction categories are not hypotheses
         with_t = [labeled_base[sid] for sid in labeled_base if t in context.scene_tags.get(sid, ())]
         without_t = [
-            labeled_base[sid] for sid in labeled_base if t not in context.scene_tags.get(sid, ())
+            labeled_base[sid]
+            for sid in _group_clean_scenes(
+                context,
+                [sid for sid in labeled_base if t not in context.scene_tags.get(sid, ())],
+                t,
+            )
         ]
         contrast: float | None = None
         if len(labeled_base) >= CONTRAST_MIN_LABELED and with_t and without_t:
@@ -900,6 +918,7 @@ def _pair_candidates(
             if base_tag in context.scene_tags.get(sid, ())
             and context_tag not in context.scene_tags.get(sid, ())
         ]
+        cell_b = _group_clean_scenes(context, cell_b, context_tag)
         out: list[tuple[str, str]] = []
         for a in cell_a:
             for b in cell_b:

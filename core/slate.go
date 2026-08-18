@@ -18,11 +18,11 @@ import (
 
 // slateLanes mirrors SlateBuilder's lane vocabulary.
 var slateLanes = map[string]bool{
-	"for_you": true, "best_bets": true, "revisit": true, "discover": true, "adventure": true,
+	"for_you": true, "best_bets": true, "revisit": true, "stretch": true, "adventure": true,
 }
 
 // queriedScoreFirstLanes mirrors slate.QUERIED_SCORE_FIRST_LANES.
-var queriedScoreFirstLanes = map[string]bool{"best_bets": true, "revisit": true, "discover": true}
+var queriedScoreFirstLanes = map[string]bool{"best_bets": true, "revisit": true, "stretch": true}
 
 // scoreFirstRankingJSON mirrors slate.SCORE_FIRST_RANKING_JSON.
 const scoreFirstRankingJSON = `{"penalties":{"performer":0.0,"studio":0.0,"content":0.0,"history":0.0,"live_cooldown":0.0},"bonuses":{"uncovered_content":0.0}}`

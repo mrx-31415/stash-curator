@@ -107,7 +107,7 @@ class Microplanner:
             (self._unit(reason) for reason in reasons if reason.code.startswith("explore.")),
             key=lambda unit: (-unit.strength, unit.reason.code),
         )
-        if lane in {"discover", "adventure"} and exploration:
+        if lane in {"stretch", "adventure"} and exploration:
             return exploration[0]
         reservations = sorted(
             (

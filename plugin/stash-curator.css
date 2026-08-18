@@ -40,7 +40,7 @@
   --curator-hue-similar: #6cc4dc;
   --curator-hue-best_bets: #d59a52;
   --curator-hue-hunt: #d98a9e;
-  --curator-hue-discover: #5cc19c;
+  --curator-hue-stretch: #5cc19c;
   --curator-hue-adventure: #e0824f;
   --curator-hue-revisit: #b79ce0;
   --curator-hue-expand: #e0645c;
@@ -95,7 +95,7 @@
   --curator-hue-similar: #1f7f96;
   --curator-hue-best_bets: #a56f2a;
   --curator-hue-hunt: #a34a63;
-  --curator-hue-discover: #2f8f68;
+  --curator-hue-stretch: #2f8f68;
   --curator-hue-adventure: #b85e33;
   --curator-hue-revisit: #7452ad;
   --curator-hue-expand: #b83f4c;
@@ -1341,7 +1341,7 @@
 .curator-lane-for_you { --lane-color: var(--curator-hue-for_you); }
 .curator-lane-best_bets { --lane-color: var(--curator-hue-best_bets); }
 .curator-lane-revisit { --lane-color: var(--curator-hue-revisit); }
-.curator-lane-discover { --lane-color: var(--curator-hue-discover); }
+.curator-lane-stretch { --lane-color: var(--curator-hue-stretch); }
 .curator-lane-adventure { --lane-color: var(--curator-hue-adventure); }
 .curator-lane-similar { --lane-color: var(--curator-hue-similar); }
 .curator-lane-expand { --lane-color: var(--curator-hue-expand); }
@@ -1361,7 +1361,7 @@
    the badges also get the same visual depth as the logo mark/active nav
    pill. Where the light-theme hue already passed 4.5:1 it's reused as the
    lighter gradient stop (for_you/similar/hunt/revisit/expand); the other
-   four (best_bets/discover/adventure/prune) needed new darker literals —
+   four (best_bets/stretch/adventure/prune) needed new darker literals —
    light theme's own versions still fell short (3.83–4.48:1). Each
    gradient's second stop is that first stop darkened ~22% further, which
    can only raise contrast, never lower it. */
@@ -1369,7 +1369,7 @@
 .curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #1f7f96, #186375); }
 .curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #976d3a, #76552d); }
 .curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #a34a63, #7f3a4d); }
-.curator-lane-discover { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
+.curator-lane-stretch { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
 .curator-lane-adventure { --lane-badge-gradient: linear-gradient(145deg, #ac643d, #864e30); }
 .curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #7452ad, #5a4087); }
 .curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #b83f4c, #90313b); }

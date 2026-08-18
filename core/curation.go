@@ -543,6 +543,9 @@ func curationSelectHypothesis(
 		{"!L&!T", difference(ctx.sceneIDs, union(base, context))},
 	} {
 		pool := curationUnlabeledPool(ctx, cell.scenes)
+		if cell.name == "L&!T" {
+			pool = groupCleanScenes(ctx, pool, contextTag)
+		}
 		pools[cell.name] = pool
 		poolKeys = append(poolKeys, cell.name)
 	}
@@ -1379,7 +1382,7 @@ func tagContextCandidatesBody(db dbx, tagID string, minSupport int) (jVal, error
 		for sceneID, outcome := range labeledBase {
 			if ctx.sceneTags[sceneID][t] {
 				withT = append(withT, outcome)
-			} else {
+			} else if len(ctx.scenePerformers[sceneID]) < 3 || ctx.tagCat[t] != "Group Makeup" {
 				withoutT = append(withoutT, outcome)
 			}
 		}
@@ -1700,6 +1703,23 @@ func pairScore(ctx *curationContext, a, b, dimension string) (score, predA, pred
 	return conflict * coverage * fit, predA, predB
 }
 
+// groupCleanScenes mirrors curation._group_clean_scenes: scenes missing `tag`
+// that can serve as clean negative examples. For group tags (taxonomy
+// category Group Makeup), a scene with 3+ performers is likely the untagged
+// group activity, so it cannot vouch for "without tag".
+func groupCleanScenes(ctx *curationContext, scenes []string, tag string) []string {
+	if ctx.tagCat[tag] != "Group Makeup" {
+		return scenes
+	}
+	out := make([]string, 0, len(scenes))
+	for _, sceneID := range scenes {
+		if len(ctx.scenePerformers[sceneID]) < 3 {
+			out = append(out, sceneID)
+		}
+	}
+	return out
+}
+
 func pairUnlabeled(ctx *curationContext, seen map[string]bool) []string {
 	var out []string
 	for sceneID := range ctx.sceneIDs {
@@ -1733,6 +1753,7 @@ func pairCandidates(ctx *curationContext, dimension, baseTag, contextTag, perfor
 				cellB = append(cellB, sceneID)
 			}
 		}
+		cellB = groupCleanScenes(ctx, cellB, contextTag)
 		for _, a := range cellA {
 			for _, b := range cellB {
 				if len(out) >= pairMaxCandidates {
