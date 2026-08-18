@@ -88,7 +88,8 @@ def make_slice6_sidecar(path: Path) -> None:
             INSERT INTO source_performer(performer_id, name, source_hash, updated_at)
             VALUES ('p1', 'Performer One', 'ph-1', '2026-01-01T00:00:00Z'),
                    ('p2', 'Performer Two', 'ph-2', '2026-01-01T00:00:00Z'),
-                   ('p3', 'Performer Three', 'ph-3', '2026-01-01T00:00:00Z')
+                   ('p3', 'Performer Three', 'ph-3', '2026-01-01T00:00:00Z'),
+                   ('p4', 'Performer Four', 'ph-4', '2026-01-01T00:00:00Z')
             """
         )
         connection.execute(
@@ -101,6 +102,18 @@ def make_slice6_sidecar(path: Path) -> None:
                 ('s7', 'p3', 0),
                 ('s8', 'p1', 0), ('s8', 'p2', 1)
             """
+        )
+        # s21: 3 performers, tagged lesbian (t1) but NOT threesome (t2). A
+        # 3-performer scene is likely an untagged threesome, so it must be
+        # excluded from the L&!T cell (cell hygiene).
+        connection.execute(
+            "INSERT INTO source_scene(scene_id, studio_id, title, updated_at, source_hash) "
+            "VALUES ('s21', NULL, 'Twenty One', '2026-01-01T00:00:00Z', 'h21')"
+        )
+        connection.execute("INSERT INTO scene_tag(scene_id, tag_id) VALUES ('s21', 't1')")
+        connection.execute(
+            "INSERT INTO scene_performer(scene_id, performer_id, position) VALUES "
+            "('s21', 'p2', 0), ('s21', 'p3', 1), ('s21', 'p4', 2)"
         )
         # Tag-dimension round: pairs across the contrast cells (t1 lesbian,
         # t2 threesome). s1/s7 are L&T, s2 is L&!T, s4 is !L&T.

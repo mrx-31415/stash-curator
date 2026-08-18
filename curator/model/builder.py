@@ -190,12 +190,15 @@ _CLASSIFICATION_FAMILIES = (
 )
 
 
-def _classification_payload(components: dict[str, object]) -> dict[str, object]:
+def _classification_payload(
+    components: dict[str, object], *, stretch_contributor_count: int = 3
+) -> dict[str, object]:
     """Slim component view that lane classification reads.
 
-    Classification only needs the six family values and the direct signals; this
-    avoids storing (and later parsing) the full components_json with its
-    top-contributor metadata for every scene.
+    Classification only needs the six family values, the direct signals, and a
+    bounded Stretch contributor list; this avoids storing (and later parsing) the
+    full components_json with its unbounded top-contributor metadata for every
+    scene.
     """
     payload: dict[str, object] = {}
     for family in _CLASSIFICATION_FAMILIES:
@@ -206,7 +209,78 @@ def _classification_payload(components: dict[str, object]) -> dict[str, object]:
     payload["direct"] = {
         "signals": list(direct.get("signals", [])) if isinstance(direct, dict) else []
     }
+    payload["stretch_contributors"] = _stretch_contributor_payload(
+        components, count=stretch_contributor_count
+    )
     return payload
+
+
+def _confirmed_tag_candidates(contributions: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Content-family contributions restricted to StashDB-confirmed tags.
+
+    Description terms and unconfirmed tags cannot be named as a Stretch taste
+    dimension — see docs/workpackage-lane-redesign.md ("Facets, not tags").
+    """
+    candidates = []
+    for item in contributions:
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("tag_id") is None:
+            continue
+        reason = metadata.get("role_reason")
+        if not (isinstance(reason, str) and reason.startswith("stashdb_")):
+            continue
+        candidates.append(
+            {
+                "feature_id": item["feature_id"],
+                "name": metadata.get("tag_name") or item["name"],
+                "facet_type": "tag",
+                "value": item["value"],
+                "affinity": item["affinity"],
+                "confidence": item["confidence"],
+                "effective_support": item["effective_support"],
+            }
+        )
+    return candidates
+
+
+_STRETCH_CONTRIBUTOR_FIELDS = (
+    "feature_id",
+    "name",
+    "facet_type",
+    "value",
+    "affinity",
+    "confidence",
+    "effective_support",
+)
+
+
+def _stretch_contributor_payload(
+    components: dict[str, object], *, count: int
+) -> dict[str, object]:
+    """Bounded positive/negative contributor list for the Stretch lane.
+
+    Combines the confirmed-tag and studio candidates computed alongside the
+    content/studio components, sorted by signed value, and capped at `count` per
+    side — six small records rather than the unbounded per-feature detail
+    258452e removed from classification_json.
+    """
+    pool: list[dict[str, object]] = []
+    for family in ("content", "studio"):
+        component = components.get(family)
+        if isinstance(component, dict):
+            pool.extend(cast(list[dict[str, object]], component.get("stretch_candidates") or []))
+    positive = sorted(
+        (item for item in pool if _number(item.get("value")) > 0),
+        key=lambda item: (-_number(item["value"]), str(item["name"])),
+    )[:count]
+    negative = sorted(
+        (item for item in pool if _number(item.get("value")) < 0),
+        key=lambda item: (_number(item["value"]), str(item["name"])),
+    )[:count]
+    return {
+        "positive": [{key: item[key] for key in _STRETCH_CONTRIBUTOR_FIELDS} for item in positive],
+        "negative": [{key: item[key] for key in _STRETCH_CONTRIBUTOR_FIELDS} for item in negative],
+    }
 
 
 def _numpy_cosine_matrix(
@@ -961,6 +1035,10 @@ class PreferenceModelBuilder:
         eligibility = self._eligibility(reference_at_ms)
         performer_priors = self._performer_priors()
         studio_priors = self._studio_priors()
+        studio_names = {
+            str(row["studio_id"]): str(row["name"] or "")
+            for row in self.connection.execute("SELECT studio_id, name FROM source_studio")
+        }
         scores: list[_Score] = []
         profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         total_scenes = len(all_scene_ids)
@@ -994,6 +1072,7 @@ class PreferenceModelBuilder:
                             "value": value,
                             "affinity": affinity.affinity,
                             "confidence": affinity.confidence,
+                            "effective_support": affinity.support,
                             "metadata": feature.metadata,
                             "affinity_metadata": affinity.contexts,
                         }
@@ -1010,7 +1089,7 @@ class PreferenceModelBuilder:
                     else 0.0
                 )
                 family_confidences[family] = evidence_confidence
-                components[family] = {
+                family_payload: dict[str, object] = {
                     "raw": raw,
                     "value": _soft_bound(raw, bound),
                     "evidence_confidence": evidence_confidence,
@@ -1019,6 +1098,11 @@ class PreferenceModelBuilder:
                         key=lambda item: (-abs(_number(item["value"])), str(item["name"])),
                     )[:5],
                 }
+                if family == "content":
+                    family_payload["stretch_candidates"] = _confirmed_tag_candidates(
+                        contributions
+                    )
+                components[family] = family_payload
             performer_items = [
                 feature for feature in features if feature.family == "performer_identity"
             ]
@@ -1089,6 +1173,7 @@ class PreferenceModelBuilder:
             }
             studio_features = [feature for feature in features if feature.family == "studio"]
             studio_items = []
+            stretch_studio_candidates: list[dict[str, object]] = []
             for feature in studio_features:
                 studio_id = feature.name.removeprefix("studio:")
                 affinity = affinities.get(feature.feature_id)
@@ -1106,6 +1191,23 @@ class PreferenceModelBuilder:
                         ),
                     }
                 )
+                # A studio only qualifies as a Stretch dimension when the model has an
+                # actual feature_affinity row for it — without that, "learned" is 0.0
+                # for every studio the model has no opinion on and they would all tie
+                # at maximum challenge distance. See docs/workpackage-lane-redesign.md
+                # defect 8.
+                if affinity is not None:
+                    stretch_studio_candidates.append(
+                        {
+                            "feature_id": feature.feature_id,
+                            "name": studio_names.get(studio_id) or feature.name,
+                            "facet_type": "studio",
+                            "value": learned,
+                            "affinity": affinity.affinity,
+                            "confidence": affinity.confidence,
+                            "effective_support": affinity.support,
+                        }
+                    )
             studio_raw = sum(_number(item["value"]) for item in studio_items)
             studio_confidence = max(
                 (_number(item.get("confidence")) for item in studio_items), default=0.0
@@ -1116,6 +1218,7 @@ class PreferenceModelBuilder:
                 "value": _soft_bound(studio_raw, self.config.model.studio_bound),
                 "studios": studio_items,
                 "evidence_confidence": studio_confidence,
+                "stretch_candidates": stretch_studio_candidates,
             }
             neighbor_data = neighbors.get(
                 scene_id,
@@ -1691,7 +1794,12 @@ class PreferenceModelBuilder:
                         # parsing the full components_json (with its top-contributor
                         # metadata for explanations) for every scene on every build.
                         json.dumps(
-                            _classification_payload(score.components),
+                            _classification_payload(
+                                score.components,
+                                stretch_contributor_count=(
+                                    self.config.ranking.stretch_contributor_count
+                                ),
+                            ),
                             sort_keys=True,
                             separators=(",", ":"),
                         ),

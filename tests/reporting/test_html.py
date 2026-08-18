@@ -49,7 +49,7 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
         "for_you",
         "best_bets",
         "revisit",
-        "discover",
+        "stretch",
         "adventure",
     }
     assert all(f'<section id="{lane}">' in document for lane in result.lane_counts)

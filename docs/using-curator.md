@@ -12,7 +12,7 @@ permalink: /using-curator/
 | **For You** | A varied everyday mix of dependable matches, revisits, and a little discovery |
 | **Best Bets** | Strong unseen matches with enough independent supporting evidence |
 | **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
-| **Discover** | Mostly familiar recommendations plus one explained test of your taste |
+| **Stretch** | Mostly familiar recommendations, with one confirmed tag or studio named as the challenge |
 | **Adventure** | Deliberate probes into uncertain or under-covered parts of the model |
 
 Cards are arranged as a slate. Curator avoids adjacent performer repetition and

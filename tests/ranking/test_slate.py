@@ -32,6 +32,7 @@ def _score(
     signals: tuple[str, ...] = (),
     eligible: bool = True,
     neighbors: tuple[dict[str, object], ...] = (),
+    stretch_contributors: dict[str, object] | None = None,
 ) -> None:
     components = {
         "baseline": _component(0),
@@ -48,6 +49,8 @@ def _score(
         },
         "fit": {"recovery": recovery, "cooldown": 0, "satiation": 0, "not_now": 0},
     }
+    if stretch_contributors is not None:
+        components["stretch_contributors"] = stretch_contributors
     connection.execute(
         """
         INSERT INTO model_scene_score(
@@ -214,7 +217,36 @@ def _database(path: Path) -> sqlite3.Connection:
         "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES ('d-revisit', 1, 0)"
     )
     _score(
-        connection, "e-frontier", fit=0.12, appeal=0.15, confidence=0.3, metadata=0.5, content=0.12
+        connection,
+        "e-frontier",
+        fit=0.12,
+        appeal=0.15,
+        confidence=0.3,
+        metadata=0.5,
+        content=0.12,
+        stretch_contributors={
+            "positive": [
+                {
+                    "feature_id": "feat-anchor-e",
+                    "name": "Anchor Tag E",
+                    "facet_type": "tag",
+                    "value": 0.10,
+                    "affinity": 0.30,
+                    "confidence": 0.70,
+                    "effective_support": 5.0,
+                },
+                {
+                    "feature_id": "feat-untested-e",
+                    "name": "Untested Studio E",
+                    "facet_type": "studio",
+                    "value": 0.02,
+                    "affinity": 0.05,
+                    "confidence": 0.55,
+                    "effective_support": 0.10,
+                },
+            ],
+            "negative": [],
+        },
     )
     _score(
         connection,
@@ -225,6 +257,30 @@ def _database(path: Path) -> sqlite3.Connection:
         metadata=0.6,
         content=0.12,
         studio=-0.05,
+        stretch_contributors={
+            "positive": [
+                {
+                    "feature_id": "feat-anchor-f",
+                    "name": "Anchor Tag F",
+                    "facet_type": "tag",
+                    "value": 0.10,
+                    "affinity": 0.30,
+                    "confidence": 0.70,
+                    "effective_support": 5.0,
+                },
+            ],
+            "negative": [
+                {
+                    "feature_id": "feat-negative-f",
+                    "name": "Disliked Studio F",
+                    "facet_type": "studio",
+                    "value": -0.08,
+                    "affinity": -0.20,
+                    "confidence": 0.65,
+                    "effective_support": 5.0,
+                },
+            ],
+        },
     )
     _score(
         connection,
@@ -272,10 +328,10 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     lookup = {(item.scene_id, item.lane): item for item in classifications}
 
     assert ("a-best", "best_bets") in lookup
-    assert ("a-best", "discover") not in lookup
+    assert ("a-best", "stretch") not in lookup
     assert ("d-revisit", "revisit") in lookup
-    assert lookup[("e-frontier", "discover")].subtype == "frontier"
-    assert lookup[("f-stretch", "discover")].subtype == "stretch"
+    assert lookup[("e-frontier", "stretch")].subtype == "untested"
+    assert lookup[("f-stretch", "stretch")].subtype == "tested_negative"
     assert lookup[("g-combination", "adventure")].subtype == "structured_combination_challenge"
     assert lookup[("f-stretch", "adventure")].subtype == "model_disagreement"
     assert lookup[("i-island", "adventure")].subtype == "under_covered_island"
@@ -303,7 +359,7 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
-    assert set(counts) == {"best_bets", "revisit", "discover", "adventure"}
+    assert set(counts) == {"best_bets", "revisit", "stretch", "adventure"}
     assert progress == [(position, 7) for position in range(1, 8)]
     assert set(builder.materialize_timings_ms) == {
         "score_first_ordering",
@@ -336,7 +392,7 @@ def test_queried_score_first_lanes_match_full_materialized_order(tmp_path: Path)
                 varied=False,
             )
         ]
-        for lane in ("best_bets", "revisit", "discover")
+        for lane in ("best_bets", "revisit", "stretch")
     }
 
     builder.materialize("model", force=True)
@@ -353,7 +409,7 @@ def test_available_count_matches_live_materialized_slate(tmp_path: Path) -> None
     for diversity_enabled in (True, False):
         builder = SlateBuilder(connection, diversity_enabled=diversity_enabled)
         builder.materialize("model", force=True)
-        for lane in ("for_you", "best_bets", "revisit", "discover", "adventure"):
+        for lane in ("for_you", "best_bets", "revisit", "stretch", "adventure"):
             slate = builder._load_materialized_slate("model", lane, 100)
             assert slate is not None
             assert builder.available_count("model", lane) == len(slate.items)
@@ -472,7 +528,7 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
     counts = SlateBuilder(connection).prepare("model")
-    assert set(counts) == {"best_bets", "revisit", "discover", "adventure"}
+    assert set(counts) == {"best_bets", "revisit", "stretch", "adventure"}
 
     monkeypatch.setattr(
         SlateBuilder,
@@ -745,7 +801,7 @@ def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path
         "best_bets",
         "revisit",
         "best_bets",
-        "discover",
+        "stretch",
     ]
     assert len({item.scene_id for item in for_you.items}) == len(for_you.items)
 
@@ -758,13 +814,13 @@ def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path
         "best_bets",
         "revisit",
         "best_bets",
-        "discover",
+        "stretch",
     ]
     assert [item.source_lane for item in adventurous.items] == [
         "best_bets",
         "best_bets",
         "revisit",
-        "discover",
+        "stretch",
         "best_bets",
     ]
 
@@ -776,11 +832,11 @@ def test_recommend_cli_returns_full_score_decomposition(
     connection = _database(database)
     connection.close()
     assert (
-        run(["--db", str(database), "recommend", "--lane", "discover", "--count", "2", "--json"])
+        run(["--db", str(database), "recommend", "--lane", "stretch", "--count", "2", "--json"])
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["lane"] == "discover"
+    assert payload["lane"] == "stretch"
     assert len(payload["items"]) == 2
     assert {
         "appeal",
