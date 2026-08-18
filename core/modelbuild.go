@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -278,8 +279,8 @@ ORDER BY scene_id, occurred_at_ms`)
 	return labels, nil
 }
 
-// modelTrainingLabels mirrors _training_labels.
-func modelTrainingLabels(db dbx, labels map[string]sceneLabel) (map[string]sceneLabel, error) {
+// metadataWrongScenes mirrors _metadata_wrong_scenes.
+func metadataWrongScenes(db dbx) (map[string]bool, error) {
 	rows, err := db.Query(`
 SELECT DISTINCT scene_id FROM feedback
 WHERE feedback_type='metadata_wrong' AND reversed_by_id IS NULL`)
@@ -299,6 +300,15 @@ WHERE feedback_type='metadata_wrong' AND reversed_by_id IS NULL`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return metadataWrong, nil
+}
+
+// modelTrainingLabels mirrors _training_labels.
+func modelTrainingLabels(db dbx, labels map[string]sceneLabel) (map[string]sceneLabel, error) {
+	metadataWrong, err := metadataWrongScenes(db)
+	if err != nil {
+		return nil, err
+	}
 	result := map[string]sceneLabel{}
 	for sceneID, label := range labels {
 		if !metadataWrong[sceneID] {
@@ -316,6 +326,30 @@ func modelLabelMean(labels map[string]sceneLabel) float64 {
 		label := labels[sceneID]
 		confidences = append(confidences, label.confidence)
 		products = append(products, label.outcome*label.confidence)
+	}
+	support := sumFloats(confidences)
+	if support <= 0 {
+		return 0.0
+	}
+	return sumFloats(products) / support
+}
+
+// modelAbsoluteLabelMean mirrors _absolute_label_mean: the population
+// baseline for modelAffinities' general per-scene loop, scoped to the
+// absolute channel like that loop, so a pairwise pick anywhere in the corpus
+// never shifts the baseline a feature both scenes of some OTHER pair share is
+// measured against.
+func modelAbsoluteLabelMean(labels map[string]sceneLabel) float64 {
+	confidences := make([]float64, 0, len(labels))
+	products := make([]float64, 0, len(labels))
+	for _, sceneID := range sortedStringKeys(labels) {
+		label := labels[sceneID]
+		if label.absoluteEvidence <= 0 {
+			continue
+		}
+		confidence := 1 - math.Exp(-label.absoluteEvidence)
+		confidences = append(confidences, confidence)
+		products = append(products, confidence*label.absoluteOutcome)
 	}
 	support := sumFloats(confidences)
 	if support <= 0 {
@@ -579,23 +613,173 @@ func modelSceneContexts(db dbx) (map[string]sceneContext, error) {
 	return contexts, nil
 }
 
+// pairEvent mirrors _PairEvent: one answered comparison reconstructed from
+// its matched winner/loser feedback rows.
+type pairEvent struct {
+	winnerScene string
+	loserScene  string
+	confidence  float64
+}
+
+// modelPairEvents mirrors _pair_events.
+func modelPairEvents(db dbx) ([]pairEvent, error) {
+	metadataWrong, err := metadataWrongScenes(db)
+	if err != nil {
+		return nil, err
+	}
+	type pairAccum struct {
+		winnerScene, loserScene string
+		confidence              float64
+	}
+	byPair := map[string]*pairAccum{}
+	rows, err := db.Query(`
+SELECT scene_id, feedback_type, payload_json FROM feedback
+WHERE reversed_by_id IS NULL
+  AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+ORDER BY scene_id, occurred_at_ms`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID, feedbackType, payloadJSON string
+		if err := rows.Scan(&sceneID, &feedbackType, &payloadJSON); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if metadataWrong[sceneID] {
+			continue
+		}
+		payload, parseErr := parseJSON([]byte(payloadJSON))
+		if parseErr != nil {
+			continue
+		}
+		pairID := pythonStrOrEmpty(payload.get("pair_id"))
+		if pairID == "" {
+			continue
+		}
+		selectionProbability := pythonFloatValue(payload.get("selection_probability"))
+		if selectionProbability <= 0 {
+			selectionProbability = 1.0
+		}
+		if selectionProbability > 1 {
+			continue
+		}
+		predictedWinner := pythonFloatValue(payload.get("predicted_winner"))
+		predictedLoser := pythonFloatValue(payload.get("predicted_loser"))
+		surprise := predictedLoser - predictedWinner
+		if surprise < 0 {
+			surprise = 0
+		}
+		confidence := 0.50 * (1.0 + 2.0*surprise) * math.Min(4.0, 1.0/selectionProbability)
+		if confidence > 1.0 {
+			confidence = 1.0
+		}
+		entry, ok := byPair[pairID]
+		if !ok {
+			entry = &pairAccum{}
+			byPair[pairID] = entry
+		}
+		entry.confidence = confidence
+		if feedbackType == "curation_pair_winner" {
+			entry.winnerScene = sceneID
+		} else {
+			entry.loserScene = sceneID
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	pairIDs := make([]string, 0, len(byPair))
+	for pairID := range byPair {
+		pairIDs = append(pairIDs, pairID)
+	}
+	sort.Strings(pairIDs)
+	events := make([]pairEvent, 0, len(pairIDs))
+	for _, pairID := range pairIDs {
+		entry := byPair[pairID]
+		if entry.winnerScene == "" || entry.loserScene == "" {
+			continue
+		}
+		events = append(events, pairEvent{entry.winnerScene, entry.loserScene, entry.confidence})
+	}
+	return events, nil
+}
+
 // modelAffinities mirrors _affinities.
 func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
-	labels map[string]sceneLabel, labelMean float64) (map[string]modelAffinity, error) {
+	labels map[string]sceneLabel, absoluteLabelMean float64) (map[string]modelAffinity, error) {
 	type accumulator struct {
 		sceneID string
 		weight  float64
 		outcome float64
 	}
 	accumulators := map[string][]accumulator{}
+	// Absolute channel only: pairwise picks are accumulated as matched pairs
+	// below, where shared features cancel by construction rather than
+	// approximately (this loop's own cancellation only held when both scenes
+	// had equal confidence and the corpus-wide mean was 0).
 	for _, sceneID := range sortedStringKeys(labels) {
 		label := labels[sceneID]
+		if label.absoluteEvidence <= 0 {
+			continue
+		}
+		absoluteConfidence := 1 - math.Exp(-label.absoluteEvidence)
 		for _, feature := range sceneFeatures[sceneID] {
-			weight := label.confidence * feature.confidence * math.Abs(feature.value)
+			weight := absoluteConfidence * feature.confidence * math.Abs(feature.value)
 			accumulators[feature.featureID] = append(accumulators[feature.featureID], accumulator{
 				sceneID: sceneID,
 				weight:  weight,
-				outcome: (label.outcome - labelMean) * copysign(1, feature.value),
+				outcome: (label.absoluteOutcome - absoluteLabelMean) * copysign(1, feature.value),
+			})
+		}
+	}
+	// Pairwise comparisons: matched winner/loser, so a feature both scenes
+	// share is skipped entirely (no numerator or support contribution) — only
+	// what differed between the two scenes carries information. No labelMean
+	// subtraction: the comparison already isolates the signal.
+	pairEvents, err := modelPairEvents(db)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range pairEvents {
+		winnerFeatures := map[string]storedFeature{}
+		for _, f := range sceneFeatures[event.winnerScene] {
+			winnerFeatures[f.featureID] = f
+		}
+		loserFeatures := map[string]storedFeature{}
+		for _, f := range sceneFeatures[event.loserScene] {
+			loserFeatures[f.featureID] = f
+		}
+		var winnerOnly, loserOnly []string
+		for featureID := range winnerFeatures {
+			if _, shared := loserFeatures[featureID]; !shared {
+				winnerOnly = append(winnerOnly, featureID)
+			}
+		}
+		for featureID := range loserFeatures {
+			if _, shared := winnerFeatures[featureID]; !shared {
+				loserOnly = append(loserOnly, featureID)
+			}
+		}
+		sort.Strings(winnerOnly)
+		sort.Strings(loserOnly)
+		for _, featureID := range winnerOnly {
+			feature := winnerFeatures[featureID]
+			weight := event.confidence * feature.confidence * math.Abs(feature.value)
+			accumulators[featureID] = append(accumulators[featureID], accumulator{
+				sceneID: event.winnerScene,
+				weight:  weight,
+				outcome: copysign(1, feature.value),
+			})
+		}
+		for _, featureID := range loserOnly {
+			feature := loserFeatures[featureID]
+			weight := event.confidence * feature.confidence * math.Abs(feature.value)
+			accumulators[featureID] = append(accumulators[featureID], accumulator{
+				sceneID: event.loserScene,
+				weight:  weight,
+				outcome: -copysign(1, feature.value),
 			})
 		}
 	}
