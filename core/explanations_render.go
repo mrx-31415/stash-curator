@@ -166,7 +166,7 @@ func boundaryUnit(reasons []*explanationReason, lane string) *evidenceUnit {
 		}
 	}
 	sortUnits(exploration)
-	if (lane == "discover" || lane == "adventure") && len(exploration) > 0 {
+	if (lane == "stretch" || lane == "adventure") && len(exploration) > 0 {
 		unit := exploration[0]
 		return &unit
 	}
@@ -431,7 +431,7 @@ func specificSlots(db dbx, r *explanationReason) map[string]string {
 	case "appeal.studio":
 		return map[string]string{"studio": entityName(db, r.subjectID, "studio")}
 	case "explore.challenge":
-		return map[string]string{"challenge": challengePhrase(r.detail.get("challenged_assumption").asString())}
+		return map[string]string{"challenge": challengePhrase(r.detail.get("challenged_feature"))}
 	}
 	if strings.HasPrefix(r.code, "appeal.tag_") {
 		return map[string]string{"tags": tagNames(r)}
@@ -504,8 +504,13 @@ func outcomePhrase(neighbor jVal) string {
 }
 
 // challengePhrase mirrors render._challenge_phrase.
-func challengePhrase(value string) string {
-	switch value {
+func challengePhrase(value jVal) string {
+	if value.kind == jObj {
+		if name := strings.TrimSpace(value.get("name").asString()); name != "" {
+			return name
+		}
+	}
+	switch value.asString() {
 	case "studio":
 		return "a less familiar studio"
 	case "performer":

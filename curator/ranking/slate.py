@@ -29,7 +29,7 @@ FAMILIAR_PATTERN = (
     "best_bets",
     "revisit",
     "best_bets",
-    "discover",
+    "stretch",
     "best_bets",
     "best_bets",
     "revisit",
@@ -40,15 +40,15 @@ ADVENTUROUS_PATTERN = (
     "best_bets",
     "best_bets",
     "revisit",
-    "discover",
+    "stretch",
     "best_bets",
-    "discover",
+    "stretch",
     "adventure",
     "best_bets",
-    "discover",
+    "stretch",
     "adventure",
 )
-QUERIED_SCORE_FIRST_LANES = frozenset({"best_bets", "revisit", "discover"})
+QUERIED_SCORE_FIRST_LANES = frozenset({"best_bets", "revisit", "stretch"})
 SCORE_FIRST_RANKING_JSON = json.dumps(
     {
         "penalties": {
@@ -62,6 +62,15 @@ SCORE_FIRST_RANKING_JSON = json.dumps(
     },
     separators=(",", ":"),
 )
+
+
+def _stretch_dimension(classification: LaneClassification) -> str | None:
+    """The challenged feature id, for the per-dimension Stretch rotation."""
+    challenged = classification.qualification.get("challenged_feature")
+    if not isinstance(challenged, dict):
+        return None
+    feature_id = challenged.get("feature_id")
+    return str(feature_id) if feature_id else None
 
 
 @dataclass(frozen=True)
@@ -260,7 +269,25 @@ class SlateBuilder:
                 result.append(("lane", candidate.classification.lane))
             elif lane == "adventure" and candidate.classification.subtype:
                 result.append(("subtype", candidate.classification.subtype))
+            elif lane == "stretch":
+                dimension = _stretch_dimension(candidate.classification)
+                if dimension:
+                    result.append(("dimension", dimension))
             return tuple(result)
+
+        # At most stretch_per_dimension (default 1) card per challenged dimension
+        # per page: round-robin the target selector through every distinct
+        # dimension present, the same mechanism _target already uses to rotate
+        # adventure's five subtypes. See docs/workpackage-lane-redesign.md.
+        # Gated on varied: stretch is a QUERIED_SCORE_FIRST_LANES member, so its
+        # score_first ordering is never materialized through this path (only
+        # answered live by a plain lane_value-sorted query) — this rotation
+        # must stay out of the varied=False branch so the two stay equivalent.
+        stretch_dimensions = (
+            sorted({dim for c in candidates if (dim := _stretch_dimension(c.classification))})
+            if lane == "stretch" and varied
+            else ()
+        )
 
         def push(key: tuple[str, str]) -> None:
             candidate = by_key[key]
@@ -343,6 +370,14 @@ class SlateBuilder:
             wanted = (
                 ("subtype", target_subtype)
                 if lane == "adventure" and target_subtype
+                else (
+                    "dimension",
+                    stretch_dimensions[
+                        (len(ordered) // max(1, self.config.ranking.stretch_per_dimension))
+                        % len(stretch_dimensions)
+                    ],
+                )
+                if lane == "stretch" and stretch_dimensions
                 else ("lane", target_lane)
                 if lane == "for_you"
                 else ("all", "")
@@ -421,7 +456,7 @@ class SlateBuilder:
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
-        if lane not in {"for_you", "best_bets", "revisit", "discover", "adventure"}:
+        if lane not in {"for_you", "best_bets", "revisit", "stretch", "adventure"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
@@ -553,8 +588,27 @@ class SlateBuilder:
             if self.diversity_enabled
             else {}
         )
+        # At most stretch_per_dimension card per challenged dimension per page,
+        # mirrored from _build_order's rotation since this greedy path has its
+        # own separate selection loop for the live-recompute / filtered case.
+        # Gated on diversity_enabled to match _build_order's varied gate: with
+        # diversity off, stretch (a QUERIED_SCORE_FIRST_LANES member) must fall
+        # back to plain lane_value order, the same as the live SQL query path.
+        stretch_dimensions = (
+            sorted({dim for c in candidates if (dim := _stretch_dimension(c.classification))})
+            if lane == "stretch" and self.diversity_enabled
+            else ()
+        )
         for position in range(len(selected), count):
             target_lane, target_subtype = self._target(lane, position, exploration)
+            target_dimension = (
+                stretch_dimensions[
+                    (position // max(1, self.config.ranking.stretch_per_dimension))
+                    % len(stretch_dimensions)
+                ]
+                if lane == "stretch" and stretch_dimensions
+                else None
+            )
             remaining = [
                 candidate
                 for candidate in candidates
@@ -565,6 +619,10 @@ class SlateBuilder:
                 for candidate in remaining
                 if candidate.classification.lane == target_lane
                 and (target_subtype is None or candidate.classification.subtype == target_subtype)
+                and (
+                    target_dimension is None
+                    or _stretch_dimension(candidate.classification) == target_dimension
+                )
             ]
             pool = preferred or (
                 [
