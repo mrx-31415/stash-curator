@@ -13,7 +13,17 @@ from pathlib import Path
 
 import pytest
 
-from curator.curation import create_pair_round, pair_verdict, submit_picks
+from curator.curation import (
+    ORTHOGONAL_CANDIDATE_MULTIPLIER,
+    CurationContext,
+    _orthogonal_pairs,
+    _pair_score,
+    _pair_unlabeled,
+    create_pair_round,
+    curation_context,
+    pair_verdict,
+    submit_picks,
+)
 from tests.core.test_backend_slice6_pairs import (
     ROUND_ORTH,
     ROUND_PERF,
@@ -148,7 +158,68 @@ def test_only_answered_pairs_retire_their_scenes(sidecar: Path, tmp_path: Path) 
     assert scenes_of(third).isdisjoint(retired)
 
 
-def test_submit_picks_writes_labels_and_elo(sidecar: Path, tmp_path: Path) -> None:
+def test_orthogonal_candidates_are_over_generated_for_score_based_selection(
+    sidecar: Path, tmp_path: Path
+) -> None:
+    """_orthogonal_pairs must generate more candidates than the round needs,
+    so create_pair_round's _pair_score ranking has real choices to pick from.
+    Returning exactly `budget` pairs (the old behavior) left that ranking
+    nothing to choose between, since every generated pair used each scene
+    exactly once and so always passed the per-scene cap — the sort by
+    coverage decided everything, and the score-based selection was a no-op."""
+    conn = _fresh_selection(sidecar, tmp_path)
+    context = curation_context(conn)
+    budget = 4
+    unlabeled = _pair_unlabeled(context, frozenset())
+    candidates = _orthogonal_pairs(context, budget, frozenset())
+    expected_pairs = min(len(unlabeled), ORTHOGONAL_CANDIDATE_MULTIPLIER * budget) // 2
+    assert len(candidates) == expected_pairs
+    assert len(candidates) > budget
+    # create_pair_round still hands back at most `budget` pairs: the wider
+    # candidate set is consumed by scoring/ranking, not exposed to the caller.
+    round_data = create_pair_round(conn, "orthogonal", budget)
+    assert 0 < len(round_data["pairs"]) <= budget  # type: ignore[arg-type]
+
+
+def test_pair_score_coverage_favors_few_rare_over_many_common() -> None:
+    """Coverage is the mean rarity over the symmetric difference, not the sum.
+    A pair differing on one very rare tag (rarity 0.5) must outrank a pair
+    differing on five only-moderately-rare tags (rarity 0.2 each, summing to
+    1.0) — the old sum-based coverage would have preferred the many-tag pair
+    (1.0 > 0.5); summing rewarded "differs on everything", which spread a
+    single comparison's +-1 signal thin across all of it."""
+    context = CurationContext(
+        labels=frozenset(),
+        scene_ids=frozenset({"rare-a", "rare-b", "many-a", "many-b"}),
+        scene_tags={
+            "rare-a": frozenset({"t-rare"}),
+            "rare-b": frozenset(),
+            "many-a": frozenset({"t1", "t2", "t3", "t4", "t5"}),
+            "many-b": frozenset(),
+        },
+        scene_performers={},
+        performer_counts={},
+        performer_name={},
+        studio={},
+        scene_title={},
+        scene_date={},
+        scene_details={},
+        tag_cat={},
+        tag_name={},
+        counts={"t-rare": 4, "t1": 25, "t2": 25, "t3": 25, "t4": 25, "t5": 25},
+        appeal={},
+        blocked_scenes=frozenset(),
+        metadata_wrong=frozenset(),
+        interactive=frozenset({"t-rare", "t1", "t2", "t3", "t4", "t5"}),
+    )
+    rare_score, _, _ = _pair_score(context, "rare-a", "rare-b", "orthogonal")
+    many_score, _, _ = _pair_score(context, "many-a", "many-b", "orthogonal")
+    assert rare_score == pytest.approx(0.5)
+    assert many_score == pytest.approx(0.2)
+    assert rare_score > many_score
+
+
+def test_submit_picks_writes_labels(sidecar: Path, tmp_path: Path) -> None:
     conn = _fresh_selection(sidecar, tmp_path)
     round_data = create_pair_round(conn, "orthogonal", 4)
     round_id = str(round_data["round_id"])
@@ -179,9 +250,6 @@ def test_submit_picks_writes_labels_and_elo(sidecar: Path, tmp_path: Path) -> No
         "curation_pair_winner": "10",
         "curation_pair_loser": "0",
     }
-    # ELO rows written for the answered pair's scenes.
-    elo = conn.execute("SELECT count(*) FROM curation_pair_elo").fetchone()[0]
-    assert elo == 2
 
 
 def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) -> None:
@@ -191,7 +259,6 @@ def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) 
     pair = round_data["pairs"][0]  # type: ignore[union-attr]
     pair_id = pair["pair_id"]
     scene_a = pair["scene_a"]["scene_id"]
-    elo_before = conn.execute("SELECT count(*) FROM curation_pair_elo").fetchone()[0]
     labels_before = conn.execute(
         "SELECT count(*) FROM feedback WHERE feedback_type LIKE 'curation_pair_%'"
     ).fetchone()[0]
@@ -208,14 +275,13 @@ def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) 
         ).fetchone()[0]
         == 1
     )
-    # The flagged pair produces no winner/loser labels and no ELO update.
+    # The flagged pair produces no winner/loser labels.
     assert (
         conn.execute(
             "SELECT count(*) FROM feedback WHERE feedback_type LIKE 'curation_pair_%'"
         ).fetchone()[0]
         == labels_before
     )
-    assert conn.execute("SELECT count(*) FROM curation_pair_elo").fetchone()[0] == elo_before
     # The flagged scene is the one named in the pick.
     row = conn.execute(
         "SELECT scene_id FROM feedback WHERE feedback_type='metadata_wrong'"
@@ -232,8 +298,7 @@ def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) 
 
 def test_submit_picks_tie_writes_neutral_labels(sidecar: Path, tmp_path: Path) -> None:
     """A tie is Bradley-Terry information, not a discard: both scenes get a
-    neutral label, the row is answered with no winner, and ELO is untouched
-    because nothing beat anything."""
+    neutral label, and the row is answered with no winner."""
     conn = _fresh_selection(sidecar, tmp_path)
     round_data = create_pair_round(conn, "orthogonal", 4)
     pair = round_data["pairs"][0]  # type: ignore[union-attr]
@@ -256,7 +321,6 @@ def test_submit_picks_tie_writes_neutral_labels(sidecar: Path, tmp_path: Path) -
         pair["scene_a"]["scene_id"],
         pair["scene_b"]["scene_id"],
     }
-    assert conn.execute("SELECT count(*) FROM curation_pair_elo").fetchone()[0] == 0
     # No winner, so the pair contributes no win rate to the verdict.
     verdict = pair_verdict(conn, str(round_data["round_id"]))
     assert verdict["n_answered"] == 0

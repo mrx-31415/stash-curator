@@ -522,7 +522,13 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 			return err
 		}
 		labelMean = modelLabelMean(trainingLabels)
-		affinities, err = modelAffinities(db, sceneFeatures, trainingLabels, labelMean)
+		// modelAffinities' general per-scene loop is scoped to the absolute
+		// channel, so its own baseline must be too, or a pairwise pick
+		// anywhere in the corpus would still nudge every shared feature's
+		// affinity via labelMean even though the loop itself no longer
+		// touches that feature for a given comparison.
+		absoluteLabelMean := modelAbsoluteLabelMean(trainingLabels)
+		affinities, err = modelAffinities(db, sceneFeatures, trainingLabels, absoluteLabelMean)
 		return err
 	})
 	if err != nil {
