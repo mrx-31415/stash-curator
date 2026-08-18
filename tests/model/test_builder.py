@@ -193,6 +193,62 @@ def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
     assert winner.confidence == pytest.approx(1 - math.exp(-0.7))
 
 
+def test_pairwise_affinity_skips_shared_features_and_signals_differing_ones(
+    tmp_path: Path,
+) -> None:
+    """A comparison's Bradley-Terry gradient must land only on what differed
+    between the two scenes. old-good (tag good, performer p1, studio studio-1)
+    and unseen-good (tag good, performer p3, studio studio-2) share tag
+    'good': its affinity must be completely unaffected by the pair. performer
+    p1 (winner-only) must gain support from the comparison, and performer p3
+    (loser-only, previously absent from feature_affinity since neither scene
+    carrying it had any other evidence) must appear with a negative affinity."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    baseline = builder.build()
+
+    def affinity(model_id: str, name: str) -> tuple[float, float] | None:
+        row = connection.execute(
+            """
+            SELECT a.affinity, a.effective_support FROM feature_affinity a
+            JOIN feature_definition d USING(feature_id)
+            WHERE a.model_id=? AND d.name=?
+            """,
+            (model_id, name),
+        ).fetchone()
+        return (float(row[0]), float(row[1])) if row is not None else None
+
+    tag_good_before = affinity(baseline.model_id, "tag:good")
+    performer_p1_before = affinity(baseline.model_id, "performer:p1")
+    assert tag_good_before is not None
+    assert performer_p1_before is not None
+    assert affinity(baseline.model_id, "performer:p3") is None
+
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cpw-shared', 'old-good', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "pfx1", "predicted_winner": 0.1, "predicted_loser": 0.1,
+                  "selection_probability": 1.0}'),
+               ('cpl-shared', 'unseen-good', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "pfx1", "predicted_winner": 0.1, "predicted_loser": 0.1,
+                  "selection_probability": 1.0}')
+        """
+    )
+    after = builder.build()
+    assert after.model_id != baseline.model_id
+
+    tag_good_after = affinity(after.model_id, "tag:good")
+    performer_p1_after = affinity(after.model_id, "performer:p1")
+    performer_p3_after = affinity(after.model_id, "performer:p3")
+    assert tag_good_after == pytest.approx(tag_good_before)
+    assert performer_p1_after is not None
+    assert performer_p1_after[1] > performer_p1_before[1]
+    assert performer_p3_after is not None
+    assert performer_p3_after[0] < 0
+
+
 def test_curation_pair_labels_never_become_absolute_sentiment(tmp_path: Path) -> None:
     """A pick is relative evidence about the features that differed. It trains
     affinities through the full-signal channel, but must not materialize as the

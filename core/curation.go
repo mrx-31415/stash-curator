@@ -1557,14 +1557,14 @@ func tagContextCandidatesBodyOp(pluginDir string, payload, settings jVal) (jVal,
 // ── Pairwise picks (mirror of the curation.py pair section) ────────────────
 
 const (
-	pairMinBudget          = 4
-	pairMaxBudget          = 20
-	pairDefaultBudget      = 10
-	pairMaxCandidates      = 20_000
-	pairSceneCap           = 2
-	pairDimensionFitShare  = 0.5
-	pairEloK               = 16.0
-	pairEloInitial         = 1500.0
+	pairMinBudget         = 4
+	pairMaxBudget         = 20
+	pairDefaultBudget     = 10
+	pairMaxCandidates     = 20_000
+	pairSceneCap          = 2
+	pairDimensionFitShare = 0.5
+	// orthogonalCandidateMultiplier mirrors curation.ORTHOGONAL_CANDIDATE_MULTIPLIER.
+	orthogonalCandidateMultiplier = 10
 	// pairVerdictPrior mirrors curation.PAIR_VERDICT_PRIOR.
 	pairVerdictPrior = 4.0
 )
@@ -1628,6 +1628,11 @@ func sceneCoverage(ctx *curationContext, sceneID string) float64 {
 	return total
 }
 
+// pairScore mirrors curation._pair_score. Coverage is the mean rarity over
+// the symmetric difference, not the sum: summing rewards pairs that differ on
+// many features, which spreads a single comparison's +-1 signal thin across
+// all of them. Averaging instead favors pairs that differ on few but rare
+// features, where one answer resolves something concrete.
 func pairScore(ctx *curationContext, a, b, dimension string) (score, predA, predB float64) {
 	predA = ctx.appeal[a]
 	predB = ctx.appeal[b]
@@ -1644,28 +1649,37 @@ func pairScore(ctx *curationContext, a, b, dimension string) (score, predA, pred
 			tagsB[tagID] = true
 		}
 	}
-	var coverage float64
+	var coverageSum float64
+	var diffCount int
 	for tagID := range tagsA {
 		if !tagsB[tagID] {
-			coverage += ctx.rarity(tagID)
+			coverageSum += ctx.rarity(tagID)
+			diffCount++
 		}
 	}
 	for tagID := range tagsB {
 		if !tagsA[tagID] {
-			coverage += ctx.rarity(tagID)
+			coverageSum += ctx.rarity(tagID)
+			diffCount++
 		}
 	}
 	perfsA := ctx.scenePerformers[a]
 	perfsB := ctx.scenePerformers[b]
 	for performerID := range perfsA {
 		if !perfsB[performerID] {
-			coverage += pairRarity(ctx, performerID)
+			coverageSum += pairRarity(ctx, performerID)
+			diffCount++
 		}
 	}
 	for performerID := range perfsB {
 		if !perfsA[performerID] {
-			coverage += pairRarity(ctx, performerID)
+			coverageSum += pairRarity(ctx, performerID)
+			diffCount++
 		}
+	}
+	var coverage float64
+	if diffCount > 0 {
+		coverage = coverageSum / float64(diffCount)
 	}
 	var shared int
 	switch dimension {
@@ -1820,6 +1834,13 @@ func mapEqual(a, b map[string]bool) bool {
 	return true
 }
 
+// orthogonalPairs mirrors curation._orthogonal_pairs: candidates from the top
+// orthogonalCandidateMultiplier x budget scenes, adjacent-paired. This
+// deliberately over-generates — createPairRound's own pairScore ranking then
+// picks the best `budget` of these; returning exactly `budget` pairs (as this
+// used to) left that ranking nothing to choose between, since every
+// generated pair used each scene exactly once and so always passed the
+// per-scene cap.
 func orthogonalPairs(ctx *curationContext, budget int, seen map[string]bool) []pairCandidate {
 	unlabeled := pairUnlabeled(ctx, seen)
 	sort.Slice(unlabeled, func(i, j int) bool {
@@ -1829,12 +1850,12 @@ func orthogonalPairs(ctx *curationContext, budget int, seen map[string]bool) []p
 		}
 		return unlabeled[i] < unlabeled[j]
 	})
-	take := 2 * budget
+	take := orthogonalCandidateMultiplier * budget
 	if len(unlabeled) < take {
 		take = len(unlabeled)
 	}
 	var out []pairCandidate
-	for i := 0; i+1 < take && len(out) < budget; i += 2 {
+	for i := 0; i+1 < take; i += 2 {
 		out = append(out, pairCandidate{a: unlabeled[i], b: unlabeled[i+1]})
 	}
 	return out
@@ -2166,41 +2187,6 @@ func shrunkRate(wins, appearances int) float64 {
 	return (float64(wins) + half) / (float64(appearances) + pairVerdictPrior)
 }
 
-func updateElo(conn *sql.Conn, sceneA, sceneB, winner string, now int64) error {
-	current := func(sceneID string) float64 {
-		var elo sql.NullFloat64
-		err := conn.QueryRowContext(context.Background(),
-			`SELECT elo FROM curation_pair_elo WHERE scene_id=?`, sceneID).Scan(&elo)
-		if err == nil && elo.Valid {
-			return elo.Float64
-		}
-		return pairEloInitial
-	}
-	ra, rb := current(sceneA), current(sceneB)
-	ea := 1.0 / (1.0 + math.Pow(10.0, (rb-ra)/400.0))
-	eb := 1.0 - ea
-	if winner == "a" {
-		ra += pairEloK * (1.0 - ea)
-		rb += pairEloK * (0.0 - eb)
-	} else {
-		ra += pairEloK * (0.0 - ea)
-		rb += pairEloK * (1.0 - eb)
-	}
-	for _, pair := range []struct {
-		sceneID string
-		elo     float64
-	}{{sceneA, ra}, {sceneB, rb}} {
-		if _, err := conn.ExecContext(context.Background(), `
-INSERT INTO curation_pair_elo(scene_id, elo, updated_at_ms)
-VALUES (?, ?, ?)
-ON CONFLICT(scene_id) DO UPDATE SET elo=excluded.elo, updated_at_ms=excluded.updated_at_ms`,
-			pair.sceneID, pair.elo, now); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // submitPicks mirrors curation.submit_picks.
 func submitPicks(db dbx, roundID string, picks jVal) (jVal, error) {
 	if roundID == "" {
@@ -2349,11 +2335,6 @@ INSERT INTO feedback(
 				`UPDATE curation_pair SET status='answered', winner=?, occurred_at_ms=? WHERE pair_id=?`,
 				storedWinner, now, p.pairID); err != nil {
 				return err
-			}
-			if !tie {
-				if err := updateElo(conn, row.sceneA, row.sceneB, p.winner, now); err != nil {
-					return err
-				}
 			}
 			if err := coordinatorRequest(conn, "curation_picks", now); err != nil {
 				return err

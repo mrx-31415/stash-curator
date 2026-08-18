@@ -116,6 +116,16 @@ class _NeighborEvidence:
 
 
 @dataclass(frozen=True)
+class _PairEvent:
+    """One answered pick, reconstructed from its matched winner/loser feedback
+    rows. ``confidence`` is the same surprise/IPS value both rows carry."""
+
+    winner_scene: str
+    loser_scene: str
+    confidence: float
+
+
+@dataclass(frozen=True)
 class _Score:
     scene_id: str
     general_appeal: float
@@ -347,7 +357,13 @@ class PreferenceModelBuilder:
             stage_started = time.perf_counter()
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
             label_mean = self._label_mean(training_labels)
-            affinities = self._affinities(scene_features, training_labels, label_mean)
+            # _affinities' general per-scene loop is scoped to the absolute
+            # channel (see _affinities), so its own baseline must be too, or a
+            # pairwise pick anywhere in the corpus would still nudge every
+            # shared feature's affinity via label_mean even though the loop
+            # itself no longer touches that feature for this comparison.
+            absolute_label_mean = self._absolute_label_mean(training_labels)
+            affinities = self._affinities(scene_features, training_labels, absolute_label_mean)
             self._report(0.35)
             timings["affinities"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "model.affinities", timings["affinities"])
@@ -532,8 +548,8 @@ class PreferenceModelBuilder:
             )
         return labels
 
-    def _training_labels(self, labels: dict[str, _SceneLabel]) -> dict[str, _SceneLabel]:
-        metadata_wrong = {
+    def _metadata_wrong_scenes(self) -> set[str]:
+        return {
             str(row[0])
             for row in self.connection.execute(
                 """
@@ -542,6 +558,9 @@ class PreferenceModelBuilder:
                 """
             )
         }
+
+    def _training_labels(self, labels: dict[str, _SceneLabel]) -> dict[str, _SceneLabel]:
+        metadata_wrong = self._metadata_wrong_scenes()
         return {
             scene_id: label for scene_id, label in labels.items() if scene_id not in metadata_wrong
         }
@@ -638,22 +657,98 @@ class PreferenceModelBuilder:
             _fingerprint_table(self.connection, digest, label, statement)
         return digest.hexdigest()
 
+    def _pair_events(self) -> list[_PairEvent]:
+        """Reconstruct answered comparisons from their matched winner/loser
+        feedback rows, sharing a pair_id in payload_json. A tie has no winner
+        so it is not a _PairEvent; a pair reversed on only one side (a
+        feedback correction touching just the winner or loser row) yields no
+        complete match and is dropped, same as the excluded scene below."""
+        metadata_wrong = self._metadata_wrong_scenes()
+        by_pair: dict[str, dict[str, Any]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT scene_id, feedback_type, payload_json FROM feedback
+            WHERE reversed_by_id IS NULL
+              AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+            ORDER BY scene_id, occurred_at_ms
+            """
+        ):
+            payload = json.loads(str(row["payload_json"]) or "{}")
+            pair_id = payload.get("pair_id")
+            scene_id = str(row["scene_id"])
+            if not pair_id or scene_id in metadata_wrong:
+                continue
+            try:
+                selection_probability = float(payload.get("selection_probability") or 1.0)
+                predicted_winner = float(payload.get("predicted_winner") or 0.0)
+                predicted_loser = float(payload.get("predicted_loser") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if not 0 < selection_probability <= 1:
+                continue
+            surprise = max(0.0, predicted_loser - predicted_winner)
+            confidence = min(
+                1.0,
+                self.config.model.curation_pair_confidence
+                * (1.0 + self.config.model.curation_pair_surprise_bonus * surprise)
+                * min(self.config.model.curation_pair_ips_cap, 1.0 / selection_probability),
+            )
+            entry = by_pair.setdefault(str(pair_id), {"confidence": confidence})
+            if str(row["feedback_type"]) == "curation_pair_winner":
+                entry["winner_scene"] = scene_id
+            else:
+                entry["loser_scene"] = scene_id
+        return [
+            _PairEvent(entry["winner_scene"], entry["loser_scene"], entry["confidence"])
+            for _, entry in sorted(by_pair.items())
+            if "winner_scene" in entry and "loser_scene" in entry
+        ]
+
     def _affinities(
         self,
         scene_features: dict[str, tuple[StoredFeature, ...]],
         labels: dict[str, _SceneLabel],
-        label_mean: float,
+        absolute_label_mean: float,
     ) -> dict[str, _Affinity]:
         accumulators: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
         for scene_id, label in labels.items():
+            # Absolute channel only: pairwise picks are accumulated as matched
+            # pairs below, where shared features cancel by construction rather
+            # than approximately (this loop's own cancellation only held when
+            # both scenes had equal confidence and the corpus-wide mean was 0).
+            if label.absolute_evidence <= 0:
+                continue
+            absolute_confidence = 1 - math.exp(-label.absolute_evidence)
             for feature in scene_features.get(scene_id, ()):
-                weight = label.confidence * feature.confidence * abs(feature.value)
+                weight = absolute_confidence * feature.confidence * abs(feature.value)
                 accumulators[feature.feature_id].append(
                     (
                         scene_id,
                         weight,
-                        (label.outcome - label_mean) * math.copysign(1, feature.value),
+                        (label.absolute_outcome - absolute_label_mean)
+                        * math.copysign(1, feature.value),
                     )
+                )
+        # Pairwise comparisons: matched winner/loser, so a feature both scenes
+        # share is skipped entirely (no numerator or support contribution) —
+        # only what differed between the two scenes carries information. No
+        # label_mean subtraction: the comparison already isolates the signal.
+        for event in self._pair_events():
+            winner_features = {f.feature_id: f for f in scene_features.get(event.winner_scene, ())}
+            loser_features = {f.feature_id: f for f in scene_features.get(event.loser_scene, ())}
+            # sorted(): set difference has no defined order, and this feeds
+            # floating-point sums that must stay byte-identical run to run.
+            for feature_id in sorted(winner_features.keys() - loser_features.keys()):
+                feature = winner_features[feature_id]
+                weight = event.confidence * feature.confidence * abs(feature.value)
+                accumulators[feature_id].append(
+                    (event.winner_scene, weight, math.copysign(1, feature.value))
+                )
+            for feature_id in sorted(loser_features.keys() - winner_features.keys()):
+                feature = loser_features[feature_id]
+                weight = event.confidence * feature.confidence * abs(feature.value)
+                accumulators[feature_id].append(
+                    (event.loser_scene, weight, -math.copysign(1, feature.value))
                 )
         scene_context = self._scene_contexts()
         result: dict[str, _Affinity] = {}
@@ -755,6 +850,26 @@ class PreferenceModelBuilder:
         if support <= 0:
             return 0.0
         return sum(label.outcome * label.confidence for label in labels.values()) / support
+
+    @staticmethod
+    def _absolute_label_mean(labels: dict[str, _SceneLabel]) -> float:
+        """The population baseline for _affinities' general per-scene loop.
+
+        Scoped to the absolute channel (matching that loop's own scope) so a
+        pairwise pick's learning-channel outcome never shifts the baseline a
+        shared feature is measured against — otherwise a feature two scenes
+        share would still drift slightly whenever any pair anywhere in the
+        corpus changed, even though its own weight and outcome did not.
+        """
+        weighted = [
+            (1 - math.exp(-label.absolute_evidence), label.absolute_outcome)
+            for label in labels.values()
+            if label.absolute_evidence > 0
+        ]
+        support = sum(confidence for confidence, _ in weighted)
+        if support <= 0:
+            return 0.0
+        return sum(confidence * outcome for confidence, outcome in weighted) / support
 
     def _scene_contexts(self) -> dict[str, tuple[str | None, tuple[str, ...]]]:
         contexts: dict[str, tuple[str | None, list[str]]] = {}
