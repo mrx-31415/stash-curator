@@ -802,7 +802,7 @@ PAIR_ELO_INITIAL = 1500.0
 # so a 2-of-2 sweep reports 0.67 rather than a meaningless 1.00.
 PAIR_VERDICT_PRIOR = 4.0
 VERDICT_QUERY_CHUNK = 400
-PAIR_PICK_VALUES = ("a", "b", "skip", "flag")
+PAIR_PICK_VALUES = ("a", "b", "tie", "skip", "flag")
 
 
 def _pair_rarity(context: CurationContext, performer_id: str) -> float:
@@ -974,10 +974,14 @@ def create_pair_round(
     ):
         raise ValueError(f"unknown performer: {performer_id}")
     context = curation_context(connection, config)
+    # Only answered pairs retire their scenes. Offering a pair used to burn
+    # both scenes forever, so an abandoned round — or a stream that prefetches
+    # ahead of the user — permanently consumed scenes nobody ever judged.
     seen = frozenset(
         str(row[0])
         for row in connection.execute(
-            "SELECT scene_a FROM curation_pair UNION SELECT scene_b FROM curation_pair"
+            "SELECT scene_a FROM curation_pair WHERE status='answered'"
+            " UNION SELECT scene_b FROM curation_pair WHERE status='answered'"
         )
     )
     if dimension == "orthogonal":
@@ -1127,7 +1131,7 @@ def submit_picks(
             raise ValueError(f"pair already answered: {pair_id}")
         winner = entry.get("winner")
         if winner not in PAIR_PICK_VALUES:
-            raise ValueError("winner must be 'a', 'b', 'skip', or 'flag'")
+            raise ValueError("winner must be 'a', 'b', 'tie', 'skip', or 'flag'")
         scene: str | None = None
         if winner == "flag":
             scene = entry.get("scene")
@@ -1172,12 +1176,18 @@ def submit_picks(
                 continue
             scene_a = str(row["scene_a"])
             scene_b = str(row["scene_b"])
+            # A tie is "these two are equally appealing" — real Bradley-Terry
+            # information that pulls the features which differed toward the
+            # mean, so it carries a label like any other answer. It has no
+            # winner, so the row keeps winner NULL; every consumer of
+            # 'answered' already guards on winner IN ('a', 'b').
+            tie = winner == "tie"
             winner_scene = scene_a if winner == "a" else scene_b
             loser_scene = scene_b if winner == "a" else scene_a
             pred_winner = (
-                payload.get("predicted_a") if winner == "a" else payload.get("predicted_b")
+                payload.get("predicted_a") if winner != "b" else payload.get("predicted_b")
             )
-            pred_loser = payload.get("predicted_b") if winner == "a" else payload.get("predicted_a")
+            pred_loser = payload.get("predicted_b") if winner != "b" else payload.get("predicted_a")
             label_payload = {
                 "pair_id": pair_id,
                 "round_id": round_id,
@@ -1186,7 +1196,15 @@ def submit_picks(
                 "predicted_loser": pred_loser,
                 "selection_probability": float(row["selection_probability"]),
             }
-            for scene_id, value in ((winner_scene, "10"), (loser_scene, "0")):
+            labels: tuple[tuple[str, str, str], ...] = (
+                ((scene_a, "5", "curation_pair_tie"), (scene_b, "5", "curation_pair_tie"))
+                if tie
+                else (
+                    (winner_scene, "10", "curation_pair_winner"),
+                    (loser_scene, "0", "curation_pair_loser"),
+                )
+            )
+            for scene_id, value, feedback_type in labels:
                 connection.execute(
                     """
                     INSERT INTO feedback(
@@ -1197,7 +1215,7 @@ def submit_picks(
                     (
                         f"{now_ms}-{uuid4().hex}",
                         scene_id,
-                        "curation_pair_winner" if value == "10" else "curation_pair_loser",
+                        feedback_type,
                         value,
                         now_ms,
                         json.dumps(label_payload, sort_keys=True, separators=(",", ":")),
@@ -1206,9 +1224,10 @@ def submit_picks(
             connection.execute(
                 "UPDATE curation_pair SET status='answered', winner=?, occurred_at_ms=?"
                 " WHERE pair_id=?",
-                (winner, now_ms, pair_id),
+                (None if tie else winner, now_ms, pair_id),
             )
-            _update_elo(connection, scene_a, scene_b, winner, now_ms)
+            if not tie:
+                _update_elo(connection, scene_a, scene_b, winner, now_ms)
             coordinator.request("curation_picks")
             accepted += 1
     return {

@@ -42,6 +42,16 @@ type sceneLabel struct {
 var pairSignalTypes = map[string]bool{
 	"curation_pair_winner": true,
 	"curation_pair_loser":  true,
+	"curation_pair_tie":    true,
+}
+
+// pairSignalOutcomes mirrors builder.PAIR_SIGNAL_OUTCOMES: the Bradley-Terry
+// gradient per label. A tie contributes 0, pulling the features that differed
+// between the two scenes toward the label mean rather than either extreme.
+var pairSignalOutcomes = map[string]float64{
+	"curation_pair_winner": 1.0,
+	"curation_pair_loser":  -1.0,
+	"curation_pair_tie":    0.0,
 }
 
 // storedFeature mirrors features.store.StoredFeature.
@@ -168,7 +178,9 @@ ORDER BY scene_id, occurred_at_ms`)
 	rows, err = db.Query(`
 SELECT scene_id, feedback_type, payload_json FROM feedback
 WHERE reversed_by_id IS NULL
-  AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+  AND feedback_type IN (
+      'curation_pair_winner', 'curation_pair_loser', 'curation_pair_tie'
+  )
 ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
 		return nil, err
@@ -192,7 +204,6 @@ ORDER BY scene_id, occurred_at_ms`)
 		}
 		predictedWinner := pythonFloatValue(payload.get("predicted_winner"))
 		predictedLoser := pythonFloatValue(payload.get("predicted_loser"))
-		isWinner := feedbackType == "curation_pair_winner"
 		surprise := predictedLoser - predictedWinner
 		if surprise < 0 {
 			surprise = 0
@@ -201,11 +212,8 @@ ORDER BY scene_id, occurred_at_ms`)
 		if confidence > 1.0 {
 			confidence = 1.0
 		}
-		value := -1.0
-		if isWinner {
-			value = 1.0
-		}
-		signals[sceneID] = append(signals[sceneID], signal{value, confidence, feedbackType})
+		signals[sceneID] = append(signals[sceneID],
+			signal{pairSignalOutcomes[feedbackType], confidence, feedbackType})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

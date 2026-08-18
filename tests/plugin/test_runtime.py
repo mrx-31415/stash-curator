@@ -438,10 +438,13 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    # Tag sentiment lives exclusively under Manage > Taste Profile now (GH
-    # #152 round 2) — Curate's old "Tag sentiment" tab duplicated it and was
-    # removed, since Taste Profile is Manage's default landing section.
-    assert "function TasteProfilePanel({ embedded = false } = {})" in source
+    # One control, two homes: Manage > Taste Profile shows the full list, and
+    # Curate > Tag sentiment mounts the same panel as a "Needs answer" queue.
+    assert 'function TasteProfilePanel({ embedded = false, initialStatus = "all" } = {})' in source
+    assert (
+        'React.createElement(TasteProfilePanel, { embedded: true, initialStatus: "unanswered" })'
+        in source
+    )
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -458,32 +461,47 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'if (sort !== "suggested")' in source
 
 
-def test_curate_lane_renders_picks() -> None:
+def test_curate_lane_renders_sectioned_stream() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert 'value: "curate"' in source
-    # No tab switcher any more — Curate is pair-comparison only now that its
-    # old "Tag sentiment" tab (a duplicate of Manage > Taste Profile) is gone.
+    # Curate is a sectioned view now: the old landing screen forced a choice
+    # between "Random round" and "Pick-test a hypothesis", which are the same
+    # activity with a different pair-selection filter.
+    assert "const CURATE_SECTIONS = [" in source
+    for section in ("stream", "hypothesis", "sentiment", "progress"):
+        assert f'value: "{section}"' in source
+    assert 'React.createElement("strong", null, "Random round")' not in source
+    assert 'variant: "primary", disabled: picksBusy, onClick: () => generatePicks' not in source
     assert "curateTab" not in source
-    assert "Compare scenes in pairs to teach the model fast" in source
+    assert "function SectionShell(" in source
+    assert 'navLabel: "Curate sections"' in source
+    assert 'navLabel: "Manage sections"' in source
+    assert 'lane === "curate" && React.createElement(CuratePanel,' in source
+    assert "section: curateSection, onSelectSection: openCurate" in source
+    assert "function openCurate(section)" in source
+    # Curate and Manage share ?section=, so switching views must clear it.
+    assert '["performer", "label", "id", "type", "section"]' in source
+
+    # The stream: answers post as they happen, with one buffered for undo.
+    assert "function CurateStream()" in source
+    assert "function usePickAnswers(" in source
+    assert "CURATE_COMMIT_IDLE_MS" in source
+    assert "CURATE_PREFETCH_MARGIN" in source
+    assert "Submit picks" not in source
+    assert "picksUndo" not in source
+    assert "forwardPicks" not in source
+    assert 'event.key === "Backspace"' in source
+    assert "curator-pick-prefetch" in source
+
     assert "PickSceneCard" in source
-    assert 'event.key === "ArrowLeft"' in source
-    assert 'event.key === "ArrowRight"' in source
-    assert 'event.key === "ArrowUp"' in source
-    assert 'event.key === "ArrowDown"' in source
-    assert "backPicks" in source
-    assert "forwardPicks" in source
-    assert "picksUndo" in source
-    assert "pickCellLabel" in source
-    assert "without ${context}" in source
-    assert "curator-pick-verdict-note" in source
-    assert "shared features cancel, differing ones get the signal." in source
-    assert "You preferred" in source
-    assert "Picks were one-sided" in source
+    assert "function PickStage(" in source
+    for key in ("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"):
+        assert f'{key}: "' in source
     assert "← Left" in source
-    assert "Similar ↑" in source
+    assert "Equal ↑" in source
     assert "Skip ↓" in source
-    assert "FLASH_MS" in source
+    assert "CURATE_FLASH_MS" in source
     assert "setFlash" in source
     assert "curator-pick-video" in source
     assert "curator-pick-info" in source
@@ -493,29 +511,41 @@ def test_curate_lane_renders_picks() -> None:
     assert "Metadata wrong" in source
     assert "curator-pick-flag" in source
     assert 'winner: "flag"' in source
+    assert "curator-pick-selected" in source
+
+    # A tie is an answer, not a discard.
+    assert 'onAnswer("tie")' in source
+    assert '{ ArrowUp: "tie"' not in source or 'ArrowUp: "tie"' in source
+
+    # In-context tag sentiment on the comparison screen (GH #153 problem 2).
+    assert "function PairTagSentiment(" in source
+    assert "curator-pick-tag-strip" in source
+    assert "TagSentimentControl" in source
+
     assert 'operation: "get_curation_picks"' in source
     assert 'operation: "submit_curation_picks"' in source
     assert 'operation: "get_curation_pair_verdict"' in source
     assert 'operation: "get_tag_context_candidates"' in source
-    assert '"Pick-test"' in source
-    assert '"Random round"' in source
-    assert "PICKS_STATE_KEY" in source
-    assert "curator-pick-selected" in source
-    assert 'value: "curate",\n      label: "Curate",\n      icon: faBullseye' in source
-    assert 'lane === "curate" && React.createElement(CuratePanel)' in source
+    assert 'operation: "get_curation_impact"' in source
+    assert "ImpactReport" in source
+    assert "loadSuggestions" in source
+    # Hypothesis candidates come from tags the model is unsure about, not the
+    # ones already rated low.
+    assert "Ideas Curator is unsure about" in source
+    assert "left.confidence - right.confidence" in source
+
     assert "CurateNudge" in source
     assert "CURATE_NUDGE_KEY" in source
     assert "MAX_NUDGE_ROUNDS" in source
     assert "curator-curate-nudge-dismiss" in source
-    assert 'operation: "get_curation_impact"' in source
-    assert "ImpactReport" in source
-    assert "loadSuggestions" in source
-    assert "MAX_SUGGESTIONS_PER_BASE" in source
-    # The scene-batch rating flow is retired: picks are the single interaction.
+
+    # The scene-batch rating flow stays retired, and the round-scoped picks
+    # cache is gone with the submit gate.
     assert "get_curation_batch" not in source
     assert "submit_curation_ratings" not in source
     assert "CurationSceneCard" not in source
     assert "CURATION_STATE_KEY" not in source
+    assert "PICKS_STATE_KEY" not in source
 
 
 def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_traces() -> None:

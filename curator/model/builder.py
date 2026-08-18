@@ -45,7 +45,15 @@ PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
 MODEL_BUILD_VERSION = 4
 # Pairwise-pick signals train feature affinities but never stand in for a
 # scene's own absolute sentiment; see _SceneLabel.
-PAIR_SIGNAL_TYPES = frozenset({"curation_pair_winner", "curation_pair_loser"})
+PAIR_SIGNAL_TYPES = frozenset({"curation_pair_winner", "curation_pair_loser", "curation_pair_tie"})
+# Outcome per pair label: the Bradley-Terry gradient. A tie contributes 0,
+# which pulls the features that differed between the two scenes toward the
+# label mean rather than toward either extreme.
+PAIR_SIGNAL_OUTCOMES = {
+    "curation_pair_winner": 1.0,
+    "curation_pair_loser": -1.0,
+    "curation_pair_tie": 0.0,
+}
 
 
 @dataclass(frozen=True)
@@ -461,7 +469,9 @@ class PreferenceModelBuilder:
             """
             SELECT scene_id, feedback_type, payload_json FROM feedback
             WHERE reversed_by_id IS NULL
-              AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
+              AND feedback_type IN (
+                  'curation_pair_winner', 'curation_pair_loser', 'curation_pair_tie'
+              )
             ORDER BY scene_id, occurred_at_ms
             """
         ):
@@ -474,7 +484,7 @@ class PreferenceModelBuilder:
                 continue
             if not 0 < selection_probability <= 1:
                 continue
-            is_winner = str(row["feedback_type"]) == "curation_pair_winner"
+            feedback_type = str(row["feedback_type"])
             # Surprise-weighted: a pick that contradicts the model's predicted
             # ordering is stronger evidence than one that confirms it.
             surprise = max(0.0, predicted_loser - predicted_winner)
@@ -485,7 +495,7 @@ class PreferenceModelBuilder:
             )
             confidence = min(1.0, confidence)
             signals[str(row["scene_id"])].append(
-                (1.0 if is_winner else -1.0, confidence, str(row["feedback_type"]))
+                (PAIR_SIGNAL_OUTCOMES[feedback_type], confidence, feedback_type)
             )
         for row in self.connection.execute(
             "SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL"

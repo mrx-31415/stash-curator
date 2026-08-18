@@ -263,6 +263,21 @@ def test_submit_curation_picks_byte_identical(
     assert_slice6_identical(binary, raw, slice6_sidecar)
 
 
+def test_submit_curation_picks_tie_byte_identical(
+    binary: Path, stub_stash: str, slice6_sidecar: Path
+) -> None:
+    """A tie answers the pair with no winner and writes neutral labels for both
+    scenes; ELO stays untouched. ps1 is the open pair of the performer round."""
+    raw = payload(
+        "submit_curation_picks",
+        slice6_sidecar,
+        stub_stash,
+        round_id=ROUND_PERF,
+        picks=[{"pair_id": "ps1", "winner": "tie"}],
+    )
+    assert_slice6_identical(binary, raw, slice6_sidecar)
+
+
 def test_submit_curation_picks_error_paths(
     binary: Path, stub_stash: str, slice6_sidecar: Path
 ) -> None:
