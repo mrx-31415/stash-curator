@@ -3059,6 +3059,51 @@
   gap: 0.25rem;
 }
 
+/* Rate-strip on the comparison screen: the tags carried by the pair currently
+   on screen, so sentiment can be taught in context rather than only from the
+   separate Tag sentiment list. */
+.curator-pick-tag-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--curator-border);
+}
+
+.curator-pick-tag-strip-label {
+  font-size: 0.8rem;
+  color: var(--curator-text-muted);
+}
+
+.curator-pick-tag-strip-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.curator-pick-tag-strip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.curator-pick-tag-strip-item .svg-inline--fa {
+  margin-left: 0.35rem;
+}
+
+/* Offscreen warm-up for the next pair's stills, so advancing the stream does
+   not flash empty cards. */
+.curator-pick-prefetch {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
 .curator-pick-verdict-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
