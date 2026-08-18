@@ -1573,7 +1573,9 @@ var pairDimensions = map[string]bool{
 	"tag": true, "performer": true, "studio": true, "orthogonal": true,
 }
 
-var pairPickValues = map[string]bool{"a": true, "b": true, "skip": true, "flag": true}
+var pairPickValues = map[string]bool{
+	"a": true, "b": true, "tie": true, "skip": true, "flag": true,
+}
 
 func pairRarity(ctx *curationContext, performerID string) float64 {
 	n := ctx.performerCounts[performerID]
@@ -1916,8 +1918,12 @@ func createPairRound(db dbx, dimension string, budget int, baseTagID, contextTag
 	if err != nil {
 		return jvNull(), err
 	}
+	// Only answered pairs retire their scenes. Offering a pair used to burn
+	// both scenes forever, so an abandoned round — or a stream that prefetches
+	// ahead of the user — permanently consumed scenes nobody ever judged.
 	seen := map[string]bool{}
-	rows, err := db.Query(`SELECT scene_a FROM curation_pair UNION SELECT scene_b FROM curation_pair`)
+	rows, err := db.Query(`SELECT scene_a FROM curation_pair WHERE status='answered'
+UNION SELECT scene_b FROM curation_pair WHERE status='answered'`)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -2238,7 +2244,7 @@ func submitPicks(db dbx, roundID string, picks jVal) (jVal, error) {
 		}
 		winner := pythonStrOrEmpty(entry.get("winner"))
 		if !pairPickValues[winner] {
-			return jvNull(), fmt.Errorf("winner must be 'a', 'b', 'skip', or 'flag'")
+			return jvNull(), fmt.Errorf("winner must be 'a', 'b', 'tie', 'skip', or 'flag'")
 		}
 		scene := pythonStrOrEmpty(entry.get("scene"))
 		if winner == "flag" && scene != "a" && scene != "b" {
@@ -2285,6 +2291,12 @@ INSERT INTO feedback(
 				skipped++
 				continue
 			}
+			// A tie is "these two are equally appealing" — real Bradley-Terry
+			// information that pulls the features which differed toward the
+			// mean, so it carries a label like any other answer. It has no
+			// winner, so the row keeps winner NULL; every consumer of
+			// 'answered' already guards on winner IN ('a', 'b').
+			tie := p.winner == "tie"
 			winnerScene := row.sceneA
 			loserScene := row.sceneB
 			if p.winner == "b" {
@@ -2304,14 +2316,22 @@ INSERT INTO feedback(
 				jvKey("selection_probability", jvFloat(row.probability)),
 			)
 			labelJSON := labelPayload.marshalSortedKeys()
-			for _, label := range []struct {
+			type pairLabel struct {
 				sceneID string
 				value   string
 				kind    string
-			}{
+			}
+			labels := []pairLabel{
 				{winnerScene, "10", "curation_pair_winner"},
 				{loserScene, "0", "curation_pair_loser"},
-			} {
+			}
+			if tie {
+				labels = []pairLabel{
+					{row.sceneA, "5", "curation_pair_tie"},
+					{row.sceneB, "5", "curation_pair_tie"},
+				}
+			}
+			for _, label := range labels {
 				if _, err := conn.ExecContext(context.Background(), `
 INSERT INTO feedback(
     feedback_id, scene_id, feedback_type, value, occurred_at_ms,
@@ -2321,13 +2341,19 @@ INSERT INTO feedback(
 					return err
 				}
 			}
+			var storedWinner any = p.winner
+			if tie {
+				storedWinner = nil
+			}
 			if _, err := conn.ExecContext(context.Background(),
 				`UPDATE curation_pair SET status='answered', winner=?, occurred_at_ms=? WHERE pair_id=?`,
-				p.winner, now, p.pairID); err != nil {
+				storedWinner, now, p.pairID); err != nil {
 				return err
 			}
-			if err := updateElo(conn, row.sceneA, row.sceneB, p.winner, now); err != nil {
-				return err
+			if !tie {
+				if err := updateElo(conn, row.sceneA, row.sceneB, p.winner, now); err != nil {
+					return err
+				}
 			}
 			if err := coordinatorRequest(conn, "curation_picks", now); err != nil {
 				return err
