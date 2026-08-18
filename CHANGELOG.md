@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0](https://github.com/mrx-31415/stash-curator/compare/v0.13.0...v0.14.0) (2026-08-18)
+
+
+### Features
+
+* **curate:** side-menu sections, endless Stream, ties, in-context sentiment ([255342a](https://github.com/mrx-31415/stash-curator/commit/255342a87d2ee187bdd503965ae8e18d9d1ce2d2))
+* **model:** pairwise affinity accumulation, coverage normalization, drop ELO ([2a7cddc](https://github.com/mrx-31415/stash-curator/commit/2a7cddc673106f5353d2461ae512d4d5ab4e1ccc)), closes [#165](https://github.com/mrx-31415/stash-curator/issues/165)
+
+
+### Bug Fixes
+
+* **curate:** apply picks to the model, keep them out of absolute appeal ([7ff8991](https://github.com/mrx-31415/stash-curator/commit/7ff8991dc96533d41e0ee8e419bdeee9e2d3d6f4)), closes [#163](https://github.com/mrx-31415/stash-curator/issues/163)
+* **curate:** ship ELO table drop as migration 0033 ([2fe5d6f](https://github.com/mrx-31415/stash-curator/commit/2fe5d6fe3a74f40bd9ec9c370fbb1865de754e24))
+
 ## [0.13.0](https://github.com/mrx-31415/stash-curator/compare/v0.12.0...v0.13.0) (2026-08-17)
 
 
