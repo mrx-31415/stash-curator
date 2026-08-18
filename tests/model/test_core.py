@@ -61,7 +61,8 @@ def _built_context(tmp_path: Path) -> tuple[builder_module.PreferenceModelBuilde
     labels = builder._scene_labels()
     training_labels = builder._training_labels(labels)
     label_mean = builder._label_mean(training_labels)
-    affinities = builder._affinities(scene_features, training_labels, label_mean)
+    absolute_label_mean = builder._absolute_label_mean(training_labels)
+    affinities = builder._affinities(scene_features, training_labels, absolute_label_mean)
     vectors = builder_module.FeatureStore(connection).scene_content_vectors(built.feature_version)
     preference, _ = builder._preference_content_vectors(vectors, scene_features, affinities)
     progress_total = len(preference) + len(
