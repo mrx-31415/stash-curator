@@ -121,28 +121,31 @@ def test_create_round_scene_cap_and_propensity(sidecar: Path, tmp_path: Path) ->
         assert sides == {True, False}
 
 
-def test_rounds_never_repeat_scenes(sidecar: Path, tmp_path: Path) -> None:
-    """Seen-exclusion: scenes from a previous round (submitted or not) must not
-    reappear in a later round."""
+def test_only_answered_pairs_retire_their_scenes(sidecar: Path, tmp_path: Path) -> None:
+    """Seen-exclusion covers answered pairs only. Offering a pair used to burn
+    both scenes forever, so an abandoned round — or a stream prefetching ahead
+    of the user — permanently consumed scenes nobody ever judged."""
+
+    def scenes_of(round_data: dict[str, object]) -> set[str]:
+        out = set()
+        for pair in round_data["pairs"]:  # type: ignore[union-attr]
+            out.add(pair["scene_a"]["scene_id"])
+            out.add(pair["scene_b"]["scene_id"])
+        return out
+
     conn = _fresh_selection(sidecar, tmp_path)
     first = create_pair_round(conn, "orthogonal", 4)
+    first_scenes = scenes_of(first)
+    assert first_scenes
+    # Nothing was answered, so the same scenes stay available.
     second = create_pair_round(conn, "orthogonal", 4)
-    first_scenes = set()
-    for pair in first["pairs"]:  # type: ignore[union-attr]
-        first_scenes.add(pair["scene_a"]["scene_id"])
-        first_scenes.add(pair["scene_b"]["scene_id"])
-    second_scenes = set()
-    for pair in second["pairs"]:  # type: ignore[union-attr]
-        second_scenes.add(pair["scene_a"]["scene_id"])
-        second_scenes.add(pair["scene_b"]["scene_id"])
-    assert first_scenes.isdisjoint(second_scenes)
-    # The unsubmitted first round still consumed its scenes.
+    assert scenes_of(second) & first_scenes
+    # Answering one pair retires exactly that pair's two scenes.
+    answered = second["pairs"][0]  # type: ignore[union-attr]
+    retired = {answered["scene_a"]["scene_id"], answered["scene_b"]["scene_id"]}
+    submit_picks(conn, str(second["round_id"]), [{"pair_id": answered["pair_id"], "winner": "a"}])
     third = create_pair_round(conn, "orthogonal", 4)
-    third_scenes = set()
-    for pair in third["pairs"]:  # type: ignore[union-attr]
-        third_scenes.add(pair["scene_a"]["scene_id"])
-        third_scenes.add(pair["scene_b"]["scene_id"])
-    assert third_scenes.isdisjoint(first_scenes | second_scenes)
+    assert scenes_of(third).isdisjoint(retired)
 
 
 def test_submit_picks_writes_labels_and_elo(sidecar: Path, tmp_path: Path) -> None:
@@ -225,6 +228,38 @@ def test_submit_picks_flag_writes_metadata_wrong(sidecar: Path, tmp_path: Path) 
         submit_picks(
             conn_two, str(round_two["round_id"]), [{"pair_id": flag_entry, "winner": "flag"}]
         )
+
+
+def test_submit_picks_tie_writes_neutral_labels(sidecar: Path, tmp_path: Path) -> None:
+    """A tie is Bradley-Terry information, not a discard: both scenes get a
+    neutral label, the row is answered with no winner, and ELO is untouched
+    because nothing beat anything."""
+    conn = _fresh_selection(sidecar, tmp_path)
+    round_data = create_pair_round(conn, "orthogonal", 4)
+    pair = round_data["pairs"][0]  # type: ignore[union-attr]
+    result = submit_picks(
+        conn, str(round_data["round_id"]), [{"pair_id": pair["pair_id"], "winner": "tie"}]
+    )
+    assert result["accepted"] == 1
+    assert result["skipped"] == 0
+    row = conn.execute(
+        "SELECT status, winner FROM curation_pair WHERE pair_id=?", (pair["pair_id"],)
+    ).fetchone()
+    assert str(row["status"]) == "answered"
+    assert row["winner"] is None
+    labels = conn.execute(
+        "SELECT scene_id, value FROM feedback WHERE feedback_type='curation_pair_tie'"
+        " ORDER BY scene_id"
+    ).fetchall()
+    assert [str(r["value"]) for r in labels] == ["5", "5"]
+    assert {str(r["scene_id"]) for r in labels} == {
+        pair["scene_a"]["scene_id"],
+        pair["scene_b"]["scene_id"],
+    }
+    assert conn.execute("SELECT count(*) FROM curation_pair_elo").fetchone()[0] == 0
+    # No winner, so the pair contributes no win rate to the verdict.
+    verdict = pair_verdict(conn, str(round_data["round_id"]))
+    assert verdict["n_answered"] == 0
 
 
 def test_submit_picks_marks_the_model_dirty(sidecar: Path, tmp_path: Path) -> None:
