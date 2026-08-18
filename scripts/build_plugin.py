@@ -8,18 +8,24 @@ Python runtime ships. The only non-binary runtime resource is the explanation
 catalog (`curator/explanations/realizations.json`, read from disk by the
 binary). Go is a build-time dependency for packaging; the binaries use the
 native mattn/go-sqlite3 driver (CGO_ENABLED=1, SQLite amalgamation compiled
-in), and cross-compile through `zig cc`, so a single machine (with Go +
-zig on PATH) cross-compiles every shipped platform.
+in), and cross-compile through `zig cc`, so a single machine cross-compiles
+every shipped platform. A pinned zig is bootstrapped into `.tmp/zig/` when
+none is on PATH (hash-verified download), so packaging needs no manual zig
+install — only Go plus the repo's uv environment.
 """
 
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import tomllib
+import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -57,6 +63,91 @@ ZIG_CC = {
 # The darwin link shims: -lresolv plus the CoreFoundation/Security framework
 # stubs, satisfied from scripts/zig/.
 ZIG_SHIM_DIR = ROOT / "scripts" / "zig"
+
+# Pinned C cross-compiler bootstrap. When zig is not on PATH, packaging
+# downloads this exact version into the gitignored .tmp/zig/ cache and
+# verifies it against the official ziglang.org download index hashes below,
+# so a fresh checkout needs only Go and the repo's uv environment. A zig
+# already on PATH always wins (including CI's own install step).
+ZIG_VERSION = "0.15.2"
+ZIG_TARBALLS = {
+    ("linux", "x86_64"): (
+        "zig-x86_64-linux-0.15.2.tar.xz",
+        "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239",
+    ),
+    ("linux", "aarch64"): (
+        "zig-aarch64-linux-0.15.2.tar.xz",
+        "958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f",
+    ),
+    ("macos", "x86_64"): (
+        "zig-x86_64-macos-0.15.2.tar.xz",
+        "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f",
+    ),
+    ("macos", "aarch64"): (
+        "zig-aarch64-macos-0.15.2.tar.xz",
+        "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b",
+    ),
+}
+ZIG_BASE_URL = "https://ziglang.org/download"
+ZIG_CACHE = ROOT / ".tmp" / "zig"
+
+
+def _host_platform() -> tuple[str, str]:
+    machine = platform.machine().lower().replace("amd64", "x86_64").replace("arm64", "aarch64")
+    if sys.platform == "darwin":
+        return ("macos", machine)
+    return (sys.platform, machine)
+
+
+def bootstrap_zig() -> Path | None:
+    """Return the bin dir of a pinned zig, downloading it into .tmp/zig/ when needed.
+
+    Returns None when zig is already on PATH or the host has no pinned tarball
+    (packaging then falls through to the zig-on-PATH requirement). The tarball
+    is hash-verified against the official ziglang.org index before extraction;
+    a corrupted cache entry is re-downloaded.
+    """
+    if shutil.which("zig") is not None:
+        return None
+    entry = ZIG_TARBALLS.get(_host_platform())
+    if entry is None:
+        return None
+    tarball_name, expected_sha256 = entry
+    cache_dir = ZIG_CACHE / f"zig-{ZIG_VERSION}"
+    final = cache_dir / "zig"
+    for candidate in (final / "zig", final / "bin" / "zig"):
+        if candidate.is_file():
+            return candidate.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    archive = cache_dir / tarball_name
+    if archive.is_file() and sha256(archive.read_bytes()).hexdigest() != expected_sha256:
+        archive.unlink()
+    if not archive.is_file():
+        print(f"[build_plugin] bootstrapping pinned zig {ZIG_VERSION} into {cache_dir}")
+        url = f"{ZIG_BASE_URL}/{ZIG_VERSION}/{tarball_name}"
+        with (
+            urllib.request.urlopen(url) as response,
+            tempfile.NamedTemporaryFile(dir=cache_dir, suffix=".tar.xz", delete=False) as out,
+        ):
+            shutil.copyfileobj(response, out)
+            temporary = Path(out.name)
+        if sha256(temporary.read_bytes()).hexdigest() != expected_sha256:
+            temporary.unlink()
+            raise RuntimeError(f"zig download failed checksum verification: {url}")
+        temporary.replace(archive)
+    if final.exists():
+        shutil.rmtree(final)
+    with tempfile.TemporaryDirectory(dir=cache_dir) as extract_dir:
+        with tarfile.open(archive) as tar:
+            tar.extractall(extract_dir, filter="data")
+        extracted = Path(extract_dir) / tarball_name.removesuffix(".tar.xz")
+        if not extracted.is_dir():
+            extracted = Path(extract_dir)
+        shutil.move(str(extracted), str(final))
+    for candidate in (final / "zig", final / "bin" / "zig"):
+        if candidate.is_file():
+            return candidate.parent
+    raise RuntimeError(f"unexpected layout in bootstrapped zig: {final}")
 
 
 def version() -> str:
@@ -96,18 +187,13 @@ def core_binaries() -> list[Path]:
         raise RuntimeError(
             "packaging the plugin requires the Go toolchain (install Go, then see core/README.md)"
         )
-    if shutil.which("zig") is None:
-        raise RuntimeError(
-            "packaging the plugin requires zig (ziglang.org) as the C cross-compiler "
-            "for the mattn sqlite driver (CGO_ENABLED=1); install it and put it on PATH"
-        )
     plugin_version = version()
     pending: list[tuple[tuple[str, str], Path, dict[str, str]]] = []
     for goos, goarch in SHIPPED_PLATFORMS:
         target = ROOT / "core" / "bin" / core_binary_name(goos, goarch)
         if _core_binary_fresh(target):
             continue
-        env = dict(
+        target_env = dict(
             os.environ,
             CGO_ENABLED="1",
             GOOS=goos,
@@ -115,8 +201,21 @@ def core_binaries() -> list[Path]:
             CC=ZIG_CC[(goos, goarch)],
         )
         if goos == "darwin":
-            env["CGO_LDFLAGS"] = f"-L{ZIG_SHIM_DIR} -F{ZIG_SHIM_DIR}"
-        pending.append((target, env))
+            target_env["CGO_LDFLAGS"] = f"-L{ZIG_SHIM_DIR} -F{ZIG_SHIM_DIR}"
+        pending.append((target, target_env))
+    if pending:
+        zig_bin = bootstrap_zig()
+        if zig_bin is None and shutil.which("zig") is None:
+            hosts = ", ".join(f"{goos}-{arch}" for goos, arch in sorted(ZIG_TARBALLS))
+            raise RuntimeError(
+                "packaging the plugin requires zig (ziglang.org) as the C cross-compiler "
+                "for the mattn sqlite driver (CGO_ENABLED=1); install it and put it on PATH, "
+                f"or let the bootstrap download it on a supported host ({hosts})"
+            )
+        if zig_bin is not None:
+            prepend = f"{zig_bin}{os.pathsep}"
+            for _, target_env in pending:
+                target_env["PATH"] = prepend + target_env.get("PATH", "")
 
     def build_one(item: tuple[Path, dict[str, str]]) -> None:
         target, env = item
