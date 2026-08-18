@@ -125,8 +125,38 @@ The first pass exposed seven defects in the initial spec, all now folded in:
    sits at 0.98-1.00, so the term contributed nothing to ordering while
    appearing to. Demoted to a gate; ranking uses `positive_strength * fit_rank`.
 
-A second pass then tested whether the lanes could be made less tag-dependent.
-That produced the facet generalization below, plus three measured rejections.
+A second pass tested whether the lanes could be made less tag-dependent. A
+third re-sampled the revised spec and found four more defects, also folded in:
+
+8. **A facet with no affinity row is not "untested", it is unmodelled.** Only
+   268 of 998 studio features carry a `feature_affinity` row. Under a bare
+   `effective_support < threshold` rule the other 730 all qualified as
+   challenges, every one at `1 - confidence = 1.0` — an unbounded pool tied at
+   maximum distance, reproducing defect 1 through a new facet. The `untested`
+   kind now requires an existing affinity row with low support. The conceptual
+   line: **Stretch challenges dimensions the model has an opinion about; Blind
+   Spots handles what it has never seen.**
+9. **Performer attributes cannot be Stretch dimensions.** `feature_affinity`
+   carries rows for `content`, `performer_identity`, `studio` and `structure`
+   only — nothing for `profile:*`. There is no affinity, confidence or support
+   from which to compute `challenge_distance`. Attributes remain valid for
+   Blind Spots, which derives darkness from observed rates rather than learned
+   affinity.
+10. **Averaging darkness penalised corroboration.** Ranking on
+    `mean(darkness)` meant a scene with *more* independent agreement scored
+    *lower*, because additional corroborators diluted the strongest signal. The
+    best-corroborated card in sampling — three facets on one coherent niche —
+    ranked fifth. Ranking now takes the strongest facet and adds a bonus per
+    additional independent facet type.
+11. **A region must be narrow to mean anything.** With only a lower bound on
+    facet breadth, one era bucket and one ethnicity facet appeared in four of
+    the five top cards, acting as free corroboration for unrelated niches. A
+    facet covering 12% of the library corroborates everything and therefore
+    distinguishes nothing. Breadth is now bounded above as well as below.
+
+That third pass also confirmed Dormant reproduces identically across runs, and
+that the two Stretch kinds separate cleanly on confidence (roughly 0.6-0.9 for
+tested-negative against 0.1-0.15 for untested).
 
 **"Gate share" is the wrong metric for two of these lanes.** Stretch and
 Dormant both admit ~30% of eligible scenes, but their per-dimension and
@@ -160,9 +190,11 @@ blob (`tag_id`, `tag_name`, `document_frequency`).
 | facet type | source | reliability |
 |---|---|---|
 | studio | `source_scene.studio_id` | one authoritative FK per scene |
-| performer attribute | `entity_feature` families `profile:hair`, `profile:ethnicity`, `profile:augmentation`, `profile:eyes`, plus `measurements` / `tattoos` / `piercings` / `age` / `height` | from the performer record, not per-scene tagging |
-| era | `source_scene.scene_date`, bucketed | one date field |
 | tag | `scene_tag`, filtered — see below | hand-applied multi-label, noisiest |
+
+Era (`source_scene.scene_date`) and performer attributes were evaluated as
+facets and dropped; see *Explicitly not proposed*. The extraction machinery
+stays general so they can be reinstated if the blocking reasons are removed.
 
 **Tag confirmation.** `tag_role` classifies tags into `content` /
 `performer_attribute` / `workflow_administrative`, but the `content` bucket
@@ -201,9 +233,17 @@ Measured play-rate spread by facet type, on a real library:
 | performer hair colour | 1.8x |
 | performer augmentation | 1.5x |
 
-Dark-region counts at a `darkness >= 0.55`, `library >= 60` bar came out
-**studio 25, tag 12, era 1, performer attribute 1** — studio alone more than
-doubles what tags supply, from a field that cannot be mis-tagged.
+Dark-region counts at a `darkness >= 0.55`, `60 <= library <= 500` bar came out
+**studio 20, tag 12** — studio alone supplies more than tags do, from a field
+that cannot be mis-tagged.
+
+**The generalization's real payoff is studio.** Era and performer attributes
+were both carried into the spec and then fell back out under sampling, for
+different reasons recorded below: attributes have no learned affinity (so they
+cannot drive Stretch) and are too broad to be regions (so they cannot drive
+Blind Spots), and every era bucket spans thousands of scenes. The lane set is
+therefore **studio + confirmed tag**, with the facet machinery kept general so
+attributes can join later if `profile:*` affinities are ever built.
 
 **Corroboration is the reliability mechanism.** A scene qualifies for Blind
 Spots only when **two or more independent facet types** are simultaneously
@@ -213,6 +253,10 @@ than any single field being sparse. It also buys margin: because a noisy single
 facet can no longer qualify alone, the per-facet threshold can be *lower*
 without losing precision. Reliability comes from agreement across independent
 measurements, not from a stricter bar on one field.
+
+Corroboration only works if the corroborators are *specific*. A facet spanning
+a large fraction of the library agrees with everything, so it inflates the
+count without adding evidence — hence the breadth ceiling in the gate below.
 
 ## Proposed lanes
 
@@ -246,10 +290,12 @@ confidence, effective_support}`. This preserves the intent of `258452e`: the
 bulk that commit removed was the `metadata` blob and unbounded family detail,
 not six small records. Artifact payload change, invalidates cached models once.
 
-**Candidate dimensions.** Tags (StashDB-confirmed only), performer attributes,
-and studio. Performer attributes are *preferred* when available: they are
-low-cardinality, single-valued, derived from the performer record rather than
-per-scene tagging, and immediately legible as "one thing changed."
+**Candidate dimensions.** StashDB-confirmed tags and studios — the two facet
+types that carry a learned `feature_affinity`. Performer attributes are
+deliberately *excluded*: `feature_affinity` has no `profile:*` rows, so there
+is nothing to compute `challenge_distance` from. Admitting them would require
+adding profile families to the affinity build, which is a model change rather
+than a lane change and belongs in its own workpackage.
 
 **Definitions.** Over the scene's contributor list, restricted to confirmed
 taste dimensions:
@@ -259,7 +305,14 @@ taste dimensions:
 - Challenge set `C` = contributors that are either
   - *tested negative*: `affinity <= -stretch_anchor_affinity` and
     `confidence >= stretch_anchor_confidence`; or
-  - *untested*: `effective_support < stretch_untested_support`.
+  - *untested*: the feature **has** a `feature_affinity` row but
+    `effective_support < stretch_untested_support`.
+
+  The affinity-row requirement is load-bearing. Roughly three quarters of
+  studio features have no affinity row at all; without the requirement they all
+  qualify at `1 - confidence = 1.0` and tie at maximum distance. A dimension
+  the model has never scored is *unmodelled*, which is Blind Spots' concern,
+  not a challenge Stretch can pose.
 - `anchor_strength = sum(value for A)`.
 - `challenged = argmax(|value|) over C` — **the named dimension**.
 - `challenge_distance` = `|affinity| * confidence` for tested-negative,
@@ -304,6 +357,17 @@ floor is what stops Stretch reproducing the Best Bets ordering — today
 **Diversity.** At most `stretch_per_dimension` (default 1) card per challenged
 dimension per page. Without it every top card challenges the same dimension.
 
+**Shelf size.** The gate admits a large share of eligible scenes, but the
+per-dimension cap means the shelf a user can actually page through is bounded
+by the number of distinct challengeable dimensions — the confirmed tags and
+studios carrying an affinity row. Quote that bound, not the gate share.
+
+Sampling separates the two kinds cleanly on confidence, which suggests the
+names could be better: `tested_negative` cards sit around 0.6-0.9 confidence
+and `untested` around 0.1-0.15, so what distinguishes them is the *strength* of
+the model's stance, not its existence. `known_dislike` / `weak_evidence` would
+describe the split more honestly.
+
 **Qualification contract.**
 
 ```json
@@ -319,8 +383,8 @@ threshold ladder, so they do not churn between builds.
 
 ### Blind Spots — replaces Adventure
 
-**Facet coverage.** For every facet (studio, performer attribute, era bucket,
-confirmed tag), count library presence and played presence, then:
+**Facet coverage.** For every facet (studio, confirmed tag — see *Facet
+sources*), count library presence and played presence, then:
 
 ```
 base_rate   = played_scenes / total_scenes
@@ -334,7 +398,14 @@ existing formula is an unregularized mean over a sparse vector, which is why
 Adventure's top-500 carry 46% as many tags as the library mean.
 
 A facet is **dark** when `darkness(f) >= dark_threshold` (0.55) and
-`library_count[f] >= dark_min_library` (60).
+`dark_min_library <= library_count[f] <= dark_max_library` (60 and 500).
+
+**The upper bound matters as much as the lower one.** A facet spanning a large
+share of the library is not a region — it co-occurs with everything, so it
+corroborates everything. Without the ceiling, one era bucket and one ethnicity
+facet appeared in four of the five top-ranked cards, inflating corroboration
+counts for niches they had nothing to do with. The ceiling removes every era
+bucket, the broad demographic facets, and the largest studios.
 
 **Gate — corroboration.**
 
@@ -349,13 +420,20 @@ one measurement, a dark tag plus a dark studio are two. This is the clause that
 stops the lane admitting every eligible scene, and the minimum feature count
 stops sparse scenes re-entering through `representativeness`.
 
-**Ranking — inverted relative to today.**
+**Ranking — inverted relative to today, and corroboration-rewarding.**
 
 ```
-lane_value = mean(darkness(f) for dark facets f)
+lane_value = max(darkness(f) for dark facets f)
+           * (1 + dark_corroboration_bonus * (facet_types - 1))   # default 0.15
            * metadata_confidence
            * (1 + max(0, appeal))
 ```
+
+Taking the **strongest** facet rather than the mean is deliberate. Averaging
+lets a weaker corroborator drag a card down, so a scene with more independent
+agreement ranks lower than one with less — the opposite of the intent. In
+sampling, the best-corroborated card (three facets on one coherent niche)
+ranked fifth under `mean` and first under `max` plus bonus.
 
 The `unknown_performer_share`, `unknown_studio` and `content_distance` terms
 are **dropped entirely**. They are precisely the terms that select thin
@@ -382,11 +460,23 @@ balancing axis unlike the five subtypes it replaces.
 pairwise Curate loop (`docs/workpackage-pairwise-picks.md`); its success metric
 is *did the model learn*, not *did the user watch*.
 
+**Shelf size.** As with Stretch, quote the bound the user experiences: with one
+card per dark facet, the shelf is bounded by the number of dark facets, which
+is an order of magnitude smaller than the gate share.
+
 **Facet-level dismissal.** Several dark studios are ones the user owns 60-120
 scenes of and has never played. That may mean "unexplored" or "bulk-acquired
 and not to my taste," and the lane would otherwise keep offering them. Blind
 Spots therefore needs a dismissal that suppresses a whole *facet*, not just a
 scene — which is also the cleanest signal the Curate loop could consume.
+
+**Very broad dark facets are a pruning signal, not an exploration card.** The
+breadth ceiling excludes studios the user owns well over a thousand scenes of
+and almost never plays. That observation is real and worth surfacing — but as
+"you own N scenes from this studio and play almost none," on the pruning
+surface, not as a per-scene recommendation. It is the same data serving a
+different intent, which is exactly the conflation this workpackage is trying to
+undo.
 
 ### Dormant — new
 
@@ -487,7 +577,7 @@ no lane means both "try this" and "delete this."
 | Bounded named content contributors in `classification_json` | `builder.py` `_classification_payload` + Go mirror | payload change — invalidates cached models once |
 | `model_entity_dormancy` table | migration 0033, core + artifact schema | new table |
 | `entity_dormancy` curve | `curator/model/curves.py` + Go mirror | new curve |
-| Facet extraction (studio / attribute / era / confirmed tag) | `LanePolicy` / `laneClassify` | new derivation, existing tables |
+| Facet extraction (studio + confirmed tag; machinery general) | `LanePolicy` / `laneClassify` | new derivation, existing tables |
 | StashDB tag-confirmation filter | `tag_role.resolution_reason` | existing data, newly used |
 | Regularized `darkness(f)` + support floor + corroboration | `LanePolicy` / `laneClassify` | replaces `_adventure_context` gap math |
 | `model_lane_order` lane CHECK rebuild | migration 0033 | schema change |
@@ -497,7 +587,7 @@ Nothing above needs a new *source* — no new Stash fields, no external fetches.
 
 **Cost.** Stretch adds a bounded number of small records per scene to the
 artifact. Blind Spots reuses counts already built in `_adventure_context`,
-extends them across four facet types, and *drops* the unknown performer/studio
+extends them across the facet types, and *drops* the unknown performer/studio
 passes. Dormant adds one entity-level pass over `source_play` joined to
 `scene_performer` / `scene_tag`, bounded by play history rather than library
 size — a new pass, to be measured against the existing lane-classification
@@ -515,11 +605,19 @@ Each of these was measured, not assumed.
 - **Duration and performer-count facets.** Spreads of roughly 2.7x and 3.4x
   exist, but every bucket covers thousands of scenes so no bucket ever goes
   dark. Usable as filters, useless as regions.
-- **Era as a weighted signal.** Era produces real dark regions but is
-  confounded with acquisition recency — older scenes have had *more* time to be
-  watched and are watched less, so "does not watch old scenes" may be a
-  preference to honour rather than a blind spot to challenge. Included as a
-  corroborating facet, deliberately not weighted on its own.
+- **Era as a facet at all.** Era survived the first pass as a corroborating
+  facet and was then removed by the breadth ceiling: every bucket spans
+  thousands of scenes, so it corroborates any old scene for free and
+  distinguishes nothing. It is also confounded with acquisition recency —
+  older scenes have had *more* time to be watched and are watched less, so
+  "does not watch old scenes" is plausibly a preference to honour rather than a
+  blind spot to challenge. Dropped on both counts.
+- **Performer attributes as Stretch dimensions.** Their play-rate spread is
+  real (roughly 1.5x-2.6x between the least- and most-played value of a given
+  attribute), but `feature_affinity` has no `profile:*` rows, so there is no
+  learned stance to challenge. They also proved too broad to survive the Blind
+  Spots breadth ceiling. Building attribute affinities is a plausible follow-up
+  workpackage; it is a model change, not a lane change.
 - **"You never finished this."** Ruled out on data: the overwhelming majority
   of played scenes register under 20% completion in Stash's play-duration
   tracking, so abandonment is indistinguishable from normal use.
@@ -599,3 +697,9 @@ behind config if they cannot ship together.
   explanation.
 - Where does facet-level dismissal live — a Blind Spots control, a Curate
   outcome, or both?
+- Rename the Stretch subtypes to `known_dislike` / `weak_evidence`? Sampling
+  shows the split is about the strength of the model's stance, not whether one
+  exists, and the current names imply the latter.
+- Is `dark_max_library` (default 500, roughly 2% of a large library) better
+  expressed as an absolute count or as a share of the library? A share travels
+  better across library sizes.
