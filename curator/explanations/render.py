@@ -106,14 +106,19 @@ class ExplanationService:
                 feature_version,
             )
         ]
-        if item.source_lane in {"discover", "adventure"}:
+        if item.source_lane in {"stretch", "adventure"}:
             exploration_code = self._exploration_code(item)
             if exploration_code is not None:
+                magnitude = _number(
+                    item.qualification.get(
+                        "challenge_distance", item.qualification.get("uncertainty")
+                    )
+                )
                 reasons.append(
                     Reason(
                         exploration_code,
                         "unknown",
-                        min(1.0, _number(item.qualification.get("uncertainty"))),
+                        min(1.0, magnitude),
                         item.confidence,
                         "scene",
                         item.scene_id,
@@ -121,9 +126,8 @@ class ExplanationService:
                         "lane_policy",
                         {
                             "subtype": item.subtype,
-                            "challenged_assumption": item.qualification.get(
-                                "challenged_assumption"
-                            ),
+                            "challenged_feature": item.qualification.get("challenged_feature"),
+                            "anchor_features": item.qualification.get("anchor_features", []),
                             "positive_anchors": item.qualification.get("positive_anchors", {}),
                         },
                         model_id,
@@ -158,10 +162,10 @@ class ExplanationService:
 
     @staticmethod
     def _exploration_code(item: RecommendationItem) -> str | None:
+        if item.source_lane == "stretch":
+            return "explore.challenge"
         if item.subtype == "model_disagreement":
             return "explore.disagreement"
-        if item.subtype == "stretch":
-            return "explore.challenge"
         if item.subtype in {"under_covered_island", "anchored_model_gap"}:
             return "explore.coverage"
         return None
@@ -212,7 +216,7 @@ class ExplanationService:
         if reason.code.startswith("appeal.tag_"):
             return {"tags": self._tag_names(reason)}
         if reason.code == "explore.challenge":
-            return {"challenge": self._challenge_phrase(reason.detail.get("challenged_assumption"))}
+            return {"challenge": self._challenge_phrase(reason.detail.get("challenged_feature"))}
         return {}
 
     def _neighbor_slots(self, reason: Reason) -> dict[str, str]:
@@ -250,6 +254,10 @@ class ExplanationService:
 
     @staticmethod
     def _challenge_phrase(value: object) -> str:
+        if isinstance(value, dict):
+            name = str(value.get("name", "")).strip()
+            if name:
+                return name
         return {
             "studio": "a less familiar studio",
             "performer": "a less familiar performer",

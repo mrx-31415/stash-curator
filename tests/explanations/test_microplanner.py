@@ -108,7 +108,7 @@ def test_familiar_performer_similarity_stays_out_of_prose_plan() -> None:
 def test_exploration_is_mandatory_boundary_in_exploration_lanes() -> None:
     performer = _reason("appeal.performer_identity")
     exploration = _reason("explore.coverage", direction="unknown")
-    for lane in ("discover", "adventure"):
+    for lane in ("stretch", "adventure"):
         plan = Microplanner().plan((_lane(lane), performer, exploration))
         assert plan.boundary is not None
         assert plan.boundary.reason == exploration

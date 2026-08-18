@@ -125,26 +125,31 @@ class RankingConfig:
     best_bet_anchor_percentile: float = 0.60
     best_bet_metadata_confidence: float = 0.35
     revisit_direct_confidence: float = 0.35
-    discover_anchor: float = 0.08
+    stretch_contributor_count: int = 3
+    stretch_anchor_affinity: float = 0.015
+    stretch_anchor_confidence: float = 0.5
+    stretch_untested_support: float = 0.5
+    stretch_fit_floor: float = 0.0
+    stretch_per_dimension: int = 1
     page_size: int = 20
     for_you_pattern: tuple[str, ...] = (
         "best_bets",
         "best_bets",
         "revisit",
         "best_bets",
-        "discover",
+        "stretch",
         "best_bets",
         "best_bets",
-        "discover",
-        "best_bets",
-        "revisit",
-        "best_bets",
-        "discover",
-        "best_bets",
+        "stretch",
         "best_bets",
         "revisit",
         "best_bets",
-        "discover",
+        "stretch",
+        "best_bets",
+        "best_bets",
+        "revisit",
+        "best_bets",
+        "stretch",
         "best_bets",
         "adventure",
         "best_bets",

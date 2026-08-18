@@ -1,7 +1,7 @@
 // Lane classification — a port of curator/ranking/policy.py's LanePolicy:
 // percentile ranks over the family components, the adventure context
 // (coverage gaps, unknown performers/studios), and the per-scene best_bets /
-// revisit / discover / adventure classification persisted to
+// revisit / stretch / adventure classification persisted to
 // model_scene_lane. Runs on the model artifact connection (reads through the
 // attached core + feature views).
 package main
@@ -339,11 +339,26 @@ type laneContext struct {
 	played            map[string]bool
 }
 
-// classifyScene computes the best_bets / revisit / discover / adventure
-// rows for one eligible scene (the LanePolicy.classify per-scene body). The
-// loop is row-independent: every input is a precomputed read-only map, so
-// fixed-chunk parallel processing yields identical rows.
-func (c *laneContext) classifyScene(sceneID string, score classificationScore) []builtLaneClassification {
+// stretchRaw mirrors policy.classify's per-scene stretch_raw entry: the
+// ingredients Stretch's lane_value needs, collected before the global
+// percentile pass that normalizes anchor_strength and challenge_distance
+// (the latter separately per challenge kind).
+type stretchRaw struct {
+	sceneID           string
+	anchorFeatures    []jVal
+	challengedFeature jVal
+	challengeKind     string
+	anchorStrength    float64
+	challengeDistance float64
+}
+
+// classifyScene computes the best_bets / revisit / adventure rows for one
+// eligible scene (the LanePolicy.classify per-scene body), plus the deferred
+// Stretch ingredients (if the scene qualifies) for the caller's global
+// percentile pass. The loop is row-independent: every input is a
+// precomputed read-only map, so fixed-chunk parallel processing yields
+// identical rows.
+func (c *laneContext) classifyScene(sceneID string, score classificationScore) ([]builtLaneClassification, *stretchRaw) {
 	var classifications []builtLaneClassification
 	reusable := map[string]float64{
 		"content":              componentValue(score.components, "content"),
@@ -439,35 +454,63 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) [
 			),
 		})
 	}
-	if !bestBet && score.directConfidence < 0.35 && strongestAnchor >= 0.08 {
-		subtype := "adjacent"
-		if len(negatives) == 1 {
-			subtype = "stretch"
-		} else if score.confidence < 0.35 || score.metadataConfidence < 0.30 {
-			subtype = "frontier"
+	var stretch *stretchRaw
+	stretchContributors := score.components.get("stretch_contributors")
+	positivePool := stretchContributors.get("positive").arr
+	negativePool := stretchContributors.get("negative").arr
+	var anchors []jVal
+	for _, item := range positivePool {
+		if numberValue(item.get("affinity")) >= 0.015 && numberValue(item.get("confidence")) >= 0.5 {
+			anchors = append(anchors, item)
 		}
-		var challenged jVal = jvNull()
-		if len(negatives) > 0 {
-			bestKey := ""
-			bestValue := 0.0
-			for family, value := range negatives {
-				if bestKey == "" || value < bestValue {
-					bestKey = family
-					bestValue = value
-				}
+	}
+	type challengeCandidate struct {
+		item jVal
+		kind string
+	}
+	var challenges []challengeCandidate
+	for _, item := range negativePool {
+		if numberValue(item.get("affinity")) <= -0.015 && numberValue(item.get("confidence")) >= 0.5 {
+			challenges = append(challenges, challengeCandidate{item, "tested_negative"})
+		}
+	}
+	for _, item := range append(append([]jVal{}, positivePool...), negativePool...) {
+		if numberValue(item.get("effective_support")) < 0.5 {
+			challenges = append(challenges, challengeCandidate{item, "untested"})
+		}
+	}
+	if !bestBet && score.directConfidence < 0.35 && len(anchors) > 0 && len(challenges) > 0 &&
+		score.currentFit >= 0.0 {
+		best := challenges[0]
+		bestAbs := math.Abs(numberValue(best.item.get("value")))
+		bestFeatureID := best.item.get("feature_id").asString()
+		for _, candidate := range challenges[1:] {
+			candidateAbs := math.Abs(numberValue(candidate.item.get("value")))
+			candidateFeatureID := candidate.item.get("feature_id").asString()
+			if candidateAbs > bestAbs || (candidateAbs == bestAbs && candidateFeatureID > bestFeatureID) {
+				best = candidate
+				bestAbs = candidateAbs
+				bestFeatureID = candidateFeatureID
 			}
-			challenged = jvStr(bestKey)
 		}
-		classifications = append(classifications, builtLaneClassification{
-			sceneID: sceneID, lane: "discover", subtype: subtype,
-			laneValue: score.currentFit + 0.12*(1-score.confidence) + 0.5*strongestAnchor,
-			qualification: jvObj(
-				jvKey("positive_anchors", floatMapJVal(positives)),
-				jvKey("negative_assumptions", floatMapJVal(negatives)),
-				jvKey("challenged_assumption", challenged),
-				jvKey("uncertainty", jvFloat(1-score.confidence)),
-			),
-		})
+		var challengeDistance float64
+		if best.kind == "tested_negative" {
+			challengeDistance = math.Abs(numberValue(best.item.get("affinity"))) * numberValue(best.item.get("confidence"))
+		} else {
+			challengeDistance = 1 - numberValue(best.item.get("confidence"))
+		}
+		anchorStrength := 0.0
+		for _, item := range anchors {
+			anchorStrength += numberValue(item.get("value"))
+		}
+		stretch = &stretchRaw{
+			sceneID:           sceneID,
+			anchorFeatures:    anchors,
+			challengedFeature: best.item,
+			challengeKind:     best.kind,
+			anchorStrength:    anchorStrength,
+			challengeDistance: challengeDistance,
+		}
 	}
 	subtype := adventureSubtype(score, positives, negatives,
 		reusable["structure"], c.coverageRanks[sceneID])
@@ -488,7 +531,7 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) [
 			jvKey("unknown_studio", jvFloat(c.unknownStudios[sceneID])),
 		),
 	})
-	return classifications
+	return classifications, stretch
 }
 
 // laneClassify mirrors LanePolicy.classify and persists the rows.
@@ -565,15 +608,77 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 				}
 			})
 		}()
-		classifications = parallelChunks(total, nthreads(0), func(start, end int) []builtLaneClassification {
-			var out []builtLaneClassification
+		type sceneClassifyResult struct {
+			classifications []builtLaneClassification
+			stretch         *stretchRaw
+		}
+		results := parallelChunks(total, nthreads(0), func(start, end int) []sceneClassifyResult {
+			out := make([]sceneClassifyResult, 0, end-start)
 			for _, sceneID := range sceneIDs[start:end] {
-				out = append(out, context.classifyScene(sceneID, eligibleScores[sceneID])...)
+				rows, stretch := context.classifyScene(sceneID, eligibleScores[sceneID])
+				out = append(out, sceneClassifyResult{rows, stretch})
 				progressReporter.done()
 			}
 			return out
 		})
 		<-reporterDone
+		stretchBySceneID := map[string]*stretchRaw{}
+		for _, result := range results {
+			classifications = append(classifications, result.classifications...)
+			if result.stretch != nil {
+				stretchBySceneID[result.stretch.sceneID] = result.stretch
+			}
+		}
+		// Stretch's lane_value needs a global percentile pass, so it is
+		// assembled after the per-scene loop: anchor_strength is normalized
+		// across every qualifying scene, while challenge_distance is
+		// normalized separately within each challenge kind (tested_negative
+		// vs untested), since the two kinds use incomparable distance
+		// formulas. See docs/workpackage-lane-redesign.md defect 1.
+		anchorValues := map[string]float64{}
+		testedNegativeDistances := map[string]float64{}
+		untestedDistances := map[string]float64{}
+		for sceneID, raw := range stretchBySceneID {
+			anchorValues[sceneID] = raw.anchorStrength
+			if raw.challengeKind == "tested_negative" {
+				testedNegativeDistances[sceneID] = raw.challengeDistance
+			} else {
+				untestedDistances[sceneID] = raw.challengeDistance
+			}
+		}
+		anchorPercentiles := lanePercentiles(anchorValues)
+		challengePercentiles := lanePercentiles(testedNegativeDistances)
+		for sceneID, percentile := range lanePercentiles(untestedDistances) {
+			challengePercentiles[sceneID] = percentile
+		}
+		for _, sceneID := range sortedStringKeys(stretchBySceneID) {
+			raw := stretchBySceneID[sceneID]
+			anchorFeatures := jvArr()
+			for _, item := range raw.anchorFeatures {
+				anchorFeatures.arr = append(anchorFeatures.arr, jvObj(
+					jvKey("feature_id", item.get("feature_id")),
+					jvKey("name", item.get("name")),
+					jvKey("value", jvFloat(numberValue(item.get("value")))),
+				))
+			}
+			classifications = append(classifications, builtLaneClassification{
+				sceneID: sceneID, lane: "stretch", subtype: raw.challengeKind,
+				laneValue: anchorPercentiles[sceneID] * challengePercentiles[sceneID],
+				qualification: jvObj(
+					jvKey("anchor_features", anchorFeatures),
+					jvKey("challenged_feature", jvObj(
+						jvKey("feature_id", raw.challengedFeature.get("feature_id")),
+						jvKey("name", raw.challengedFeature.get("name")),
+						jvKey("facet_type", raw.challengedFeature.get("facet_type")),
+						jvKey("affinity", jvFloat(numberValue(raw.challengedFeature.get("affinity")))),
+						jvKey("confidence", jvFloat(numberValue(raw.challengedFeature.get("confidence")))),
+					)),
+					jvKey("challenge_kind", jvStr(raw.challengeKind)),
+					jvKey("anchor_strength", jvFloat(raw.anchorStrength)),
+					jvKey("challenge_distance", jvFloat(raw.challengeDistance)),
+				),
+			})
+		}
 	}
 	if progress != nil && total == 0 {
 		progress(1, 1)

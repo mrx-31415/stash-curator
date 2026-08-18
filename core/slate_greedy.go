@@ -22,23 +22,24 @@ const (
 	rankingHistoryStudioPenalty    = 0.03
 	rankingHistoryContentPenalty   = 0.05
 	rankingUncoveredContentBonus   = 0.03
+	rankingStretchPerDimension     = 1
 )
 
 var forYouPattern = []string{
-	"best_bets", "best_bets", "revisit", "best_bets", "discover",
-	"best_bets", "best_bets", "discover", "best_bets", "revisit",
-	"best_bets", "discover", "best_bets", "best_bets", "revisit",
-	"best_bets", "discover", "best_bets", "adventure", "best_bets",
+	"best_bets", "best_bets", "revisit", "best_bets", "stretch",
+	"best_bets", "best_bets", "stretch", "best_bets", "revisit",
+	"best_bets", "stretch", "best_bets", "best_bets", "revisit",
+	"best_bets", "stretch", "best_bets", "adventure", "best_bets",
 }
 
 var familiarPattern = []string{
-	"best_bets", "best_bets", "revisit", "best_bets", "discover",
+	"best_bets", "best_bets", "revisit", "best_bets", "stretch",
 	"best_bets", "best_bets", "revisit", "best_bets", "best_bets",
 }
 
 var adventurousPattern = []string{
-	"best_bets", "best_bets", "revisit", "discover", "best_bets",
-	"discover", "adventure", "best_bets", "discover", "adventure",
+	"best_bets", "best_bets", "revisit", "stretch", "best_bets",
+	"stretch", "adventure", "best_bets", "stretch", "adventure",
 }
 
 var adventureSubtypes = []string{
@@ -60,6 +61,41 @@ type greedyCandidate struct {
 	studioGroup   string // "" when none
 	content       map[string]float64
 	contentOrder  []string // insertion order (SQL/JSON order) for serialization
+}
+
+// stretchDimension mirrors _stretch_dimension: the challenged feature id, for
+// the per-dimension Stretch rotation.
+func stretchDimension(c *greedyCandidate) string {
+	challenged := c.qualification.get("challenged_feature")
+	if challenged.kind != jObj {
+		return ""
+	}
+	return challenged.get("feature_id").asString()
+}
+
+// stretchDimensions mirrors the sorted-distinct-dimension precompute shared
+// by _build_order and recommend()'s greedy loop. Gated on enabled (varied in
+// buildOrdering, diversityEnabled in the greedy loop): stretch is a
+// QUERIED_SCORE_FIRST_LANES member, so its score_first ordering is never
+// materialized through buildOrdering (only answered live by a plain
+// laneValue-sorted query) — this rotation must stay out of that path so the
+// two stay equivalent.
+func stretchDimensions(lane string, candidates []*greedyCandidate, enabled bool) []string {
+	if lane != "stretch" || !enabled {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if dim := stretchDimension(c); dim != "" {
+			seen[dim] = true
+		}
+	}
+	dims := make([]string, 0, len(seen))
+	for dim := range seen {
+		dims = append(dims, dim)
+	}
+	sort.Strings(dims)
+	return dims
 }
 
 // recommendGreedy mirrors SlateBuilder.recommend's recompute branch.
@@ -250,8 +286,16 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		}
 	}
 
+	// At most stretch_per_dimension card per challenged dimension per page —
+	// mirrors buildOrdering's rotation for this greedy path's own separate
+	// selection loop (the live-recompute / filtered case).
+	dimensions := stretchDimensions(lane, live, diversityEnabled)
 	for position := int64(len(selected)); position < count; position++ {
 		targetLane, targetSubtype := slateTarget(lane, position, exploration)
+		targetDimension := ""
+		if lane == "stretch" && len(dimensions) > 0 {
+			targetDimension = dimensions[(int(position)/maxInt(1, rankingStretchPerDimension))%len(dimensions)]
+		}
 		remaining := make([]*greedyCandidate, 0, len(live))
 		for _, c := range live {
 			if !selectedSceneIDs[c.sceneID] {
@@ -260,7 +304,8 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		}
 		preferred := make([]*greedyCandidate, 0, len(remaining))
 		for _, c := range remaining {
-			if c.lane == targetLane && (targetSubtype == "" || c.subtype == targetSubtype) {
+			if c.lane == targetLane && (targetSubtype == "" || c.subtype == targetSubtype) &&
+				(targetDimension == "" || stretchDimension(c) == targetDimension) {
 				preferred = append(preferred, c)
 			}
 		}

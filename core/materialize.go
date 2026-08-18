@@ -15,7 +15,7 @@ import (
 )
 
 // lanes mirrors policy.LANES (order matters for the returned counts dict).
-var lanes = []string{"best_bets", "revisit", "discover", "adventure"}
+var lanes = []string{"best_bets", "revisit", "stretch", "adventure"}
 
 // orderingEntry mirrors one _build_order result row.
 type orderingEntry struct {
@@ -78,9 +78,17 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 			result = append(result, key{"lane", c.lane})
 		} else if lane == "adventure" && c.subtype != "" {
 			result = append(result, key{"subtype", c.subtype})
+		} else if lane == "stretch" {
+			if dim := stretchDimension(c); dim != "" {
+				result = append(result, key{"dimension", dim})
+			}
 		}
 		return result
 	}
+	// At most stretch_per_dimension (default 1) card per challenged dimension
+	// per page: round-robin the target selector through every distinct
+	// dimension present, the same mechanism used for adventure's subtypes.
+	dimensions := stretchDimensions(lane, candidates, varied)
 	push := func(k key) {
 		c := byKey[k]
 		entry := heapEntry{-utilities[k], c.sceneID, c.lane, versions[k]}
@@ -171,6 +179,8 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 		var wanted key
 		if lane == "adventure" && targetSubtype != "" {
 			wanted = key{"subtype", targetSubtype}
+		} else if lane == "stretch" && len(dimensions) > 0 {
+			wanted = key{"dimension", dimensions[(len(ordered)/maxInt(1, rankingStretchPerDimension))%len(dimensions)]}
 		} else if lane == "for_you" {
 			wanted = key{"lane", targetLane}
 		} else {

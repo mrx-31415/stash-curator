@@ -7,6 +7,7 @@ import math
 import sqlite3
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import cast
 
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import OBSERVED_PLAYBACK_SQL
@@ -14,7 +15,7 @@ from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.storage import transaction
 
-LANES = ("best_bets", "revisit", "discover", "adventure")
+LANES = ("best_bets", "revisit", "stretch", "adventure")
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ class LanePolicy:
             model_id, set(eligible_scores)
         )
         classifications: list[LaneClassification] = []
+        stretch_raw: dict[str, dict[str, object]] = {}
         total = len(eligible_scores)
         for position, (scene_id, score) in enumerate(sorted(eligible_scores.items()), 1):
             reusable = {
@@ -213,32 +215,67 @@ class LanePolicy:
                         },
                     )
                 )
+            stretch_contributors = score.components.get("stretch_contributors")
+            stretch_positive = (
+                stretch_contributors.get("positive", [])
+                if isinstance(stretch_contributors, dict)
+                else []
+            )
+            stretch_negative = (
+                stretch_contributors.get("negative", [])
+                if isinstance(stretch_contributors, dict)
+                else []
+            )
+            anchors = [
+                item
+                for item in stretch_positive
+                if _number(item.get("affinity")) >= self.config.ranking.stretch_anchor_affinity
+                and _number(item.get("confidence"))
+                >= self.config.ranking.stretch_anchor_confidence
+            ]
+            tested_negative = [
+                item
+                for item in stretch_negative
+                if _number(item.get("affinity")) <= -self.config.ranking.stretch_anchor_affinity
+                and _number(item.get("confidence"))
+                >= self.config.ranking.stretch_anchor_confidence
+            ]
+            untested = [
+                item
+                for item in stretch_positive + stretch_negative
+                if _number(item.get("effective_support"))
+                < self.config.ranking.stretch_untested_support
+            ]
+            challenges = [(item, "tested_negative") for item in tested_negative] + [
+                (item, "untested") for item in untested
+            ]
             if (
                 not best_bet
                 and score.direct_confidence < self.config.ranking.revisit_direct_confidence
-                and strongest_anchor >= self.config.ranking.discover_anchor
+                and anchors
+                and challenges
+                and score.current_fit >= self.config.ranking.stretch_fit_floor
             ):
-                if len(negatives) == 1:
-                    subtype = "stretch"
-                elif score.confidence < 0.35 or score.metadata_confidence < 0.30:
-                    subtype = "frontier"
-                else:
-                    subtype = "adjacent"
-                challenged = min(negatives, key=lambda key: negatives[key]) if negatives else None
-                classifications.append(
-                    LaneClassification(
-                        scene_id,
-                        "discover",
-                        subtype,
-                        score.current_fit + 0.12 * (1 - score.confidence) + 0.5 * strongest_anchor,
-                        {
-                            "positive_anchors": positives,
-                            "negative_assumptions": negatives,
-                            "challenged_assumption": challenged,
-                            "uncertainty": 1 - score.confidence,
-                        },
-                    )
+                challenged_item, challenge_kind = max(
+                    challenges,
+                    key=lambda pair: (
+                        abs(_number(pair[0].get("value"))),
+                        str(pair[0].get("feature_id")),
+                    ),
                 )
+                challenge_distance = (
+                    abs(_number(challenged_item.get("affinity")))
+                    * _number(challenged_item.get("confidence"))
+                    if challenge_kind == "tested_negative"
+                    else 1 - _number(challenged_item.get("confidence"))
+                )
+                stretch_raw[scene_id] = {
+                    "anchor_features": anchors,
+                    "challenged_feature": challenged_item,
+                    "challenge_kind": challenge_kind,
+                    "anchor_strength": sum(_number(item.get("value")) for item in anchors),
+                    "challenge_distance": challenge_distance,
+                }
             subtype = self._adventure_subtype(
                 score,
                 positives,
@@ -275,6 +312,56 @@ class LanePolicy:
                 progress(position, max(1, total))
         if progress and not total:
             progress(1, 1)
+        # Stretch's lane_value needs a global percentile pass, so it is assembled
+        # after the per-scene loop: anchor_strength is normalized across every
+        # qualifying scene, while challenge_distance is normalized separately
+        # within each challenge kind (tested_negative vs untested), since the two
+        # kinds use incomparable distance formulas. See
+        # docs/workpackage-lane-redesign.md defect 1.
+        anchor_percentiles = _percentiles(
+            {scene_id: _number(raw["anchor_strength"]) for scene_id, raw in stretch_raw.items()}
+        )
+        challenge_percentiles: dict[str, float] = {}
+        for kind in ("tested_negative", "untested"):
+            challenge_percentiles.update(
+                _percentiles(
+                    {
+                        scene_id: _number(raw["challenge_distance"])
+                        for scene_id, raw in stretch_raw.items()
+                        if raw["challenge_kind"] == kind
+                    }
+                )
+            )
+        for scene_id, raw in stretch_raw.items():
+            challenged_item = cast(dict[str, object], raw["challenged_feature"])
+            classifications.append(
+                LaneClassification(
+                    scene_id,
+                    "stretch",
+                    cast(str, raw["challenge_kind"]),
+                    anchor_percentiles[scene_id] * challenge_percentiles[scene_id],
+                    {
+                        "anchor_features": [
+                            {
+                                "feature_id": item["feature_id"],
+                                "name": item["name"],
+                                "value": _number(item.get("value")),
+                            }
+                            for item in cast(list[dict[str, object]], raw["anchor_features"])
+                        ],
+                        "challenged_feature": {
+                            "feature_id": challenged_item["feature_id"],
+                            "name": challenged_item["name"],
+                            "facet_type": challenged_item["facet_type"],
+                            "affinity": _number(challenged_item.get("affinity")),
+                            "confidence": _number(challenged_item.get("confidence")),
+                        },
+                        "challenge_kind": raw["challenge_kind"],
+                        "anchor_strength": _number(raw["anchor_strength"]),
+                        "challenge_distance": _number(raw["challenge_distance"]),
+                    },
+                )
+            )
         self._persist(
             model_id,
             classifications,
