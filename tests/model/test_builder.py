@@ -157,6 +157,33 @@ def test_curation_rating_feeds_scene_labels(tmp_path: Path) -> None:
     assert "unusual" not in labels
 
 
+def test_soft_bound_keeps_saturated_components_comparable() -> None:
+    """Two scenes whose raw signal exceeds the bound must not end up equal.
+
+    A hard clamp mapped every strong scene to the identical value, so the
+    families that saturate stopped discriminating. Appeal is ranked and
+    thresholded directly (prune, sentiment review), so those ties are lost
+    information rather than a display detail.
+    """
+    bound = 0.35
+    # Below the knee the transform is exact: it only acts where a hard clamp
+    # was already discarding the difference.
+    for raw in (0.0, 0.1, 0.2, 0.8 * bound):
+        assert builder_module._soft_bound(raw, bound) == pytest.approx(raw)
+    # Above the bound it stays inside it, where a hard clamp would tie them...
+    strong = builder_module._soft_bound(0.45, bound)
+    stronger = builder_module._soft_bound(0.90, bound)
+    assert 0.8 * bound < strong < stronger < bound
+    # ...and the ordering survives, which is the whole point.
+    assert stronger > strong
+    # Symmetric, and the bound still holds for extreme input: the tail
+    # saturates to exactly the bound (exp underflows) and never past it.
+    assert builder_module._soft_bound(-0.90, bound) == pytest.approx(-stronger)
+    assert abs(builder_module._soft_bound(1e6, bound)) <= bound
+    # A degenerate bound cannot produce a value outside it.
+    assert builder_module._soft_bound(5.0, 0.0) == pytest.approx(0.0)
+
+
 def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     # 'unseen-good' beats 'unlabeled'; both carry tag 'good' (the shared-tag
