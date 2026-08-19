@@ -79,17 +79,23 @@ class SimilarityService:
                 (self.model_id,),
             )
         }
-        if not self.appeals:
-            self.appeals = {
-                str(row["scene_id"]): float(row["appeal"])
-                for row in connection.execute(
-                    """
-                    SELECT scene_id, appeal FROM model_scene_score
-                    WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
-                    """,
-                    (self.model_id,),
-                )
-            }
+        # The lane index is a fast path, not a complete one: Stretch and Blind
+        # Spots both gate (unlike the Adventure lane they replaced, which
+        # admitted every eligible scene and so made the index complete by
+        # construction — see docs/workpackage-lane-redesign.md). An eligible
+        # scene that misses every lane still needs an appeal for Similar to
+        # surface it, so anything the index is missing is filled in here
+        # rather than only falling back when the index is empty outright.
+        for row in connection.execute(
+            """
+            SELECT scene_id, appeal FROM model_scene_score
+            WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
+            """,
+            (self.model_id,),
+        ):
+            scene_id = str(row["scene_id"])
+            if scene_id not in self.appeals:
+                self.appeals[scene_id] = float(row["appeal"])
         self.timings_ms = {"initialization": round((time.perf_counter() - started) * 1000)}
         self.total_count = 0
         record_duration("python", "similarity.initialization", self.timings_ms["initialization"])

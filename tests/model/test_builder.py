@@ -606,8 +606,13 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             """,
             (first.model_id,),
         )
-    } == {"adventure", "for_you"}
-    assert [
+    } == {"for_you"}
+    # Both orderings materialize independently for for_you; this fixture's
+    # candidate pool is too small (Blind Spots, unlike the Adventure lane it
+    # replaced, gates rather than admitting every eligible scene) to also
+    # exercise varied actually reordering score_first here — that is covered
+    # directly in tests/ranking/test_slate.py.
+    varied_order = [
         str(row[0])
         for row in connection.execute(
             """
@@ -617,7 +622,8 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             """,
             (first.model_id,),
         )
-    ] != [
+    ]
+    score_first_order = [
         str(row[0])
         for row in connection.execute(
             """
@@ -628,6 +634,7 @@ def test_complete_model_is_bounded_reproducible_and_applies_cooldown(tmp_path: P
             (first.model_id,),
         )
     ]
+    assert varied_order and set(varied_order) == set(score_first_order)
     assert scores["unseen-good"].neighbors
     assert all("scene_id" in neighbor for neighbor in scores["unseen-good"].neighbors)
     assert {str(neighbor["scene_id"]) for neighbor in scores["unseen-good"].neighbors} <= {

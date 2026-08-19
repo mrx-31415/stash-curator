@@ -166,7 +166,7 @@ func boundaryUnit(reasons []*explanationReason, lane string) *evidenceUnit {
 		}
 	}
 	sortUnits(exploration)
-	if (lane == "stretch" || lane == "adventure") && len(exploration) > 0 {
+	if (lane == "stretch" || lane == "blind_spots") && len(exploration) > 0 {
 		unit := exploration[0]
 		return &unit
 	}
@@ -353,6 +353,7 @@ func formatSlots(template string, slots map[string]string) string {
 // baseSlots mirrors render._slots' base dict.
 var baseSlots = map[string]string{
 	"challenge":         "one less-certain part of your taste",
+	"facet":             "an under-explored part of your library",
 	"known":             "a familiar performer",
 	"performer":         "a familiar performer",
 	"precedent":         "a scene that worked for you",
@@ -432,6 +433,8 @@ func specificSlots(db dbx, r *explanationReason) map[string]string {
 		return map[string]string{"studio": entityName(db, r.subjectID, "studio")}
 	case "explore.challenge":
 		return map[string]string{"challenge": challengePhrase(r.detail.get("challenged_feature"))}
+	case "explore.coverage":
+		return map[string]string{"facet": facetPhrase(r.detail.get("dark_facets"))}
 	}
 	if strings.HasPrefix(r.code, "appeal.tag_") {
 		return map[string]string{"tags": tagNames(r)}
@@ -521,6 +524,16 @@ func challengePhrase(value jVal) string {
 		return "something outside your usual rotation"
 	}
 	return "one less-certain part of your taste"
+}
+
+// facetPhrase mirrors render._facet_phrase.
+func facetPhrase(value jVal) string {
+	if value.kind == jArr && len(value.arr) > 0 && value.arr[0].kind == jObj {
+		if name := strings.TrimSpace(value.arr[0].get("name").asString()); name != "" {
+			return name
+		}
+	}
+	return "an under-explored part of your library"
 }
 
 // similaritySlots mirrors render._similarity_slots.

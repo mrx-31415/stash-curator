@@ -36,6 +36,6 @@ def test_synthetic_sync_build_and_report_validation_slice(tmp_path: Path) -> Non
         "best_bets",
         "revisit",
         "stretch",
-        "adventure",
+        "blind_spots",
     }
     assert report_path.read_text(encoding="utf-8").startswith("<!doctype html>")

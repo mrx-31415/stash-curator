@@ -44,11 +44,8 @@
     "explore.challenge": {
       "boundary": ["the deliberate stretch is {challenge}", "{challenge} is the part being tested here", "this asks you to reconsider {challenge}"]
     },
-    "explore.disagreement": {
-      "boundary": ["your past choices give mixed signals here", "the evidence points in different directions", "this sits near a boundary in your history"]
-    },
     "explore.coverage": {
-      "boundary": ["there is less history to rely on here", "this explores a less-covered part of your library", "the evidence is thinner than usual"]
+      "boundary": ["{facet} is a dark spot in your history", "this comes from {facet}, which you have barely explored", "{facet} has almost no play history to go on"]
     },
     "explore.unknown": {
       "boundary": ["the evidence here is limited", "this is a less-tested direction", "your history does not give a clear answer yet"]

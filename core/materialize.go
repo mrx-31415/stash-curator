@@ -15,7 +15,7 @@ import (
 )
 
 // lanes mirrors policy.LANES (order matters for the returned counts dict).
-var lanes = []string{"best_bets", "revisit", "stretch", "adventure"}
+var lanes = []string{"best_bets", "revisit", "stretch", "blind_spots"}
 
 // orderingEntry mirrors one _build_order result row.
 type orderingEntry struct {
@@ -76,19 +76,27 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 		result := []key{{"all", ""}}
 		if lane == "for_you" {
 			result = append(result, key{"lane", c.lane})
-		} else if lane == "adventure" && c.subtype != "" {
-			result = append(result, key{"subtype", c.subtype})
 		} else if lane == "stretch" {
 			if dim := stretchDimension(c); dim != "" {
 				result = append(result, key{"dimension", dim})
+			}
+		} else if lane == "blind_spots" {
+			if facet := blindSpotFacet(c); facet != "" {
+				result = append(result, key{"facet", facet})
 			}
 		}
 		return result
 	}
 	// At most stretch_per_dimension (default 1) card per challenged dimension
 	// per page: round-robin the target selector through every distinct
-	// dimension present, the same mechanism used for adventure's subtypes.
+	// dimension present.
 	dimensions := stretchDimensions(lane, candidates, varied)
+	// At most blind_spot_per_facet card per dark facet per page — unconditional
+	// (not gated like stretch's varied param): blind_spots is not a
+	// QUERIED_SCORE_FIRST_LANES member, so both orderings materialize through
+	// this same path, matching how the adventure subtype rotation it replaces
+	// always applied here too.
+	facets := blindSpotFacets(lane, candidates)
 	push := func(k key) {
 		c := byKey[k]
 		entry := heapEntry{-utilities[k], c.sceneID, c.lane, versions[k]}
@@ -175,12 +183,12 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 		sceneIDs[c.sceneID] = true
 	}
 	for len(selectedSceneIDs) < len(sceneIDs) {
-		targetLane, targetSubtype := slateTarget(lane, int64(len(ordered)), 0)
+		targetLane := slateTarget(lane, int64(len(ordered)), 0)
 		var wanted key
-		if lane == "adventure" && targetSubtype != "" {
-			wanted = key{"subtype", targetSubtype}
-		} else if lane == "stretch" && len(dimensions) > 0 {
+		if lane == "stretch" && len(dimensions) > 0 {
 			wanted = key{"dimension", dimensions[(len(ordered)/maxInt(1, rankingStretchPerDimension))%len(dimensions)]}
+		} else if lane == "blind_spots" && len(facets) > 0 {
+			wanted = key{"facet", facets[(len(ordered)/maxInt(1, rankingBlindSpotPerFacet))%len(facets)]}
 		} else if lane == "for_you" {
 			wanted = key{"lane", targetLane}
 		} else {

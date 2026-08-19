@@ -30,7 +30,7 @@ for first-build expectations, configuration, updates, and backups.
 ## What it does
 
 - **Recommendations:** For You balances dependable matches, revisits, and discovery;
-  Best Bets, Revisit, Discover, and Adventure let you choose the kind of slate.
+  Best Bets, Revisit, Stretch, and Blind Spots let you choose the kind of slate.
 - **Explanations:** “Why this?” shows why an item fits, how strong the evidence is,
   and whether timing changed its place.
 - **Similar:** find related scenes and performers in your library or compare separate

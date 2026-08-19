@@ -131,6 +131,14 @@ class RankingConfig:
     stretch_untested_support: float = 0.5
     stretch_fit_floor: float = 0.0
     stretch_per_dimension: int = 1
+    dark_prior_strength: float = 20.0
+    dark_threshold: float = 0.55
+    dark_min_library: int = 60
+    dark_max_library: int = 500
+    dark_min_features: int = 4
+    dark_min_facet_types: int = 2
+    dark_corroboration_bonus: float = 0.15
+    blind_spot_per_facet: int = 1
     page_size: int = 20
     for_you_pattern: tuple[str, ...] = (
         "best_bets",
@@ -151,7 +159,7 @@ class RankingConfig:
         "best_bets",
         "stretch",
         "best_bets",
-        "adventure",
+        "blind_spots",
         "best_bets",
     )
 

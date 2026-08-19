@@ -9,7 +9,7 @@ from tests.ranking.test_slate import _database
 
 
 def test_unknown_exploration_subtype_has_no_card_reason() -> None:
-    item = SimpleNamespace(source_lane="adventure", subtype=None)
+    item = SimpleNamespace(source_lane="best_bets", subtype=None)
     assert ExplanationService._exploration_code(item) is None  # type: ignore[arg-type]
 
 
@@ -249,7 +249,7 @@ def test_every_recommended_item_has_versioned_structured_reasons(tmp_path: Path)
     connection = _database(tmp_path / "curator.sqlite3")
     service = ExplanationService(connection)
 
-    for lane in ("for_you", "best_bets", "revisit", "stretch", "adventure"):
+    for lane in ("for_you", "best_bets", "revisit", "stretch", "blind_spots"):
         for item in SlateBuilder(connection).recommend(lane, 20).items:
             explanation = service.explain_recommendation(item)
             assert explanation.summary

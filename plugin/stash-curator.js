@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -42,10 +42,10 @@
       description: "Mostly your taste, with one boundary gently challenged to find something new.",
     },
     {
-      value: "adventure",
-      label: "Adventure",
-      icon: faCompass,
-      description: "Deliberate long shots that explore gaps in the model—and possible pruning candidates.",
+      value: "blind_spots",
+      label: "Blind Spots",
+      icon: faEyeSlash,
+      description: "Corroborated dark corners of your library — studios or tags you barely watch, worth teaching the model about.",
     },
   ];
   const NAV_ITEMS = [

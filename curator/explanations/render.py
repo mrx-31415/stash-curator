@@ -106,14 +106,26 @@ class ExplanationService:
                 feature_version,
             )
         ]
-        if item.source_lane in {"stretch", "adventure"}:
+        if item.source_lane in {"stretch", "blind_spots"}:
             exploration_code = self._exploration_code(item)
             if exploration_code is not None:
-                magnitude = _number(
-                    item.qualification.get(
-                        "challenge_distance", item.qualification.get("uncertainty")
+                detail: dict[str, object] = {"subtype": item.subtype}
+                if item.source_lane == "stretch":
+                    magnitude = _number(item.qualification.get("challenge_distance"))
+                    detail["challenged_feature"] = item.qualification.get("challenged_feature")
+                    detail["anchor_features"] = item.qualification.get("anchor_features", [])
+                else:
+                    dark_facets = item.qualification.get("dark_facets")
+                    top = (
+                        dark_facets[0]
+                        if isinstance(dark_facets, list) and dark_facets
+                        else None
                     )
-                )
+                    magnitude = _number(top.get("darkness")) if isinstance(top, dict) else 0.0
+                    detail["dark_facets"] = dark_facets or []
+                    detail["corroborating_types"] = item.qualification.get(
+                        "corroborating_types", 0
+                    )
                 reasons.append(
                     Reason(
                         exploration_code,
@@ -124,12 +136,7 @@ class ExplanationService:
                         item.scene_id,
                         "standard",
                         "lane_policy",
-                        {
-                            "subtype": item.subtype,
-                            "challenged_feature": item.qualification.get("challenged_feature"),
-                            "anchor_features": item.qualification.get("anchor_features", []),
-                            "positive_anchors": item.qualification.get("positive_anchors", {}),
-                        },
+                        detail,
                         model_id,
                         feature_version,
                     )
@@ -164,9 +171,7 @@ class ExplanationService:
     def _exploration_code(item: RecommendationItem) -> str | None:
         if item.source_lane == "stretch":
             return "explore.challenge"
-        if item.subtype == "model_disagreement":
-            return "explore.disagreement"
-        if item.subtype in {"under_covered_island", "anchored_model_gap"}:
+        if item.source_lane == "blind_spots":
             return "explore.coverage"
         return None
 
@@ -191,6 +196,7 @@ class ExplanationService:
     def _slots(self, reason: Reason) -> dict[str, str]:
         slots = {
             "challenge": "one less-certain part of your taste",
+            "facet": "an under-explored part of your library",
             "known": "a familiar performer",
             "performer": "a familiar performer",
             "precedent": "a scene that worked for you",
@@ -217,6 +223,8 @@ class ExplanationService:
             return {"tags": self._tag_names(reason)}
         if reason.code == "explore.challenge":
             return {"challenge": self._challenge_phrase(reason.detail.get("challenged_feature"))}
+        if reason.code == "explore.coverage":
+            return {"facet": self._facet_phrase(reason.detail.get("dark_facets"))}
         return {}
 
     def _neighbor_slots(self, reason: Reason) -> dict[str, str]:
@@ -264,6 +272,15 @@ class ExplanationService:
             "content": "a less familiar content pattern",
             "history": "something outside your usual rotation",
         }.get(str(value), "one less-certain part of your taste")
+
+    @staticmethod
+    def _facet_phrase(value: object) -> str:
+        top = value[0] if isinstance(value, list) and value else None
+        if isinstance(top, dict):
+            name = str(top.get("name", "")).strip()
+            if name:
+                return name
+        return "an under-explored part of your library"
 
     def _similarity_slots(self, reason: Reason) -> dict[str, str]:
         matches = reason.detail.get("matches", [])
