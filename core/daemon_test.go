@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -374,41 +375,63 @@ func TestWorkerUpdateWatcherDetectsReplacement(t *testing.T) {
 	}
 }
 
-func TestEnqueueInlineFallback(t *testing.T) {
+func TestTaskPermissionFailureDoesNotOpenSidecar(t *testing.T) {
+	pluginDir := t.TempDir()
+	database := filepath.Join(t.TempDir(), "curator.sqlite3")
+	previous := checkWorkerStateWritableFn
+	checkWorkerStateWritableFn = func(string) error { return errors.New("permission denied") }
+	defer func() { checkWorkerStateWritableFn = previous }()
+
+	if _, err := runTaskBody(pluginDir, taskPayload(database, "build"), "build", jvObj()); err == nil {
+		t.Fatal("permission failure must reject the task")
+	}
+	if _, err := os.Stat(database); !os.IsNotExist(err) {
+		t.Fatalf("permission failure opened sidecar: %v", err)
+	}
+}
+
+func TestBackupValidationFailureRemovesSnapshot(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "curator.sqlite3.backup")
+	previous := validateBackupFn
+	validateBackupFn = func(string) error { return errors.New("invalid backup") }
+	defer func() { validateBackupFn = previous }()
+
+	if _, err := backupDatabaseValidated(db, destination, false, nil); err == nil {
+		t.Fatal("invalid backup must fail validation")
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("invalid backup remains published: %v", err)
+	}
+}
+
+func TestEnqueueFailsClosedWhenWorkerUnavailable(t *testing.T) {
 	db, path := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
 		t.Fatal(err)
 	}
 	pluginDir := t.TempDir()
-	prevSpawn := spawnWorkerFn
+	previousSpawn := spawnWorkerFn
 	spawnWorkerFn = func(string) error { return errors.New("no worker in tests") }
-	defer func() { spawnWorkerFn = prevSpawn }()
-	pinTime(t, 30_000, func() {
-		_, err := runTaskBody(pluginDir, taskPayload(path, "compact"), "compact", jvObj())
-		// The mode body runs inline; on a bare sidecar compaction either
-		// completes or fails fast — either way the row must leave 'queued'.
-		_ = err
-	})
-	// Find the row the enqueue inserted (job_id is a uuid): exactly one row,
-	// and it is no longer queued (it ran inline to a terminal state).
-	var states []string
-	rows, err := db.Query(`SELECT state FROM curator_job`)
-	if err != nil {
+	defer func() { spawnWorkerFn = previousSpawn }()
+
+	_, err := runTaskBody(pluginDir, taskPayload(path, "compact"), "compact", jvObj())
+	if err == nil {
+		t.Fatal("worker failure must not fall back to inline execution")
+	}
+	var state string
+	var taskError string
+	if err := db.QueryRow(`SELECT state, error FROM curator_job`).Scan(&state, &taskError); err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var state string
-		if err := rows.Scan(&state); err != nil {
-			t.Fatal(err)
-		}
-		states = append(states, state)
+	if state != "failed" {
+		t.Fatalf("failed worker left job in %q", state)
 	}
-	if len(states) != 1 {
-		t.Fatalf("expected one job row, got %d", len(states))
-	}
-	if states[0] == "queued" || states[0] == "running" {
-		t.Fatalf("inline fallback left the row in %q", states[0])
+	if !strings.Contains(taskError, "worker unavailable") {
+		t.Fatalf("unexpected task error: %q", taskError)
 	}
 }
 

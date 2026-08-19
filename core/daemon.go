@@ -70,15 +70,74 @@ func workerLogPath(pluginDir string) string {
 	return filepath.Join(pluginDir, "data", "curator-daemon.log")
 }
 
+func workerStateDataDir(pluginDir string) string {
+	return filepath.Join(pluginDir, "data")
+}
+
+// checkWorkerStateWritable fails before a task mutates the sidecar when the
+// caller cannot coordinate with the daemon. This is especially important for
+// direct invocations under a different UID from the Stash container.
+func checkWorkerStateWritable(pluginDir string) error {
+	directory := workerStateDataDir(pluginDir)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return fmt.Errorf("could not create worker state directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".curator-worker-probe-*")
+	if err != nil {
+		return fmt.Errorf("worker state directory is not writable: %w", err)
+	}
+	name := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("could not close worker state probe: %w", err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("could not remove worker state probe: %w", err)
+	}
+	return nil
+}
+
+var checkWorkerStateWritableFn = checkWorkerStateWritable
+
 func writeWorkerState(pluginDir string, state workerState) error {
-	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+	directory := workerStateDataDir(pluginDir)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(workerStatePath(pluginDir), raw, 0o644)
+	temporary, err := os.CreateTemp(directory, ".curator-worker-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryName)
+	}
+	if err := temporary.Chmod(0o644); err != nil {
+		cleanup()
+		return err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryName)
+		return err
+	}
+	if err := os.Rename(temporaryName, workerStatePath(pluginDir)); err != nil {
+		_ = os.Remove(temporaryName)
+		return err
+	}
+	return nil
 }
 
 func readWorkerState(pluginDir string) (workerState, error) {
