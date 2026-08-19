@@ -10,6 +10,10 @@ import (
 	"syscall"
 )
 
+// Windows does not expose a portable command-line query through the APIs used
+// by this plugin; PID liveness remains the available ownership check there.
+func workerPidIsWorker(pid int, _ string) bool { return pidAlive(pid) }
+
 func workerFileIdentity(os.FileInfo) string { return "" }
 
 func terminateWorker(pid int) error {

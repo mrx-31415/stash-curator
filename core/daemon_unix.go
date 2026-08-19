@@ -3,10 +3,24 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"syscall"
 )
+
+func workerPidIsWorker(pid int, pluginDir string) bool {
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil || !bytes.Contains(cmdline, []byte(pluginDir)) {
+		return false
+	}
+	for _, arg := range bytes.Split(cmdline, []byte{0}) {
+		if bytes.Equal(arg, []byte("daemon")) {
+			return true
+		}
+	}
+	return false
+}
 
 func workerFileIdentity(info os.FileInfo) string {
 	stat, ok := info.Sys().(*syscall.Stat_t)
