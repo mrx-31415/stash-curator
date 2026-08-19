@@ -43,10 +43,10 @@ ADVENTUROUS_PATTERN = (
     "stretch",
     "best_bets",
     "stretch",
-    "adventure",
+    "blind_spots",
     "best_bets",
     "stretch",
-    "adventure",
+    "blind_spots",
 )
 QUERIED_SCORE_FIRST_LANES = frozenset({"best_bets", "revisit", "stretch"})
 SCORE_FIRST_RANKING_JSON = json.dumps(
@@ -71,6 +71,23 @@ def _stretch_dimension(classification: LaneClassification) -> str | None:
         return None
     feature_id = challenged.get("feature_id")
     return str(feature_id) if feature_id else None
+
+
+def _blind_spot_facet(classification: LaneClassification) -> str | None:
+    """The strongest dark facet's id, for the per-facet Blind Spots rotation.
+
+    policy.py sorts dark_facets by darkness descending, so the first entry is
+    the facet driving lane_value (lane_value uses max(darkness)); the same
+    facet doubles as the rotation key.
+    """
+    facets = classification.qualification.get("dark_facets")
+    if not isinstance(facets, list) or not facets:
+        return None
+    top = facets[0]
+    if not isinstance(top, dict):
+        return None
+    facet_id = top.get("id")
+    return str(facet_id) if facet_id else None
 
 
 @dataclass(frozen=True)
@@ -267,18 +284,19 @@ class SlateBuilder:
             result = [("all", "")]
             if lane == "for_you":
                 result.append(("lane", candidate.classification.lane))
-            elif lane == "adventure" and candidate.classification.subtype:
-                result.append(("subtype", candidate.classification.subtype))
             elif lane == "stretch":
                 dimension = _stretch_dimension(candidate.classification)
                 if dimension:
                     result.append(("dimension", dimension))
+            elif lane == "blind_spots":
+                facet = _blind_spot_facet(candidate.classification)
+                if facet:
+                    result.append(("facet", facet))
             return tuple(result)
 
         # At most stretch_per_dimension (default 1) card per challenged dimension
         # per page: round-robin the target selector through every distinct
-        # dimension present, the same mechanism _target already uses to rotate
-        # adventure's five subtypes. See docs/workpackage-lane-redesign.md.
+        # dimension present. See docs/workpackage-lane-redesign.md.
         # Gated on varied: stretch is a QUERIED_SCORE_FIRST_LANES member, so its
         # score_first ordering is never materialized through this path (only
         # answered live by a plain lane_value-sorted query) — this rotation
@@ -286,6 +304,16 @@ class SlateBuilder:
         stretch_dimensions = (
             sorted({dim for c in candidates if (dim := _stretch_dimension(c.classification))})
             if lane == "stretch" and varied
+            else ()
+        )
+        # At most blind_spot_per_facet card per dark facet per page — the same
+        # rotation mechanism, unconditional on varied since blind_spots is not
+        # a QUERIED_SCORE_FIRST_LANES member (both orderings materialize
+        # through this path, matching how the adventure subtype rotation it
+        # replaces always applied here too).
+        blind_spot_facets = (
+            sorted({f for c in candidates if (f := _blind_spot_facet(c.classification))})
+            if lane == "blind_spots"
             else ()
         )
 
@@ -366,11 +394,9 @@ class SlateBuilder:
         previous: _Candidate | None = None
         scene_count = len({candidate.classification.scene_id for candidate in candidates})
         while len(selected_scene_ids) < scene_count:
-            target_lane, target_subtype = self._target(lane, len(ordered), 0)
+            target_lane = self._target(lane, len(ordered), 0)
             wanted = (
-                ("subtype", target_subtype)
-                if lane == "adventure" and target_subtype
-                else (
+                (
                     "dimension",
                     stretch_dimensions[
                         (len(ordered) // max(1, self.config.ranking.stretch_per_dimension))
@@ -378,6 +404,14 @@ class SlateBuilder:
                     ],
                 )
                 if lane == "stretch" and stretch_dimensions
+                else (
+                    "facet",
+                    blind_spot_facets[
+                        (len(ordered) // max(1, self.config.ranking.blind_spot_per_facet))
+                        % len(blind_spot_facets)
+                    ],
+                )
+                if lane == "blind_spots" and blind_spot_facets
                 else ("lane", target_lane)
                 if lane == "for_you"
                 else ("all", "")
@@ -456,7 +490,7 @@ class SlateBuilder:
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
-        if lane not in {"for_you", "best_bets", "revisit", "stretch", "adventure"}:
+        if lane not in {"for_you", "best_bets", "revisit", "stretch", "blind_spots"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
@@ -599,14 +633,32 @@ class SlateBuilder:
             if lane == "stretch" and self.diversity_enabled
             else ()
         )
+        # At most blind_spot_per_facet card per dark facet per page, mirrored
+        # from _build_order's rotation for this greedy path's own separate
+        # selection loop. Unconditional on diversity_enabled: blind_spots is
+        # not a QUERIED_SCORE_FIRST_LANES member, so there is no live SQL path
+        # this needs to stay equivalent to.
+        blind_spot_facets = (
+            sorted({f for c in candidates if (f := _blind_spot_facet(c.classification))})
+            if lane == "blind_spots"
+            else ()
+        )
         for position in range(len(selected), count):
-            target_lane, target_subtype = self._target(lane, position, exploration)
+            target_lane = self._target(lane, position, exploration)
             target_dimension = (
                 stretch_dimensions[
                     (position // max(1, self.config.ranking.stretch_per_dimension))
                     % len(stretch_dimensions)
                 ]
                 if lane == "stretch" and stretch_dimensions
+                else None
+            )
+            target_facet = (
+                blind_spot_facets[
+                    (position // max(1, self.config.ranking.blind_spot_per_facet))
+                    % len(blind_spot_facets)
+                ]
+                if lane == "blind_spots" and blind_spot_facets
                 else None
             )
             remaining = [
@@ -618,10 +670,13 @@ class SlateBuilder:
                 candidate
                 for candidate in remaining
                 if candidate.classification.lane == target_lane
-                and (target_subtype is None or candidate.classification.subtype == target_subtype)
                 and (
                     target_dimension is None
                     or _stretch_dimension(candidate.classification) == target_dimension
+                )
+                and (
+                    target_facet is None
+                    or _blind_spot_facet(candidate.classification) == target_facet
                 )
             ]
             pool = preferred or (
@@ -1391,24 +1446,15 @@ class SlateBuilder:
                 rows,
             )
 
-    def _target(self, lane: str, position: int, exploration: float) -> tuple[str, str | None]:
+    def _target(self, lane: str, position: int, exploration: float) -> str:
         if lane == "for_you":
             base = self.config.ranking.for_you_pattern
             alternative = FAMILIAR_PATTERN if exploration < 0 else ADVENTUROUS_PATTERN
             mixed_slots = round(abs(exploration) * len(base))
             use_alternative = (position * 7) % len(base) < mixed_slots
             pattern = alternative if use_alternative else base
-            return pattern[position % len(pattern)], None
-        if lane == "adventure":
-            subtypes = (
-                "anchored_model_gap",
-                "model_disagreement",
-                "structured_combination_challenge",
-                "under_covered_island",
-                "pure_probe",
-            )
-            return lane, subtypes[position] if position < len(subtypes) else None
-        return lane, None
+            return pattern[position % len(pattern)]
+        return lane
 
     def _candidates(
         self, model_id: str, classifications: tuple[LaneClassification, ...]

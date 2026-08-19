@@ -109,23 +109,23 @@ CREATE TABLE model_scene_reason (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_lane (
     model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','adventure')),
+    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots')),
     subtype TEXT, lane_value REAL NOT NULL, qualification_json TEXT NOT NULL DEFAULT '{}',
     appeal REAL, PRIMARY KEY (model_id, scene_id, lane)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_lane_candidate_cache (
     model_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('best_bets','revisit','stretch','adventure')),
+    lane TEXT NOT NULL CHECK (lane IN ('best_bets','revisit','stretch','blind_spots')),
     candidates_json TEXT NOT NULL, candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), PRIMARY KEY (model_id, lane)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_lane_order (
     model_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','adventure')),
+    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots')),
     ordering TEXT NOT NULL CHECK (ordering IN ('score_first','varied')),
     position INTEGER NOT NULL CHECK (position >= 0), scene_id TEXT NOT NULL,
     source_lane TEXT NOT NULL CHECK (
-        source_lane IN ('best_bets','revisit','stretch','adventure')
+        source_lane IN ('best_bets','revisit','stretch','blind_spots')
     ),
     utility REAL NOT NULL, ranking_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (model_id, lane, ordering, position),
