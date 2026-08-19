@@ -13,7 +13,7 @@ permalink: /using-curator/
 | **Best Bets** | Strong unseen matches with enough independent supporting evidence |
 | **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
 | **Stretch** | Mostly familiar recommendations, with one confirmed tag or studio named as the challenge |
-| **Adventure** | Deliberate probes into uncertain or under-covered parts of the model |
+| **Blind Spots** | Studios or tags you've barely watched, corroborated by more than one signal |
 
 Cards are arranged as a slate. Curator avoids adjacent performer repetition and
 softly varies studios and content, so the page is not merely the top 20 scores.
@@ -110,7 +110,7 @@ Curator never deletes media, and the tag can be removed from the same view or in
 - Scenes, performers, studios, and tags you create, edit, or delete in Stash are imported
   immediately through entity hooks, so recommendations pick them up without a manual sync.
 - Back up before plugin updates and before uninstalling.
-- Treat Adventure and external results as exploration, not guaranteed matches.
+- Treat Blind Spots and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
 - Enable profiling only while measuring a reproducible slow operation; retained
   traces stay local until cleared.

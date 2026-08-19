@@ -10,6 +10,7 @@ from pathlib import Path
 
 _FIELDS = {
     "challenge",
+    "facet",
     "known",
     "performer",
     "profile",

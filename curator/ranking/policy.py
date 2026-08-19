@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import math
 import sqlite3
+from collections import defaultdict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import cast
@@ -15,7 +15,7 @@ from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.storage import transaction
 
-LANES = ("best_bets", "revisit", "stretch", "adventure")
+LANES = ("best_bets", "revisit", "stretch", "blind_spots")
 
 
 @dataclass(frozen=True)
@@ -116,27 +116,11 @@ class LanePolicy:
         fit_ranks = _percentiles(
             {scene_id: score.current_fit for scene_id, score in eligible_scores.items()}
         )
-        coverage_ranks, unknown_performers, unknown_studios = self._adventure_context(
-            model_id, set(eligible_scores)
-        )
+        blind_spot_context = self._blind_spot_context(model_id, set(eligible_scores))
         classifications: list[LaneClassification] = []
         stretch_raw: dict[str, dict[str, object]] = {}
         total = len(eligible_scores)
         for position, (scene_id, score) in enumerate(sorted(eligible_scores.items()), 1):
-            reusable = {
-                family: _component_value(score, family)
-                for family in (
-                    "content",
-                    "content_neighbor",
-                    "performer_identity",
-                    "performer_similarity",
-                    "studio",
-                    "structure",
-                )
-            }
-            positives = {key: value for key, value in reusable.items() if value >= 0.025}
-            negatives = {key: value for key, value in reusable.items() if value <= -0.025}
-            strongest_anchor = max(positives.values(), default=0.0)
             content_rank = content_ranks[scene_id]
             neighbor_rank = neighbor_ranks[scene_id]
             similarity_rank = similarity_ranks[scene_id]
@@ -276,38 +260,47 @@ class LanePolicy:
                     "anchor_strength": sum(_number(item.get("value")) for item in anchors),
                     "challenge_distance": challenge_distance,
                 }
-            subtype = self._adventure_subtype(
-                score,
-                positives,
-                negatives,
-                reusable.get("structure", 0.0),
-                coverage_ranks.get(scene_id, 0.0),
+            context = blind_spot_context.get(
+                scene_id, {"dark_facets": [], "content_feature_count": 0}
             )
-            distance_rank = 1 - similarity_rank
-            adventure_value = (
-                0.38 * coverage_ranks.get(scene_id, 0.0)
-                + 0.25 * distance_rank
-                + 0.17 * unknown_performers.get(scene_id, 1.0)
-                + 0.08 * unknown_studios.get(scene_id, 1.0)
-                + 0.12 * score.metadata_confidence
-            )
-            classifications.append(
-                LaneClassification(
-                    scene_id,
-                    "adventure",
-                    subtype,
-                    adventure_value,
-                    {
-                        "positive_anchors": positives,
-                        "component_disagreement": negatives,
-                        "uncertainty": 1 - score.confidence,
-                        "coverage_gap_percentile": coverage_ranks.get(scene_id, 0.0),
-                        "content_distance_percentile": distance_rank,
-                        "unknown_performer_share": unknown_performers.get(scene_id, 1.0),
-                        "unknown_studio": unknown_studios.get(scene_id, 1.0),
-                    },
+            dark_facets = cast(list[dict[str, object]], context["dark_facets"])
+            facet_types = {str(item["facet_type"]) for item in dark_facets}
+            if (
+                scene_id not in played_scene_ids
+                and cast(int, context["content_feature_count"])
+                >= self.config.ranking.dark_min_features
+                and len(facet_types) >= self.config.ranking.dark_min_facet_types
+            ):
+                max_darkness = max(_number(item["darkness"]) for item in dark_facets)
+                blind_spot_value = (
+                    max_darkness
+                    * (
+                        1
+                        + self.config.ranking.dark_corroboration_bonus * (len(facet_types) - 1)
+                    )
+                    * score.metadata_confidence
+                    * (1 + max(0.0, score.appeal))
                 )
-            )
+                subtype = (
+                    "never_played"
+                    if all(int(cast(int, item["played_count"])) == 0 for item in dark_facets)
+                    else "under_played"
+                )
+                classifications.append(
+                    LaneClassification(
+                        scene_id,
+                        "blind_spots",
+                        subtype,
+                        blind_spot_value,
+                        {
+                            "dark_facets": sorted(
+                                dark_facets,
+                                key=lambda item: (-_number(item["darkness"]), str(item["id"])),
+                            ),
+                            "corroborating_types": len(facet_types),
+                        },
+                    )
+                )
             if progress and (position == total or position % 250 == 0):
                 progress(position, max(1, total))
         if progress and not total:
@@ -429,87 +422,130 @@ class LanePolicy:
             )
         }
 
-    @staticmethod
-    def _adventure_subtype(
-        score: ModelSceneScore,
-        positives: dict[str, float],
-        negatives: dict[str, float],
-        structure: float,
-        coverage_rank: float,
-    ) -> str:
-        if structure > 0.015:
-            return "structured_combination_challenge"
-        if positives and negatives:
-            return "model_disagreement"
-        if positives and score.confidence < 0.45:
-            return "anchored_model_gap"
-        if coverage_rank >= 0.65 or (score.metadata_confidence >= 0.30 and score.confidence < 0.25):
-            return "under_covered_island"
-        return "pure_probe"
-
-    def _adventure_context(
+    def _blind_spot_context(
         self, model_id: str, scene_ids: set[str]
-    ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    ) -> dict[str, dict[str, object]]:
+        """Per-scene dark-facet data for Blind Spots: which studio/confirmed-tag
+        facets are underexplored relative to the library's overall play rate,
+        and how many of the scene's facet types corroborate each other.
+
+        Darkness uses a Beta-posterior shrink toward the library base rate
+        (alpha = dark_prior_strength) rather than an unregularized mean, so a
+        facet with few scenes does not get an unbounded darkness score just
+        because none of its handful of scenes happen to be played yet. See
+        docs/workpackage-lane-redesign.md ("Blind Spots").
+        """
         feature_row = self.connection.execute(
             "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
         ).fetchone()
-        vectors = FeatureStore(self.connection).scene_content_vectors(str(feature_row[0]))
+        features_by_scene = FeatureStore(self.connection).entity_features(
+            str(feature_row[0]), "scene"
+        )
         played = self._played_scene_ids()
-        library_count: dict[str, int] = {}
-        played_count: dict[str, int] = {}
-        for scene_id, vector in vectors.items():
-            for feature in vector:
-                library_count[feature] = library_count.get(feature, 0) + 1
-                if scene_id in played:
-                    played_count[feature] = played_count.get(feature, 0) + 1
-        total_scenes = max(1, len(vectors))
-        played_scenes = len(played)
-        gaps: dict[str, float] = {}
-        for scene_id in scene_ids:
-            vector = vectors.get(scene_id, {})
-            weighted_gap = 0.0
-            weight = 0.0
-            for feature, value in vector.items():
-                expected = library_count.get(feature, 0) * played_scenes / total_scenes
-                ratio = (expected + 2) / (played_count.get(feature, 0) + 2)
-                weighted_gap += min(3.0, math.log1p(ratio)) * value
-                weight += value
-            gaps[scene_id] = weighted_gap / weight if weight else 0.0
-        coverage_ranks = _percentiles(gaps)
 
-        performers: dict[str, list[str]] = {}
+        content_feature_count = {
+            scene_id: sum(1 for feature in features if feature.family == "content")
+            for scene_id, features in features_by_scene.items()
+        }
+
+        # Tag facets: content features confirmed against the StashDB taxonomy
+        # (see "Tag confirmation" — role_reason must resolve via stashdb_*, not
+        # the content_default fallback). Studio facets: source_scene.studio_id,
+        # one authoritative FK per scene.
+        tag_scenes: dict[str, set[str]] = defaultdict(set)
+        tag_names: dict[str, str] = {}
+        for scene_id, features in features_by_scene.items():
+            for feature in features:
+                if feature.family != "content":
+                    continue
+                metadata = feature.metadata
+                reason = metadata.get("role_reason")
+                if metadata.get("tag_id") is None or not (
+                    isinstance(reason, str) and reason.startswith("stashdb_")
+                ):
+                    continue
+                tag_scenes[feature.feature_id].add(scene_id)
+                tag_names[feature.feature_id] = str(metadata.get("tag_name") or feature.name)
+
+        scene_studio: dict[str, str] = {}
+        studio_scenes: dict[str, set[str]] = defaultdict(set)
+        studio_names: dict[str, str] = {}
         for row in self.connection.execute(
-            "SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, position"
+            """
+            SELECT s.scene_id, s.studio_id, st.name FROM source_scene s
+            JOIN source_studio st ON st.studio_id = s.studio_id
+            WHERE s.studio_id IS NOT NULL
+            """
         ):
-            performers.setdefault(str(row["scene_id"]), []).append(str(row["performer_id"]))
-        known_performers = {
-            performer for scene_id in played for performer in performers.get(scene_id, ())
-        }
-        unknown_performers = {
-            scene_id: (
-                sum(performer not in known_performers for performer in performers.get(scene_id, ()))
-                / len(performers[scene_id])
-                if performers.get(scene_id)
-                else 1.0
-            )
-            for scene_id in scene_ids
-        }
-        scene_studios = {
-            str(row["scene_id"]): str(row["studio_id"])
-            for row in self.connection.execute(
-                "SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL"
-            )
-        }
-        known_studios = {
-            scene_studios[scene_id] for scene_id in played if scene_id in scene_studios
-        }
-        unknown_studios = {
-            scene_id: float(
-                scene_id not in scene_studios or scene_studios[scene_id] not in known_studios
-            )
-            for scene_id in scene_ids
-        }
-        return coverage_ranks, unknown_performers, unknown_studios
+            scene_id, studio_id = str(row["scene_id"]), str(row["studio_id"])
+            scene_studio[scene_id] = studio_id
+            studio_scenes[studio_id].add(scene_id)
+            studio_names[studio_id] = str(row["name"] or "")
+
+        total_scenes = max(1, len(features_by_scene))
+        played_scenes = len(played & set(features_by_scene))
+        base_rate = played_scenes / total_scenes
+        alpha = self.config.ranking.dark_prior_strength
+
+        def darkness_of(scenes: set[str]) -> tuple[float, int, int]:
+            library_count = len(scenes)
+            played_count = len(scenes & played)
+            if base_rate <= 0:
+                return 0.0, library_count, played_count
+            rate = (played_count + alpha * base_rate) / (library_count + alpha)
+            return max(0.0, min(1.0, 1 - rate / base_rate)), library_count, played_count
+
+        def dark_facets_of(pool: dict[str, set[str]]) -> dict[str, tuple[float, int, int]]:
+            result: dict[str, tuple[float, int, int]] = {}
+            for facet_id, scenes in pool.items():
+                darkness, library_count, played_count = darkness_of(scenes)
+                if (
+                    darkness >= self.config.ranking.dark_threshold
+                    and self.config.ranking.dark_min_library
+                    <= library_count
+                    <= self.config.ranking.dark_max_library
+                ):
+                    result[facet_id] = (darkness, library_count, played_count)
+            return result
+
+        dark_tags = dark_facets_of(tag_scenes)
+        dark_studios = dark_facets_of(studio_scenes)
+
+        result: dict[str, dict[str, object]] = {}
+        for scene_id in scene_ids:
+            dark_facets: list[dict[str, object]] = []
+            for feature in features_by_scene.get(scene_id, ()):
+                if feature.family != "content" or feature.feature_id not in dark_tags:
+                    continue
+                darkness, library_count, played_count = dark_tags[feature.feature_id]
+                dark_facets.append(
+                    {
+                        "facet_type": "tag",
+                        "id": feature.feature_id,
+                        "name": tag_names[feature.feature_id],
+                        "library_count": library_count,
+                        "played_count": played_count,
+                        "darkness": darkness,
+                    }
+                )
+            scene_studio_id = scene_studio.get(scene_id)
+            if scene_studio_id is not None and scene_studio_id in dark_studios:
+                darkness, library_count, played_count = dark_studios[scene_studio_id]
+                dark_facets.append(
+                    {
+                        "facet_type": "studio",
+                        "id": scene_studio_id,
+                        "name": studio_names[scene_studio_id],
+                        "library_count": library_count,
+                        "played_count": played_count,
+                        "darkness": darkness,
+                    }
+                )
+            result[scene_id] = {
+                "dark_facets": dark_facets,
+                "content_feature_count": content_feature_count.get(scene_id, 0),
+            }
+        return result
 
     def _persist(
         self,
