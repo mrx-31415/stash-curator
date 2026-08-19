@@ -83,8 +83,9 @@ the spawning process is gone), ensures the worker is alive, and returns
 `{job_id, queued: true}` immediately (~100 ms). Semantics:
 
 - same-type coalescing keeps the `already_running` behavior (`already_queued`);
-- if the worker cannot be spawned (unusual platform), run inline exactly as
-  today — no behavior regression.
+- If worker coordination or spawning fails, the task fails closed with an
+  actionable error; it never falls back to inline sidecar writes. This prevents
+  a direct invocation under another UID from racing a resident daemon.
 
 ### 4.2 Daemon (`curator-core <pluginDir> daemon`)
 
@@ -179,8 +180,12 @@ it Curator-side:
   stale `server_connection`; refresh per enqueue, fail clear on stale URL.
 - **Always-resident vs lazy-with-idle-exit**: lazy recommended (no permanent
   process on an otherwise idle plugin).
-- **backend.py parity divergence** on the task lifecycle: keep the inline
-  path as fallback so the reference and the differential gates stay honest.
+- **backend.py parity divergence** on the task lifecycle: the Python backend
+  remains the inline oracle for differential task-body comparisons, while the
+  shipped Go runtime fails closed when worker ownership cannot be established.
+- **Backup durability**: newly created snapshots pass a full SQLite integrity
+  check before publication; backup storage should be outside the live sidecar's
+  failure domain when possible.
 
 ## 6. Sequencing
 

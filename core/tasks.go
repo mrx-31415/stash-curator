@@ -58,11 +58,15 @@ func runTask(pluginDir string, payload jVal, mode string) (jVal, error) {
 // runTaskBody posts the task to the Curator-owned worker queue and returns
 // immediately, freeing Stash's single-slot job queue (docs/decisions/004).
 // Same-type queued/running jobs coalesce into the existing already_running
-// response. If the worker cannot run (unusual platform), the task executes
-// inline exactly as before so behavior never silently regresses.
+// response. Worker coordination failures are terminal for this invocation:
+// tasks never fall back to inline writes because a resident daemon may still
+// own the sidecar.
 func runTaskBody(pluginDir string, payload jVal, mode string, settings jVal) (jVal, error) {
 	if !taskModeNative(mode) {
 		return jvNull(), fmt.Errorf("unknown Curator task: %s", mode)
+	}
+	if err := checkWorkerStateWritableFn(pluginDir); err != nil {
+		return jvNull(), fmt.Errorf("Curator worker coordination unavailable; refusing inline task: %w", err)
 	}
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
@@ -111,19 +115,12 @@ VALUES (?, ?, 'queued', ?, ?, ?)`, jobID, mode, now, now, payloadRaw)
 		), nil
 	}
 	if workerErr := ensureWorker(pluginDir, payload, settings); workerErr != nil {
-		// No worker: fall back to inline execution (pre-worker behavior) so
-		// the task still completes. The queued row is promoted to running.
-		infoLog(fmt.Sprintf("Stash Curator %s running inline (worker unavailable: %v)", mode, workerErr))
-		if err := execImmediate(db, `UPDATE curator_job SET state='running', heartbeat_at_ms=?
-WHERE job_id=? AND state='queued'`, now, jobID); err != nil {
+		failure := fmt.Errorf("Curator worker unavailable; queued task was not started: %w", workerErr)
+		if err := execImmediate(db, `UPDATE curator_job SET state='failed', finished_at_ms=?, error=?
+WHERE job_id=? AND state='queued'`, nowMs(), truncateString(failure.Error(), 2000), jobID); err != nil {
 			return jvNull(), err
 		}
-		work, oerr := openTaskSidecar(pluginDir, payload, settings, mode)
-		if oerr != nil {
-			return jvNull(), oerr
-		}
-		defer work.Close()
-		return executeClaimedJob(work, pluginDir, payload, mode, settings, jobID, now)
+		return jvNull(), failure
 	}
 	return jvObj(
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
@@ -670,7 +667,7 @@ func taskBackup(db dbx, pluginDir string, payload jVal, settings jVal, startedAt
 	var backup string
 	err := pythonSpan("task.backup", func() error {
 		var err error
-		backup, err = backupDatabase(db, destination, false, mappedProgress(0.05, 0.95))
+		backup, err = backupDatabaseValidated(db, destination, false, mappedProgress(0.05, 0.95))
 		return err
 	})
 	if err != nil {
