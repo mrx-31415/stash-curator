@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     recommend = subparsers.add_parser("recommend", help="Build a recommendation slate")
     recommend.add_argument(
         "--lane",
-        choices=("for_you", "best_bets", "revisit", "stretch", "blind_spots"),
+        choices=("for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant"),
         required=True,
     )
     recommend.add_argument("--count", type=int, default=20)

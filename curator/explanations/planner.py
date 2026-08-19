@@ -44,6 +44,7 @@ class Microplanner:
 
     _PRIORITY: ClassVar[dict[str, int]] = {
         "direct.positive": 7,
+        "dormant.entity": 7,
         "appeal.performer_identity": 6,
         "appeal.content_neighbor": 5,
         "appeal.tag_declared_positive": 5,
@@ -98,6 +99,12 @@ class Microplanner:
             )
             if direct is not None:
                 return direct
+        if lane == "dormant":
+            dormant = next(
+                (unit for unit in positives if unit.reason.code == "dormant.entity"), None
+            )
+            if dormant is not None:
+                return dormant
         if positives:
             return positives[0]
         return self._fallback_unit(lane)

@@ -15,7 +15,7 @@ import (
 )
 
 // lanes mirrors policy.LANES (order matters for the returned counts dict).
-var lanes = []string{"best_bets", "revisit", "stretch", "blind_spots"}
+var lanes = []string{"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
 
 // orderingEntry mirrors one _build_order result row.
 type orderingEntry struct {
@@ -84,6 +84,10 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 			if facet := blindSpotFacet(c); facet != "" {
 				result = append(result, key{"facet", facet})
 			}
+		} else if lane == "dormant" {
+			if entity := dormantEntity(c); entity != "" {
+				result = append(result, key{"entity", entity})
+			}
 		}
 		return result
 	}
@@ -97,6 +101,9 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 	// this same path, matching how the adventure subtype rotation it replaces
 	// always applied here too.
 	facets := blindSpotFacets(lane, candidates)
+	// At most dormant_per_entity card per dormant entity per page — same
+	// reasoning as facets above.
+	entities := dormantEntities(lane, candidates)
 	push := func(k key) {
 		c := byKey[k]
 		entry := heapEntry{-utilities[k], c.sceneID, c.lane, versions[k]}
@@ -189,6 +196,8 @@ func buildOrdering(lane string, candidates []*greedyCandidate, varied bool) []or
 			wanted = key{"dimension", dimensions[(len(ordered)/maxInt(1, rankingStretchPerDimension))%len(dimensions)]}
 		} else if lane == "blind_spots" && len(facets) > 0 {
 			wanted = key{"facet", facets[(len(ordered)/maxInt(1, rankingBlindSpotPerFacet))%len(facets)]}
+		} else if lane == "dormant" && len(entities) > 0 {
+			wanted = key{"entity", entities[(len(ordered)/maxInt(1, rankingDormantPerEntity))%len(entities)]}
 		} else if lane == "for_you" {
 			wanted = key{"lane", targetLane}
 		} else {
@@ -354,7 +363,6 @@ WHERE model_id=? GROUP BY lane`, modelID)
 		counts.set(lane, jvInt(count))
 	}
 	completed := 0
-	total := len(lanes) + 3
 	if err := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
 		if _, err := conn.ExecContext(ctx,
@@ -369,6 +377,17 @@ WHERE model_id=? GROUP BY lane`, modelID)
 	}
 	timings := map[string]int64{"score_first_ordering": 0, "varied_ordering": 0}
 	allLanes := append(append([]string(nil), lanes...), "for_you")
+	// One progress tick per (lane, ordering) pair below: queried score-first
+	// lanes materialize only "varied"; every other lane (including for_you)
+	// also materializes "score_first".
+	total := 0
+	for _, lane := range allLanes {
+		if queriedScoreFirstLanes[lane] {
+			total++
+		} else {
+			total += 2
+		}
+	}
 	for _, lane := range allLanes {
 		laneCandidates := make([]*greedyCandidate, 0, len(candidates))
 		for _, c := range candidates {
