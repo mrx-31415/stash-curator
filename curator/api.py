@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections import defaultdict
 from dataclasses import asdict, replace
 from typing import Any
 from uuid import uuid4
 
 from curator import curation
 from curator.config import DEFAULT_CONFIG
+from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.expand import STASHDB, ExpandService
 from curator.explanations import ExplanationService
 from curator.features import FeatureStore
@@ -904,7 +906,7 @@ class CuratorAPI:
         page_size: int = 20,
         tag_name: str = "[Prune]",
     ) -> dict[str, object]:
-        if view not in {"candidates", "tagged", "explicit", "suspects"}:
+        if view not in {"candidates", "tagged", "explicit", "suspects", "breadth"}:
             raise ValueError("unknown prune view")
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("invalid prune page")
@@ -974,11 +976,59 @@ class CuratorAPI:
             and float(score["confidence"]) >= confidence_limit
             and states.get(scene_id) != "keep"
         }
+        breadth: set[str] = set()
+        breadth_scene_studio: dict[str, str] = {}
+        breadth_studio_stats: dict[str, tuple[int, int]] = {}
+        breadth_studio_names: dict[str, str] = {}
+        with span("python", "prune.breadth"):
+            played = {
+                str(row[0])
+                for row in self.connection.execute(
+                    f"""
+                    SELECT DISTINCT scene_id FROM source_play
+                    UNION
+                    SELECT DISTINCT scene_id FROM play_session
+                    WHERE provenance<>'direct_player' OR {OBSERVED_PLAYBACK_SQL}
+                    """
+                )
+            }
+            studio_scenes: dict[str, set[str]] = defaultdict(set)
+            for row in self.connection.execute(
+                """
+                SELECT s.scene_id, s.studio_id, st.name FROM source_scene s
+                JOIN source_studio st ON st.studio_id = s.studio_id
+                WHERE s.studio_id IS NOT NULL
+                """
+            ):
+                scene_id, studio_id = str(row["scene_id"]), str(row["studio_id"])
+                studio_scenes[studio_id].add(scene_id)
+                breadth_studio_names[studio_id] = str(row["name"] or "")
+            total_scenes = max(
+                1, int(self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0])
+            )
+            base_rate = len(played) / total_scenes
+            alpha = DEFAULT_CONFIG.ranking.dark_prior_strength
+            if base_rate > 0:
+                for studio_id, scenes in studio_scenes.items():
+                    library_count = len(scenes)
+                    if library_count <= DEFAULT_CONFIG.ranking.dark_max_library:
+                        continue
+                    played_count = len(scenes & played)
+                    rate = (played_count + alpha * base_rate) / (library_count + alpha)
+                    darkness = max(0.0, min(1.0, 1 - rate / base_rate))
+                    if darkness >= DEFAULT_CONFIG.ranking.dark_threshold:
+                        breadth_studio_stats[studio_id] = (library_count, played_count)
+                        for scene_id in scenes:
+                            if states.get(scene_id) == "keep":
+                                continue
+                            breadth.add(scene_id)
+                            breadth_scene_studio[scene_id] = studio_id
         selected = {
-            "candidates": explicit | suspects,
+            "candidates": explicit | suspects | breadth,
             "tagged": tagged,
             "explicit": explicit,
             "suspects": suspects,
+            "breadth": breadth,
         }[view] - (tagged if view != "tagged" else set())
         ordered = sorted(
             selected,
@@ -1006,6 +1056,14 @@ class CuratorAPI:
                 evidence.append("Explicit negative feedback")
             if scene_id in suspects:
                 evidence.append("Low predicted Appeal with supporting evidence")
+            if scene_id in breadth:
+                studio_id = breadth_scene_studio[scene_id]
+                library_count, played_count = breadth_studio_stats[studio_id]
+                studio_name = breadth_studio_names.get(studio_id, studio_id)
+                evidence.append(
+                    f"Broad, low-engagement studio ({studio_name}): "
+                    f"owns {library_count}, played {played_count}"
+                )
             items.append(
                 {
                     **rows.get(scene_id, {"scene_id": scene_id, "title": "", "play_count": 0}),
@@ -1014,6 +1072,7 @@ class CuratorAPI:
                     "tagged": scene_id in tagged,
                     "explicit": scene_id in explicit,
                     "suspect": scene_id in suspects,
+                    "breadth": scene_id in breadth,
                     "evidence": evidence,
                 }
             )

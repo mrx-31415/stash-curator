@@ -80,7 +80,7 @@ func opGetPruneCandidates(pluginDir string, payload jVal) (jVal, error) {
 // pruneCandidates mirrors CuratorAPI.prune_candidates.
 func pruneCandidates(db dbx, view string, aggressiveness float64, page, pageSize int64,
 	tagName string, modelID string) (jVal, error) {
-	if view != "candidates" && view != "tagged" && view != "explicit" && view != "suspects" {
+	if view != "candidates" && view != "tagged" && view != "explicit" && view != "suspects" && view != "breadth" {
 		return jvNull(), fmt.Errorf("unknown prune view")
 	}
 	if page < 1 || pageSize < 1 || pageSize > 100 {
@@ -202,6 +202,75 @@ WHERE model_id=? AND scene_id IN (
 			suspects[sceneID] = true
 		}
 	}
+	breadth := map[string]bool{}
+	breadthSceneStudio := map[string]string{}
+	type breadthStat struct {
+		libraryCount, playedCount int64
+	}
+	breadthStudioStats := map[string]breadthStat{}
+	breadthStudioNames := map[string]string{}
+	err = pythonSpan("prune.breadth", func() error {
+		played, err := playedSceneIDs(db)
+		if err != nil {
+			return err
+		}
+		studioScenes := map[string]map[string]bool{}
+		rows, err := db.Query(`
+SELECT s.scene_id, s.studio_id, st.name
+FROM source_scene s JOIN source_studio st ON st.studio_id = s.studio_id
+WHERE s.studio_id IS NOT NULL`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var sceneID, studioID string
+			var name sql.NullString
+			if err := rows.Scan(&sceneID, &studioID, &name); err != nil {
+				rows.Close()
+				return err
+			}
+			if studioScenes[studioID] == nil {
+				studioScenes[studioID] = map[string]bool{}
+			}
+			studioScenes[studioID][sceneID] = true
+			breadthStudioNames[studioID] = name.String
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		var totalScenes int64
+		if err := db.QueryRow(`SELECT count(*) FROM source_scene`).Scan(&totalScenes); err != nil {
+			return err
+		}
+		if totalScenes < 1 {
+			totalScenes = 1
+		}
+		baseRate := float64(len(played)) / float64(totalScenes)
+		const alpha = 20.0
+		const darkThreshold = 0.55
+		const darkMaxLibrary = 500
+		if baseRate > 0 {
+			for studioID, scenes := range studioScenes {
+				darkness, libraryCount, playedCount := darkPoolStats(scenes, played, baseRate, alpha)
+				if libraryCount <= darkMaxLibrary || darkness < darkThreshold {
+					continue
+				}
+				breadthStudioStats[studioID] = breadthStat{libraryCount, playedCount}
+				for sceneID := range scenes {
+					if states[sceneID] == "keep" {
+						continue
+					}
+					breadth[sceneID] = true
+					breadthSceneStudio[sceneID] = studioID
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return jvNull(), err
+	}
 	selected := map[string]bool{}
 	switch view {
 	case "candidates":
@@ -209,6 +278,9 @@ WHERE model_id=? AND scene_id IN (
 			selected[id] = true
 		}
 		for id := range suspects {
+			selected[id] = true
+		}
+		for id := range breadth {
 			selected[id] = true
 		}
 	case "tagged":
@@ -221,6 +293,10 @@ WHERE model_id=? AND scene_id IN (
 		}
 	case "suspects":
 		for id := range suspects {
+			selected[id] = true
+		}
+	case "breadth":
+		for id := range breadth {
 			selected[id] = true
 		}
 	}
@@ -322,6 +398,17 @@ WHERE model_id=? AND scene_id IN (
 		if suspects[sceneID] {
 			evidence.arr = append(evidence.arr, jvStr("Low predicted Appeal with supporting evidence"))
 		}
+		if breadth[sceneID] {
+			studioID := breadthSceneStudio[sceneID]
+			stat := breadthStudioStats[studioID]
+			studioName := breadthStudioNames[studioID]
+			if studioName == "" {
+				studioName = studioID
+			}
+			evidence.arr = append(evidence.arr, jvStr(fmt.Sprintf(
+				"Broad, low-engagement studio (%s): owns %d, played %d",
+				studioName, stat.libraryCount, stat.playedCount)))
+		}
 		items.arr = append(items.arr, jvObj(
 			jvKey("scene_id", jvStr(sceneID)),
 			jvKey("title", jvStr(title)),
@@ -331,6 +418,7 @@ WHERE model_id=? AND scene_id IN (
 			jvKey("tagged", jvBool(tagged[sceneID])),
 			jvKey("explicit", jvBool(explicit[sceneID])),
 			jvKey("suspect", jvBool(suspects[sceneID])),
+			jvKey("breadth", jvBool(breadth[sceneID])),
 			jvKey("evidence", evidence),
 		))
 	}

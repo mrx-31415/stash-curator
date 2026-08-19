@@ -9,7 +9,7 @@ from curator.features import FeatureStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.ranking import Slate, SlateBuilder
 from curator.similarity import SimilarityService
-from curator.storage import connect_database
+from curator.storage import MigrationRunner, connect_database
 from tests.model.test_builder import DAY_MS, REFERENCE_MS, _database
 
 
@@ -626,6 +626,86 @@ def test_prune_candidates_are_reversible_tags_not_deletions(tmp_path: Path) -> N
         connection.execute("SELECT 1 FROM pruning_candidate WHERE scene_id='disliked'").fetchone()
         is None
     )
+
+
+def _breadth_prune_database(path: Path) -> sqlite3.Connection:
+    """One studio far over Blind Spots' breadth ceiling (dark_max_library=500)
+    and almost entirely unplayed, plus a small played control studio so
+    darkness has a non-zero base rate to compare against.
+
+    Exercises CuratorAPI.prune_candidates's 'breadth' view, which routes
+    exactly the signal Blind Spots discards for being too broad to be a
+    region — see docs/workpackage-lane-redesign.md, "Route the
+    breadth-ceiling signal to pruning".
+    """
+    connection = connect_database(path)
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    connection.execute(
+        """
+        INSERT INTO feature_build(
+            feature_version, status, config_json, source_fingerprint,
+            created_at_ms, published_at_ms
+        ) VALUES ('features', 'published', '{}', 'source', 1, 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO model_version(
+            model_id, status, feature_version, config_json, created_at_ms, published_at_ms
+        ) VALUES ('model', 'published', 'features', '{}', 1, 1)
+        """
+    )
+    connection.executemany(
+        "INSERT INTO source_studio(studio_id, name, source_hash) VALUES (?, ?, ?)",
+        (("mega-studio", "Mega Studio", "ms"), ("control-studio", "Control Studio", "cs")),
+    )
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, title, studio_id, source_hash) VALUES (?, ?, ?, ?)",
+        (
+            (f"mega-{index:03d}", f"mega-{index:03d}", "mega-studio", f"mega-{index:03d}")
+            for index in range(600)
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, title, studio_id, source_hash) VALUES (?, ?, ?, ?)",
+        (
+            (f"control-{index}", f"control-{index}", "control-studio", f"control-{index}")
+            for index in range(5)
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES (?, 1, 0)",
+        ((f"control-{index}",) for index in range(5)),
+    )
+    return connection
+
+
+def test_prune_candidates_breadth_view_surfaces_the_blind_spots_ceiling_signal(
+    tmp_path: Path,
+) -> None:
+    connection = _breadth_prune_database(tmp_path / "curator.sqlite3")
+    api = CuratorAPI(connection)
+
+    breadth = api.prune_candidates("breadth", page_size=1)
+    assert breadth["total"] == 600
+    assert breadth["items"][0]["scene_id"].startswith("mega-")
+    assert breadth["items"][0]["breadth"] is True
+    assert breadth["items"][0]["evidence"] == [
+        "Broad, low-engagement studio (Mega Studio): owns 600, played 0"
+    ]
+
+    # Folds into the default "candidates" view too, alongside explicit/suspect.
+    assert api.prune_candidates("candidates", page_size=1)["total"] == 600
+    # Control studio's scenes are all played and stay out of the breadth pool.
+    assert not any(
+        item["scene_id"].startswith("control-") for item in api.prune_candidates("breadth")["items"]
+    )
+    assert api.prune_candidates("suspects")["total"] == 0
+
+    api.dismiss_prune_candidate("mega-000", now_ms=10)
+    dismissed = api.prune_candidates("breadth")
+    assert dismissed["total"] == 599
+    assert "mega-000" not in [item["scene_id"] for item in dismissed["items"]]
 
 
 def test_explicit_negative_feedback_reopens_a_dismissed_prune_suspect(tmp_path: Path) -> None:
