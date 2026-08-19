@@ -28,6 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "benchmarks" / "baseline.json"
 REFERENCE_MS = 200 * 86_400_000
 DEFAULT_MULTIPLIER = 2.5
+# Filesystem scheduling noise dominates very short stages. Keep the per-stage
+# gate useful for regressions while avoiding failures from sub-500 ms jitter;
+# the total budget remains unchanged and still catches aggregate slowdowns.
+MIN_STAGE_BUDGET_MS = 500
 
 # The Python-era stage key set (stageTimingOrder in core/tasks.go).
 STAGE_ORDER = (
@@ -138,7 +142,7 @@ def main() -> int:
         for key in STAGE_ORDER:
             if key not in baseline["stages"] or key not in stages:
                 continue
-            budget = baseline["stages"][key] * multiplier
+            budget = max(baseline["stages"][key] * multiplier, MIN_STAGE_BUDGET_MS)
             if stages[key] > budget:
                 failures.append((key, stages[key], budget))
         total_budget = baseline["total_ms"] * multiplier
