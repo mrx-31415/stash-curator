@@ -74,9 +74,8 @@ func listBackups(directory string) (jVal, error) {
 	return items, nil
 }
 
-// validateBackup mirrors backend.py's _validate_backup: SQLite integrity
-// check, a schema_migration table, and a migration-status (checksum) pass;
-// every failure is wrapped as "incompatible Curator backup: ...".
+// validateBackup mirrors backend.py's backup validation: a full SQLite
+// integrity check, schema presence, and migration checksum validation.
 func validateBackup(path string) error {
 	inner := func() error {
 		db, err := openDatabase(path, true, nil)
@@ -85,7 +84,7 @@ func validateBackup(path string) error {
 		}
 		defer db.Close()
 		var check string
-		if err := db.QueryRow("PRAGMA quick_check").Scan(&check); err != nil {
+		if err := db.QueryRow("PRAGMA integrity_check").Scan(&check); err != nil {
 			return err
 		}
 		if check != "ok" {
@@ -108,6 +107,30 @@ func validateBackup(path string) error {
 		return fmt.Errorf("incompatible Curator backup: %v", err)
 	}
 	return nil
+}
+
+var validateBackupFn = validateBackup
+
+func removeBackupSidecars(path string) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+			warnLog("could not remove backup sidecar: " + err.Error())
+		}
+	}
+}
+
+func backupDatabaseValidated(db dbx, dst string, overwrite bool, progress func(done, total int)) (string, error) {
+	backup, err := backupDatabase(db, dst, overwrite, progress)
+	if err != nil {
+		return "", err
+	}
+	if err := validateBackupFn(backup); err != nil {
+		removeBackupSidecars(backup)
+		_ = os.Remove(backup)
+		return "", err
+	}
+	removeBackupSidecars(backup)
+	return backup, nil
 }
 
 // backupDatabase mirrors curator.storage.database.backup_database: an
@@ -347,7 +370,7 @@ func opBackupControl(pluginDir string, payload jVal) (jVal, error) {
 	}
 	now := nowMs()
 	if operation == "create_backup" {
-		backup, err := backupDatabase(
+		backup, err := backupDatabaseValidated(
 			db,
 			filepath.Join(directory, fmt.Sprintf("curator-%d.sqlite3.backup", now)),
 			false,
