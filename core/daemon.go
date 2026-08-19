@@ -137,11 +137,19 @@ func workerBinaryFingerprint(pluginDir string) (string, error) {
 		info.Size(), info.ModTime().UnixNano(), info.Mode().Perm()), nil
 }
 
-// workerPidAliveFn is injectable for rotation tests.
+// workerPidAliveFn and workerPidIsWorkerFn are injectable for rotation tests.
 var workerPidAliveFn = pidAlive
+
+var workerPidIsWorkerFn = workerPidIsWorker
 
 // stopWorkerFn is injectable so rotation tests never signal a real process.
 var stopWorkerFn = stopWorker
+
+func removeWorkerPidIfOwned(pluginDir string) {
+	if pid, ok := readWorkerPid(pluginDir); ok && pid == os.Getpid() {
+		_ = os.Remove(workerPidPath(pluginDir))
+	}
+}
 
 func stopWorker(pid int) error {
 	if !pidAlive(pid) {
@@ -161,11 +169,15 @@ func stopWorker(pid int) error {
 }
 
 // rotateStaleWorker stops a live daemon whose generation predates the
-// installed executable. Missing state is treated as stale for safe rollout
-// from versions that did not record a fingerprint.
+// installed executable. A live PID that is not actually a Curator daemon is
+// treated as stale metadata and is never signalled.
 func rotateStaleWorker(pluginDir, fingerprint string) error {
 	pid, ok := readWorkerPid(pluginDir)
 	if !ok || !workerPidAliveFn(pid) {
+		return nil
+	}
+	if !workerPidIsWorkerFn(pid, pluginDir) {
+		_ = os.Remove(workerPidPath(pluginDir))
 		return nil
 	}
 	state, err := readWorkerState(pluginDir)
@@ -266,7 +278,7 @@ func ensureAutoWorker(pluginDir string, payload jVal, settings jVal, db dbx) {
 		ServerConnection:  serverConn,
 		BinaryFingerprint: fingerprint,
 	}
-	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) {
+	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
 		if err := writeWorkerState(pluginDir, state); err != nil {
 			return
 		}
@@ -321,7 +333,7 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 		ServerConnection:  serverConn,
 		BinaryFingerprint: fingerprint,
 	}
-	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) {
+	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
 		if err := writeWorkerState(pluginDir, state); err != nil {
 			return fmt.Errorf("could not write worker state: %w", err)
 		}
@@ -367,7 +379,7 @@ func runDaemon(pluginDir string) {
 		infoLog("daemon generation is stale; exiting")
 		return
 	}
-	if pid, ok := readWorkerPid(pluginDir); ok && pid != os.Getpid() && workerPidAliveFn(pid) {
+	if pid, ok := readWorkerPid(pluginDir); ok && pid != os.Getpid() && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
 		// A concurrent spawn won the race; it owns the worker.
 		os.Exit(0)
 	}
@@ -375,7 +387,7 @@ func runDaemon(pluginDir string) {
 		fmt.Fprintf(os.Stderr, "curator-core daemon: could not write pid file: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.Remove(workerPidPath(pluginDir))
+	defer removeWorkerPidIfOwned(pluginDir)
 
 	daemonExitOnCancel = true
 	loop, loopPath := openDaemonLoop(pluginDir, state)
@@ -391,6 +403,7 @@ func runDaemon(pluginDir string) {
 	go func() {
 		<-sigCh
 		markRunningCancelled(loop)
+		removeWorkerPidIfOwned(pluginDir)
 		os.Exit(0)
 	}()
 
