@@ -94,7 +94,14 @@ WHERE model_id=? AND appeal IS NOT NULL GROUP BY scene_id`, modelID)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(appeals) == 0 {
+	{
+		// The lane index is a fast path, not a complete one: Stretch and Blind
+		// Spots both gate (unlike the Adventure lane they replaced, which
+		// admitted every eligible scene and so made the index complete by
+		// construction). An eligible scene that misses every lane still needs
+		// an appeal for Similar to surface it, so anything the index is
+		// missing is filled in here rather than only falling back when the
+		// index is empty outright.
 		rows, err := db.Query(`SELECT scene_id, appeal FROM model_scene_score
 WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1`, modelID)
 		if err != nil {
@@ -106,7 +113,9 @@ WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1`, modelID)
 			if err := rows.Scan(&sceneID, &appeal); err != nil {
 				return nil, err
 			}
-			appeals[sceneID] = appeal
+			if _, ok := appeals[sceneID]; !ok {
+				appeals[sceneID] = appeal
+			}
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {

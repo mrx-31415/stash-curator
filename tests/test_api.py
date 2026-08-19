@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,13 +10,66 @@ from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.ranking import Slate, SlateBuilder
 from curator.similarity import SimilarityService
 from curator.storage import connect_database
-from tests.model.test_builder import REFERENCE_MS, _database
+from tests.model.test_builder import DAY_MS, REFERENCE_MS, _database
+
+
+def _multi_candidate_database(path: Path) -> sqlite3.Connection:
+    """_database plus three more revisit-qualifying scenes.
+
+    Blind Spots (unlike the Adventure lane it replaced) gates on corroborated
+    dark facets that need a realistically sized library to appear at all
+    (dark_min_library=60), so it cannot supply _database's small fixture with
+    extra for_you candidates the way Adventure's admit-everyone lane used to.
+    These tests need multiple for_you candidates for paging/materialization
+    behavior, not Blind Spots specifically, so more scenes are added on the
+    cheaper revisit path instead — same recipe as 'old-good's own play
+    history (played well past cooldown recovery, a durable 'o' signal).
+    """
+    connection = _database(path)
+    scenes = (
+        ("extra-good-1", "studio-1"),
+        ("extra-good-2", "studio-1"),
+        ("extra-good-3", "studio-1"),
+    )
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, title, studio_id, source_hash) VALUES (?, ?, ?, ?)",
+        tuple((scene_id, scene_id, studio_id, scene_id) for scene_id, studio_id in scenes),
+    )
+    connection.executemany(
+        "INSERT INTO source_file(file_id, scene_id, available, source_hash) VALUES (?, ?, 1, ?)",
+        tuple((f"file-{scene_id}", scene_id, f"file-hash-{scene_id}") for scene_id, _ in scenes),
+    )
+    connection.executemany(
+        "INSERT INTO scene_tag(scene_id, tag_id, provenance) VALUES (?, 'good', 'scene')",
+        tuple((scene_id,) for scene_id, _ in scenes),
+    )
+    connection.executemany(
+        "INSERT INTO scene_performer(scene_id, performer_id, position) VALUES (?, 'p1', 0)",
+        tuple((scene_id,) for scene_id, _ in scenes),
+    )
+    connection.executemany(
+        "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES (?, ?, 0)",
+        tuple((scene_id, REFERENCE_MS - 120 * DAY_MS) for scene_id, _ in scenes),
+    )
+    connection.executemany(
+        """
+        INSERT INTO behavior_event(
+            event_id, event_type, scene_id, occurred_at_ms, outcome, confidence,
+            provenance, payload_json
+        ) VALUES (?, 'occasion_outcome', ?, ?, 1.0, 1, 'synthetic', '{"primary_signal":"o"}')
+        """,
+        tuple(
+            (f"event-{scene_id}", scene_id, REFERENCE_MS - 120 * DAY_MS)
+            for scene_id, _ in scenes
+        ),
+    )
+    return connection
 
 
 def test_slate_api_defers_explanations_until_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
+    connection = _multi_candidate_database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     monkeypatch.setattr(
         ExplanationService,
@@ -114,7 +168,7 @@ def test_feedback_history_is_newest_first_paginated_and_correctable(tmp_path: Pa
 def test_slate_api_pages_one_ranked_prefix_with_global_positions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
+    connection = _multi_candidate_database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     api = CuratorAPI(connection)
     fail = lambda *_args, **_kwargs: (_ for _ in ()).throw(  # noqa: E731
@@ -151,7 +205,7 @@ def test_slate_api_pages_one_ranked_prefix_with_global_positions(
 def test_slate_api_materializes_only_through_requested_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
+    connection = _multi_candidate_database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     requested_counts: list[int] = []
     recommend = SlateBuilder.recommend
@@ -183,7 +237,12 @@ def test_slate_api_materializes_only_through_requested_page(
 
     monkeypatch.setattr(SlateBuilder, "recommend", observed)
 
-    result = CuratorAPI(connection).get_slate("adventure", 1, page=2, now_ms=REFERENCE_MS)
+    # for_you: any lane outside QUERIED_SCORE_FIRST_LANES exercises this
+    # caching path (materialize only through the requested page rather than
+    # the whole candidate set); blind_spots also qualifies but needs a
+    # realistically sized library to produce any candidates at all, which
+    # this fixture doesn't have.
+    result = CuratorAPI(connection).get_slate("for_you", 1, page=2, now_ms=REFERENCE_MS)
 
     assert result["items"]
     assert requested_counts == [2]

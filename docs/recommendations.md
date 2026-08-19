@@ -32,10 +32,11 @@ different lane than a high estimate backed by varied outcomes.
 - **Stretch** keeps a familiar anchor while naming one confirmed tag or studio the
   model challenges — either a dimension it has learned to dislike, or one it has too
   little evidence about — and requires that named challenge to exist.
-- **Adventure** probes under-covered or conflicting regions of the model. It is not
-  simply a list of low scores.
+- **Blind Spots** surfaces studios or confirmed tags you have barely played, gated
+  on at least two independently corroborating facets so a single noisy field can't
+  qualify a scene alone.
 - **For You** mixes those policies with conservative items early and only a small
-  Adventure share.
+  Blind Spots share.
 
 Hard exclusions, unavailable files, explicit suppression, and Prune state are
 checked before lane scoring.

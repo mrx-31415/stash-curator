@@ -1,9 +1,9 @@
 // Lane classification — a port of curator/ranking/policy.py's LanePolicy:
-// percentile ranks over the family components, the adventure context
-// (coverage gaps, unknown performers/studios), and the per-scene best_bets /
-// revisit / stretch / adventure classification persisted to
-// model_scene_lane. Runs on the model artifact connection (reads through the
-// attached core + feature views).
+// percentile ranks over the family components, the Blind Spots context
+// (dark studio/tag facets, regularized against the library's play rate),
+// and the per-scene best_bets / revisit / stretch / blind_spots
+// classification persisted to model_scene_lane. Runs on the model artifact
+// connection (reads through the attached core + feature views).
 package main
 
 import (
@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"math"
 	"sort"
+	"strings"
 )
 
 // lanePercentiles mirrors policy._percentiles: tied values share the midpoint
@@ -188,131 +189,186 @@ WHERE provenance<>'direct_player' OR ` + observedPlaybackSQL)
 	return result, nil
 }
 
-// adventureSubtype mirrors LanePolicy._adventure_subtype.
-func adventureSubtype(score classificationScore, positives, negatives map[string]float64,
-	structure, coverageRank float64) string {
-	if structure > 0.015 {
-		return "structured_combination_challenge"
-	}
-	if len(positives) > 0 && len(negatives) > 0 {
-		return "model_disagreement"
-	}
-	if len(positives) > 0 && score.confidence < 0.45 {
-		return "anchored_model_gap"
-	}
-	if coverageRank >= 0.65 || (score.metadataConfidence >= 0.30 && score.confidence < 0.25) {
-		return "under_covered_island"
-	}
-	return "pure_probe"
+// darkFacet mirrors one dark_facets entry.
+type darkFacet struct {
+	facetType    string
+	id           string
+	name         string
+	libraryCount int64
+	playedCount  int64
+	darkness     float64
 }
 
-// adventureContext mirrors LanePolicy._adventure_context.
-func adventureContext(db dbx, modelID string, sceneIDs map[string]bool,
-	vectors map[string]map[string]float64) (map[string]float64, map[string]float64, map[string]float64, error) {
+// blindSpotSceneData mirrors one scene's precomputed Blind Spots ingredients:
+// its dark facets (already sorted by darkness descending, so index 0 is the
+// facet lane_value and the diversity rotation both key on) and its content
+// feature count (the dark_min_features floor).
+type blindSpotSceneData struct {
+	darkFacets          []darkFacet
+	contentFeatureCount int
+}
+
+// darkPoolStats mirrors _blind_spot_context.darkness_of: the regularized
+// darkness for one facet's scene set, shrunk toward the library base rate
+// (alpha = dark_prior_strength) rather than an unregularized mean, so a
+// facet with few scenes does not get an unbounded darkness score just
+// because none of its handful of scenes happen to be played yet.
+func darkPoolStats(scenes map[string]bool, played map[string]bool, baseRate, alpha float64) (float64, int64, int64) {
+	libraryCount := int64(len(scenes))
+	var playedCount int64
+	for sceneID := range scenes {
+		if played[sceneID] {
+			playedCount++
+		}
+	}
+	if baseRate <= 0 {
+		return 0.0, libraryCount, playedCount
+	}
+	rate := (float64(playedCount) + alpha*baseRate) / (float64(libraryCount) + alpha)
+	darkness := 1 - rate/baseRate
+	if darkness < 0 {
+		darkness = 0
+	}
+	if darkness > 1 {
+		darkness = 1
+	}
+	return darkness, libraryCount, playedCount
+}
+
+// blindSpotContext mirrors LanePolicy._blind_spot_context: which studio and
+// confirmed-tag facets are underexplored relative to the library's overall
+// play rate, and how many of each scene's facet types corroborate each
+// other. See docs/workpackage-lane-redesign.md ("Blind Spots").
+func blindSpotContext(db dbx, sceneIDs map[string]bool, featureVersion string) (map[string]blindSpotSceneData, error) {
+	featuresByScene, err := modelStoredFeatures(db, featureVersion, "scene")
+	if err != nil {
+		return nil, err
+	}
 	played, err := playedSceneIDs(db)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	libraryCount := map[string]int64{}
-	playedCount := map[string]int64{}
-	for sceneID, vector := range vectors {
-		for feature := range vector {
-			libraryCount[feature]++
-			if played[sceneID] {
-				playedCount[feature]++
+
+	contentFeatureCount := map[string]int{}
+	tagScenes := map[string]map[string]bool{}
+	tagNames := map[string]string{}
+	for sceneID, features := range featuresByScene {
+		for _, feature := range features {
+			if feature.family != "content" {
+				continue
 			}
-		}
-	}
-	totalScenes := maxInt(1, len(vectors))
-	playedScenes := int64(len(played))
-	gaps := map[string]float64{}
-	for sceneID := range sceneIDs {
-		vector := vectors[sceneID]
-		var weightedGap, weight float64
-		for _, feature := range sortedStringKeys(vector) {
-			value := vector[feature]
-			expected := float64(libraryCount[feature]) * float64(playedScenes) / float64(totalScenes)
-			ratio := (expected + 2) / (float64(playedCount[feature]) + 2)
-			weightedGap += math.Min(3.0, math.Log1p(ratio)) * value
-			weight += value
-		}
-		if weight != 0 {
-			gaps[sceneID] = weightedGap / weight
-		} else {
-			gaps[sceneID] = 0.0
-		}
-	}
-	coverageRanks := lanePercentiles(gaps)
-	performers := map[string][]string{}
-	rows, err := db.Query(`SELECT scene_id, performer_id FROM scene_performer ORDER BY scene_id, position`)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	for rows.Next() {
-		var sceneID, performerID string
-		if err := rows.Scan(&sceneID, &performerID); err != nil {
-			rows.Close()
-			return nil, nil, nil, err
-		}
-		performers[sceneID] = append(performers[sceneID], performerID)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, nil, nil, err
-	}
-	knownPerformers := map[string]bool{}
-	for sceneID := range played {
-		for _, performer := range performers[sceneID] {
-			knownPerformers[performer] = true
-		}
-	}
-	unknownPerformers := map[string]float64{}
-	for sceneID := range sceneIDs {
-		if len(performers[sceneID]) == 0 {
-			unknownPerformers[sceneID] = 1.0
-			continue
-		}
-		var unknown float64
-		for _, performer := range performers[sceneID] {
-			if !knownPerformers[performer] {
-				unknown++
+			contentFeatureCount[sceneID]++
+			metadata := feature.metadata
+			reason := metadata.get("role_reason").asString()
+			if metadata.get("tag_id").kind == jNull || !strings.HasPrefix(reason, "stashdb_") {
+				continue
 			}
+			if tagScenes[feature.featureID] == nil {
+				tagScenes[feature.featureID] = map[string]bool{}
+			}
+			tagScenes[feature.featureID][sceneID] = true
+			name := metadata.get("tag_name").asString()
+			if name == "" {
+				name = feature.name
+			}
+			tagNames[feature.featureID] = name
 		}
-		unknownPerformers[sceneID] = unknown / float64(len(performers[sceneID]))
 	}
-	sceneStudios := map[string]string{}
-	rows, err = db.Query(`SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL`)
+
+	sceneStudio := map[string]string{}
+	studioScenes := map[string]map[string]bool{}
+	studioNames := map[string]string{}
+	rows, err := db.Query(`
+		SELECT s.scene_id, s.studio_id, st.name
+		FROM source_scene s
+		JOIN source_studio st ON st.studio_id = s.studio_id
+		WHERE s.studio_id IS NOT NULL
+	`)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	for rows.Next() {
 		var sceneID, studioID string
-		if err := rows.Scan(&sceneID, &studioID); err != nil {
+		var name sql.NullString
+		if err := rows.Scan(&sceneID, &studioID, &name); err != nil {
 			rows.Close()
-			return nil, nil, nil, err
+			return nil, err
 		}
-		sceneStudios[sceneID] = studioID
+		sceneStudio[sceneID] = studioID
+		if studioScenes[studioID] == nil {
+			studioScenes[studioID] = map[string]bool{}
+		}
+		studioScenes[studioID][sceneID] = true
+		studioNames[studioID] = name.String
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	knownStudios := map[string]bool{}
-	for sceneID := range played {
-		if studioID, ok := sceneStudios[sceneID]; ok {
-			knownStudios[studioID] = true
+
+	totalScenes := maxInt(1, len(featuresByScene))
+	playedScenes := 0
+	for sceneID := range featuresByScene {
+		if played[sceneID] {
+			playedScenes++
 		}
 	}
-	unknownStudios := map[string]float64{}
+	baseRate := float64(playedScenes) / float64(totalScenes)
+	const alpha = 20.0
+	const darkThreshold = 0.55
+	const darkMinLibrary = 60
+	const darkMaxLibrary = 500
+
+	darkPool := func(pool map[string]map[string]bool) map[string]darkFacet {
+		result := map[string]darkFacet{}
+		for facetID, scenes := range pool {
+			darkness, libraryCount, playedCount := darkPoolStats(scenes, played, baseRate, alpha)
+			if darkness >= darkThreshold && libraryCount >= darkMinLibrary && libraryCount <= darkMaxLibrary {
+				result[facetID] = darkFacet{
+					libraryCount: libraryCount, playedCount: playedCount, darkness: darkness,
+				}
+			}
+		}
+		return result
+	}
+	darkTags := darkPool(tagScenes)
+	darkStudios := darkPool(studioScenes)
+
+	result := map[string]blindSpotSceneData{}
 	for sceneID := range sceneIDs {
-		studioID, ok := sceneStudios[sceneID]
-		if !ok || !knownStudios[studioID] {
-			unknownStudios[sceneID] = 1.0
-		} else {
-			unknownStudios[sceneID] = 0.0
+		var facets []darkFacet
+		for _, feature := range featuresByScene[sceneID] {
+			if feature.family != "content" {
+				continue
+			}
+			dark, ok := darkTags[feature.featureID]
+			if !ok {
+				continue
+			}
+			facets = append(facets, darkFacet{
+				facetType: "tag", id: feature.featureID, name: tagNames[feature.featureID],
+				libraryCount: dark.libraryCount, playedCount: dark.playedCount, darkness: dark.darkness,
+			})
+		}
+		if studioID, ok := sceneStudio[sceneID]; ok {
+			if dark, ok := darkStudios[studioID]; ok {
+				facets = append(facets, darkFacet{
+					facetType: "studio", id: studioID, name: studioNames[studioID],
+					libraryCount: dark.libraryCount, playedCount: dark.playedCount, darkness: dark.darkness,
+				})
+			}
+		}
+		sort.SliceStable(facets, func(i, j int) bool {
+			if facets[i].darkness != facets[j].darkness {
+				return facets[i].darkness > facets[j].darkness
+			}
+			return facets[i].id < facets[j].id
+		})
+		result[sceneID] = blindSpotSceneData{
+			darkFacets: facets, contentFeatureCount: contentFeatureCount[sceneID],
 		}
 	}
-	return coverageRanks, unknownPerformers, unknownStudios, nil
+	return result, nil
 }
 
 // builtLaneClassification mirrors LaneClassification.
@@ -325,17 +381,15 @@ type builtLaneClassification struct {
 }
 
 // laneContext carries the row-independent precomputed inputs for the
-// per-scene classification loop (ranks, adventure context, played set).
+// per-scene classification loop (ranks, Blind Spots context, played set).
 type laneContext struct {
-	contentRanks      map[string]float64
-	neighborRanks     map[string]float64
-	similarityRanks   map[string]float64
-	performerRanks    map[string]float64
-	studioRanks       map[string]float64
-	fitRanks          map[string]float64
-	coverageRanks     map[string]float64
-	unknownPerformers map[string]float64
-	unknownStudios    map[string]float64
+	contentRanks    map[string]float64
+	neighborRanks   map[string]float64
+	similarityRanks map[string]float64
+	performerRanks  map[string]float64
+	studioRanks     map[string]float64
+	fitRanks        map[string]float64
+	blindSpots      map[string]blindSpotSceneData
 	played            map[string]bool
 }
 
@@ -352,7 +406,7 @@ type stretchRaw struct {
 	challengeDistance float64
 }
 
-// classifyScene computes the best_bets / revisit / adventure rows for one
+// classifyScene computes the best_bets / revisit / blind_spots rows for one
 // eligible scene (the LanePolicy.classify per-scene body), plus the deferred
 // Stretch ingredients (if the scene qualifies) for the caller's global
 // percentile pass. The loop is row-independent: every input is a
@@ -360,29 +414,6 @@ type stretchRaw struct {
 // identical rows.
 func (c *laneContext) classifyScene(sceneID string, score classificationScore) ([]builtLaneClassification, *stretchRaw) {
 	var classifications []builtLaneClassification
-	reusable := map[string]float64{
-		"content":              componentValue(score.components, "content"),
-		"content_neighbor":     componentValue(score.components, "content_neighbor"),
-		"performer_identity":   componentValue(score.components, "performer_identity"),
-		"performer_similarity": componentValue(score.components, "performer_similarity"),
-		"studio":               componentValue(score.components, "studio"),
-		"structure":            componentValue(score.components, "structure"),
-	}
-	positives := map[string]float64{}
-	negatives := map[string]float64{}
-	for family, value := range reusable {
-		if value >= 0.025 {
-			positives[family] = value
-		} else if value <= -0.025 {
-			negatives[family] = value
-		}
-	}
-	strongestAnchor := 0.0
-	for _, value := range positives {
-		if value > strongestAnchor {
-			strongestAnchor = value
-		}
-	}
 	contentRank := c.contentRanks[sceneID]
 	neighborRank := c.neighborRanks[sceneID]
 	similarityRank := c.similarityRanks[sceneID]
@@ -512,25 +543,51 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) (
 			challengeDistance: challengeDistance,
 		}
 	}
-	subtype := adventureSubtype(score, positives, negatives,
-		reusable["structure"], c.coverageRanks[sceneID])
-	distanceRank := 1 - similarityRank
-	adventureValue := 0.38*c.coverageRanks[sceneID] + 0.25*distanceRank +
-		0.17*c.unknownPerformers[sceneID] + 0.08*c.unknownStudios[sceneID] +
-		0.12*score.metadataConfidence
-	classifications = append(classifications, builtLaneClassification{
-		sceneID: sceneID, lane: "adventure", subtype: subtype,
-		laneValue: adventureValue,
-		qualification: jvObj(
-			jvKey("positive_anchors", floatMapJVal(positives)),
-			jvKey("component_disagreement", floatMapJVal(negatives)),
-			jvKey("uncertainty", jvFloat(1-score.confidence)),
-			jvKey("coverage_gap_percentile", jvFloat(c.coverageRanks[sceneID])),
-			jvKey("content_distance_percentile", jvFloat(distanceRank)),
-			jvKey("unknown_performer_share", jvFloat(c.unknownPerformers[sceneID])),
-			jvKey("unknown_studio", jvFloat(c.unknownStudios[sceneID])),
-		),
-	})
+	blindSpot := c.blindSpots[sceneID]
+	facetTypes := map[string]bool{}
+	for _, facet := range blindSpot.darkFacets {
+		facetTypes[facet.facetType] = true
+	}
+	if !c.played[sceneID] && blindSpot.contentFeatureCount >= 4 && len(facetTypes) >= 2 {
+		maxDarkness := 0.0
+		for _, facet := range blindSpot.darkFacets {
+			if facet.darkness > maxDarkness {
+				maxDarkness = facet.darkness
+			}
+		}
+		blindSpotValue := maxDarkness * (1 + 0.15*float64(len(facetTypes)-1)) *
+			score.metadataConfidence * (1 + math.Max(0, score.appeal))
+		neverPlayed := true
+		for _, facet := range blindSpot.darkFacets {
+			if facet.playedCount != 0 {
+				neverPlayed = false
+				break
+			}
+		}
+		subtype := "under_played"
+		if neverPlayed {
+			subtype = "never_played"
+		}
+		darkFacetsJSON := jvArr()
+		for _, facet := range blindSpot.darkFacets {
+			darkFacetsJSON.arr = append(darkFacetsJSON.arr, jvObj(
+				jvKey("facet_type", jvStr(facet.facetType)),
+				jvKey("id", jvStr(facet.id)),
+				jvKey("name", jvStr(facet.name)),
+				jvKey("library_count", jvInt(facet.libraryCount)),
+				jvKey("played_count", jvInt(facet.playedCount)),
+				jvKey("darkness", jvFloat(facet.darkness)),
+			))
+		}
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "blind_spots", subtype: subtype,
+			laneValue: blindSpotValue,
+			qualification: jvObj(
+				jvKey("dark_facets", darkFacetsJSON),
+				jvKey("corroborating_types", jvInt(int64(len(facetTypes)))),
+			),
+		})
+	}
 	return classifications, stretch
 }
 
@@ -566,15 +623,11 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 	}))
 	studioRanks := lanePercentiles(mapValues(eligibleScores, func(s classificationScore) float64 { return componentValue(s.components, "studio") }))
 	fitRanks := lanePercentiles(mapValues(eligibleScores, func(s classificationScore) float64 { return s.currentFit }))
-	vectors, err := sceneContentVectorsAll(db, featureVersion)
-	if err != nil {
-		return nil, err
-	}
 	eligibleSet := map[string]bool{}
 	for sceneID := range eligibleScores {
 		eligibleSet[sceneID] = true
 	}
-	coverageRanks, unknownPerformers, unknownStudios, err := adventureContext(db, modelID, eligibleSet, vectors)
+	blindSpots, err := blindSpotContext(db, eligibleSet, featureVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -583,16 +636,14 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 	var classifications []builtLaneClassification
 	if total > 0 {
 		context := &laneContext{
-			contentRanks:      contentRanks,
-			neighborRanks:     neighborRanks,
-			similarityRanks:   similarityRanks,
-			performerRanks:    performerRanks,
-			studioRanks:       studioRanks,
-			fitRanks:          fitRanks,
-			coverageRanks:     coverageRanks,
-			unknownPerformers: unknownPerformers,
-			unknownStudios:    unknownStudios,
-			played:            played,
+			contentRanks:    contentRanks,
+			neighborRanks:   neighborRanks,
+			similarityRanks: similarityRanks,
+			performerRanks:  performerRanks,
+			studioRanks:     studioRanks,
+			fitRanks:        fitRanks,
+			blindSpots:      blindSpots,
+			played:          played,
 		}
 		// Each scene's classification depends only on its own score and the
 		// precomputed ranks, so the loop is row-independent: run it in fixed

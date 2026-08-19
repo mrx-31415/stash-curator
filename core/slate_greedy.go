@@ -23,13 +23,14 @@ const (
 	rankingHistoryContentPenalty   = 0.05
 	rankingUncoveredContentBonus   = 0.03
 	rankingStretchPerDimension     = 1
+	rankingBlindSpotPerFacet       = 1
 )
 
 var forYouPattern = []string{
 	"best_bets", "best_bets", "revisit", "best_bets", "stretch",
 	"best_bets", "best_bets", "stretch", "best_bets", "revisit",
 	"best_bets", "stretch", "best_bets", "best_bets", "revisit",
-	"best_bets", "stretch", "best_bets", "adventure", "best_bets",
+	"best_bets", "stretch", "best_bets", "blind_spots", "best_bets",
 }
 
 var familiarPattern = []string{
@@ -39,16 +40,9 @@ var familiarPattern = []string{
 
 var adventurousPattern = []string{
 	"best_bets", "best_bets", "revisit", "stretch", "best_bets",
-	"stretch", "adventure", "best_bets", "stretch", "adventure",
+	"stretch", "blind_spots", "best_bets", "stretch", "blind_spots",
 }
 
-var adventureSubtypes = []string{
-	"anchored_model_gap",
-	"model_disagreement",
-	"structured_combination_challenge",
-	"under_covered_island",
-	"pure_probe",
-}
 
 // greedyCandidate mirrors slate._Candidate.
 type greedyCandidate struct {
@@ -96,6 +90,46 @@ func stretchDimensions(lane string, candidates []*greedyCandidate, enabled bool)
 	}
 	sort.Strings(dims)
 	return dims
+}
+
+// blindSpotFacet mirrors _blind_spot_facet: the strongest dark facet's id,
+// for the per-facet Blind Spots rotation. classifyScene sorts dark_facets by
+// darkness descending, so the first entry is the facet driving lane_value
+// (lane_value uses max(darkness)); the same facet doubles as the rotation
+// key.
+func blindSpotFacet(c *greedyCandidate) string {
+	facets := c.qualification.get("dark_facets")
+	if facets.kind != jArr || len(facets.arr) == 0 {
+		return ""
+	}
+	top := facets.arr[0]
+	if top.kind != jObj {
+		return ""
+	}
+	return top.get("id").asString()
+}
+
+// blindSpotFacets mirrors the sorted-distinct-facet precompute shared by
+// buildOrdering and recommend()'s greedy loop. Unconditional (no varied /
+// diversityEnabled gate like stretchDimensions): blind_spots is not a
+// QUERIED_SCORE_FIRST_LANES member, so there is no live SQL path this needs
+// to stay equivalent to.
+func blindSpotFacets(lane string, candidates []*greedyCandidate) []string {
+	if lane != "blind_spots" {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if facet := blindSpotFacet(c); facet != "" {
+			seen[facet] = true
+		}
+	}
+	facets := make([]string, 0, len(seen))
+	for facet := range seen {
+		facets = append(facets, facet)
+	}
+	sort.Strings(facets)
+	return facets
 }
 
 // recommendGreedy mirrors SlateBuilder.recommend's recompute branch.
@@ -290,11 +324,18 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 	// mirrors buildOrdering's rotation for this greedy path's own separate
 	// selection loop (the live-recompute / filtered case).
 	dimensions := stretchDimensions(lane, live, diversityEnabled)
+	// At most blind_spot_per_facet card per dark facet per page — unconditional,
+	// see blindSpotFacets.
+	facets := blindSpotFacets(lane, live)
 	for position := int64(len(selected)); position < count; position++ {
-		targetLane, targetSubtype := slateTarget(lane, position, exploration)
+		targetLane := slateTarget(lane, position, exploration)
 		targetDimension := ""
 		if lane == "stretch" && len(dimensions) > 0 {
 			targetDimension = dimensions[(int(position)/maxInt(1, rankingStretchPerDimension))%len(dimensions)]
+		}
+		targetFacet := ""
+		if lane == "blind_spots" && len(facets) > 0 {
+			targetFacet = facets[(int(position)/maxInt(1, rankingBlindSpotPerFacet))%len(facets)]
 		}
 		remaining := make([]*greedyCandidate, 0, len(live))
 		for _, c := range live {
@@ -304,8 +345,9 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		}
 		preferred := make([]*greedyCandidate, 0, len(remaining))
 		for _, c := range remaining {
-			if c.lane == targetLane && (targetSubtype == "" || c.subtype == targetSubtype) &&
-				(targetDimension == "" || stretchDimension(c) == targetDimension) {
+			if c.lane == targetLane &&
+				(targetDimension == "" || stretchDimension(c) == targetDimension) &&
+				(targetFacet == "" || blindSpotFacet(c) == targetFacet) {
 				preferred = append(preferred, c)
 			}
 		}
@@ -446,7 +488,7 @@ func optString(s string) jVal {
 }
 
 // slateTarget mirrors SlateBuilder._target.
-func slateTarget(lane string, position int64, exploration float64) (string, string) {
+func slateTarget(lane string, position int64, exploration float64) string {
 	if lane == "for_you" {
 		base := forYouPattern
 		alternative := familiarPattern
@@ -459,15 +501,9 @@ func slateTarget(lane string, position int64, exploration float64) (string, stri
 		if useAlternative {
 			pattern = alternative
 		}
-		return pattern[position%int64(len(base))], ""
+		return pattern[position%int64(len(base))]
 	}
-	if lane == "adventure" {
-		if position < int64(len(adventureSubtypes)) {
-			return lane, adventureSubtypes[position]
-		}
-		return lane, ""
-	}
-	return lane, ""
+	return lane
 }
 
 // loadPreparedSlate mirrors SlateBuilder._load_prepared_slate; ok is false

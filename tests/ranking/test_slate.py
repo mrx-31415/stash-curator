@@ -332,11 +332,11 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
     assert ("d-revisit", "revisit") in lookup
     assert lookup[("e-frontier", "stretch")].subtype == "untested"
     assert lookup[("f-stretch", "stretch")].subtype == "tested_negative"
-    assert lookup[("g-combination", "adventure")].subtype == "structured_combination_challenge"
-    assert lookup[("f-stretch", "adventure")].subtype == "model_disagreement"
-    assert lookup[("i-island", "adventure")].subtype == "under_covered_island"
-    assert lookup[("h-probe", "adventure")].subtype == "under_covered_island"
-    assert lookup[("j-anchor", "adventure")].subtype == "anchored_model_gap"
+    # Blind Spots gates on facets with dark_min_library (60) library presence;
+    # this fixture's ~13 scenes cannot reach that, so none of them qualify.
+    # See test_blind_spot_context_gates_on_corroborated_dark_facets for
+    # dedicated Blind Spots coverage against a realistically sized library.
+    assert not any(item.lane == "blind_spots" for item in classifications)
     assert not any(item.scene_id == "x-excluded" for item in classifications)
     assert connection.execute(
         "SELECT count(*) FROM model_scene_lane WHERE model_id='model'"
@@ -345,6 +345,175 @@ def test_lane_policy_assigns_expected_subtypes_and_excludes_hard_failures(tmp_pa
         (item.scene_id, item.lane): item for item in LanePolicy(connection).load("model")
     } == lookup
     assert progress[-1][0] == progress[-1][1]
+
+
+def _blind_spot_database(path: Path) -> sqlite3.Connection:
+    """A library large enough for Blind Spots' facet gate (dark_min_library=60)
+    to engage, since _database's ~13 scenes cannot reach it.
+
+    Layout: 60 scenes carry both a confirmed dark tag and a dark studio
+    (corroborated, unplayed); 10 more carry only the dark studio; 5 more carry
+    only the dark tag; 25 "control" scenes carry a distinct, well-played
+    studio and tag and are excluded from both dark pools by the library-size
+    floor anyway. Every scene gets 3 filler (unconfirmed) content tags so the
+    corroborated scenes clear content_feature_count >= 4 without those
+    fillers themselves being eligible as facets.
+    """
+    connection = connect_database(path)
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    connection.execute(
+        """
+        INSERT INTO feature_build(
+            feature_version, status, config_json, source_fingerprint,
+            created_at_ms, published_at_ms
+        ) VALUES ('features', 'published', '{}', 'source', 1, 1)
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO model_version(
+            model_id, status, feature_version, config_json, created_at_ms, published_at_ms
+        ) VALUES ('model', 'published', 'features', '{}', 1, 1)
+        """
+    )
+    connection.executemany(
+        "INSERT INTO source_studio(studio_id, name, source_hash) VALUES (?, ?, ?)",
+        (("dark-studio", "Dark Studio", "ds"), ("control-studio", "Control Studio", "cs")),
+    )
+    connection.executemany(
+        "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+        (("dark-tag", "Dark Tag", "dt"), ("control-tag", "Control Tag", "ct")),
+    )
+    for index in range(3):
+        connection.execute(
+            """
+            INSERT INTO feature_definition(
+                feature_id, feature_version, family, name, provenance, metadata_json
+            ) VALUES (?, 'features', 'content', ?, 'synthetic', '{}')
+            """,
+            (f"filler-{index}", f"filler:{index}"),
+        )
+    connection.execute(
+        """
+        INSERT INTO feature_definition(
+            feature_id, feature_version, family, name, provenance, metadata_json
+        ) VALUES ('feature-dark-tag', 'features', 'content', 'tag:dark-tag', 'synthetic', ?)
+        """,
+        (
+            json.dumps(
+                {
+                    "tag_id": "dark-tag",
+                    "tag_name": "Dark Tag",
+                    "role_reason": "stashdb_unique_name_or_alias:dark-tag",
+                }
+            ),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO feature_definition(
+            feature_id, feature_version, family, name, provenance, metadata_json
+        ) VALUES ('feature-control-tag', 'features', 'content', 'tag:control-tag', 'synthetic', ?)
+        """,
+        (
+            json.dumps(
+                {
+                    "tag_id": "control-tag",
+                    "tag_name": "Control Tag",
+                    "role_reason": "stashdb_unique_name_or_alias:control-tag",
+                }
+            ),
+        ),
+    )
+    groups = (
+        *(("both", index) for index in range(60)),
+        *(("studio-only", index) for index in range(60, 70)),
+        *(("tag-only", index) for index in range(70, 75)),
+        *(("control", index) for index in range(75, 100)),
+    )
+    for group, index in groups:
+        scene_id = f"s{index:03d}"
+        studio_id = "dark-studio" if group in ("both", "studio-only") else "control-studio"
+        connection.execute(
+            "INSERT INTO source_scene(scene_id, title, studio_id, source_hash) VALUES (?, ?, ?, ?)",
+            (scene_id, scene_id, studio_id, scene_id),
+        )
+        content_features = [f"filler-{i}" for i in range(3)]
+        if group in ("both", "tag-only"):
+            content_features.append("feature-dark-tag")
+        if group == "control":
+            content_features.append("feature-control-tag")
+        connection.executemany(
+            """
+            INSERT INTO entity_feature(
+                feature_version, entity_type, entity_id, feature_id, value, confidence
+            ) VALUES ('features', 'scene', ?, ?, 1, 1)
+            """,
+            tuple((scene_id, feature_id) for feature_id in content_features),
+        )
+        # Every scene needs a real model_scene_score row for eligibility (see
+        # _score above); Blind Spots reads facets from entity_feature/
+        # source_scene/source_studio directly, not from components_json, so
+        # generic score values suffice here.
+        _score(connection, scene_id, fit=0.1, appeal=0.1, confidence=0.3, metadata=0.5)
+        if group == "control":
+            connection.execute(
+                "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES (?, 1, 0)",
+                (scene_id,),
+            )
+    return connection
+
+
+def test_blind_spot_context_gates_on_corroborated_dark_facets(tmp_path: Path) -> None:
+    connection = _blind_spot_database(tmp_path / "curator.sqlite3")
+    classifications = LanePolicy(connection).classify("model")
+    lookup = {item.scene_id: item for item in classifications if item.lane == "blind_spots"}
+
+    # Corroborated (studio + confirmed tag, both dark, both unplayed) qualifies.
+    corroborated = lookup["s000"]
+    assert corroborated.subtype == "never_played"
+    facet_types = {facet["facet_type"] for facet in corroborated.qualification["dark_facets"]}
+    assert facet_types == {"studio", "tag"}
+    assert corroborated.qualification["corroborating_types"] == 2
+    darkness_by_type = {
+        facet["facet_type"]: facet["darkness"]
+        for facet in corroborated.qualification["dark_facets"]
+    }
+    assert all(0.55 <= darkness <= 1.0 for darkness in darkness_by_type.values())
+    # Ranking is max(darkness) with a corroboration bonus, not mean — a second
+    # independent facet type must strictly raise lane_value above what either
+    # facet alone would produce (docs/workpackage-lane-redesign.md, "Blind
+    # Spots" ranking, and Validation defect 10).
+    max_darkness = max(darkness_by_type.values())
+    expected_value = max_darkness * (1 + 0.15 * 1) * 0.5 * (1 + max(0.0, 0.1))
+    assert corroborated.lane_value == pytest.approx(expected_value)
+    assert corroborated.lane_value > max_darkness * 0.5 * 1.1
+
+    # A single dark facet type (studio only) fails the corroboration
+    # requirement (dark_min_facet_types=2) and must not qualify.
+    assert "s060" not in lookup
+    # A dark, corroborated scene with too few content features (defect 3:
+    # sparse scenes re-entering through representativeness) must not qualify
+    # either — content_feature_count < dark_min_features(4).
+    connection.execute("DELETE FROM entity_feature WHERE entity_id='s000'")
+    connection.executemany(
+        """
+        INSERT INTO entity_feature(
+            feature_version, entity_type, entity_id, feature_id, value, confidence
+        ) VALUES ('features', 'scene', 's000', ?, 1, 1)
+        """,
+        (("feature-dark-tag",),),
+    )
+    sparse = {
+        item.scene_id: item
+        for item in LanePolicy(connection).classify("model")
+        if item.lane == "blind_spots"
+    }
+    assert "s000" not in sparse
+
+    # Control scenes (well-played, below the library-size floor) never
+    # qualify as dark facets at all.
+    assert "s075" not in lookup
 
 
 def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
@@ -359,7 +528,7 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
-    assert set(counts) == {"best_bets", "revisit", "stretch", "adventure"}
+    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots"}
     assert progress == [(position, 7) for position in range(1, 8)]
     assert set(builder.materialize_timings_ms) == {
         "score_first_ordering",
@@ -373,7 +542,9 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
             WHERE model_id='model' AND ordering='score_first'
             """
         )
-    } == {"adventure", "for_you"}
+        # blind_spots produces no rows for this fixture's small library — see
+        # test_blind_spot_context_gates_on_corroborated_dark_facets.
+    } == {"for_you"}
 
 
 def test_queried_score_first_lanes_match_full_materialized_order(tmp_path: Path) -> None:
@@ -409,7 +580,7 @@ def test_available_count_matches_live_materialized_slate(tmp_path: Path) -> None
     for diversity_enabled in (True, False):
         builder = SlateBuilder(connection, diversity_enabled=diversity_enabled)
         builder.materialize("model", force=True)
-        for lane in ("for_you", "best_bets", "revisit", "stretch", "adventure"):
+        for lane in ("for_you", "best_bets", "revisit", "stretch", "blind_spots"):
             slate = builder._load_materialized_slate("model", lane, 100)
             assert slate is not None
             assert builder.available_count("model", lane) == len(slate.items)
@@ -528,7 +699,7 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
     counts = SlateBuilder(connection).prepare("model")
-    assert set(counts) == {"best_bets", "revisit", "stretch", "adventure"}
+    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots"}
 
     monkeypatch.setattr(
         SlateBuilder,
@@ -784,17 +955,8 @@ def test_not_now_expires_without_rebuilding_model(
     assert builder.recommend("best_bets", 1).items[0].scene_id == "a-best"
 
 
-def test_adventure_gradient_and_for_you_mixture_are_deterministic(tmp_path: Path) -> None:
+def test_for_you_mixture_is_deterministic(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
-    adventure = SlateBuilder(connection).recommend("adventure", 5)
-    assert [item.subtype for item in adventure.items] == [
-        "anchored_model_gap",
-        "model_disagreement",
-        "structured_combination_challenge",
-        "under_covered_island",
-        "pure_probe",
-    ]
-
     for_you = SlateBuilder(connection).recommend("for_you", 5)
     assert [item.source_lane for item in for_you.items] == [
         "best_bets",
