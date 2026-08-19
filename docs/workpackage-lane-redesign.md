@@ -480,7 +480,8 @@ undo.
 
 ### Dormant — new
 
-**New table required** (migration 0033):
+**New table required** (migration 0034 — see *Architecture context* for why
+the number moved):
 
 ```sql
 CREATE TABLE model_entity_dormancy (
@@ -565,22 +566,36 @@ corroborating evidence were strong — which is what dormancy erodes.
 
 **Subtype** = `entity_type`.
 
-### Pruning moves out of recommendations
+### Route the breadth-ceiling signal to pruning
 
-`pruning_candidate` already has its own table. Give it a maintenance surface so
-no lane means both "try this" and "delete this."
+`pruning_candidate` already has its own table, scoring, and UI panel
+(`PrunePanel` in `plugin/stash-curator.js`), fully independent of the four
+lanes today — the only structural link is that pruned scenes are excluded
+from lane eligibility (`core/eligibility.go`). This is not a restructuring,
+then; it closes one specific gap. Adventure's dominant signal today is
+metadata thinness, the same character of signal that drives prune-suspect
+scoring, so without any code coupling the same poorly-tagged scenes tend to
+surface on both the explore lane and as prune suspects — a coincidence of
+shared signal character, not a shared pipeline, and Blind Spots' facet
+approach mostly moves away from it (see *Facets, not tags*). The genuine gap
+is the breadth ceiling itself (see *Blind Spots*, "the upper bound matters as
+much as the lower one"): a studio the user owns well over a thousand scenes
+of and almost never plays is excluded from Blind Spots as too broad to be a
+region, and that observation — "you own N scenes from this studio and play
+almost none" — is real and worth surfacing, but today it is simply discarded
+rather than routed anywhere. Land it as a new derived prune reason.
 
 ## New properties summary
 
 | what | where | kind |
 |---|---|---|
 | Bounded named content contributors in `classification_json` | `builder.py` `_classification_payload` + Go mirror | payload change — invalidates cached models once |
-| `model_entity_dormancy` table | migration 0033, core + artifact schema | new table |
+| `model_entity_dormancy` table | migration 0034, core + artifact schema | new table |
 | `entity_dormancy` curve | `curator/model/curves.py` + Go mirror | new curve |
 | Facet extraction (studio + confirmed tag; machinery general) | `LanePolicy` / `laneClassify` | new derivation, existing tables |
 | StashDB tag-confirmation filter | `tag_role.resolution_reason` | existing data, newly used |
 | Regularized `darkness(f)` + support floor + corroboration | `LanePolicy` / `laneClassify` | replaces `_adventure_context` gap math |
-| `model_lane_order` lane CHECK rebuild | migration 0033 | schema change |
+| `model_scene_lane` / `model_lane_candidate_cache` / `model_lane_order` lane CHECK rebuild | migration 0034 | schema change |
 | `stretch_*`, `dormant_*`, `dark_*` constants | `RankingConfig` + `modelSubConfig` | config, fingerprint-guarded |
 
 Nothing above needs a new *source* — no new Stash fields, no external fetches.
@@ -633,12 +648,20 @@ Each of these was measured, not assumed.
   oracle) with byte-identical differential tests. `LanePolicy.classify` and
   `laneClassify` must stay row-for-row equal, including `qualification_json`
   key order. Every formula above lands twice.
-- **Migration 0033** (mirrored byte-identical in `core/migrations/` and
-  `curator/storage/sql/`): `model_lane_order` from migration 0015 carries
-  `CHECK (lane IN ('for_you','best_bets','revisit','discover','adventure'))`
-  and a matching `source_lane` check, so renaming or adding a lane means
-  rebuilding that table. The same migration adds `model_entity_dormancy`.
-  `model_scene_lane.lane` is unconstrained `TEXT`.
+- **Migration 0034** (renumbered from the original 0033 during rebase: `main`
+  had independently claimed 0033 for an unrelated ELO-table drop; mirrored
+  byte-identical in `core/migrations/` and `curator/storage/sql/`). Three
+  tables carry a `CHECK (lane IN (...))` naming the old lane list and cannot
+  be altered in place, so all three are rebuilt: `model_scene_lane` (from
+  migration 0003 — contrary to an earlier version of this doc, its `lane`
+  column is **not** unconstrained), `model_lane_candidate_cache` (migration
+  0008), and `model_lane_order` + `source_lane` (migration 0015). The same
+  migration adds `model_entity_dormancy`. All three rebuilt tables are
+  `MODEL_TABLES` entries (`curator/storage/artifacts.py`), so a connection
+  with an active model artifact shadows each name with a temp view; every
+  `DROP`/`CREATE TABLE` is `main.`-qualified to target the core-schema copy
+  instead, and `model_scene_lane`'s two indexes (which `CREATE INDEX` cannot
+  schema-qualify) are preceded by `DROP VIEW IF EXISTS temp.model_scene_lane`.
 - New thresholds are config-backed so the canonical-config fingerprint guards
   them; changing them invalidates cached models, which is intended.
 - The contributor-list payload change alters the model fingerprint once.
@@ -674,14 +697,16 @@ Each of these was measured, not assumed.
 
 1. **Stretch** — contributor-payload extension, the required-challenge gate,
    the confirmation filter, per-kind normalization, and the per-dimension cap.
-   No new table, no new pass.
+   No new table, no new pass. **Shipped** (migration 0034, PR #172).
 2. **Blind Spots** — facet extraction, regularized darkness, corroboration
-   gate, ranking inversion, facet dismissal. Needs the 0033 lane rename.
+   gate, ranking inversion, facet dismissal. Needs the 0034 lane rename.
 3. **Dormant** — the entity pass, the table, and the curve.
-4. **Pruning surface split** and doc/UI copy alignment.
+4. **Route the Blind Spots breadth-ceiling signal to pruning** and doc/UI
+   copy alignment.
 
-Steps 1-3 all want migration 0033; land the schema once and gate the lanes
-behind config if they cannot ship together.
+Steps 1-3 all want migration 0034 (already landed by step 1); land any
+further schema for steps 2-3 as its own migration, and gate the lanes behind
+config if they cannot ship together.
 
 ## Open questions
 
