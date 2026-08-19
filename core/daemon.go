@@ -520,6 +520,10 @@ func runDaemon(pluginDir string) {
 		if jobID != "" {
 			idleSince = nowMs()
 			runWorkerJob(pluginDir, loop, jobID, startedAtMs, payload, mode)
+			// The job's peak is garbage now, and the daemon may stay resident
+			// for a while yet (see the stay-alive check below), so give the
+			// pages back rather than idling at the build's high-water mark.
+			releaseMemoryToOS()
 			continue
 		}
 		// Idle-exit only when nothing is queued AND the auto-scheduler has no
