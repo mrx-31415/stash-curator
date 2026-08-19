@@ -25,6 +25,13 @@ import (
 const (
 	performerSimilarityAffinityCutoff = 0.005
 	modelBuildVersion                 = 4
+	// Mirrors ModelConfig.curation_pair_* in curator/config.py. The product of
+	// the base confidence and the IPS cap bounds a pick's weight: keeping it
+	// under 1.0 is what stops every comparison clamping to the ceiling, which
+	// would make the surprise term inert and let picks outweigh watch history.
+	curationPairConfidence    = 0.15
+	curationPairSurpriseBonus = 2.0
+	curationPairIPSCap        = 2.0
 )
 
 // sceneLabel mirrors _SceneLabel: outcome/confidence/effectiveEvidence cover
@@ -209,7 +216,7 @@ ORDER BY scene_id, occurred_at_ms`)
 		if surprise < 0 {
 			surprise = 0
 		}
-		confidence := 0.50 * (1.0 + 2.0*surprise) * math.Min(4.0, 1.0/selectionProbability)
+		confidence := curationPairConfidence * (1.0 + curationPairSurpriseBonus*surprise) * math.Min(curationPairIPSCap, 1.0/selectionProbability)
 		if confidence > 1.0 {
 			confidence = 1.0
 		}
@@ -670,7 +677,7 @@ ORDER BY scene_id, occurred_at_ms`)
 		if surprise < 0 {
 			surprise = 0
 		}
-		confidence := 0.50 * (1.0 + 2.0*surprise) * math.Min(4.0, 1.0/selectionProbability)
+		confidence := curationPairConfidence * (1.0 + curationPairSurpriseBonus*surprise) * math.Min(curationPairIPSCap, 1.0/selectionProbability)
 		if confidence > 1.0 {
 			confidence = 1.0
 		}
