@@ -187,10 +187,65 @@ def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
     assert loser.signal_types == ("curation_pair_loser",)
     # The label's confidence field is 1-exp(-evidence); the pair signal's
     # confidence itself surfaces as effective_evidence:
-    # 0.5 * (1 + 2*0.2) * min(4, 1/1.0) = 0.7.
-    assert winner.effective_evidence == pytest.approx(0.7)
-    assert loser.effective_evidence == pytest.approx(0.7)
-    assert winner.confidence == pytest.approx(1 - math.exp(-0.7))
+    # 0.15 * (1 + 2*0.2) * min(2, 1/1.0) = 0.21.
+    assert winner.effective_evidence == pytest.approx(0.21)
+    assert loser.effective_evidence == pytest.approx(0.21)
+    assert winner.confidence == pytest.approx(1 - math.exp(-0.21))
+
+
+def test_pair_confidence_does_not_saturate_at_realistic_probabilities(
+    tmp_path: Path,
+) -> None:
+    """A pick's confidence must stay off the 1.0 ceiling for the selection
+    probabilities rounds actually produce.
+
+    Pairs are drawn from a large candidate pool, so 1/selection_probability
+    always exceeds the IPS cap and the cap term is effectively constant. If
+    base * cap reaches 1.0, every comparison clamps: the surprise bonus stops
+    differentiating informative picks from confirmatory ones, and each pick
+    enters affinity learning at maximum weight regardless of what it told us.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    # p=0.01 is typical: 1/p = 100, far above the cap, so the cap binds.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('cpw-sat', 'unseen-good', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "psat", "predicted_winner": 0.1,
+                  "predicted_loser": 0.1, "selection_probability": 0.01}'),
+               ('cpl-sat', 'unlabeled', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "psat", "predicted_winner": 0.1,
+                  "predicted_loser": 0.1, "selection_probability": 0.01}'),
+               ('cpw-sur', 'old-good', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "psur", "predicted_winner": 0.1,
+                  "predicted_loser": 0.9, "selection_probability": 0.01}'),
+               ('cpl-sur', 'disliked', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "psur", "predicted_winner": 0.1,
+                  "predicted_loser": 0.9, "selection_probability": 0.01}')
+        """
+    )
+    events = {
+        event.winner_scene: event.confidence
+        for event in PreferenceModelBuilder(
+            connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+        )._pair_events()
+    }
+    unsurprising = events["unseen-good"]
+    surprising = events["old-good"]
+    # The cap binds for both, so each is base * cap * (1 + bonus*surprise).
+    # Neither may reach the ceiling, or the clamp erases the difference.
+    assert unsurprising == pytest.approx(0.30)
+    assert surprising == pytest.approx(0.78)
+    assert surprising < 1.0
+    # Surprise still moves the number: at the ceiling it could not.
+    assert surprising > unsurprising
+    # The guarantee in config terms, independent of these fixtures: a
+    # zero-surprise pick at any realistic probability stays off the ceiling.
+    assert (
+        DEFAULT_CONFIG.model.curation_pair_confidence
+        * DEFAULT_CONFIG.model.curation_pair_ips_cap
+    ) < 1.0
 
 
 def test_pairwise_affinity_skips_shared_features_and_signals_differing_ones(
@@ -288,10 +343,17 @@ def test_curation_pair_labels_never_become_absolute_sentiment(tmp_path: Path) ->
     assert thumbed.absolute_evidence < thumbed.effective_evidence
 
 
-def test_curation_pair_labels_ips_confidence_clamped(tmp_path: Path) -> None:
+def test_curation_pair_confidence_clamps_only_at_extreme_surprise(
+    tmp_path: Path,
+) -> None:
+    """The 1.0 ceiling is a bound for outliers, not the value every pick takes.
+
+    A confirming pick at a low selection probability sits well under it: the
+    IPS term is capped, so the result is base * cap. Only a maximally
+    surprising pick — the model predicted the opposite outcome outright —
+    reaches the ceiling.
+    """
     connection = _database(tmp_path / "curator.sqlite3")
-    # Confirming pick (pred_winner 0.3 > pred_loser 0.1 -> surprise 0) at a low
-    # selection probability: 0.5 * 1 * min(4, 1/0.25) = 2.0, clamped to 1.0.
     connection.execute(
         """
         INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
@@ -299,6 +361,10 @@ def test_curation_pair_labels_ips_confidence_clamped(tmp_path: Path) -> None:
         VALUES ('cpw-2', 'unusual', 'curation_pair_winner', '10', 1,
                 '{"pair_id": "p2", "round_id": "r2", "dimension": "performer",
                   "predicted_winner": 0.3, "predicted_loser": 0.1,
+                  "selection_probability": 0.25}'),
+               ('cpw-x', 'unlabeled', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "px", "round_id": "rx", "dimension": "performer",
+                  "predicted_winner": -1.0, "predicted_loser": 1.0,
                   "selection_probability": 0.25}')
         """
     )
@@ -306,8 +372,10 @@ def test_curation_pair_labels_ips_confidence_clamped(tmp_path: Path) -> None:
         connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
     )._scene_labels()
     assert labels["unusual"].outcome == pytest.approx(1.0)
-    # Signal confidence 2.0 clamped to 1.0 -> effective_evidence 1.0.
-    assert labels["unusual"].effective_evidence == pytest.approx(1.0)
+    # surprise 0, IPS capped: 0.15 * 1 * min(2, 1/0.25) = 0.30 — no clamp.
+    assert labels["unusual"].effective_evidence == pytest.approx(0.30)
+    # surprise 2.0: 0.15 * (1 + 2*2.0) * 2 = 1.5, clamped to the 1.0 ceiling.
+    assert labels["unlabeled"].effective_evidence == pytest.approx(1.0)
 
 
 def test_satiation_content_dots_match_naive_recent_loop() -> None:
