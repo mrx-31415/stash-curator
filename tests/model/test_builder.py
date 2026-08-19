@@ -243,8 +243,7 @@ def test_pair_confidence_does_not_saturate_at_realistic_probabilities(
     # The guarantee in config terms, independent of these fixtures: a
     # zero-surprise pick at any realistic probability stays off the ceiling.
     assert (
-        DEFAULT_CONFIG.model.curation_pair_confidence
-        * DEFAULT_CONFIG.model.curation_pair_ips_cap
+        DEFAULT_CONFIG.model.curation_pair_confidence * DEFAULT_CONFIG.model.curation_pair_ips_cap
     ) < 1.0
 
 
