@@ -41,7 +41,7 @@ class ReportGenerator:
         ReasonGraphStore(self.connection).ensure(model_id)
         explanation_service = ExplanationService(self.connection)
         scores = RecommendationModelStore(self.connection).scores(model_id)
-        lanes = ("for_you", "best_bets", "revisit", "stretch", "blind_spots")
+        lanes = ("for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant")
         sections = []
         lane_counts: dict[str, int] = {}
         aliases = self._aliases(redacted)
@@ -592,6 +592,7 @@ class ReportGenerator:
             "revisit": "Revisit",
             "stretch": "Stretch",
             "blind_spots": "Blind Spots",
+            "dormant": "Dormant",
         }[lane]
 
     @staticmethod
@@ -639,7 +640,8 @@ input[type=text] {{ width:70%; }} .diagnostics {{ color:#f0c674; }}
 Show scene images</label></div>
 <nav><a href="#for_you">For You</a><a href="#best_bets">Best Bets</a>
 <a href="#revisit">Revisit</a><a href="#stretch">Stretch</a>
-<a href="#blind_spots">Blind Spots</a><a href="#build">Build</a></nav>
+<a href="#blind_spots">Blind Spots</a><a href="#dormant">Dormant</a>
+<a href="#build">Build</a></nav>
 {sections}
 <section id="build"><h2>Build and configuration</h2><pre>{summary}</pre></section>
 </body></html>"""

@@ -24,6 +24,15 @@ def scene_recovery(
     return 1 / (1 + math.exp(max(-60.0, min(60.0, exponent))))
 
 
+def entity_dormancy(
+    days_since_entity_played: float, *, config: ModelConfig = DEFAULT_CONFIG.model
+) -> float:
+    if days_since_entity_played < 0 or not math.isfinite(days_since_entity_played):
+        raise ValueError("days_since_entity_played must be finite and non-negative")
+    exponent = -(days_since_entity_played - config.dormancy_center_days) / config.dormancy_width_days
+    return 1 / (1 + math.exp(max(-60.0, min(60.0, exponent))))
+
+
 def blend_appeal(general: float, direct: float, confidence: float) -> float:
     if not all(math.isfinite(value) and -1 <= value <= 1 for value in (general, direct)):
         raise ValueError("appeal inputs must be finite and in [-1, 1]")

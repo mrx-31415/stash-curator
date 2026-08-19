@@ -81,6 +81,8 @@ class ModelConfig:
     direct_confidence_scale: float = 0.8
     cooldown_center_days: float = 90.0
     cooldown_width_days: float = 15.0
+    dormancy_center_days: float = 120.0
+    dormancy_width_days: float = 45.0
     baseline_bound: float = 0.10
     content_bound: float = 0.35
     neighbor_bound: float = 0.20
@@ -139,6 +141,11 @@ class RankingConfig:
     dark_min_facet_types: int = 2
     dark_corroboration_bonus: float = 0.15
     blind_spot_per_facet: int = 1
+    dormant_min_plays: int = 3
+    dormant_min_scenes: int = 2
+    dormant_min_positive: float = 0.10
+    dormant_floor: float = 0.5
+    dormant_per_entity: int = 1
     page_size: int = 20
     for_you_pattern: tuple[str, ...] = (
         "best_bets",
@@ -160,7 +167,7 @@ class RankingConfig:
         "stretch",
         "best_bets",
         "blind_spots",
-        "best_bets",
+        "dormant",
     )
 
 

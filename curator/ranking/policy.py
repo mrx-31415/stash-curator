@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections import defaultdict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
@@ -13,9 +14,10 @@ from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.features import FeatureStore
 from curator.model import ModelSceneScore, RecommendationModelStore
+from curator.model.curves import entity_dormancy
 from curator.storage import transaction
 
-LANES = ("best_bets", "revisit", "stretch", "blind_spots")
+LANES = ("best_bets", "revisit", "stretch", "blind_spots", "dormant")
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,10 @@ class LanePolicy:
         model_id: str,
         *,
         progress: Callable[[int, int], None] | None = None,
+        now_ms: int | None = None,
     ) -> tuple[LaneClassification, ...]:
+        if now_ms is None:
+            now_ms = time.time_ns() // 1_000_000
         scores = RecommendationModelStore(self.connection).classification_data(model_id)
         eligible_scores = {
             scene_id: score
@@ -117,6 +122,7 @@ class LanePolicy:
             {scene_id: score.current_fit for scene_id, score in eligible_scores.items()}
         )
         blind_spot_context = self._blind_spot_context(model_id, set(eligible_scores))
+        dormant_context = self._dormant_context(model_id, set(eligible_scores), now_ms)
         classifications: list[LaneClassification] = []
         stretch_raw: dict[str, dict[str, object]] = {}
         total = len(eligible_scores)
@@ -298,6 +304,29 @@ class LanePolicy:
                                 key=lambda item: (-_number(item["darkness"]), str(item["id"])),
                             ),
                             "corroborating_types": len(facet_types),
+                        },
+                    )
+                )
+            dormant_candidate = dormant_context.get(scene_id)
+            if scene_id not in played_scene_ids and dormant_candidate is not None:
+                classifications.append(
+                    LaneClassification(
+                        scene_id,
+                        "dormant",
+                        str(dormant_candidate["entity_type"]),
+                        _number(dormant_candidate["positive_strength"]) * fit_ranks[scene_id],
+                        {
+                            "dormant_entity": {
+                                "type": dormant_candidate["entity_type"],
+                                "id": dormant_candidate["entity_id"],
+                                "name": dormant_candidate["name"],
+                            },
+                            "days_since_played": int(
+                                round(_number(dormant_candidate["days_since_played"]))
+                            ),
+                            "positive_strength": _number(dormant_candidate["positive_strength"]),
+                            "supporting_plays": dormant_candidate["supporting_plays"],
+                            "dormancy": _number(dormant_candidate["dormancy"]),
                         },
                     )
                 )
@@ -545,6 +574,93 @@ class LanePolicy:
                 "dark_facets": dark_facets,
                 "content_feature_count": content_feature_count.get(scene_id, 0),
             }
+        return result
+
+    def _dormant_context(
+        self, model_id: str, scene_ids: set[str], now_ms: int
+    ) -> dict[str, dict[str, object]]:
+        """Per-scene strongest qualifying dormant entity: a performer, studio,
+        or confirmed tag the user used to watch a lot of, hasn't touched in a
+        while, and whose scenes model_entity_dormancy shows a real positive
+        history for (not just a stray play). "Now" is evaluated live, not
+        frozen at build — see docs/workpackage-lane-redesign.md ("Dormant",
+        "Evaluated at slate time, not frozen at build").
+        """
+        dormancy_rows = {
+            (str(row["entity_type"]), str(row["entity_id"])): row
+            for row in self.connection.execute(
+                """
+                SELECT entity_type, entity_id, last_played_at_ms, positive_strength,
+                       play_count, distinct_scene_count
+                FROM model_entity_dormancy WHERE model_id=?
+                """,
+                (model_id,),
+            )
+        }
+        if not dormancy_rows:
+            return {}
+        scene_entities: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for row in self.connection.execute("SELECT scene_id, performer_id FROM scene_performer"):
+            scene_entities[str(row["scene_id"])].append(("performer", str(row["performer_id"])))
+        for row in self.connection.execute(
+            "SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL"
+        ):
+            scene_entities[str(row["scene_id"])].append(("studio", str(row["studio_id"])))
+        for row in self.connection.execute("SELECT scene_id, tag_id FROM scene_tag"):
+            scene_entities[str(row["scene_id"])].append(("tag", str(row["tag_id"])))
+
+        names: dict[str, dict[str, str]] = {
+            "performer": {
+                str(row["performer_id"]): str(row["name"] or "")
+                for row in self.connection.execute("SELECT performer_id, name FROM source_performer")
+            },
+            "studio": {
+                str(row["studio_id"]): str(row["name"] or "")
+                for row in self.connection.execute("SELECT studio_id, name FROM source_studio")
+            },
+            "tag": {
+                str(row["tag_id"]): str(row["name"] or "")
+                for row in self.connection.execute("SELECT tag_id, name FROM source_tag")
+            },
+        }
+
+        result: dict[str, dict[str, object]] = {}
+        for scene_id in scene_ids:
+            best: dict[str, object] | None = None
+            for entity_type, entity_id in scene_entities.get(scene_id, ()):
+                row = dormancy_rows.get((entity_type, entity_id))
+                if row is None:
+                    continue
+                play_count = int(row["play_count"])
+                distinct_scene_count = int(row["distinct_scene_count"])
+                positive_strength = _number(row["positive_strength"])
+                if (
+                    play_count < self.config.ranking.dormant_min_plays
+                    or distinct_scene_count < self.config.ranking.dormant_min_scenes
+                    or positive_strength < self.config.ranking.dormant_min_positive
+                ):
+                    continue
+                days_since_played = max(
+                    0.0, (now_ms - int(row["last_played_at_ms"])) / 86_400_000
+                )
+                dormancy = entity_dormancy(days_since_played, config=self.config.model)
+                if dormancy < self.config.ranking.dormant_floor:
+                    continue
+                if best is None or positive_strength > _number(best["positive_strength"]) or (
+                    positive_strength == _number(best["positive_strength"])
+                    and entity_id < str(best["entity_id"])
+                ):
+                    best = {
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "name": names[entity_type].get(entity_id) or entity_id,
+                        "days_since_played": days_since_played,
+                        "positive_strength": positive_strength,
+                        "supporting_plays": play_count,
+                        "dormancy": dormancy,
+                    }
+            if best is not None:
+                result[scene_id] = best
         return result
 
     def _persist(

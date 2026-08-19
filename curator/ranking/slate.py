@@ -90,6 +90,15 @@ def _blind_spot_facet(classification: LaneClassification) -> str | None:
     return str(facet_id) if facet_id else None
 
 
+def _dormant_entity(classification: LaneClassification) -> str | None:
+    """The dormant entity's id, for the per-entity Dormant rotation."""
+    entity = classification.qualification.get("dormant_entity")
+    if not isinstance(entity, dict):
+        return None
+    entity_id = entity.get("id")
+    return str(entity_id) if entity_id else None
+
+
 @dataclass(frozen=True)
 class _Candidate:
     classification: LaneClassification
@@ -206,7 +215,12 @@ class SlateBuilder:
             )
             self.connection.execute("DELETE FROM model_lane_order WHERE model_id=?", (model_id,))
         completed = 0
-        total = len(LANES) + 3
+        # One progress tick per (lane, ordering) pair below: queried
+        # score-first lanes materialize only "varied"; every other lane
+        # (including for_you) also materializes "score_first".
+        total = sum(
+            1 if lane in QUERIED_SCORE_FIRST_LANES else 2 for lane in (*LANES, "for_you")
+        )
         timings = {"score_first_ordering": 0, "varied_ordering": 0}
         for lane in (*LANES, "for_you"):
             lane_candidates = tuple(
@@ -292,6 +306,10 @@ class SlateBuilder:
                 facet = _blind_spot_facet(candidate.classification)
                 if facet:
                     result.append(("facet", facet))
+            elif lane == "dormant":
+                entity = _dormant_entity(candidate.classification)
+                if entity:
+                    result.append(("entity", entity))
             return tuple(result)
 
         # At most stretch_per_dimension (default 1) card per challenged dimension
@@ -314,6 +332,14 @@ class SlateBuilder:
         blind_spot_facets = (
             sorted({f for c in candidates if (f := _blind_spot_facet(c.classification))})
             if lane == "blind_spots"
+            else ()
+        )
+        # At most dormant_per_entity card per dormant entity per page — same
+        # mechanism, also unconditional (dormant is not a
+        # QUERIED_SCORE_FIRST_LANES member either).
+        dormant_entities = (
+            sorted({e for c in candidates if (e := _dormant_entity(c.classification))})
+            if lane == "dormant"
             else ()
         )
 
@@ -412,6 +438,14 @@ class SlateBuilder:
                     ],
                 )
                 if lane == "blind_spots" and blind_spot_facets
+                else (
+                    "entity",
+                    dormant_entities[
+                        (len(ordered) // max(1, self.config.ranking.dormant_per_entity))
+                        % len(dormant_entities)
+                    ],
+                )
+                if lane == "dormant" and dormant_entities
                 else ("lane", target_lane)
                 if lane == "for_you"
                 else ("all", "")
@@ -490,7 +524,7 @@ class SlateBuilder:
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
-        if lane not in {"for_you", "best_bets", "revisit", "stretch", "blind_spots"}:
+        if lane not in {"for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant"}:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
@@ -643,6 +677,13 @@ class SlateBuilder:
             if lane == "blind_spots"
             else ()
         )
+        # At most dormant_per_entity card per dormant entity per page, same
+        # reasoning as blind_spot_facets above.
+        dormant_entities = (
+            sorted({e for c in candidates if (e := _dormant_entity(c.classification))})
+            if lane == "dormant"
+            else ()
+        )
         for position in range(len(selected), count):
             target_lane = self._target(lane, position, exploration)
             target_dimension = (
@@ -661,6 +702,14 @@ class SlateBuilder:
                 if lane == "blind_spots" and blind_spot_facets
                 else None
             )
+            target_entity = (
+                dormant_entities[
+                    (position // max(1, self.config.ranking.dormant_per_entity))
+                    % len(dormant_entities)
+                ]
+                if lane == "dormant" and dormant_entities
+                else None
+            )
             remaining = [
                 candidate
                 for candidate in candidates
@@ -677,6 +726,10 @@ class SlateBuilder:
                 and (
                     target_facet is None
                     or _blind_spot_facet(candidate.classification) == target_facet
+                )
+                and (
+                    target_entity is None
+                    or _dormant_entity(candidate.classification) == target_entity
                 )
             ]
             pool = preferred or (

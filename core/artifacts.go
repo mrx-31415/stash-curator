@@ -34,6 +34,7 @@ var modelTables = []string{
 	"model_lane_candidate_cache",
 	"model_lane_order",
 	"model_lane_order_state",
+	"model_entity_dormancy",
 }
 
 // finalArtifactName matches artifacts._FINAL_NAME.
