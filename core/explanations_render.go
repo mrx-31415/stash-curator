@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 // reasonPriority mirrors Microplanner._PRIORITY.
 var reasonPriority = map[string]int64{
 	"direct.positive":              7,
+	"dormant.entity":               7,
 	"appeal.performer_identity":    6,
 	"appeal.content_neighbor":      5,
 	"appeal.tag_declared_positive": 5,
@@ -147,6 +149,13 @@ func primaryUnit(positives []evidenceUnit, lane string) evidenceUnit {
 	if lane == "revisit" {
 		for _, unit := range positives {
 			if unit.reason.code == "direct.positive" {
+				return unit
+			}
+		}
+	}
+	if lane == "dormant" {
+		for _, unit := range positives {
+			if unit.reason.code == "dormant.entity" {
 				return unit
 			}
 		}
@@ -353,6 +362,7 @@ func formatSlots(template string, slots map[string]string) string {
 // baseSlots mirrors render._slots' base dict.
 var baseSlots = map[string]string{
 	"challenge":         "one less-certain part of your taste",
+	"dormant":           "a taste you used to have",
 	"facet":             "an under-explored part of your library",
 	"known":             "a familiar performer",
 	"performer":         "a familiar performer",
@@ -360,6 +370,7 @@ var baseSlots = map[string]string{
 	"precedent_outcome": "which worked for you",
 	"precedents":        "nearby scenes you enjoyed",
 	"profile":           "their overall profiles",
+	"since":             "in a while",
 	"studio":            "a familiar studio",
 	"tags":              "familiar elements",
 	"target":            "a new performer",
@@ -435,11 +446,48 @@ func specificSlots(db dbx, r *explanationReason) map[string]string {
 		return map[string]string{"challenge": challengePhrase(r.detail.get("challenged_feature"))}
 	case "explore.coverage":
 		return map[string]string{"facet": facetPhrase(r.detail.get("dark_facets"))}
+	case "dormant.entity":
+		return dormantSlots(r)
 	}
 	if strings.HasPrefix(r.code, "appeal.tag_") {
 		return map[string]string{"tags": tagNames(r)}
 	}
 	return map[string]string{}
+}
+
+// dormantSlots mirrors render._dormant_slots.
+func dormantSlots(r *explanationReason) map[string]string {
+	entity := r.detail.get("dormant_entity")
+	name := ""
+	if entity.kind == jObj {
+		name = strings.TrimSpace(entity.get("name").asString())
+	}
+	if name == "" {
+		name = "a taste you used to have"
+	}
+	return map[string]string{
+		"dormant": name,
+		"since":   durationPhrase(number(r.detail.get("days_since_played"))),
+	}
+}
+
+// durationPhrase mirrors render._duration_phrase.
+func durationPhrase(days float64) string {
+	if days >= 365 {
+		years := pyRound(days / 365)
+		if years != 1 {
+			return fmt.Sprintf("about %d years", years)
+		}
+		return "about 1 year"
+	}
+	months := pyRound(days / 30)
+	if months >= 1 {
+		if months != 1 {
+			return fmt.Sprintf("about %d months", months)
+		}
+		return "about 1 month"
+	}
+	return "a while"
 }
 
 // neighborSlots mirrors render._neighbor_slots.

@@ -141,6 +141,27 @@ class ExplanationService:
                         feature_version,
                     )
                 )
+        if item.source_lane == "dormant":
+            entity = item.qualification.get("dormant_entity")
+            if isinstance(entity, dict):
+                reasons.append(
+                    Reason(
+                        "dormant.entity",
+                        "positive",
+                        min(1.0, _number(item.qualification.get("dormancy"))),
+                        item.confidence,
+                        "scene",
+                        item.scene_id,
+                        "standard",
+                        "lane_policy",
+                        {
+                            "dormant_entity": entity,
+                            "days_since_played": item.qualification.get("days_since_played"),
+                        },
+                        model_id,
+                        feature_version,
+                    )
+                )
         for name, penalty in item.penalties.items():
             if penalty <= 0:
                 continue
@@ -196,6 +217,7 @@ class ExplanationService:
     def _slots(self, reason: Reason) -> dict[str, str]:
         slots = {
             "challenge": "one less-certain part of your taste",
+            "dormant": "a taste you used to have",
             "facet": "an under-explored part of your library",
             "known": "a familiar performer",
             "performer": "a familiar performer",
@@ -203,6 +225,7 @@ class ExplanationService:
             "precedent_outcome": "which worked for you",
             "precedents": "nearby scenes you enjoyed",
             "profile": "their overall profiles",
+            "since": "in a while",
             "studio": "a familiar studio",
             "tags": "familiar elements",
             "target": "a new performer",
@@ -225,7 +248,27 @@ class ExplanationService:
             return {"challenge": self._challenge_phrase(reason.detail.get("challenged_feature"))}
         if reason.code == "explore.coverage":
             return {"facet": self._facet_phrase(reason.detail.get("dark_facets"))}
+        if reason.code == "dormant.entity":
+            return self._dormant_slots(reason)
         return {}
+
+    def _dormant_slots(self, reason: Reason) -> dict[str, str]:
+        entity = reason.detail.get("dormant_entity")
+        name = str(entity.get("name", "")).strip() if isinstance(entity, dict) else ""
+        return {
+            "dormant": name or "a taste you used to have",
+            "since": self._duration_phrase(_number(reason.detail.get("days_since_played"))),
+        }
+
+    @staticmethod
+    def _duration_phrase(days: float) -> str:
+        if days >= 365:
+            years = round(days / 365)
+            return f"about {years} year{'s' if years != 1 else ''}"
+        months = round(days / 30)
+        if months >= 1:
+            return f"about {months} month{'s' if months != 1 else ''}"
+        return "a while"
 
     def _neighbor_slots(self, reason: Reason) -> dict[str, str]:
         raw = reason.detail.get("neighbors", [])

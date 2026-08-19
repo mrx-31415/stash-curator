@@ -516,6 +516,77 @@ def test_blind_spot_context_gates_on_corroborated_dark_facets(tmp_path: Path) ->
     assert "s075" not in lookup
 
 
+def test_dormant_context_gates_on_entity_play_history(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    now_ms = 200 * 86_400_000
+    connection.executemany(
+        "INSERT INTO source_performer(performer_id, name, source_hash) VALUES (?, ?, ?)",
+        (("p-dormant", "Dormant Performer", "pd"), ("p-recent", "Recent Performer", "pr"),
+         ("p-thin", "Thin Performer", "pt")),
+    )
+    scenes = (
+        ("m-dormant", "p-dormant"),
+        ("m-recent", "p-recent"),
+        ("m-thin", "p-thin"),
+    )
+    for scene_id, performer_id in scenes:
+        connection.execute(
+            "INSERT INTO source_scene(scene_id, title, source_hash) VALUES (?, ?, ?)",
+            (scene_id, scene_id, scene_id),
+        )
+        connection.execute(
+            "INSERT INTO source_file(file_id, scene_id, available, source_hash) VALUES (?, ?, 1, ?)",
+            (f"file-{scene_id}", scene_id, f"file-{scene_id}"),
+        )
+        connection.execute(
+            "INSERT INTO scene_performer(scene_id, performer_id, position) VALUES (?, ?, 0)",
+            (scene_id, performer_id),
+        )
+        _score(connection, scene_id, fit=0.1, appeal=0.1, confidence=0.3, metadata=0.5)
+    # p-dormant: strong positive history, last played ~200 days ago (past the
+    # dormancy_center_days=120 midpoint, so entity_dormancy(now) is well
+    # above the 0.5 floor) -- qualifies.
+    # p-recent: same play/appeal profile, but played 5 days ago -- entity
+    # isn't dormant yet, regardless of how positive the history is.
+    # p-thin: only 1 recorded play -- fails dormant_min_plays (3) even
+    # though positive_strength and recency alone would qualify.
+    connection.executemany(
+        """
+        INSERT INTO model_entity_dormancy(
+            model_id, entity_type, entity_id, last_played_at_ms,
+            positive_strength, play_count, distinct_scene_count
+        ) VALUES ('model', 'performer', ?, ?, ?, ?, ?)
+        """,
+        (
+            ("p-dormant", now_ms - 200 * 86_400_000, 0.8, 5, 3),
+            ("p-recent", now_ms - 5 * 86_400_000, 0.8, 5, 3),
+            ("p-thin", now_ms - 200 * 86_400_000, 0.8, 1, 1),
+        ),
+    )
+    classifications = LanePolicy(connection).classify("model", now_ms=now_ms)
+    lookup = {item.scene_id: item for item in classifications if item.lane == "dormant"}
+
+    assert "m-dormant" in lookup
+    item = lookup["m-dormant"]
+    assert item.subtype == "performer"
+    entity = item.qualification["dormant_entity"]
+    assert entity == {"type": "performer", "id": "p-dormant", "name": "Dormant Performer"}
+    assert item.qualification["positive_strength"] == pytest.approx(0.8)
+    assert item.qualification["supporting_plays"] == 5
+    assert item.qualification["days_since_played"] == 200
+    assert item.qualification["dormancy"] >= 0.5
+    # lane_value = positive_strength * fit_rank (a [0, 1] percentile), not
+    # the dormancy curve itself -- the curve saturates past ~250 days, so it
+    # is a gate only, never a ranking term (see
+    # docs/workpackage-lane-redesign.md, "Dormant"). fit_rank depends on the
+    # whole eligible set's current_fit distribution, so this only checks the
+    # formula's shape rather than reproducing that percentile by hand.
+    assert 0.0 <= item.lane_value <= item.qualification["positive_strength"]
+
+    assert "m-recent" not in lookup
+    assert "m-thin" not in lookup
+
+
 def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
@@ -528,8 +599,8 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
-    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots"}
-    assert progress == [(position, 7) for position in range(1, 8)]
+    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
+    assert progress == [(position, 9) for position in range(1, 10)]
     assert set(builder.materialize_timings_ms) == {
         "score_first_ordering",
         "varied_ordering",
@@ -580,7 +651,7 @@ def test_available_count_matches_live_materialized_slate(tmp_path: Path) -> None
     for diversity_enabled in (True, False):
         builder = SlateBuilder(connection, diversity_enabled=diversity_enabled)
         builder.materialize("model", force=True)
-        for lane in ("for_you", "best_bets", "revisit", "stretch", "blind_spots"):
+        for lane in ("for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant"):
             slate = builder._load_materialized_slate("model", lane, 100)
             assert slate is not None
             assert builder.available_count("model", lane) == len(slate.items)
@@ -699,7 +770,7 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
     counts = SlateBuilder(connection).prepare("model")
-    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots"}
+    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
 
     monkeypatch.setattr(
         SlateBuilder,

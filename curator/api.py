@@ -395,7 +395,14 @@ class CuratorAPI:
     ) -> dict[str, object]:
         if page < 1 or not 1 <= page_size <= 100:
             raise ValueError("invalid recommendation history page")
-        if lane and lane not in {"for_you", "best_bets", "revisit", "stretch", "blind_spots"}:
+        if lane and lane not in {
+            "for_you",
+            "best_bets",
+            "revisit",
+            "stretch",
+            "blind_spots",
+            "dormant",
+        }:
             raise ValueError("unknown recommendation lane")
         where = "WHERE h.lane=?" if lane else ""
         parameters: tuple[object, ...] = (lane,) if lane else ()

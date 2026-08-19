@@ -42,6 +42,7 @@
   --curator-hue-hunt: #d98a9e;
   --curator-hue-stretch: #5cc19c;
   --curator-hue-blind_spots: #e0824f;
+  --curator-hue-dormant: #7b8fc4;
   --curator-hue-revisit: #b79ce0;
   --curator-hue-expand: #e0645c;
   --curator-hue-prune: #9aa1ab;
@@ -97,6 +98,7 @@
   --curator-hue-hunt: #a34a63;
   --curator-hue-stretch: #2f8f68;
   --curator-hue-blind_spots: #b85e33;
+  --curator-hue-dormant: #4f5f96;
   --curator-hue-revisit: #7452ad;
   --curator-hue-expand: #b83f4c;
   --curator-hue-prune: #7c838c;
@@ -1343,6 +1345,7 @@
 .curator-lane-revisit { --lane-color: var(--curator-hue-revisit); }
 .curator-lane-stretch { --lane-color: var(--curator-hue-stretch); }
 .curator-lane-blind_spots { --lane-color: var(--curator-hue-blind_spots); }
+.curator-lane-dormant { --lane-color: var(--curator-hue-dormant); }
 .curator-lane-similar { --lane-color: var(--curator-hue-similar); }
 .curator-lane-expand { --lane-color: var(--curator-hue-expand); }
 .curator-lane-hunt { --lane-color: var(--curator-hue-hunt); }
@@ -1360,17 +1363,18 @@
    darker, independently-AA-passing color) rather than one flat solid, so
    the badges also get the same visual depth as the logo mark/active nav
    pill. Where the light-theme hue already passed 4.5:1 it's reused as the
-   lighter gradient stop (for_you/similar/hunt/revisit/expand); the other
-   four (best_bets/stretch/blind_spots/prune) needed new darker literals —
-   light theme's own versions still fell short (3.83–4.48:1). Each
-   gradient's second stop is that first stop darkened ~22% further, which
-   can only raise contrast, never lower it. */
+   lighter gradient stop (for_you/similar/hunt/revisit/expand/dormant); the
+   other four (best_bets/stretch/blind_spots/prune) needed new darker
+   literals — light theme's own versions still fell short (3.83–4.48:1).
+   Each gradient's second stop is that first stop darkened ~22% further,
+   which can only raise contrast, never lower it. */
 .curator-lane-for_you { --lane-badge-gradient: linear-gradient(145deg, #1d5fb8, #174a90); }
 .curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #1f7f96, #186375); }
 .curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #976d3a, #76552d); }
 .curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #a34a63, #7f3a4d); }
 .curator-lane-stretch { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
 .curator-lane-blind_spots { --lane-badge-gradient: linear-gradient(145deg, #ac643d, #864e30); }
+.curator-lane-dormant { --lane-badge-gradient: linear-gradient(145deg, #4f5f96, #3e4a75); }
 .curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #7452ad, #5a4087); }
 .curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #b83f4c, #90313b); }
 .curator-lane-prune { --lane-badge-gradient: linear-gradient(145deg, #72777f, #595d63); }

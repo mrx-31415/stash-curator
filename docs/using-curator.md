@@ -14,6 +14,7 @@ permalink: /using-curator/
 | **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
 | **Stretch** | Mostly familiar recommendations, with one confirmed tag or studio named as the challenge |
 | **Blind Spots** | Studios or tags you've barely watched, corroborated by more than one signal |
+| **Dormant** | A performer, studio, or tag you used to watch a lot, parked for a while |
 
 Cards are arranged as a slate. Curator avoids adjacent performer repetition and
 softly varies studios and content, so the page is not merely the top 20 scores.

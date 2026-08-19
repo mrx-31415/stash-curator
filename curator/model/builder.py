@@ -283,6 +283,146 @@ def _stretch_contributor_payload(
     }
 
 
+def _entity_dormancy_rows(
+    artifact: sqlite3.Connection, model_id: str, feature_version: str
+) -> list[tuple[str, str, int, float, int, int]]:
+    """Per-entity (performer/studio/confirmed tag) play history for the
+    Dormant lane: entity_type, entity_id, last_played_at_ms, positive_strength,
+    play_count, distinct_scene_count.
+
+    Only entities with at least one recorded play appear (last_played_at_ms
+    has no meaningful value otherwise, and the Dormant gate's play_count
+    floor would reject them anyway). positive_strength averages over
+    *distinct* played scenes, not raw play events, so a scene replayed many
+    times doesn't out-vote scenes played once each. Tags are restricted to
+    StashDB-confirmed ones (see docs/workpackage-lane-redesign.md, "Tag
+    confirmation") since the lane names the entity to the user, and their
+    positive_strength comes from the tag's own learned feature_affinity
+    rather than a play-weighted mean — the taste signal is in the affinity,
+    not in how many of the tag's scenes happened to be played.
+    """
+    rows: list[tuple[str, str, int, float, int, int]] = []
+    performer_rows = artifact.execute(
+        """
+        WITH plays AS (
+            SELECT sp.performer_id AS entity_id, spl.scene_id, spl.played_at_ms
+            FROM scene_performer sp JOIN source_play spl ON spl.scene_id = sp.scene_id
+        ),
+        stats AS (
+            SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+                   count(DISTINCT scene_id) AS distinct_scene_count
+            FROM plays GROUP BY entity_id
+        ),
+        distinct_scenes AS (SELECT DISTINCT entity_id, scene_id FROM plays),
+        appeal AS (
+            SELECT ds.entity_id,
+                   sum(mss.direct_appeal * mss.direct_confidence) AS weighted_sum,
+                   sum(mss.direct_confidence) AS weight_sum
+            FROM distinct_scenes ds
+            JOIN model_scene_score mss ON mss.scene_id = ds.scene_id AND mss.model_id = ?
+            GROUP BY ds.entity_id
+        )
+        SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+               COALESCE(a.weighted_sum, 0) AS weighted_sum, COALESCE(a.weight_sum, 0) AS weight_sum
+        FROM stats s LEFT JOIN appeal a ON a.entity_id = s.entity_id
+        """,
+        (model_id,),
+    )
+    for row in performer_rows:
+        weight_sum = _number(row["weight_sum"])
+        positive_strength = _number(row["weighted_sum"]) / weight_sum if weight_sum else 0.0
+        rows.append(
+            (
+                "performer",
+                str(row["entity_id"]),
+                int(row["last_played_at_ms"]),
+                positive_strength,
+                int(row["play_count"]),
+                int(row["distinct_scene_count"]),
+            )
+        )
+    studio_rows = artifact.execute(
+        """
+        WITH plays AS (
+            SELECT ss.studio_id AS entity_id, spl.scene_id, spl.played_at_ms
+            FROM source_scene ss JOIN source_play spl ON spl.scene_id = ss.scene_id
+            WHERE ss.studio_id IS NOT NULL
+        ),
+        stats AS (
+            SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+                   count(DISTINCT scene_id) AS distinct_scene_count
+            FROM plays GROUP BY entity_id
+        ),
+        distinct_scenes AS (SELECT DISTINCT entity_id, scene_id FROM plays),
+        appeal AS (
+            SELECT ds.entity_id,
+                   sum(mss.direct_appeal * mss.direct_confidence) AS weighted_sum,
+                   sum(mss.direct_confidence) AS weight_sum
+            FROM distinct_scenes ds
+            JOIN model_scene_score mss ON mss.scene_id = ds.scene_id AND mss.model_id = ?
+            GROUP BY ds.entity_id
+        )
+        SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+               COALESCE(a.weighted_sum, 0) AS weighted_sum, COALESCE(a.weight_sum, 0) AS weight_sum
+        FROM stats s LEFT JOIN appeal a ON a.entity_id = s.entity_id
+        """,
+        (model_id,),
+    )
+    for row in studio_rows:
+        weight_sum = _number(row["weight_sum"])
+        positive_strength = _number(row["weighted_sum"]) / weight_sum if weight_sum else 0.0
+        rows.append(
+            (
+                "studio",
+                str(row["entity_id"]),
+                int(row["last_played_at_ms"]),
+                positive_strength,
+                int(row["play_count"]),
+                int(row["distinct_scene_count"]),
+            )
+        )
+    tag_rows = artifact.execute(
+        """
+        WITH confirmed_tags AS (
+            SELECT fd.feature_id, json_extract(fd.metadata_json, '$.tag_id') AS tag_id
+            FROM feature_definition fd
+            WHERE fd.feature_version = ? AND fd.family = 'content'
+              AND json_extract(fd.metadata_json, '$.tag_id') IS NOT NULL
+              AND json_extract(fd.metadata_json, '$.role_reason') LIKE 'stashdb_%'
+        ),
+        plays AS (
+            SELECT ct.tag_id AS entity_id, spl.scene_id, spl.played_at_ms
+            FROM scene_tag st
+            JOIN confirmed_tags ct ON ct.tag_id = st.tag_id
+            JOIN source_play spl ON spl.scene_id = st.scene_id
+        ),
+        stats AS (
+            SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+                   count(DISTINCT scene_id) AS distinct_scene_count
+            FROM plays GROUP BY entity_id
+        )
+        SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+               fa.affinity, fa.confidence
+        FROM stats s
+        JOIN confirmed_tags ct ON ct.tag_id = s.entity_id
+        JOIN feature_affinity fa ON fa.feature_id = ct.feature_id AND fa.model_id = ?
+        """,
+        (feature_version, model_id),
+    )
+    for row in tag_rows:
+        rows.append(
+            (
+                "tag",
+                str(row["entity_id"]),
+                int(row["last_played_at_ms"]),
+                _number(row["affinity"]) * _number(row["confidence"]),
+                int(row["play_count"]),
+                int(row["distinct_scene_count"]),
+            )
+        )
+    return rows
+
+
 def _numpy_cosine_matrix(
     np: Any,
     values: Any,
@@ -1850,6 +1990,21 @@ class PreferenceModelBuilder:
                     for rank, match in enumerate(_edge_matches(entry))
                 ),
             )
+            insert_rows(
+                """
+                INSERT INTO model_entity_dormancy(
+                    model_id, entity_type, entity_id, last_played_at_ms,
+                    positive_strength, play_count, distinct_scene_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (model_id, entity_type, entity_id, last_played_at_ms, positive_strength,
+                     play_count, distinct_scene_count)
+                    for entity_type, entity_id, last_played_at_ms, positive_strength,
+                        play_count, distinct_scene_count
+                    in _entity_dormancy_rows(artifact, model_id, feature_version)
+                ),
+            )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
             from curator.ranking import LanePolicy, SlateBuilder
 
@@ -1860,6 +2015,7 @@ class PreferenceModelBuilder:
                 progress=lambda processed, total: self._report(
                     0.85 + 0.02 * processed / max(1, total)
                 ),
+                now_ms=self.clock_ms(),
             )
             timings["lane_classification"] = round((time.perf_counter() - stage_started) * 1000)
             record_duration("python", "model.lane_classification", timings["lane_classification"])

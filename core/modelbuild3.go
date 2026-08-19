@@ -57,6 +57,156 @@ func modelStoreFail(db dbx, modelID string) error {
 	})
 }
 
+// entityDormancyRows mirrors _entity_dormancy_rows: per-entity
+// (performer/studio/confirmed tag) play history for the Dormant lane. Only
+// entities with at least one recorded play appear. positive_strength
+// averages over distinct played scenes, not raw play events; tags use their
+// own learned feature_affinity instead of a play-weighted mean (see
+// docs/workpackage-lane-redesign.md, "Tag confirmation").
+func entityDormancyRows(artifact dbx, modelID, featureVersion string) ([][]any, error) {
+	var rows [][]any
+	performerRows, err := artifact.Query(`
+WITH plays AS (
+    SELECT sp.performer_id AS entity_id, spl.scene_id, spl.played_at_ms
+    FROM scene_performer sp JOIN source_play spl ON spl.scene_id = sp.scene_id
+),
+stats AS (
+    SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+           count(DISTINCT scene_id) AS distinct_scene_count
+    FROM plays GROUP BY entity_id
+),
+distinct_scenes AS (SELECT DISTINCT entity_id, scene_id FROM plays),
+appeal AS (
+    SELECT ds.entity_id,
+           sum(mss.direct_appeal * mss.direct_confidence) AS weighted_sum,
+           sum(mss.direct_confidence) AS weight_sum
+    FROM distinct_scenes ds
+    JOIN model_scene_score mss ON mss.scene_id = ds.scene_id AND mss.model_id = ?
+    GROUP BY ds.entity_id
+)
+SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+       COALESCE(a.weighted_sum, 0) AS weighted_sum, COALESCE(a.weight_sum, 0) AS weight_sum
+FROM stats s LEFT JOIN appeal a ON a.entity_id = s.entity_id`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for performerRows.Next() {
+		var entityID string
+		var lastPlayedAtMs, playCount, distinctSceneCount int64
+		var weightedSum, weightSum float64
+		if err := performerRows.Scan(&entityID, &lastPlayedAtMs, &playCount, &distinctSceneCount,
+			&weightedSum, &weightSum); err != nil {
+			performerRows.Close()
+			return nil, err
+		}
+		positiveStrength := 0.0
+		if weightSum != 0 {
+			positiveStrength = weightedSum / weightSum
+		}
+		rows = append(rows, []any{
+			modelID, "performer", entityID, lastPlayedAtMs, positiveStrength, playCount, distinctSceneCount,
+		})
+	}
+	performerRows.Close()
+	if err := performerRows.Err(); err != nil {
+		return nil, err
+	}
+
+	studioRows, err := artifact.Query(`
+WITH plays AS (
+    SELECT ss.studio_id AS entity_id, spl.scene_id, spl.played_at_ms
+    FROM source_scene ss JOIN source_play spl ON spl.scene_id = ss.scene_id
+    WHERE ss.studio_id IS NOT NULL
+),
+stats AS (
+    SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+           count(DISTINCT scene_id) AS distinct_scene_count
+    FROM plays GROUP BY entity_id
+),
+distinct_scenes AS (SELECT DISTINCT entity_id, scene_id FROM plays),
+appeal AS (
+    SELECT ds.entity_id,
+           sum(mss.direct_appeal * mss.direct_confidence) AS weighted_sum,
+           sum(mss.direct_confidence) AS weight_sum
+    FROM distinct_scenes ds
+    JOIN model_scene_score mss ON mss.scene_id = ds.scene_id AND mss.model_id = ?
+    GROUP BY ds.entity_id
+)
+SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+       COALESCE(a.weighted_sum, 0) AS weighted_sum, COALESCE(a.weight_sum, 0) AS weight_sum
+FROM stats s LEFT JOIN appeal a ON a.entity_id = s.entity_id`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for studioRows.Next() {
+		var entityID string
+		var lastPlayedAtMs, playCount, distinctSceneCount int64
+		var weightedSum, weightSum float64
+		if err := studioRows.Scan(&entityID, &lastPlayedAtMs, &playCount, &distinctSceneCount,
+			&weightedSum, &weightSum); err != nil {
+			studioRows.Close()
+			return nil, err
+		}
+		positiveStrength := 0.0
+		if weightSum != 0 {
+			positiveStrength = weightedSum / weightSum
+		}
+		rows = append(rows, []any{
+			modelID, "studio", entityID, lastPlayedAtMs, positiveStrength, playCount, distinctSceneCount,
+		})
+	}
+	studioRows.Close()
+	if err := studioRows.Err(); err != nil {
+		return nil, err
+	}
+
+	tagRows, err := artifact.Query(`
+WITH confirmed_tags AS (
+    SELECT fd.feature_id, json_extract(fd.metadata_json, '$.tag_id') AS tag_id
+    FROM feature_definition fd
+    WHERE fd.feature_version = ? AND fd.family = 'content'
+      AND json_extract(fd.metadata_json, '$.tag_id') IS NOT NULL
+      AND json_extract(fd.metadata_json, '$.role_reason') LIKE 'stashdb_%'
+),
+plays AS (
+    SELECT ct.tag_id AS entity_id, spl.scene_id, spl.played_at_ms
+    FROM scene_tag st
+    JOIN confirmed_tags ct ON ct.tag_id = st.tag_id
+    JOIN source_play spl ON spl.scene_id = st.scene_id
+),
+stats AS (
+    SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
+           count(DISTINCT scene_id) AS distinct_scene_count
+    FROM plays GROUP BY entity_id
+)
+SELECT s.entity_id, s.last_played_at_ms, s.play_count, s.distinct_scene_count,
+       fa.affinity, fa.confidence
+FROM stats s
+JOIN confirmed_tags ct ON ct.tag_id = s.entity_id
+JOIN feature_affinity fa ON fa.feature_id = ct.feature_id AND fa.model_id = ?`, featureVersion, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for tagRows.Next() {
+		var entityID string
+		var lastPlayedAtMs, playCount, distinctSceneCount int64
+		var affinity, confidence float64
+		if err := tagRows.Scan(&entityID, &lastPlayedAtMs, &playCount, &distinctSceneCount,
+			&affinity, &confidence); err != nil {
+			tagRows.Close()
+			return nil, err
+		}
+		rows = append(rows, []any{
+			modelID, "tag", entityID, lastPlayedAtMs, affinity * confidence, playCount, distinctSceneCount,
+		})
+	}
+	tagRows.Close()
+	if err := tagRows.Err(); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // modelPublish mirrors PreferenceModelBuilder._publish, recording the
 // database_writing / lane_classification / varied_ordering / indexing /
 // validation / publication stage timings into rec (the caller's build
@@ -204,12 +354,23 @@ INSERT INTO model_performer_edge(
 ) VALUES (?, ?, ?, ?, ?, ?, ?)`, edgeRows); err != nil {
 		return fail(err)
 	}
+	dormancyRows, err := entityDormancyRows(artifact, modelID, featureVersion)
+	if err != nil {
+		return fail(err)
+	}
+	if err := insertArtifactRows(artifact, `
+INSERT INTO model_entity_dormancy(
+    model_id, entity_type, entity_id, last_played_at_ms,
+    positive_strength, play_count, distinct_scene_count
+) VALUES (?, ?, ?, ?, ?, ?, ?)`, dormancyRows); err != nil {
+		return fail(err)
+	}
 	rec.set("database_writing", elapsedMs(databaseWritingStarted))
 	// Lanes + slate inside the artifact. indexing spans from just before lane
 	// classification through index creation (Python's indexing_started).
 	indexingStarted := time.Now()
 	if err := rec.stage("lane_classification", "model.lane_classification", func() error {
-		_, err := laneClassify(artifact, modelID, featureVersion, func(processed, total int) {
+		_, err := laneClassify(artifact, modelID, featureVersion, nowMs, func(processed, total int) {
 			if report != nil {
 				report(0.85 + 0.02*float64(processed)/float64(maxInt(1, total)))
 			}
@@ -355,6 +516,8 @@ func modelSubConfig() jVal {
 		jvKey("curation_pair_surprise_bonus", jvFloat(curationPairSurpriseBonus)),
 		jvKey("curation_rating_confidence", jvFloat(0.80)),
 		jvKey("direct_confidence_scale", jvFloat(0.8)),
+		jvKey("dormancy_center_days", jvFloat(120.0)),
+		jvKey("dormancy_width_days", jvFloat(45.0)),
 		jvKey("minimum_neighbor_similarity", jvFloat(0.05)),
 		jvKey("neighbor_bound", jvFloat(0.2)),
 		jvKey("neighbor_confidence_scale", jvFloat(0.35)),
@@ -394,6 +557,11 @@ func rankingSubConfig() jVal {
 		jvKey("dark_min_library", jvInt(60)),
 		jvKey("dark_prior_strength", jvFloat(20.0)),
 		jvKey("dark_threshold", jvFloat(0.55)),
+		jvKey("dormant_floor", jvFloat(0.5)),
+		jvKey("dormant_min_plays", jvInt(3)),
+		jvKey("dormant_min_positive", jvFloat(0.10)),
+		jvKey("dormant_min_scenes", jvInt(2)),
+		jvKey("dormant_per_entity", jvInt(1)),
 		jvKey("for_you_pattern", jvStrList(forYouPattern)),
 		jvKey("history_content_penalty", jvFloat(0.05)),
 		jvKey("history_performer_penalty", jvFloat(0.04)),

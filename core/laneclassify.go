@@ -371,6 +371,168 @@ func blindSpotContext(db dbx, sceneIDs map[string]bool, featureVersion string) (
 	return result, nil
 }
 
+// dormancyRow mirrors one model_entity_dormancy row.
+type dormancyRow struct {
+	lastPlayedAtMs     int64
+	positiveStrength   float64
+	playCount          int64
+	distinctSceneCount int64
+}
+
+// dormantContext mirrors LanePolicy._dormant_context: per-scene strongest
+// qualifying dormant entity (a performer, studio, or confirmed tag the user
+// used to watch a lot of, hasn't touched in a while, and whose scenes
+// model_entity_dormancy shows a real positive history for). now_ms is
+// evaluated live, not frozen at build — see
+// docs/workpackage-lane-redesign.md ("Dormant", "Evaluated at slate time,
+// not frozen at build").
+func dormantContext(db dbx, modelID string, sceneIDs map[string]bool, nowMs int64) (map[string]dormantCandidate, error) {
+	dormancyRows := map[[2]string]dormancyRow{}
+	rows, err := db.Query(`
+SELECT entity_type, entity_id, last_played_at_ms, positive_strength, play_count, distinct_scene_count
+FROM model_entity_dormancy WHERE model_id=?`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var entityType, entityID string
+		var row dormancyRow
+		if err := rows.Scan(&entityType, &entityID, &row.lastPlayedAtMs, &row.positiveStrength,
+			&row.playCount, &row.distinctSceneCount); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		dormancyRows[[2]string{entityType, entityID}] = row
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(dormancyRows) == 0 {
+		return map[string]dormantCandidate{}, nil
+	}
+
+	sceneEntities := map[string][][2]string{}
+	addEntity := func(sceneID, entityType, entityID string) {
+		sceneEntities[sceneID] = append(sceneEntities[sceneID], [2]string{entityType, entityID})
+	}
+	performerRows, err := db.Query(`SELECT scene_id, performer_id FROM scene_performer`)
+	if err != nil {
+		return nil, err
+	}
+	for performerRows.Next() {
+		var sceneID, performerID string
+		if err := performerRows.Scan(&sceneID, &performerID); err != nil {
+			performerRows.Close()
+			return nil, err
+		}
+		addEntity(sceneID, "performer", performerID)
+	}
+	performerRows.Close()
+	if err := performerRows.Err(); err != nil {
+		return nil, err
+	}
+	studioRows, err := db.Query(`SELECT scene_id, studio_id FROM source_scene WHERE studio_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for studioRows.Next() {
+		var sceneID, studioID string
+		if err := studioRows.Scan(&sceneID, &studioID); err != nil {
+			studioRows.Close()
+			return nil, err
+		}
+		addEntity(sceneID, "studio", studioID)
+	}
+	studioRows.Close()
+	if err := studioRows.Err(); err != nil {
+		return nil, err
+	}
+	tagRows, err := db.Query(`SELECT scene_id, tag_id FROM scene_tag`)
+	if err != nil {
+		return nil, err
+	}
+	for tagRows.Next() {
+		var sceneID, tagID string
+		if err := tagRows.Scan(&sceneID, &tagID); err != nil {
+			tagRows.Close()
+			return nil, err
+		}
+		addEntity(sceneID, "tag", tagID)
+	}
+	tagRows.Close()
+	if err := tagRows.Err(); err != nil {
+		return nil, err
+	}
+
+	names := map[string]map[string]string{"performer": {}, "studio": {}, "tag": {}}
+	loadNames := func(query, entityType string) error {
+		rows, err := db.Query(query)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			var name sql.NullString
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return err
+			}
+			names[entityType][id] = name.String
+		}
+		rows.Close()
+		return rows.Err()
+	}
+	if err := loadNames(`SELECT performer_id, name FROM source_performer`, "performer"); err != nil {
+		return nil, err
+	}
+	if err := loadNames(`SELECT studio_id, name FROM source_studio`, "studio"); err != nil {
+		return nil, err
+	}
+	if err := loadNames(`SELECT tag_id, name FROM source_tag`, "tag"); err != nil {
+		return nil, err
+	}
+
+	result := map[string]dormantCandidate{}
+	for sceneID := range sceneIDs {
+		var best dormantCandidate
+		for _, entity := range sceneEntities[sceneID] {
+			entityType, entityID := entity[0], entity[1]
+			row, ok := dormancyRows[[2]string{entityType, entityID}]
+			if !ok {
+				continue
+			}
+			if row.playCount < 3 || row.distinctSceneCount < 2 || row.positiveStrength < 0.10 {
+				continue
+			}
+			daysSincePlayed := math.Max(0.0, float64(nowMs-row.lastPlayedAtMs)/86_400_000)
+			dormancy := entityDormancy(daysSincePlayed)
+			if dormancy < 0.5 {
+				continue
+			}
+			if !best.found || row.positiveStrength > best.positiveStrength ||
+				(row.positiveStrength == best.positiveStrength && entityID < best.entityID) {
+				name := names[entityType][entityID]
+				if name == "" {
+					name = entityID
+				}
+				best = dormantCandidate{
+					found: true, entityType: entityType, entityID: entityID,
+					name:             name,
+					daysSincePlayed:  daysSincePlayed,
+					positiveStrength: row.positiveStrength,
+					supportingPlays:  row.playCount,
+					dormancy:         dormancy,
+				}
+			}
+		}
+		if best.found {
+			result[sceneID] = best
+		}
+	}
+	return result, nil
+}
+
 // builtLaneClassification mirrors LaneClassification.
 type builtLaneClassification struct {
 	sceneID       string
@@ -390,7 +552,20 @@ type laneContext struct {
 	studioRanks     map[string]float64
 	fitRanks        map[string]float64
 	blindSpots      map[string]blindSpotSceneData
-	played            map[string]bool
+	dormant         map[string]dormantCandidate
+	played          map[string]bool
+}
+
+// dormantCandidate mirrors one scene's strongest qualifying dormant entity.
+type dormantCandidate struct {
+	found            bool
+	entityType       string
+	entityID         string
+	name             string
+	daysSincePlayed  float64
+	positiveStrength float64
+	supportingPlays  int64
+	dormancy         float64
 }
 
 // stretchRaw mirrors policy.classify's per-scene stretch_raw entry: the
@@ -588,11 +763,29 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) (
 			),
 		})
 	}
+	dormant := c.dormant[sceneID]
+	if !c.played[sceneID] && dormant.found {
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "dormant", subtype: dormant.entityType,
+			laneValue: dormant.positiveStrength * c.fitRanks[sceneID],
+			qualification: jvObj(
+				jvKey("dormant_entity", jvObj(
+					jvKey("type", jvStr(dormant.entityType)),
+					jvKey("id", jvStr(dormant.entityID)),
+					jvKey("name", jvStr(dormant.name)),
+				)),
+				jvKey("days_since_played", jvInt(pyRound(dormant.daysSincePlayed))),
+				jvKey("positive_strength", jvFloat(dormant.positiveStrength)),
+				jvKey("supporting_plays", jvInt(dormant.supportingPlays)),
+				jvKey("dormancy", jvFloat(dormant.dormancy)),
+			),
+		})
+	}
 	return classifications, stretch
 }
 
 // laneClassify mirrors LanePolicy.classify and persists the rows.
-func laneClassify(db dbx, modelID string, featureVersion string, progress func(processed, total int)) ([]builtLaneClassification, error) {
+func laneClassify(db dbx, modelID string, featureVersion string, nowMs int64, progress func(processed, total int)) ([]builtLaneClassification, error) {
 	scores, err := classificationData(db, modelID)
 	if err != nil {
 		return nil, err
@@ -631,6 +824,10 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 	if err != nil {
 		return nil, err
 	}
+	dormant, err := dormantContext(db, modelID, eligibleSet, nowMs)
+	if err != nil {
+		return nil, err
+	}
 	sceneIDs := sortedStringKeys(eligibleScores)
 	total := len(sceneIDs)
 	var classifications []builtLaneClassification
@@ -642,6 +839,7 @@ func laneClassify(db dbx, modelID string, featureVersion string, progress func(p
 			performerRanks:  performerRanks,
 			studioRanks:     studioRanks,
 			fitRanks:        fitRanks,
+			dormant:         dormant,
 			blindSpots:      blindSpots,
 			played:          played,
 		}

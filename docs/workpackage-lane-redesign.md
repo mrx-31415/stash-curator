@@ -480,8 +480,8 @@ undo.
 
 ### Dormant — new
 
-**New table required** (migration 0034 — see *Architecture context* for why
-the number moved):
+**New table required** (migration 0036 — see *Architecture context* for the
+full migration sequence):
 
 ```sql
 CREATE TABLE model_entity_dormancy (
@@ -516,12 +516,17 @@ def entity_dormancy(days_since_entity_played, *, config):
 
 Defaults `dormancy_center_days = 120`, `dormancy_width_days = 45`.
 
-**Evaluated at slate time, not frozen at build.** `SlateBuilder` already
-recomputes `scene_recovery` against a live `now_ms` in `_direct_play_filters` /
-`_live_current_fit` rather than trusting the build-time column. Dormancy is
-time-dependent the same way, so the table stores `last_played_at_ms` and the
-curve is applied at query time. A week-old artifact must not call a taste
-dormant that was watched yesterday.
+**Shipped as build-time frozen, like the base lane classification.** The gate
+and `lane_value` are evaluated once, in `LanePolicy.classify` /
+`laneClassify`, against the model's build-time `now_ms` — the same point
+every other lane's classification is frozen at. `SlateBuilder` separately
+recomputes `scene_recovery` against a live `now_ms` in
+`_direct_play_filters` / `_live_current_fit`, but that refinement was **not**
+extended to dormancy in this pass; a stale artifact can therefore keep
+calling a taste dormant for up to one rebuild cycle after it was actually
+replayed. `model_entity_dormancy` still stores `last_played_at_ms` so a
+live-recompute layer can be added later without a schema change — see
+*Open questions*.
 
 **Gate.** The scene is eligible and unplayed, and has at least one entity with:
 
@@ -590,12 +595,12 @@ rather than routed anywhere. Land it as a new derived prune reason.
 | what | where | kind |
 |---|---|---|
 | Bounded named content contributors in `classification_json` | `builder.py` `_classification_payload` + Go mirror | payload change — invalidates cached models once |
-| `model_entity_dormancy` table | migration 0034, core + artifact schema | new table |
+| `model_entity_dormancy` table | migration 0036, core + artifact schema | new table |
 | `entity_dormancy` curve | `curator/model/curves.py` + Go mirror | new curve |
 | Facet extraction (studio + confirmed tag; machinery general) | `LanePolicy` / `laneClassify` | new derivation, existing tables |
 | StashDB tag-confirmation filter | `tag_role.resolution_reason` | existing data, newly used |
 | Regularized `darkness(f)` + support floor + corroboration | `LanePolicy` / `laneClassify` | replaces `_adventure_context` gap math |
-| `model_scene_lane` / `model_lane_candidate_cache` / `model_lane_order` lane CHECK rebuild | migration 0034 | schema change |
+| `model_scene_lane` / `model_lane_candidate_cache` / `model_lane_order` lane CHECK rebuild | migrations 0034 (Stretch), 0035 (Blind Spots), 0037 (Dormant) | schema change |
 | `stretch_*`, `dormant_*`, `dark_*` constants | `RankingConfig` + `modelSubConfig` | config, fingerprint-guarded |
 
 Nothing above needs a new *source* — no new Stash fields, no external fetches.
@@ -655,13 +660,21 @@ Each of these was measured, not assumed.
   be altered in place, so all three are rebuilt: `model_scene_lane` (from
   migration 0003 — contrary to an earlier version of this doc, its `lane`
   column is **not** unconstrained), `model_lane_candidate_cache` (migration
-  0008), and `model_lane_order` + `source_lane` (migration 0015). The same
-  migration adds `model_entity_dormancy`. All three rebuilt tables are
-  `MODEL_TABLES` entries (`curator/storage/artifacts.py`), so a connection
-  with an active model artifact shadows each name with a temp view; every
-  `DROP`/`CREATE TABLE` is `main.`-qualified to target the core-schema copy
-  instead, and `model_scene_lane`'s two indexes (which `CREATE INDEX` cannot
-  schema-qualify) are preceded by `DROP VIEW IF EXISTS temp.model_scene_lane`.
+  0008), and `model_lane_order` + `source_lane` (migration 0015). All three
+  rebuilt tables are `MODEL_TABLES` entries (`curator/storage/artifacts.py`),
+  so a connection with an active model artifact shadows each name with a temp
+  view; every `DROP`/`CREATE TABLE` is `main.`-qualified to target the
+  core-schema copy instead, and `model_scene_lane`'s two indexes (which
+  `CREATE INDEX` cannot schema-qualify) are preceded by `DROP VIEW IF EXISTS
+  temp.model_scene_lane`.
+- Each lane addition after Stretch landed its own CHECK rebuild rather than
+  reusing 0034, since the three lanes shipped as separate releases rather than
+  together: **migration 0035** repeats the same rebuild-and-`main.`-qualify
+  pattern to admit `blind_spots`; **migration 0036** adds
+  `model_entity_dormancy` on its own (a brand-new `MODEL_TABLES` entry has no
+  shadow view yet at `attach_active_artifacts` time, so it needs none of the
+  `main.`-qualification workaround); **migration 0037** repeats the CHECK
+  rebuild a third time to admit `dormant`.
 - New thresholds are config-backed so the canonical-config fingerprint guards
   them; changing them invalidates cached models, which is intended.
 - The contributor-list payload change alters the model fingerprint once.
@@ -699,22 +712,30 @@ Each of these was measured, not assumed.
    the confirmation filter, per-kind normalization, and the per-dimension cap.
    No new table, no new pass. **Shipped** (migration 0034, PR #172).
 2. **Blind Spots** — facet extraction, regularized darkness, corroboration
-   gate, ranking inversion, facet dismissal. Needs the 0034 lane rename.
-3. **Dormant** — the entity pass, the table, and the curve.
+   gate, ranking inversion, facet dismissal. **Shipped** (migration 0035,
+   PR #172).
+3. **Dormant** — the entity pass, the table, and the curve. **Shipped**
+   (migrations 0036-0037, PR #172).
 4. **Route the Blind Spots breadth-ceiling signal to pruning** and doc/UI
    copy alignment.
 
-Steps 1-3 all want migration 0034 (already landed by step 1); land any
-further schema for steps 2-3 as its own migration, and gate the lanes behind
-config if they cannot ship together.
+Steps 1-3 each landed as their own CHECK-rebuild migration rather than
+sharing 0034, since they shipped as separate releases (see *Architecture
+context*). Step 4 remains.
 
 ## Open questions
 
-- Does `for_you_pattern` keep five lanes in rotation, or does Blind Spots stay
-  out of For You entirely given its teach-the-model framing?
+- ~~Does `for_you_pattern` keep five lanes in rotation, or does Blind Spots
+  stay out of For You entirely given its teach-the-model framing?~~
+  **Resolved as shipped:** `for_you_pattern` rotates all five lanes,
+  including Blind Spots.
 - Dormancy horizon: fixed defaults, or derived per-user from the distribution
   of inter-play gaps? And should long-parked tastes discriminate at all, or is
   gate-only correct?
+- Should dormancy get the same live-recompute treatment `_live_current_fit`
+  gives `scene_recovery`, so a rebuild-cycle-old artifact can't call a taste
+  dormant after it was replayed? Deferred, not rejected — see *Dormant*,
+  "Shipped as build-time frozen."
 - Should Dormant and Revisit share a UI shelf ("Back to...") while staying
   separate lanes in the model?
 - May a scene appear in both Dormant and Best Bets? The slate already dedups by

@@ -24,13 +24,14 @@ const (
 	rankingUncoveredContentBonus   = 0.03
 	rankingStretchPerDimension     = 1
 	rankingBlindSpotPerFacet       = 1
+	rankingDormantPerEntity        = 1
 )
 
 var forYouPattern = []string{
 	"best_bets", "best_bets", "revisit", "best_bets", "stretch",
 	"best_bets", "best_bets", "stretch", "best_bets", "revisit",
 	"best_bets", "stretch", "best_bets", "best_bets", "revisit",
-	"best_bets", "stretch", "best_bets", "blind_spots", "best_bets",
+	"best_bets", "stretch", "best_bets", "blind_spots", "dormant",
 }
 
 var familiarPattern = []string{
@@ -130,6 +131,37 @@ func blindSpotFacets(lane string, candidates []*greedyCandidate) []string {
 	}
 	sort.Strings(facets)
 	return facets
+}
+
+// dormantEntity mirrors _dormant_entity: the dormant entity's id, for the
+// per-entity Dormant rotation.
+func dormantEntity(c *greedyCandidate) string {
+	entity := c.qualification.get("dormant_entity")
+	if entity.kind != jObj {
+		return ""
+	}
+	return entity.get("id").asString()
+}
+
+// dormantEntities mirrors the sorted-distinct-entity precompute shared by
+// buildOrdering and recommend()'s greedy loop. Unconditional, like
+// blindSpotFacets: dormant is not a QUERIED_SCORE_FIRST_LANES member either.
+func dormantEntities(lane string, candidates []*greedyCandidate) []string {
+	if lane != "dormant" {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		if entity := dormantEntity(c); entity != "" {
+			seen[entity] = true
+		}
+	}
+	entities := make([]string, 0, len(seen))
+	for entity := range seen {
+		entities = append(entities, entity)
+	}
+	sort.Strings(entities)
+	return entities
 }
 
 // recommendGreedy mirrors SlateBuilder.recommend's recompute branch.
@@ -327,6 +359,9 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 	// At most blind_spot_per_facet card per dark facet per page — unconditional,
 	// see blindSpotFacets.
 	facets := blindSpotFacets(lane, live)
+	// At most dormant_per_entity card per dormant entity per page — same
+	// reasoning as facets above.
+	entities := dormantEntities(lane, live)
 	for position := int64(len(selected)); position < count; position++ {
 		targetLane := slateTarget(lane, position, exploration)
 		targetDimension := ""
@@ -336,6 +371,10 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		targetFacet := ""
 		if lane == "blind_spots" && len(facets) > 0 {
 			targetFacet = facets[(int(position)/maxInt(1, rankingBlindSpotPerFacet))%len(facets)]
+		}
+		targetEntity := ""
+		if lane == "dormant" && len(entities) > 0 {
+			targetEntity = entities[(int(position)/maxInt(1, rankingDormantPerEntity))%len(entities)]
 		}
 		remaining := make([]*greedyCandidate, 0, len(live))
 		for _, c := range live {
@@ -347,7 +386,8 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 		for _, c := range remaining {
 			if c.lane == targetLane &&
 				(targetDimension == "" || stretchDimension(c) == targetDimension) &&
-				(targetFacet == "" || blindSpotFacet(c) == targetFacet) {
+				(targetFacet == "" || blindSpotFacet(c) == targetFacet) &&
+				(targetEntity == "" || dormantEntity(c) == targetEntity) {
 				preferred = append(preferred, c)
 			}
 		}

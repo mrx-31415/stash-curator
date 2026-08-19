@@ -5,6 +5,10 @@
       "lead": ["you have enjoyed this scene before", "this scene has a positive history with you", "you have returned to this scene before"],
       "support": ["your own history supports it", "you already know this scene can be worthwhile", "you have seen this scene successfully before"]
     },
+    "dormant.entity": {
+      "lead": ["you used to watch a lot of {dormant}, but not for {since}", "{dormant} was a strong pattern for you, until {since} ago", "your history with {dormant} was positive, but has gone quiet for {since}"],
+      "support": ["{dormant} was also a reliable pattern for you", "you have a positive history with {dormant} as well", "{dormant} adds another parked-taste signal"]
+    },
     "appeal.performer_identity": {
       "lead": ["you tend to enjoy {performer}", "your history with {performer} is positive", "{performer} has been a reliable choice for you"],
       "support": ["{performer} is another performer you enjoy", "you have a positive history with {performer}", "{performer}'s history adds support"]

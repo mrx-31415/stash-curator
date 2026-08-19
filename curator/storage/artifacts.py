@@ -27,6 +27,7 @@ MODEL_TABLES = (
     "model_lane_candidate_cache",
     "model_lane_order",
     "model_lane_order_state",
+    "model_entity_dormancy",
 )
 
 FEATURE_SCHEMA = """
@@ -109,23 +110,23 @@ CREATE TABLE model_scene_reason (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_lane (
     model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots')),
+    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')),
     subtype TEXT, lane_value REAL NOT NULL, qualification_json TEXT NOT NULL DEFAULT '{}',
     appeal REAL, PRIMARY KEY (model_id, scene_id, lane)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_lane_candidate_cache (
     model_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('best_bets','revisit','stretch','blind_spots')),
+    lane TEXT NOT NULL CHECK (lane IN ('best_bets','revisit','stretch','blind_spots','dormant')),
     candidates_json TEXT NOT NULL, candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0), PRIMARY KEY (model_id, lane)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_lane_order (
     model_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots')),
+    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')),
     ordering TEXT NOT NULL CHECK (ordering IN ('score_first','varied')),
     position INTEGER NOT NULL CHECK (position >= 0), scene_id TEXT NOT NULL,
     source_lane TEXT NOT NULL CHECK (
-        source_lane IN ('best_bets','revisit','stretch','blind_spots')
+        source_lane IN ('best_bets','revisit','stretch','blind_spots','dormant')
     ),
     utility REAL NOT NULL, ranking_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (model_id, lane, ordering, position),
@@ -134,6 +135,14 @@ CREATE TABLE model_lane_order (
 CREATE TABLE model_lane_order_state (
     model_id TEXT PRIMARY KEY, created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)
 ) STRICT, WITHOUT ROWID;
+CREATE TABLE model_entity_dormancy (
+    model_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('performer','tag','studio')),
+    entity_id TEXT NOT NULL, last_played_at_ms INTEGER NOT NULL,
+    positive_strength REAL NOT NULL, play_count INTEGER NOT NULL CHECK (play_count >= 0),
+    distinct_scene_count INTEGER NOT NULL CHECK (distinct_scene_count >= 0),
+    PRIMARY KEY (model_id, entity_type, entity_id)
+) STRICT;
 """
 
 
