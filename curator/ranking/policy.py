@@ -220,15 +220,13 @@ class LanePolicy:
                 item
                 for item in stretch_positive
                 if _number(item.get("affinity")) >= self.config.ranking.stretch_anchor_affinity
-                and _number(item.get("confidence"))
-                >= self.config.ranking.stretch_anchor_confidence
+                and _number(item.get("confidence")) >= self.config.ranking.stretch_anchor_confidence
             ]
             tested_negative = [
                 item
                 for item in stretch_negative
                 if _number(item.get("affinity")) <= -self.config.ranking.stretch_anchor_affinity
-                and _number(item.get("confidence"))
-                >= self.config.ranking.stretch_anchor_confidence
+                and _number(item.get("confidence")) >= self.config.ranking.stretch_anchor_confidence
             ]
             untested = [
                 item
@@ -280,10 +278,7 @@ class LanePolicy:
                 max_darkness = max(_number(item["darkness"]) for item in dark_facets)
                 blind_spot_value = (
                     max_darkness
-                    * (
-                        1
-                        + self.config.ranking.dark_corroboration_bonus * (len(facet_types) - 1)
-                    )
+                    * (1 + self.config.ranking.dark_corroboration_bonus * (len(facet_types) - 1))
                     * score.metadata_confidence
                     * (1 + max(0.0, score.appeal))
                 )
@@ -321,8 +316,8 @@ class LanePolicy:
                                 "id": dormant_candidate["entity_id"],
                                 "name": dormant_candidate["name"],
                             },
-                            "days_since_played": int(
-                                round(_number(dormant_candidate["days_since_played"]))
+                            "days_since_played": round(
+                                _number(dormant_candidate["days_since_played"])
                             ),
                             "positive_strength": _number(dormant_candidate["positive_strength"]),
                             "supporting_plays": dormant_candidate["supporting_plays"],
@@ -612,7 +607,9 @@ class LanePolicy:
         names: dict[str, dict[str, str]] = {
             "performer": {
                 str(row["performer_id"]): str(row["name"] or "")
-                for row in self.connection.execute("SELECT performer_id, name FROM source_performer")
+                for row in self.connection.execute(
+                    "SELECT performer_id, name FROM source_performer"
+                )
             },
             "studio": {
                 str(row["studio_id"]): str(row["name"] or "")
@@ -640,15 +637,17 @@ class LanePolicy:
                     or positive_strength < self.config.ranking.dormant_min_positive
                 ):
                     continue
-                days_since_played = max(
-                    0.0, (now_ms - int(row["last_played_at_ms"])) / 86_400_000
-                )
+                days_since_played = max(0.0, (now_ms - int(row["last_played_at_ms"])) / 86_400_000)
                 dormancy = entity_dormancy(days_since_played, config=self.config.model)
                 if dormancy < self.config.ranking.dormant_floor:
                     continue
-                if best is None or positive_strength > _number(best["positive_strength"]) or (
-                    positive_strength == _number(best["positive_strength"])
-                    and entity_id < str(best["entity_id"])
+                if (
+                    best is None
+                    or positive_strength > _number(best["positive_strength"])
+                    or (
+                        positive_strength == _number(best["positive_strength"])
+                        and entity_id < str(best["entity_id"])
+                    )
                 ):
                     best = {
                         "entity_type": entity_type,

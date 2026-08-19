@@ -29,7 +29,9 @@ def entity_dormancy(
 ) -> float:
     if days_since_entity_played < 0 or not math.isfinite(days_since_entity_played):
         raise ValueError("days_since_entity_played must be finite and non-negative")
-    exponent = -(days_since_entity_played - config.dormancy_center_days) / config.dormancy_width_days
+    exponent = (
+        -(days_since_entity_played - config.dormancy_center_days) / config.dormancy_width_days
+    )
     return 1 / (1 + math.exp(max(-60.0, min(60.0, exponent))))
 
 

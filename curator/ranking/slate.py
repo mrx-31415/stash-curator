@@ -218,9 +218,7 @@ class SlateBuilder:
         # One progress tick per (lane, ordering) pair below: queried
         # score-first lanes materialize only "varied"; every other lane
         # (including for_you) also materializes "score_first".
-        total = sum(
-            1 if lane in QUERIED_SCORE_FIRST_LANES else 2 for lane in (*LANES, "for_you")
-        )
+        total = sum(1 if lane in QUERIED_SCORE_FIRST_LANES else 2 for lane in (*LANES, "for_you"))
         timings = {"score_first_ordering": 0, "varied_ordering": 0}
         for lane in (*LANES, "for_you"):
             lane_candidates = tuple(
