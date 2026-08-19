@@ -253,12 +253,14 @@ func TestEnsureWorkerRotatesStaleBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
 	previousStop := stopWorkerFn
 	previousSpawn := spawnWorkerFn
 	alive := true
 	stopCalls := 0
 	spawnCalls := 0
 	workerPidAliveFn = func(int) bool { return alive }
+	workerPidIsWorkerFn = func(int, string) bool { return true }
 	stopWorkerFn = func(int) error {
 		stopCalls++
 		alive = false
@@ -270,6 +272,7 @@ func TestEnsureWorkerRotatesStaleBinary(t *testing.T) {
 	}
 	defer func() {
 		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
 		stopWorkerFn = previousStop
 		spawnWorkerFn = previousSpawn
 	}()
@@ -293,6 +296,53 @@ func TestEnsureWorkerRotatesStaleBinary(t *testing.T) {
 	}
 }
 
+func TestEnsureWorkerIgnoresReusedPID(t *testing.T) {
+	db, path := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := t.TempDir()
+	insertQueued(t, db, "queued", "sync-plays", `{}`, 1)
+	fingerprint, err := workerBinaryFingerprint(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkerState(pluginDir, workerState{BinaryFingerprint: fingerprint}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
+	previousStop := stopWorkerFn
+	previousSpawn := spawnWorkerFn
+	stopCalls := 0
+	spawnCalls := 0
+	workerPidAliveFn = func(int) bool { return true }
+	workerPidIsWorkerFn = func(int, string) bool { return false }
+	stopWorkerFn = func(int) error {
+		stopCalls++
+		return nil
+	}
+	spawnWorkerFn = func(string) error {
+		spawnCalls++
+		return nil
+	}
+	defer func() {
+		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
+		stopWorkerFn = previousStop
+		spawnWorkerFn = previousSpawn
+	}()
+
+	if err := ensureWorker(pluginDir, taskPayload(path, "sync-plays"), jvObj()); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalls != 0 || spawnCalls != 1 {
+		t.Fatalf("reused PID handling: stop=%d spawn=%d", stopCalls, spawnCalls)
+	}
+}
 func TestWorkerUpdateWatcherDetectsReplacement(t *testing.T) {
 	pluginDir := t.TempDir()
 	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH

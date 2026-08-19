@@ -91,7 +91,8 @@ the spawning process is gone), ensures the worker is alive, and returns
 - Detached spawn: `setsid` + stdio redirected to `data/curator-daemon.log`
   so the process survives Stash job teardown and Stash restarts. Must verify
   how Stash kills jobs (process-group kill is the case setsid defeats).
-- Single instance: pid file with staleness check (or lock row).
+- Single instance: pid file with staleness and process-ownership checks; a
+  reused PID is discarded rather than signalled or treated as the worker.
 - Startup recovery: mark its own `running`/`queued` rows `failed`
   (`interrupted`) — ownership-based replacement for the 6 h window.
 - Queue loop: atomically claim `queued` → `running` (one at a time; SQLite
