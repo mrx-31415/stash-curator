@@ -116,16 +116,10 @@ class ExplanationService:
                     detail["anchor_features"] = item.qualification.get("anchor_features", [])
                 else:
                     dark_facets = item.qualification.get("dark_facets")
-                    top = (
-                        dark_facets[0]
-                        if isinstance(dark_facets, list) and dark_facets
-                        else None
-                    )
+                    top = dark_facets[0] if isinstance(dark_facets, list) and dark_facets else None
                     magnitude = _number(top.get("darkness")) if isinstance(top, dict) else 0.0
                     detail["dark_facets"] = dark_facets or []
-                    detail["corroborating_types"] = item.qualification.get(
-                        "corroborating_types", 0
-                    )
+                    detail["corroborating_types"] = item.qualification.get("corroborating_types", 0)
                 reasons.append(
                     Reason(
                         exploration_code,
