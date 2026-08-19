@@ -59,8 +59,7 @@ def _multi_candidate_database(path: Path) -> sqlite3.Connection:
         ) VALUES (?, 'occasion_outcome', ?, ?, 1.0, 1, 'synthetic', '{"primary_signal":"o"}')
         """,
         tuple(
-            (f"event-{scene_id}", scene_id, REFERENCE_MS - 120 * DAY_MS)
-            for scene_id, _ in scenes
+            (f"event-{scene_id}", scene_id, REFERENCE_MS - 120 * DAY_MS) for scene_id, _ in scenes
         ),
     )
     return connection

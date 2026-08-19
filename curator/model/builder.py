@@ -254,9 +254,7 @@ _STRETCH_CONTRIBUTOR_FIELDS = (
 )
 
 
-def _stretch_contributor_payload(
-    components: dict[str, object], *, count: int
-) -> dict[str, object]:
+def _stretch_contributor_payload(components: dict[str, object], *, count: int) -> dict[str, object]:
     """Bounded positive/negative contributor list for the Stretch lane.
 
     Combines the confirmed-tag and studio candidates computed alongside the
@@ -1239,9 +1237,7 @@ class PreferenceModelBuilder:
                     )[:5],
                 }
                 if family == "content":
-                    family_payload["stretch_candidates"] = _confirmed_tag_candidates(
-                        contributions
-                    )
+                    family_payload["stretch_candidates"] = _confirmed_tag_candidates(contributions)
                 components[family] = family_payload
             performer_items = [
                 feature for feature in features if feature.family == "performer_identity"
@@ -1998,11 +1994,8 @@ class PreferenceModelBuilder:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    (model_id, entity_type, entity_id, last_played_at_ms, positive_strength,
-                     play_count, distinct_scene_count)
-                    for entity_type, entity_id, last_played_at_ms, positive_strength,
-                        play_count, distinct_scene_count
-                    in _entity_dormancy_rows(artifact, model_id, feature_version)
+                    (model_id, *row)
+                    for row in _entity_dormancy_rows(artifact, model_id, feature_version)
                 ),
             )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)

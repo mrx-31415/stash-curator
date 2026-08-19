@@ -110,7 +110,9 @@ CREATE TABLE model_scene_reason (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_scene_lane (
     model_id TEXT NOT NULL, scene_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')),
+    lane TEXT NOT NULL CHECK (
+        lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')
+    ),
     subtype TEXT, lane_value REAL NOT NULL, qualification_json TEXT NOT NULL DEFAULT '{}',
     appeal REAL, PRIMARY KEY (model_id, scene_id, lane)
 ) STRICT, WITHOUT ROWID;
@@ -122,7 +124,9 @@ CREATE TABLE model_lane_candidate_cache (
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_lane_order (
     model_id TEXT NOT NULL,
-    lane TEXT NOT NULL CHECK (lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')),
+    lane TEXT NOT NULL CHECK (
+        lane IN ('for_you','best_bets','revisit','stretch','blind_spots','dormant')
+    ),
     ordering TEXT NOT NULL CHECK (ordering IN ('score_first','varied')),
     position INTEGER NOT NULL CHECK (position >= 0), scene_id TEXT NOT NULL,
     source_lane TEXT NOT NULL CHECK (
