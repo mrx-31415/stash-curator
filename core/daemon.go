@@ -424,6 +424,11 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 // the sidecar, recovers orphans at startup, and exits after an idle period
 // so an idle plugin runs no resident process.
 func runDaemon(pluginDir string) {
+	// Before anything else, and only on this path: the daemon is background
+	// work competing with a Stash the user is actively using. Foreground
+	// plugin invocations deliberately do not call this.
+	lowerWorkerPriority()
+
 	state, err := readWorkerState(pluginDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "curator-core daemon: no worker state (%v); the daemon is only spawned from a Curator invocation\n", err)
