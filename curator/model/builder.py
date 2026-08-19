@@ -145,6 +145,29 @@ def _clamp(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
+def _soft_bound(value: float, bound: float, knee: float = 0.8) -> float:
+    """Bound a component without collapsing ordering at the cap.
+
+    Exact below ``knee * bound`` — where a hard clamp was inactive anyway —
+    then smoothly asymptotic to ``bound``. A hard clamp maps every strong
+    scene to the identical value, so scenes that saturate stop being
+    comparable: 41 scenes shared an appeal of exactly 1.0 on a real library,
+    and 43 of the top 200 shared a score with another scene. Appeal is
+    ranked and thresholded directly (Prune, Sentiment review), so those ties
+    are lost information, not a harmless display detail.
+
+    ``1 - exp(-t)`` rather than ``tanh(t)``: the same saturating shape, but
+    the exponential is already used across the Go/Python boundary here and
+    is proven to agree bit-for-bit, which the artifact parity gate requires.
+    """
+    knee_at = knee * bound
+    head = bound - knee_at
+    magnitude = abs(value)
+    if magnitude <= knee_at or head <= 0:
+        return _clamp(value, -bound, bound)
+    return math.copysign(knee_at + head * (1 - math.exp(-(magnitude - knee_at) / head)), value)
+
+
 def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
@@ -924,9 +947,7 @@ class PreferenceModelBuilder:
         baseline = (
             label_mean * baseline_support / (self.config.model.affinity_prior + baseline_support)
         )
-        baseline = _clamp(
-            baseline, -self.config.model.baseline_bound, self.config.model.baseline_bound
-        )
+        baseline = _soft_bound(baseline, self.config.model.baseline_bound)
         last_played = {
             str(row["scene_id"]): int(row["last_played"])
             for row in self.connection.execute(
@@ -991,7 +1012,7 @@ class PreferenceModelBuilder:
                 family_confidences[family] = evidence_confidence
                 components[family] = {
                     "raw": raw,
-                    "value": _clamp(raw, -bound, bound),
+                    "value": _soft_bound(raw, bound),
                     "evidence_confidence": evidence_confidence,
                     "top": sorted(
                         contributions,
@@ -1056,21 +1077,13 @@ class PreferenceModelBuilder:
             family_confidences["performer_similarity"] = similarity_confidence
             components["performer_identity"] = {
                 "raw": identity_raw,
-                "value": _clamp(
-                    identity_raw,
-                    -self.config.model.performer_identity_bound,
-                    self.config.model.performer_identity_bound,
-                ),
+                "value": _soft_bound(identity_raw, self.config.model.performer_identity_bound),
                 "performers": identity_values,
                 "evidence_confidence": identity_confidence,
             }
             components["performer_similarity"] = {
                 "raw": similarity_raw,
-                "value": _clamp(
-                    similarity_raw,
-                    -self.config.model.performer_similarity_bound,
-                    self.config.model.performer_similarity_bound,
-                ),
+                "value": _soft_bound(similarity_raw, self.config.model.performer_similarity_bound),
                 "performers": similarity_values,
                 "evidence_confidence": similarity_confidence,
             }
@@ -1100,9 +1113,7 @@ class PreferenceModelBuilder:
             family_confidences["studio"] = studio_confidence
             components["studio"] = {
                 "raw": studio_raw,
-                "value": _clamp(
-                    studio_raw, -self.config.model.studio_bound, self.config.model.studio_bound
-                ),
+                "value": _soft_bound(studio_raw, self.config.model.studio_bound),
                 "studios": studio_items,
                 "evidence_confidence": studio_confidence,
             }
@@ -1113,11 +1124,7 @@ class PreferenceModelBuilder:
             family_confidences["content_neighbor"] = neighbor_data.confidence
             components["content_neighbor"] = {
                 "raw": neighbor_data.value,
-                "value": _clamp(
-                    neighbor_data.value,
-                    -self.config.model.neighbor_bound,
-                    self.config.model.neighbor_bound,
-                ),
+                "value": _soft_bound(neighbor_data.value, self.config.model.neighbor_bound),
                 "outcome_mean": neighbor_data.outcome_mean,
                 "training_outcome_mean": label_mean,
                 "lift": neighbor_data.lift,
@@ -1131,7 +1138,7 @@ class PreferenceModelBuilder:
                 for value in components.values()
                 if isinstance(value, dict) and "value" in value
             )
-            general = _clamp(component_total)
+            general = _soft_bound(component_total, 1.0)
             direct = labels.get(scene_id, _SceneLabel(0.0, 0.0, 0.0, ()))
             # Absolute channel only: a pairwise pick is evidence about the
             # features that differed, not a verdict on this scene's own appeal.
