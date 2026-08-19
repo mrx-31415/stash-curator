@@ -9,6 +9,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -231,6 +234,94 @@ func TestEnqueueQueuesAndWorkerClaims(t *testing.T) {
 			t.Fatalf("claim mismatch: %q %q", claimed, mode)
 		}
 	})
+}
+
+func TestEnsureWorkerRotatesStaleBinary(t *testing.T) {
+	db, path := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := t.TempDir()
+	insertQueued(t, db, "queued", "sync-plays", `{}`, 1)
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkerState(pluginDir, workerState{BinaryFingerprint: "old-generation"}); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousStop := stopWorkerFn
+	previousSpawn := spawnWorkerFn
+	alive := true
+	stopCalls := 0
+	spawnCalls := 0
+	workerPidAliveFn = func(int) bool { return alive }
+	stopWorkerFn = func(int) error {
+		stopCalls++
+		alive = false
+		return nil
+	}
+	spawnWorkerFn = func(string) error {
+		spawnCalls++
+		return nil
+	}
+	defer func() {
+		workerPidAliveFn = previousAlive
+		stopWorkerFn = previousStop
+		spawnWorkerFn = previousSpawn
+	}()
+
+	if err := ensureWorker(pluginDir, taskPayload(path, "sync-plays"), jvObj()); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalls != 1 || spawnCalls != 1 {
+		t.Fatalf("rotation calls: stop=%d spawn=%d", stopCalls, spawnCalls)
+	}
+	state, err := readWorkerState(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := workerBinaryFingerprint(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.BinaryFingerprint != current {
+		t.Fatalf("state fingerprint = %q, want %q", state.BinaryFingerprint, current)
+	}
+}
+
+func TestWorkerUpdateWatcherDetectsReplacement(t *testing.T) {
+	pluginDir := t.TempDir()
+	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(pluginDir, name)
+	if err := os.WriteFile(binary, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := workerBinaryFingerprint(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousCheck := workerCheckMs
+	workerCheckMs = 1
+	defer func() { workerCheckMs = previousCheck }()
+	changed := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go workerUpdateWatcher(pluginDir, initial, changed, done)
+	defer close(done)
+	if err := os.WriteFile(binary, []byte("new-generation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+	case <-time.After(time.Second):
+		t.Fatal("worker update watcher did not detect replacement")
+	}
 }
 
 func TestEnqueueInlineFallback(t *testing.T) {
