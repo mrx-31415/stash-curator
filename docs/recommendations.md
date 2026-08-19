@@ -35,8 +35,11 @@ different lane than a high estimate backed by varied outcomes.
 - **Blind Spots** surfaces studios or confirmed tags you have barely played, gated
   on at least two independently corroborating facets so a single noisy field can't
   qualify a scene alone.
+- **Dormant** returns to a performer, studio, or confirmed tag you had a real
+  positive history with but haven't touched in a while, evaluated against the
+  current time rather than frozen at the last model build.
 - **For You** mixes those policies with conservative items early and only a small
-  Blind Spots share.
+  Blind Spots and Dormant share.
 
 Hard exclusions, unavailable files, explicit suppression, and Prune state are
 checked before lane scoring.

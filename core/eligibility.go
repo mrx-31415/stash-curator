@@ -15,6 +15,8 @@ const (
 	cooldownCenterDays = 90.0
 	cooldownWidthDays  = 15.0
 	notNowDays         = 30.0
+	dormancyCenterDays = 120.0
+	dormancyWidthDays  = 45.0
 )
 
 // sceneRecovery mirrors curator/model/curves.py scene_recovery with the
@@ -24,6 +26,17 @@ func sceneRecovery(daysSincePlayed float64) float64 {
 		return 0
 	}
 	exponent := -(daysSincePlayed - cooldownCenterDays) / cooldownWidthDays
+	exponent = math.Max(-60.0, math.Min(60.0, exponent))
+	return 1 / (1 + math.Exp(exponent))
+}
+
+// entityDormancy mirrors curator/model/curves.py entity_dormancy with the
+// default ModelConfig.
+func entityDormancy(daysSinceEntityPlayed float64) float64 {
+	if daysSinceEntityPlayed < 0 || math.IsInf(daysSinceEntityPlayed, 0) || math.IsNaN(daysSinceEntityPlayed) {
+		return 0
+	}
+	exponent := -(daysSinceEntityPlayed - dormancyCenterDays) / dormancyWidthDays
 	exponent = math.Max(-60.0, math.Min(60.0, exponent))
 	return 1 / (1 + math.Exp(exponent))
 }
