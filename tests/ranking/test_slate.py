@@ -521,8 +521,11 @@ def test_dormant_context_gates_on_entity_play_history(tmp_path: Path) -> None:
     now_ms = 200 * 86_400_000
     connection.executemany(
         "INSERT INTO source_performer(performer_id, name, source_hash) VALUES (?, ?, ?)",
-        (("p-dormant", "Dormant Performer", "pd"), ("p-recent", "Recent Performer", "pr"),
-         ("p-thin", "Thin Performer", "pt")),
+        (
+            ("p-dormant", "Dormant Performer", "pd"),
+            ("p-recent", "Recent Performer", "pr"),
+            ("p-thin", "Thin Performer", "pt"),
+        ),
     )
     scenes = (
         ("m-dormant", "p-dormant"),
@@ -535,7 +538,8 @@ def test_dormant_context_gates_on_entity_play_history(tmp_path: Path) -> None:
             (scene_id, scene_id, scene_id),
         )
         connection.execute(
-            "INSERT INTO source_file(file_id, scene_id, available, source_hash) VALUES (?, ?, 1, ?)",
+            "INSERT INTO source_file(file_id, scene_id, available, source_hash)"
+            " VALUES (?, ?, 1, ?)",
             (f"file-{scene_id}", scene_id, f"file-{scene_id}"),
         )
         connection.execute(
