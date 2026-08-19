@@ -98,9 +98,13 @@ the spawning process is gone), ensures the worker is alive, and returns
   single-writer and builds serialize anyway), heartbeat
   (`heartbeat_at_ms`, ~20 s), run the existing `runTaskMode` bodies,
   transition `complete`/`failed` with `summary_json`.
-- Ensure-worker on every plugin invocation (operation or task): check pid +
-  heartbeat freshness, spawn if dead. This is the crash-resurrection and
-  plugin-update rotation path (binary version/mtime change → restart).
+- Ensure-worker on every plugin invocation (operation or task): compare the
+  daemon's recorded executable fingerprint with the installed binary, terminate
+  a stale generation, and spawn the current one. The resident daemon also
+  watches that fingerprint, stops claiming new work after a replacement, lets
+  an active job finish, and exits so the next invocation starts the new binary.
+- This is the crash-resurrection and plugin-update rotation path; the
+  fingerprint combines platform file identity, size, mtime, and permissions.
 - Lifetime: lazy spawn on first task; exit when idle after a grace period
   (recommended) rather than permanently resident.
 
@@ -165,10 +169,10 @@ it Curator-side:
 - **Stash kill semantics**: verify whether Stash job stop/teardown kills the
   process group — setsid must defeat it. The one environment check that
   gates the whole design.
-- **Plugin update vs running daemon**: zip install replaces the binary
-  under a running daemon; version/mtime check on ensure-worker rotates it.
-  Decide: let the current job finish vs terminate (recommend: finish, then
-  next ensure spawns the new version).
+- **Plugin update vs running daemon**: zip install replaces the binary under a
+  running daemon. Generation fingerprints rotate stale workers on invocation;
+  the resident watcher drains the current job and exits without claiming more
+  work, then the next invocation spawns the new version.
 - **Progress write amplification**: debounce is mandatory (see 4.4).
 - **Connection staleness**: jobs enqueued before a Stash restart carry a
   stale `server_connection`; refresh per enqueue, fail clear on stale URL.
