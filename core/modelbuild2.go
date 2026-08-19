@@ -670,7 +670,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 		} else {
 			components.set(family.name, jvObj(
 				jvKey("raw", jvFloat(raw)),
-				jvKey("value", jvFloat(clampValue(raw, -family.bound, family.bound))),
+				jvKey("value", jvFloat(softBound(raw, family.bound))),
 				jvKey("evidence_confidence", jvFloat(evidenceConfidence)),
 				jvKey("top", top),
 			))
@@ -732,13 +732,13 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	familyConfidences["performer_similarity"] = similarityConfidence
 	components.set("performer_identity", jvObj(
 		jvKey("raw", jvFloat(identityRaw)),
-		jvKey("value", jvFloat(clampValue(identityRaw, -0.30, 0.30))),
+		jvKey("value", jvFloat(softBound(identityRaw, 0.30))),
 		jvKey("performers", identityValues),
 		jvKey("evidence_confidence", jvFloat(identityConfidence)),
 	))
 	components.set("performer_similarity", jvObj(
 		jvKey("raw", jvFloat(similarityRaw)),
-		jvKey("value", jvFloat(clampValue(similarityRaw, -0.16, 0.16))),
+		jvKey("value", jvFloat(softBound(similarityRaw, 0.16))),
 		jvKey("performers", similarityValues),
 		jvKey("evidence_confidence", jvFloat(similarityConfidence)),
 	))
@@ -784,7 +784,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	} else {
 		components.set("studio", jvObj(
 			jvKey("raw", jvFloat(studioRaw)),
-			jvKey("value", jvFloat(clampValue(studioRaw, -0.12, 0.12))),
+			jvKey("value", jvFloat(softBound(studioRaw, 0.12))),
 			jvKey("studios", studioItems),
 			jvKey("evidence_confidence", jvFloat(studioConfidence)),
 		))
@@ -804,7 +804,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	familyConfidences["content_neighbor"] = neighborConfidence
 	components.set("content_neighbor", jvObj(
 		jvKey("raw", jvFloat(neighborValue)),
-		jvKey("value", jvFloat(clampValue(neighborValue, -0.20, 0.20))),
+		jvKey("value", jvFloat(softBound(neighborValue, 0.20))),
 		jvKey("outcome_mean", jvFloat(neighborOutcomeMean)),
 		jvKey("training_outcome_mean", jvFloat(c.labelMean)),
 		jvKey("lift", jvFloat(neighborLift)),
@@ -822,7 +822,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 		}
 	}
 	componentTotal := sumFloats(componentValues)
-	general := clamp(componentTotal)
+	general := softBound(componentTotal, 1.0)
 	direct := c.labels[sceneID]
 	// Absolute channel only: a pairwise pick is evidence about the features
 	// that differed, not a verdict on this scene's own appeal.
@@ -970,7 +970,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	}
 	baselineSupport := sumFloats(baselineConfidences)
 	baseline := labelMean * baselineSupport / (1.0 + baselineSupport)
-	baseline = clampValue(baseline, -0.10, 0.10)
+	baseline = softBound(baseline, 0.10)
 	lastPlayed := map[string]int64{}
 	rows, err := db.Query(`SELECT scene_id, max(played_at_ms) AS last_played FROM source_play GROUP BY scene_id`)
 	if err != nil {

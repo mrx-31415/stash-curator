@@ -92,6 +92,25 @@ func clampValue(value, low, high float64) float64 {
 	return value
 }
 
+// softBound mirrors _soft_bound: bound a component without collapsing
+// ordering at the cap. Exact below knee*bound — where a hard clamp was
+// inactive anyway — then smoothly asymptotic to bound. A hard clamp maps
+// every strong scene to the identical value, and appeal is ranked and
+// thresholded directly (prune, sentiment review), so those ties lose real
+// information. 1-exp(-t) rather than tanh: same shape, and the exponential
+// already agrees bit-for-bit across the Go/Python boundary, which the
+// artifact parity gate requires.
+func softBound(value, bound float64) float64 {
+	const knee = 0.8
+	kneeAt := knee * bound
+	head := bound - kneeAt
+	magnitude := math.Abs(value)
+	if magnitude <= kneeAt || head <= 0 {
+		return clampValue(value, -bound, bound)
+	}
+	return math.Copysign(kneeAt+head*(1-math.Exp(-(magnitude-kneeAt)/head)), value)
+}
+
 // clamp mirrors _clamp.
 func clamp(value float64) float64 {
 	return clampValue(value, -1, 1)
