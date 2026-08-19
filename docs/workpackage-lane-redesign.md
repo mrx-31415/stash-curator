@@ -590,6 +590,24 @@ region, and that observation — "you own N scenes from this studio and play
 almost none" — is real and worth surfacing, but today it is simply discarded
 rather than routed anywhere. Land it as a new derived prune reason.
 
+**Shipped.** `CuratorAPI.prune_candidates` / `pruneCandidates` gained a
+fourth `view`, `"breadth"`, alongside `candidates`/`tagged`/`explicit`/
+`suspects`. It is a live query, not a stored table: for every studio, apply
+the same `darkness(f)` formula Blind Spots uses (same `dark_prior_strength`
+and `dark_threshold`, computed fresh against `source_scene`/`source_play`/
+`play_session` rather than reading Blind Spots' build-time output), but
+invert the breadth check — keep studios *above* `dark_max_library` instead
+of excluding them. A studio clearing both bars contributes every one of its
+scenes (minus any already dismissed via `state='keep'`, the same suppression
+`suspects` respects) to the `breadth` set, each carrying an evidence string
+naming the studio and its owned/played counts. `breadth` also folds into the
+default `candidates` view alongside `explicit`/`suspects`. Unlike `suspects`,
+it ignores `aggressiveness` — the darkness bar is the same calibrated
+threshold Blind Spots gates on, not a user-tunable slider — so the plugin
+hides the aggressiveness control on this tab. `PrunePanel` gained a "Broad &
+unwatched" tab, and dismissal (`dismiss_prune_candidate`) works on breadth
+items the same way it already did on suspects.
+
 ## New properties summary
 
 | what | where | kind |
@@ -717,11 +735,12 @@ Each of these was measured, not assumed.
 3. **Dormant** — the entity pass, the table, and the curve. **Shipped**
    (migrations 0036-0037, PR #172).
 4. **Route the Blind Spots breadth-ceiling signal to pruning** and doc/UI
-   copy alignment.
+   copy alignment. **Shipped** (no new migration — a live query, not a
+   stored table; PR #172).
 
 Steps 1-3 each landed as their own CHECK-rebuild migration rather than
 sharing 0034, since they shipped as separate releases (see *Architecture
-context*). Step 4 remains.
+context*). Step 4 needed no schema change at all.
 
 ## Open questions
 

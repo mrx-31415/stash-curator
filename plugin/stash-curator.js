@@ -3094,12 +3094,12 @@
     const pruneSpec = React.useMemo(() => ({
       defaults: { view: "candidates", aggressiveness: 0, page: 1 },
       fields: {
-        view: urlStringField("prn_view", "candidates", (value) => ["candidates", "tagged", "explicit", "suspects"].includes(value)),
+        view: urlStringField("prn_view", "candidates", (value) => ["candidates", "tagged", "explicit", "suspects", "breadth"].includes(value)),
         aggressiveness: urlNumberField("prn_aggr", 0),
       },
       page: urlPageSpec((state) => `page_prune_${state.view}`),
       prune(route, state) {
-        for (const value of ["candidates", "tagged", "explicit", "suspects"]) {
+        for (const value of ["candidates", "tagged", "explicit", "suspects", "breadth"]) {
           if (value !== state.view) route.delete(`page_prune_${value}`);
         }
       },
@@ -3158,14 +3158,14 @@
         React.createElement(
           "div",
           { className: "btn-group", role: "group", "aria-label": "Prune view" },
-          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, view: value, page: 1 })) }, label))
+          [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"], ["breadth", "Broad & unwatched"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, view: value, page: 1 })) }, label))
         ),
-        view !== "tagged" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", className: "curator-range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
+        view !== "tagged" && view !== "breadth" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", className: "curator-range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
         view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, view === "suspects" ? "No scenes cross this prediction threshold. Direct dislikes appear under Explicit dislikes; suspects need a rebuilt model with enough repeated negative evidence." : "Nothing in this view."),
+      data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, view === "suspects" ? "No scenes cross this prediction threshold. Direct dislikes appear under Explicit dislikes; suspects need a rebuilt model with enough repeated negative evidence." : view === "breadth" ? "No studio in your library is both this broad and this unwatched." : "Nothing in this view."),
       data && React.createElement(
         "div",
         { className: "curator-grid" },
@@ -3181,9 +3181,9 @@
               evidenceContent: null,
               scoreBarContent: item.appeal !== null ? utilityBar(item.appeal) : null,
               scoreSummary: item.appeal !== null ? item.appeal.toFixed(2) : "—",
-              scoreContent: React.createElement("p", null, `Confidence ${item.confidence.toFixed(2)}`),
+              scoreContent: React.createElement("p", null, item.confidence !== null ? `Confidence ${item.confidence.toFixed(2)}` : "Confidence —"),
             }))),
-            React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && item.suspect && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
+            React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && (item.suspect || item.breadth) && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
           );
         })
       ),

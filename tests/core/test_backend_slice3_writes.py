@@ -744,6 +744,15 @@ def test_get_prune_candidates_suspects_byte_identical(
     assert_slice3_identical(binary, raw, writes_sidecar)
 
 
+def test_get_prune_candidates_breadth_byte_identical(
+    writes_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = _writes_payload(
+        "get_prune_candidates", writes_sidecar, stub_stash, view="breadth", page=1, page_size=10
+    )
+    assert_slice3_identical(binary, raw, writes_sidecar)
+
+
 def test_get_prune_candidates_bad_view_byte_identical(
     writes_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:

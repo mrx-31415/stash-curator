@@ -97,9 +97,12 @@ identity.
 ## Prune
 
 Prune groups explicit dislikes, suspected poor fits, and candidates surfaced during
-exploration. Review each item before applying the configured tag. Applying or removing
-the tag changes Stash metadata only; it does not delete a file or rewrite your feedback.
-Curator never deletes media, and the tag can be removed from the same view or in Stash.
+exploration. **Broad & unwatched** adds a fourth source: studios you own well over the
+Blind Spots breadth ceiling of and have almost never played — too broad to be a Blind
+Spots exploration card, but real and worth a look. Review each item before applying the
+configured tag. Applying or removing the tag changes Stash metadata only; it does not
+delete a file or rewrite your feedback. Curator never deletes media, and the tag can be
+removed from the same view or in Stash.
 
 ## Routine maintenance
 
