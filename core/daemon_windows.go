@@ -4,10 +4,25 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
 )
+
+func workerFileIdentity(os.FileInfo) string { return "" }
+
+func terminateWorker(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Kill()
+}
+
+func forceKillWorker(pid int) error {
+	return terminateWorker(pid)
+}
 
 // pidAlive reports whether a process with the given pid exists. Windows has
 // no signal(0); probe the tasklist instead. The "no tasks" info line never
