@@ -77,6 +77,12 @@ class FeatureConfig:
 class ModelConfig:
     algorithm_version: int = 6
     affinity_prior: float = 1.0
+    # Weight on the taxonomy prior. A tag with a parent is shrunk toward
+    # what its siblings say rather than toward zero, so the prior means
+    # "what we know about this category" instead of "no opinion". A tag
+    # with no parent, or whose siblings carry no support, borrows nothing
+    # and behaves exactly as before. 0.0 disables the borrowing entirely.
+    affinity_sibling_prior: float = 1.0
     affinity_confidence_scale: float = 3.0
     direct_confidence_scale: float = 0.8
     cooldown_center_days: float = 90.0

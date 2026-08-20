@@ -506,6 +506,7 @@ func modelSubConfig() jVal {
 	return jvObj(
 		jvKey("affinity_confidence_scale", jvFloat(3.0)),
 		jvKey("affinity_prior", jvFloat(1.0)),
+		jvKey("affinity_sibling_prior", jvFloat(affinitySiblingPrior)),
 		jvKey("algorithm_version", jvInt(6)),
 		jvKey("baseline_bound", jvFloat(0.10)),
 		jvKey("content_bound", jvFloat(0.35)),
