@@ -20,6 +20,12 @@ class EventCalibration:
 
     short_exit_seconds: float = 30.0
     view_rise_seconds: float = 90.0
+    # Where the fitted curve's right limb settles. A play far past the
+    # peak stops predicting a return -- measured, that band is
+    # indistinguishable from the base rate -- but it is still engagement,
+    # so the limb decays toward a small positive value rather than to
+    # nothing or to dislike.
+    view_tail_min: float = 0.05
     view_positive_max: float = 0.35
     direct_short_exit_min: float = -0.10
     direct_view_confidence: float = 0.80
@@ -52,6 +58,7 @@ class EventCalibration:
             raise ValueError("time calibration values must be positive")
         bounded = (
             self.view_positive_max,
+            self.view_tail_min,
             -self.direct_short_exit_min,
             self.direct_view_confidence,
             self.historical_view_confidence,

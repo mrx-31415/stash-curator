@@ -61,6 +61,14 @@ def view_value(
             1 - math.exp(-(active_seconds - threshold) / calibration.view_rise_seconds)
         )
 
+    if active_seconds <= 0.0:
+        # A zero duration means no duration was recorded, not that the scene
+        # was watched for no time: most directly observed sessions never
+        # receive one, because Curator sees the start rather than the whole
+        # play. Reading that as the strongest possible dislike would put the
+        # floor under missing data. The shipped shape does exactly that; the
+        # fitted curve abstains instead.
+        return None
     curvature = view_curve[2]
     base_logit = view_curve[3]
     if curvature >= 0.0:
@@ -71,10 +79,19 @@ def view_value(
         return view_value(active_seconds, calibration=calibration)
 
     relative = (_log_odds(view_curve, active_seconds) - base_logit) / span
+    if active_seconds > peak_seconds:
+        # Soft clamp. Past the peak the fitted parabola keeps falling, but the
+        # measured return rate out there is not distinguishable from the base
+        # rate, so the fall is the functional form extrapolating rather than
+        # evidence. Decaying toward `view_tail_min` says what is actually
+        # supported: a long play is engagement, but it stops carrying
+        # information about returning. Both branches meet at the peak with zero
+        # slope in duration, because `relative` is maximized there.
+        floor = calibration.view_tail_min
+        decay = math.exp(min(relative, 1.0) - 1.0)
+        return floor + (calibration.view_positive_max - floor) * decay
     if relative >= 0.0:
         return calibration.view_positive_max * min(relative, 1.0)
-    if active_seconds > peak_seconds:
-        return None
     return calibration.direct_short_exit_min * min(-relative, 1.0)
 
 

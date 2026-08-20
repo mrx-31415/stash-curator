@@ -29,6 +29,7 @@ const (
 	shortExitSeconds         = 30.0
 	viewRiseSeconds          = 90.0
 	viewPositiveMax          = 0.35
+	viewTailMin              = 0.05
 	directShortExitMin       = -0.10
 	directViewConfidence     = 0.80
 )
@@ -111,6 +112,11 @@ func viewValue(activeSeconds float64, curve *[4]float64) (float64, bool) {
 	if curve == nil {
 		return viewValueShipped(activeSeconds), true
 	}
+	if activeSeconds <= 0.0 {
+		// A zero duration means no duration was recorded, not that the scene
+		// was watched for no time. See curves.view_value.
+		return 0, false
+	}
 	curvature := curve[2]
 	baseLogit := curve[3]
 	if curvature >= 0.0 {
@@ -122,11 +128,13 @@ func viewValue(activeSeconds float64, curve *[4]float64) (float64, bool) {
 		return viewValueShipped(activeSeconds), true
 	}
 	relative := (logOdds(*curve, activeSeconds) - baseLogit) / span
+	if activeSeconds > peakSeconds {
+		// Soft clamp toward viewTailMin; see curves.view_value.
+		decay := math.Exp(math.Min(relative, 1.0) - 1.0)
+		return viewTailMin + (viewPositiveMax-viewTailMin)*decay, true
+	}
 	if relative >= 0.0 {
 		return viewPositiveMax * math.Min(relative, 1.0), true
-	}
-	if activeSeconds > peakSeconds {
-		return 0, false
 	}
 	return directShortExitMin * math.Min(-relative, 1.0), true
 }

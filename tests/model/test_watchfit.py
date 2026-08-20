@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from curator.events.curves import view_value, viewing_outcome
 from curator.model.watchfit import (
     DEFAULT_VIEW_CURVE,
@@ -121,12 +123,33 @@ def test_short_plays_are_negative_evidence() -> None:
     assert _positive(view_value(5.0, view_curve=fit)) < 0.0
 
 
-def test_long_plays_abstain_rather_than_voting_against() -> None:
+def test_long_plays_decay_to_a_small_positive_floor() -> None:
     """Past the peak the parabola keeps falling, but measured return rates out
-    there are indistinguishable from the base rate, so there is nothing to say."""
+    there are indistinguishable from the base rate. A long play is still
+    engagement, so the limb settles low rather than going to nothing or to
+    dislike -- and a scene whose only evidence is one long play keeps a label."""
     fit = fit_view_curve(parity_corpus()).curve
 
-    assert view_value(36000.0, view_curve=fit) is None
+    far = _positive(view_value(36000.0, view_curve=fit))
+    near = _positive(view_value(600.0, view_curve=fit))
+
+    assert far == pytest.approx(0.05, abs=1e-6)
+    assert far < near < 0.35, "the right limb must decay, not step"
+    assert viewing_outcome(36000.0, 0, historical_imputed=True, view_curve=fit) is not None
+
+
+def test_right_limb_is_monotone_and_never_negative() -> None:
+    fit = fit_view_curve(parity_corpus()).curve
+    peak = math.exp(-fit[1] / (2.0 * fit[2]))
+    previous = None
+    seconds = peak
+    while seconds < 100000.0:
+        value = _positive(view_value(seconds, view_curve=fit))
+        assert value >= 0.05 - 1e-9
+        if previous is not None:
+            assert value <= previous + 1e-12, f"not decaying at {seconds:.0f}s"
+        previous = value
+        seconds *= 1.05
 
 
 def test_there_is_no_step_at_the_short_exit_threshold() -> None:
@@ -188,6 +211,16 @@ def test_unfitted_curve_is_the_shipped_curve() -> None:
             1 - math.exp(-(seconds - 30.0) / 90.0)
         )
     assert view_value(15.0, view_curve=None) == -0.10 * (1 - 15.0 / 30.0)
+
+
+def test_missing_duration_abstains_rather_than_scoring_dislike() -> None:
+    """Most directly observed sessions never record a duration, so a zero must
+    not be read as the strongest available dislike."""
+    fit = fit_view_curve(parity_corpus()).curve
+
+    assert view_value(0.0, view_curve=fit) is None
+    assert viewing_outcome(0.0, 0, view_curve=fit) is None
+    assert viewing_outcome(0.0, 0, historical_imputed=True, view_curve=fit) is None
 
 
 def _positive(value: float | None) -> float:

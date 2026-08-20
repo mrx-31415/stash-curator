@@ -86,9 +86,28 @@ func TestViewValueMatchesPython(t *testing.T) {
 	if got, ok := viewValue(2.0, &curve); !ok || !closeEnough(got, -0.1) {
 		t.Errorf("viewValue(2) = %v ok=%v", got, ok)
 	}
-	// Past the peak the curve abstains rather than voting against.
-	if _, ok := viewValue(36000.0, &curve); ok {
-		t.Errorf("viewValue(36000) reported evidence, want abstain")
+	// Past the peak the curve decays toward a small positive floor rather
+	// than voting against or vanishing.
+	far, ok := viewValue(36000.0, &curve)
+	if !ok || !closeEnough(far, viewTailMin) {
+		t.Errorf("viewValue(36000) = %v ok=%v, want the tail floor %v", far, ok, viewTailMin)
+	}
+	near, _ := viewValue(600.0, &curve)
+	if !(near > far && near < viewPositiveMax) {
+		t.Errorf("right limb is not decaying: viewValue(600)=%v viewValue(36000)=%v", near, far)
+	}
+}
+
+// TestViewValueAbstainsOnMissingDuration: a zero duration means no duration was
+// recorded, not that the scene was watched for no time.
+func TestViewValueAbstainsOnMissingDuration(t *testing.T) {
+	curve := fitViewCurve(parityCorpus(600)).curve()
+
+	if _, ok := viewValue(0.0, &curve); ok {
+		t.Errorf("viewValue(0) reported evidence, want abstain")
+	}
+	if _, ok := viewingOutcomeCurve(0.0, 0, true, &curve); ok {
+		t.Errorf("viewingOutcomeCurve(0) reported evidence, want abstain")
 	}
 }
 
