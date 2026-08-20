@@ -1,7 +1,8 @@
 # Workpackage: Signal improvements (labels, calibration, and cache identity)
 
-Status: proposed. Five independent packages arising from a measurement session
-against a real-library sidecar. Ordered by evidence strength, not by appeal.
+Status: WP1 shipped, WP4 withdrawn on measurement, three proposed. Arising from
+a measurement session against a real-library sidecar. Ordered by evidence
+strength, not by appeal.
 
 Measured figures below are from one private instance; shares and ratios carry,
 absolute counts do not. Every claim here was measured against a read-only
@@ -52,6 +53,13 @@ feedback, features or config, and asserts the resulting `model_id` differs.
 
 **Effort.** Low. **Depends on.** Nothing. **Confidence.** Certain — this is a
 demonstrated defect, not a hypothesis.
+
+**Shipped** in PR #182, by the second route rather than the first: a manifest
+of the scoring sources is hashed into a shared constant that both the Go
+builder and the Python oracle feed into the digest, so the identity is derived
+rather than remembered. `algorithm_version` had been bumped once in the
+repository's history against dozens of scoring commits, which settled the
+choice between enforcing the bump and deriving the fingerprint.
 
 ---
 
@@ -153,37 +161,18 @@ skip at rank 40 against one at rank 1.
 **Acceptance.** Skipped scenes differ measurably from never-shown ones before
 any modelling work begins. If they do not, stop.
 
-**Effort.** Medium. **Depends on.** Nothing strictly; better after WP4 so
-attribution improves. **Confidence.** Medium — the class exists, its
-informativeness is unverified.
+**Effort.** Medium. **Depends on.** Nothing. The original "better after WP4"
+no longer applies: WP4 is withdrawn, so attribution will not improve and the
+negative class — which needs none — is the whole of the package.
+**Confidence.** Medium — the class exists, its informativeness is unverified.
 
 ---
 
 ## WP4 — Record which impression a play came from
 
-**Problem.** Session-to-impression linkage is effectively absent, which is what
-weakens WP3's position-bias handling and blocks any future
-recommendation-quality measurement (click-through, regret, counterfactual
-evaluation all need it).
-
-**Evidence.** `contracts.py` already *requires* an impression id for
-Curator-originated sessions, so the gap is not a validation bug — it is that
-plays originate in Stash's own UI. Direct-player sessions average 10 seconds,
-consistent with Curator observing starts rather than whole plays.
-
-**Change.** Attribute a play to a recent impression of the same scene when no
-direct link exists — a bounded scene-plus-time-window join recorded at write
-time, with provenance marking it inferred rather than observed. Cheap, and it
-compounds: every later evaluation idea needs this join to exist.
-
-**Files.** `curator/interactions.py`, `curator/events/repository.py`,
-`core/writes.go`.
-
-**Acceptance.** A materially larger share of sessions carry an impression id,
-with inferred links distinguishable from observed ones.
-
-**Effort.** Low. **Depends on.** Nothing. **Confidence.** High that it is
-cheap; medium that it materially improves WP3.
+**Withdrawn on measurement.** The proposed scene-plus-time-window join cannot
+clear its own acceptance bar; see *Rejected, with reasons*. The problem it
+described is real, but inference is not the remedy.
 
 ---
 
@@ -239,24 +228,59 @@ Recorded so they are not re-derived from the same data.
   `end_seconds` — they are point events, so segment-level watching is not
   answerable, only "did the session reach this moment". Weaker than it appears
   and the most expensive to build.
+- **Inferring a play's impression from a scene-plus-time-window join (WP4).**
+  The acceptance bar was "a materially larger share of sessions carry an
+  impression id". Measured against the same snapshot: of the unlinked sessions
+  in the impression era, the join attributes 3% at a five-minute window and 4%
+  at two hours; stretching to twenty-four hours reaches 8% at the cost of
+  calling a day-old showing causal. The ceiling is the reason. Only **22%** of
+  those sessions played a scene that had *ever* been impressed, with no time
+  bound at all — so no window tuning can pass roughly one session in five, and
+  the realistic windows reach a twentieth of that.
+
+  The cause is the one WP4's own evidence section named: plays originate in
+  Stash's UI, not Curator's. Curator has impressed a small fraction of the
+  library, and roughly four in five played scenes were never among them. This
+  was checked against an instrumentation explanation and rejected — impressions
+  are recorded across every lane, on every day of the sample, from both the
+  plugin route and the similar-scene surface. The gap is usage, not coverage.
+
+  What survives: hardening *observed* linkage so a play started from a Curator
+  card always carries its impression id. That has the same 22% ceiling, but the
+  links are observed rather than inferred, and it needs no provenance flag.
+  Not proposed here — the ceiling makes it low-value until Curator drives a
+  materially larger share of plays.
 - **Session sequence, time-of-day conditioning, ties as scale calibration.**
   Cheap and data-ready, but none matched how the library is actually used.
 
 ## Sequencing
 
-WP1, WP2, WP4 and WP5 are independent. WP3 should follow WP4 so it is built
-against real linkage rather than a handful of rows.
+WP1, WP2 and WP5 are independent. WP4 is withdrawn (see *Rejected*), which
+removes WP3's stated dependency: attribution is not going to improve, so WP3
+stands or falls on the negative class alone — which needs no attribution.
 
-Suggested order: **WP1** (a demonstrated defect, low effort), **WP4** (cheap,
-compounds), **WP2** (largest measured mis-fit), **WP5**, then **WP3** once
-linkage data has accumulated.
+Suggested order: **WP1** (a demonstrated defect, low effort), **WP2** (largest
+measured mis-fit), **WP5**, then **WP3**, whose own acceptance check —
+skipped scenes differing measurably from never-shown ones — should be run
+before any modelling work.
+
+WP1 shipped in PR #182: the digest now carries a fingerprint of the scoring
+sources, so an algorithm change with unchanged data and config no longer
+reuses the previous algorithm's artifact.
 
 ## Method note
 
-Three ideas in this session were proposed on structural plausibility and failed
-when measured: amplifying `performer_similarity`, serialising lane-classification
-qualifications for memory, and completion ratio. Each was a real mechanism never
+Four ideas were proposed on structural plausibility and failed when measured:
+amplifying `performer_similarity`, serialising lane-classification
+qualifications for memory, completion ratio, and — added after this document
+was first written — WP4's impression inference. Each was a real mechanism never
 sized against the thing it was meant to explain.
+
+WP4 is the sharpest case, because the evidence that sank it was already in this
+document. WP3's first limitation records that only 18 sessions fall within an
+hour of a showing; nobody checked that number against WP4's acceptance bar
+before ranking it second. Writing an acceptance criterion is not the same as
+evaluating it.
 
 Size each package before implementing it. The acceptance criteria above are
 written as pre-conditions for that reason: an hour of SQL against a snapshot
