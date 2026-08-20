@@ -174,20 +174,20 @@ def test_curator_nav_collapse_and_manage_shell_are_click_driven(page: Page, base
     _wait(page)
     _dismiss_modals(page)
 
-    # Lane switcher: click Discover, confirm the URL and active state follow.
-    discover_card = page.locator(".curator-lane-card").filter(
-        has=page.locator(".curator-lane-card-name", has_text="Discover")
+    # Lane switcher: click Stretch, confirm the URL and active state follow.
+    stretch_card = page.locator(".curator-lane-card").filter(
+        has=page.locator(".curator-lane-card-name", has_text="Stretch")
     )
-    discover_card.click()
+    stretch_card.click()
     page.wait_for_timeout(800)
-    assert "view=discover" in page.url
-    assert discover_card.get_attribute("aria-pressed") == "true"
+    assert "view=stretch" in page.url
+    assert stretch_card.get_attribute("aria-pressed") == "true"
 
     # Clicking the already-active Recommendations pill must be a no-op, not
     # a reset to the default "for_you" lane.
     page.locator(".curator-nav-recommendations").click()
     page.wait_for_timeout(500)
-    assert "view=discover" in page.url
+    assert "view=stretch" in page.url
 
     # Manage: open it, pick a section, confirm the detail pane swaps.
     page.locator(".curator-nav-manage").click()
