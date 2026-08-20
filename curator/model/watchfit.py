@@ -39,6 +39,10 @@ class ViewCurveFit:
     """The outcome of a fit attempt, including why it was refused."""
 
     coefficients: tuple[float, float, float]
+    # logit of the instance's overall return rate. The curve is read relative
+    # to this: a duration that predicts returning better than the library
+    # average is positive evidence, one that predicts worse is negative.
+    base_logit: float
     adopted: bool
     reason: str
     sample_size: int
@@ -46,6 +50,11 @@ class ViewCurveFit:
     heldout_quadratic: float
     heldout_monotone: float
     heldout_constant: float
+
+    @property
+    def curve(self) -> tuple[float, float, float, float]:
+        """The four numbers `viewing_outcome` needs: the fit plus its centre."""
+        return (*self.coefficients, self.base_logit)
 
     def as_payload(self) -> dict[str, object]:
         """Recorded in the artifact so a model says which curve produced it.
@@ -66,6 +75,7 @@ class ViewCurveFit:
 
         return {
             "coefficients": [round(value, PAYLOAD_DIGITS) for value in self.coefficients],
+            "base_logit": round(self.base_logit, PAYLOAD_DIGITS),
             "adopted": self.adopted,
             "reason": self.reason,
             "sample_size": self.sample_size,
@@ -191,18 +201,34 @@ def fit_view_curve(first_plays: list[tuple[float, bool]]) -> ViewCurveFit:
         if seconds > 0.0 and math.isfinite(seconds)
     ]
     positives = sum(1 for _, label in samples if label > 0.0)
+    base_logit = 0.0
+    if 0 < positives < len(samples):
+        base_rate = positives / len(samples)
+        base_logit = math.log(base_rate / (1.0 - base_rate))
 
     def refuse(
         reason: str, quad: float = math.inf, mono: float = math.inf, const: float = math.inf
     ) -> ViewCurveFit:
         return ViewCurveFit(
-            DEFAULT_VIEW_CURVE, False, reason, len(samples), positives, quad, mono, const
+            DEFAULT_VIEW_CURVE,
+            base_logit,
+            False,
+            reason,
+            len(samples),
+            positives,
+            quad,
+            mono,
+            const,
         )
 
     if len(samples) < MIN_FIRST_PLAYS:
         return refuse("insufficient_sample")
     if positives < MIN_POSITIVES:
         return refuse("insufficient_positives")
+    if positives == len(samples):
+        # Every first play returned: there is no base rate to read the curve
+        # against, so there is nothing for it to be evidence relative to.
+        return refuse("no_negative_class")
 
     quadratic = _heldout(samples, 3)
     monotone = _heldout(samples, 2)
@@ -230,6 +256,7 @@ def fit_view_curve(first_plays: list[tuple[float, bool]]) -> ViewCurveFit:
         return refuse("curvature_not_negative", quadratic, monotone, constant)
     return ViewCurveFit(
         (shrunk[0], shrunk[1], shrunk[2]),
+        base_logit,
         True,
         "adopted",
         len(samples),

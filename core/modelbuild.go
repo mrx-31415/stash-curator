@@ -167,10 +167,10 @@ func modelSceneLabels(db dbx, fit viewCurveFit) (map[string]sceneLabel, error) {
 		confidence float64
 		signalType string
 	}
-	var curve *[3]float64
+	var curve *[4]float64
 	if fit.adopted {
-		coefficients := fit.coefficients
-		curve = &coefficients
+		fitted := fit.curve()
+		curve = &fitted
 	}
 	signals := map[string][]signal{}
 	rows, err := db.Query(`
@@ -1281,7 +1281,7 @@ func modelRecomputedOutcome(
 	occurredAtMs int64,
 	provenance string,
 	present map[string]bool,
-	curve *[3]float64,
+	curve *[4]float64,
 ) (normalizedOutcome, bool) {
 	if !activeSeconds.Valid {
 		return normalizedOutcome{}, false

@@ -75,45 +75,49 @@ func TestFitViewCurveMatchesPython(t *testing.T) {
 	}
 }
 
-// TestViewRiseMatchesPython pins the curve itself, not only the fit.
-func TestViewRiseMatchesPython(t *testing.T) {
-	curve := fitViewCurve(parityCorpus(600)).coefficients
+// TestViewValueMatchesPython pins the curve itself, not only the fit.
+func TestViewValueMatchesPython(t *testing.T) {
+	curve := fitViewCurve(parityCorpus(600)).curve()
 
-	if got := viewRise(45.0, &curve); !closeEnough(got, 0.34769805377892304) {
-		t.Errorf("viewRise(45) = %v", got)
+	if got, ok := viewValue(45.0, &curve); !ok || !closeEnough(got, 0.3353060834105465) {
+		t.Errorf("viewValue(45) = %v ok=%v", got, ok)
 	}
-	if got := viewRise(300.0, &curve); !closeEnough(got, 0.24240197521844445) {
-		t.Errorf("viewRise(300) = %v", got)
+	// A brief play is negative evidence, floored at direct_short_exit_min.
+	if got, ok := viewValue(2.0, &curve); !ok || !closeEnough(got, -0.1) {
+		t.Errorf("viewValue(2) = %v ok=%v", got, ok)
+	}
+	// Past the peak the curve abstains rather than voting against.
+	if _, ok := viewValue(36000.0, &curve); ok {
+		t.Errorf("viewValue(36000) reported evidence, want abstain")
 	}
 }
 
-// TestViewCurvePayloadRounds guards the artifact field: the coefficients are
-// rounded before they reach config_json precisely so a last-bit difference
-// between the two implementations cannot make the stored JSON differ.
-func TestViewCurvePayloadRounds(t *testing.T) {
-	payload := fitViewCurve(parityCorpus(600)).payload()
-	coefficients := payload.get("coefficients")
-	if coefficients.kind != jArr || len(coefficients.arr) != 3 {
-		t.Fatalf("coefficients are not a 3-element array")
+// TestViewValueHasNoStepAtTheThreshold is the property the base-rate centring
+// exists for: refitting only the rise made 29.9s and 30.1s differ by most of
+// the signal's range.
+func TestViewValueHasNoStepAtTheThreshold(t *testing.T) {
+	curve := fitViewCurve(parityCorpus(600)).curve()
+
+	below, belowOK := viewValue(29.9, &curve)
+	above, aboveOK := viewValue(30.1, &curve)
+	if !belowOK || !aboveOK {
+		t.Fatalf("expected evidence on both sides of the threshold")
 	}
-	for index, want := range []string{"-3.879989", "1.315676", "-0.163017"} {
-		if coefficients.arr[index].num != want {
-			t.Errorf("coefficient %d serialized as %q, want %q",
-				index, coefficients.arr[index].num, want)
-		}
+	if math.Abs(above-below) >= 0.01 {
+		t.Errorf("step at the threshold: %v -> %v", below, above)
 	}
 }
 
-// TestViewRiseFallsBackToShipped covers the guards: without a fitted curve, or
-// with one that is not an inverted U, the shipped exponential rise stands.
-func TestViewRiseFallsBackToShipped(t *testing.T) {
+// TestViewValueFallsBackToShipped covers the guards: without a fitted curve,
+// or with one that is not an inverted U, the shipped two-piece shape stands.
+func TestViewValueFallsBackToShipped(t *testing.T) {
 	shipped := viewPositiveMax * (1 - math.Exp(-(300.0-shortExitSeconds)/viewRiseSeconds))
-	if got := viewRise(300.0, nil); got != shipped {
-		t.Errorf("unfitted viewRise(300) = %v, want %v", got, shipped)
+	if got, ok := viewValue(300.0, nil); !ok || got != shipped {
+		t.Errorf("unfitted viewValue(300) = %v, want %v", got, shipped)
 	}
-	positiveCurvature := [3]float64{-4.0, 1.6, 0.2}
-	if got := viewRise(300.0, &positiveCurvature); got != shipped {
-		t.Errorf("positive-curvature viewRise(300) = %v, want %v", got, shipped)
+	positiveCurvature := [4]float64{-4.0, 1.6, 0.2, -2.0}
+	if got, ok := viewValue(300.0, &positiveCurvature); !ok || got != shipped {
+		t.Errorf("positive-curvature viewValue(300) = %v, want %v", got, shipped)
 	}
 }
 

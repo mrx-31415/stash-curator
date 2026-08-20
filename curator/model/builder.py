@@ -507,7 +507,7 @@ class PreferenceModelBuilder:
         # Replaced by build(); the unadopted default keeps the shipped curve so
         # calling _scene_labels() outside a build behaves as it always did.
         self._view_curve_fit = ViewCurveFit(
-            DEFAULT_VIEW_CURVE, False, "not_fitted", 0, 0, math.inf, math.inf, math.inf
+            DEFAULT_VIEW_CURVE, 0.0, False, "not_fitted", 0, 0, math.inf, math.inf, math.inf
         )
 
     def build(self) -> ModelBuildResult:
@@ -748,7 +748,7 @@ class PreferenceModelBuilder:
             active_seconds,
             occurred_at_ms,
             historical_imputed=historical,
-            view_curve=self._view_curve_fit.coefficients if self._view_curve_fit.adopted else None,
+            view_curve=self._view_curve_fit.curve if self._view_curve_fit.adopted else None,
         )
         if view is not None:
             signals.append(view)

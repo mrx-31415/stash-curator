@@ -89,60 +89,60 @@ func viewingOutcomeHistorical(activeSeconds float64, observedAtMs int64) (outcom
 	return outcomeSignal{"view", value, historicalViewConfidence, observedAtMs, "historical_imputed"}, true
 }
 
-// logitProbability mirrors curves._logit_probability.
-func logitProbability(curve [3]float64, seconds float64) float64 {
+// logOdds mirrors curves._log_odds.
+func logOdds(curve [4]float64, seconds float64) float64 {
 	logT := math.Log(seconds)
-	z := curve[0] + float64(curve[1]*logT) + float64(float64(curve[2]*logT)*logT)
-	if z >= 0.0 {
-		return 1.0 / (1.0 + math.Exp(-z))
-	}
-	expZ := math.Exp(z)
-	return expZ / (1.0 + expZ)
+	return curve[0] + float64(curve[1]*logT) + float64(float64(curve[2]*logT)*logT)
 }
 
-// viewRise mirrors curves.view_rise.
-func viewRise(activeSeconds float64, curve *[3]float64) float64 {
-	shipped := viewPositiveMax * (1 - math.Exp(-(activeSeconds-shortExitSeconds)/viewRiseSeconds))
+// viewValueShipped is the two-piece shape used when nothing has been fitted.
+func viewValueShipped(activeSeconds float64) float64 {
+	if activeSeconds < shortExitSeconds {
+		return directShortExitMin * (1 - activeSeconds/shortExitSeconds)
+	}
+	return viewPositiveMax * (1 - math.Exp(-(activeSeconds-shortExitSeconds)/viewRiseSeconds))
+}
+
+// viewValue mirrors curves.view_value. The bool reports whether there is any
+// evidence at all: past the peak the fitted parabola keeps falling, but
+// measured return rates out there are indistinguishable from the base rate, so
+// the curve abstains rather than voting against.
+func viewValue(activeSeconds float64, curve *[4]float64) (float64, bool) {
 	if curve == nil {
-		return shipped
+		return viewValueShipped(activeSeconds), true
 	}
 	curvature := curve[2]
+	baseLogit := curve[3]
 	if curvature >= 0.0 {
-		return shipped
+		return viewValueShipped(activeSeconds), true
 	}
 	peakSeconds := math.Exp(-curve[1] / (2.0 * curvature))
-	if peakSeconds <= shortExitSeconds {
-		return shipped
+	span := logOdds(*curve, peakSeconds) - baseLogit
+	if span < 1e-9 {
+		return viewValueShipped(activeSeconds), true
 	}
-	atPeak := logitProbability(*curve, peakSeconds)
-	if atPeak < 1e-9 {
-		return shipped
+	relative := (logOdds(*curve, activeSeconds) - baseLogit) / span
+	if relative >= 0.0 {
+		return viewPositiveMax * math.Min(relative, 1.0), true
 	}
-	scaled := logitProbability(*curve, activeSeconds) / atPeak
-	if scaled > 1.0 {
-		scaled = 1.0
+	if activeSeconds > peakSeconds {
+		return 0, false
 	}
-	return viewPositiveMax * scaled
+	return directShortExitMin * math.Min(-relative, 1.0), true
 }
 
-// viewingOutcomeCurve mirrors curves.viewing_outcome with an optional fitted
-// curve. The model build passes one; the import path does not.
+// viewingOutcomeCurve mirrors curves.viewing_outcome.
 func viewingOutcomeCurve(
-	activeSeconds float64, observedAtMs int64, historicalImputed bool, curve *[3]float64,
+	activeSeconds float64, observedAtMs int64, historicalImputed bool, curve *[4]float64,
 ) (outcomeSignal, bool) {
 	if !finite64(activeSeconds) || activeSeconds < 0 {
 		return outcomeSignal{}, false
 	}
-	var value float64
-	if activeSeconds < shortExitSeconds {
-		if historicalImputed {
-			return outcomeSignal{}, false
-		}
-		value = directShortExitMin * (1 - activeSeconds/shortExitSeconds)
-	} else {
-		value = viewRise(activeSeconds, curve)
+	if curve == nil && historicalImputed && activeSeconds < shortExitSeconds {
+		return outcomeSignal{}, false
 	}
-	if mathAbs(value) < 1e-12 {
+	value, ok := viewValue(activeSeconds, curve)
+	if !ok || mathAbs(value) < 1e-12 {
 		return outcomeSignal{}, false
 	}
 	confidence := directViewConfidence

@@ -23,7 +23,9 @@ const (
 )
 
 type viewCurveFit struct {
-	coefficients     [3]float64
+	coefficients [3]float64
+	// logit of the instance's overall return rate; the curve is read against it.
+	baseLogit        float64
 	adopted          bool
 	reason           string
 	sampleSize       int
@@ -208,14 +210,24 @@ func fitViewCurve(firstPlays []struct {
 		samples = append(samples, watchSample{math.Log(play.Seconds), label})
 	}
 	inf := math.Inf(1)
+	baseLogit := 0.0
+	if positives > 0 && positives < len(samples) {
+		baseRate := float64(positives) / float64(len(samples))
+		baseLogit = math.Log(baseRate / (1.0 - baseRate))
+	}
 	refuse := func(reason string, quad, mono, konst float64) viewCurveFit {
-		return viewCurveFit{defaultViewCurve, false, reason, len(samples), positives, quad, mono, konst}
+		return viewCurveFit{
+			defaultViewCurve, baseLogit, false, reason, len(samples), positives, quad, mono, konst,
+		}
 	}
 	if len(samples) < minFirstPlays {
 		return refuse("insufficient_sample", inf, inf, inf)
 	}
 	if positives < minPositives {
 		return refuse("insufficient_positives", inf, inf, inf)
+	}
+	if positives == len(samples) {
+		return refuse("no_negative_class", inf, inf, inf)
 	}
 	quadratic := watchHeldout(samples, 3)
 	monotone := watchHeldout(samples, 2)
@@ -241,7 +253,9 @@ func fitViewCurve(firstPlays []struct {
 	if shrunk[2] >= 0.0 {
 		return refuse("curvature_not_negative", quadratic, monotone, constant)
 	}
-	return viewCurveFit{shrunk, true, "adopted", len(samples), positives, quadratic, monotone, constant}
+	return viewCurveFit{
+		shrunk, baseLogit, true, "adopted", len(samples), positives, quadratic, monotone, constant,
+	}
 }
 
 // unfittedViewCurve is what the paths that do not fit use: the shipped curve,
@@ -249,7 +263,12 @@ func fitViewCurve(firstPlays []struct {
 // and calls _scene_labels() without a build having fitted anything.
 func unfittedViewCurve() viewCurveFit {
 	inf := math.Inf(1)
-	return viewCurveFit{defaultViewCurve, false, "not_fitted", 0, 0, inf, inf, inf}
+	return viewCurveFit{defaultViewCurve, 0, false, "not_fitted", 0, 0, inf, inf, inf}
+}
+
+// curve is the four numbers viewingOutcomeCurve needs: the fit plus its centre.
+func (fit viewCurveFit) curve() [4]float64 {
+	return [4]float64{fit.coefficients[0], fit.coefficients[1], fit.coefficients[2], fit.baseLogit}
 }
 
 // payload mirrors ViewCurveFit.as_payload, including the null-for-infinite
@@ -272,6 +291,7 @@ func (fit viewCurveFit) payload() jVal {
 	)
 	return jvObj(
 		jvKey("coefficients", coefficients),
+		jvKey("base_logit", jvFloat(round(fit.baseLogit))),
 		jvKey("adopted", jvBool(fit.adopted)),
 		jvKey("reason", jvStr(fit.reason)),
 		jvKey("sample_size", jvInt(int64(fit.sampleSize))),

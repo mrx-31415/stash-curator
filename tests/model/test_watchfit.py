@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-from curator.events.curves import view_rise, viewing_outcome
+from curator.events.curves import view_value, viewing_outcome
 from curator.model.watchfit import (
     DEFAULT_VIEW_CURVE,
     MIN_FIRST_PLAYS,
@@ -95,36 +95,105 @@ def test_shrinkage_pulls_toward_the_shipped_prior() -> None:
 def test_fitted_curve_orders_by_measured_outcome() -> None:
     """The defect in one line: the shipped curve scores a long play far above a
     one-minute play, and the fitted curve does not."""
-    fit = fit_view_curve(parity_corpus()).coefficients
+    fit = fit_view_curve(parity_corpus()).curve
 
-    assert view_rise(45.0) < view_rise(600.0), "shipped curve rises monotonically"
-    assert view_rise(45.0, view_curve=fit) > view_rise(600.0, view_curve=fit)
+    assert view_value(45.0) < view_value(600.0), "shipped curve rises monotonically"
+    assert _positive(view_value(45.0, view_curve=fit)) > _value_or_zero(
+        view_value(600.0, view_curve=fit)
+    )
 
 
 def test_fitted_curve_stays_inside_the_shipped_output_range() -> None:
-    fit = fit_view_curve(parity_corpus()).coefficients
+    fit = fit_view_curve(parity_corpus()).curve
 
-    for seconds in (30.0, 45.0, 90.0, 300.0, 1800.0, 7200.0):
-        assert 0.0 <= view_rise(seconds, view_curve=fit) <= 0.35
+    for seconds in (1.0, 5.0, 30.0, 45.0, 90.0, 300.0, 1800.0, 7200.0):
+        value = view_value(seconds, view_curve=fit)
+        if value is not None:
+            assert -0.10 <= value <= 0.35
 
 
-def test_fitted_curve_does_not_erase_view_labels() -> None:
-    """A mapping that drives the tail to exactly zero silently deletes labels,
-    because viewing_outcome drops a signal that rounds to zero."""
-    fit = fit_view_curve(parity_corpus()).coefficients
-    durations = [30.0 + 15.0 * step for step in range(200)]
+def test_short_plays_are_negative_evidence() -> None:
+    """The measured return rate under the lower crossover sits far below the
+    library average, so a brief play is evidence against, not evidence absent."""
+    fit = fit_view_curve(parity_corpus()).curve
 
-    dropped = sum(
-        1
-        for seconds in durations
-        if viewing_outcome(seconds, 0, historical_imputed=True, view_curve=fit) is None
-    )
+    assert _positive(view_value(2.0, view_curve=fit)) < 0.0
+    assert _positive(view_value(5.0, view_curve=fit)) < 0.0
 
-    assert dropped == 0
+
+def test_long_plays_abstain_rather_than_voting_against() -> None:
+    """Past the peak the parabola keeps falling, but measured return rates out
+    there are indistinguishable from the base rate, so there is nothing to say."""
+    fit = fit_view_curve(parity_corpus()).curve
+
+    assert view_value(36000.0, view_curve=fit) is None
+
+
+def test_there_is_no_step_at_the_short_exit_threshold() -> None:
+    """The whole point of centring on the base rate: 29.9s and 30.1s must not
+    differ by most of the signal's range, as they did with a refitted rise."""
+    fit = fit_view_curve(parity_corpus()).curve
+
+    below = _positive(view_value(29.9, view_curve=fit))
+    above = _positive(view_value(30.1, view_curve=fit))
+
+    assert abs(above - below) < 0.01
+
+
+def test_curve_is_continuous() -> None:
+    """No jump anywhere the curve returns a value."""
+    fit = fit_view_curve(parity_corpus()).curve
+    previous = None
+    seconds = 1.0
+    while seconds < 600.0:
+        value = view_value(seconds, view_curve=fit)
+        if value is not None and previous is not None:
+            assert abs(value - previous) < 0.02, f"jump at {seconds:.1f}s"
+        previous = value
+        seconds *= 1.02
+
+
+def test_imputed_short_play_is_negative_only_once_fitted() -> None:
+    """The shipped curve refuses to read an averaged duration as dislike; a
+    fitted curve does, with the discount carried by confidence instead."""
+    fit = fit_view_curve(parity_corpus()).curve
+
+    assert viewing_outcome(5.0, 0, historical_imputed=True) is None
+
+    signal = viewing_outcome(5.0, 0, historical_imputed=True, view_curve=fit)
+    assert signal is not None
+    assert signal.value < 0.0
+    assert signal.confidence == 0.45
+
+
+def test_repeat_evidence_outranks_the_negative_view_floor() -> None:
+    """A scene played briefly but often must not read as disliked."""
+    from curator.events.curves import collapse_signals, repeat_outcome
+
+    fit = fit_view_curve(parity_corpus()).curve
+    brief = viewing_outcome(5.0, 0, historical_imputed=True, view_curve=fit)
+    repeat = repeat_outcome(48.0, 0)
+    assert brief is not None and repeat is not None
+
+    collapsed = collapse_signals([brief, repeat])
+
+    assert collapsed is not None
+    assert collapsed.primary_signal == "repeat"
+    assert collapsed.value > 0.0
 
 
 def test_unfitted_curve_is_the_shipped_curve() -> None:
     for seconds in (30.0, 60.0, 300.0, 3600.0):
-        assert view_rise(seconds, view_curve=None) == 0.35 * (
+        assert view_value(seconds, view_curve=None) == 0.35 * (
             1 - math.exp(-(seconds - 30.0) / 90.0)
         )
+    assert view_value(15.0, view_curve=None) == -0.10 * (1 - 15.0 / 30.0)
+
+
+def _positive(value: float | None) -> float:
+    assert value is not None
+    return value
+
+
+def _value_or_zero(value: float | None) -> float:
+    return 0.0 if value is None else value
