@@ -54,6 +54,9 @@ case "${1:-}" in
       [[ "$file" == plugin/stash-curator.js ]] && javascript=true
       [[ "$file" == core/* ]] && core_changed=true
     done
+    # Regenerate the scoring fingerprint before building: the Go binary embeds
+    # the constant, so a stale one would be compiled into the parity run.
+    uv run --frozen python scripts/scoring_fingerprint.py --write >/dev/null
     if [[ "$core_changed" == true ]]; then
       core_build_and_check
       core_gate
@@ -73,6 +76,9 @@ case "${1:-}" in
     uv run --frozen python scripts/perf_gate.py
     ;;
   full)
+    # Fails rather than rewrites: a stale constant means the digest does not
+    # identify the code, and CI must not paper over that by mutating the tree.
+    uv run --frozen python scripts/scoring_fingerprint.py --check
     core_build_and_check
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
