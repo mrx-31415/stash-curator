@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.0](https://github.com/mrx-31415/stash-curator/compare/v0.14.0...v0.15.0) (2026-08-20)
+
+
+### Features
+
+* add the Dormant lane (lane redesign stage 3) ([cf4d185](https://github.com/mrx-31415/stash-curator/commit/cf4d18561aee0b77adefc4106381dd49ec0d6008))
+* **core:** return build memory to the OS when the daemon goes idle ([5cc7d4f](https://github.com/mrx-31415/stash-curator/commit/5cc7d4f11bd9abbea7df3a41c03fb8ff46cda50a))
+* **core:** run the background worker at low CPU and I/O priority ([7434743](https://github.com/mrx-31415/stash-curator/commit/743474389f8a419f37da712634d39cb2b1be7f12))
+* replace the Adventure lane with Blind Spots (lane redesign stage 2) ([3a9d26a](https://github.com/mrx-31415/stash-curator/commit/3a9d26a27a1cc61a7435f11fb965604f985d3a71))
+* replace the Discover lane with Stretch (lane redesign stage 1) ([eaecc5f](https://github.com/mrx-31415/stash-curator/commit/eaecc5f229b1bcc8a7f57038bd5e8f36b7b20dbb))
+* route the Blind Spots breadth-ceiling signal to pruning (lane redesign stage 4) ([e5804e0](https://github.com/mrx-31415/stash-curator/commit/e5804e0f84d177920bf106c71a92ae9a5d5365d2))
+
+
+### Bug Fixes
+
+* fail closed when worker coordination breaks ([a6449be](https://github.com/mrx-31415/stash-curator/commit/a6449be9babb8c0e15b690492352ae063713ee38))
+* **model:** bound score components without collapsing ordering at the cap ([b40f397](https://github.com/mrx-31415/stash-curator/commit/b40f3971be69222d97200e8d70855574abc7c1b8))
+* **model:** stop pairwise pick confidence saturating at the ceiling ([f312768](https://github.com/mrx-31415/stash-curator/commit/f3127687823bc783abfcba59f3e3639c2ff9051e))
+* reject stale daemon pid reuse ([5ae7f76](https://github.com/mrx-31415/stash-curator/commit/5ae7f761559c03e70a6f653462e95091a171c885))
+* rotate daemon after plugin updates ([49af01c](https://github.com/mrx-31415/stash-curator/commit/49af01ccd8ad77d35c09c77696f6e55ad8c831fd))
+* tolerate short-stage perf jitter ([3ec27cd](https://github.com/mrx-31415/stash-curator/commit/3ec27cd6f7d9aafe268a770c328d48c91cf80836))
+
+
+### Documentation
+
+* correct the lane-redesign doc's migration number and pruning framing ([5eecf42](https://github.com/mrx-31415/stash-curator/commit/5eecf4294bd55a415220c1e4fdd7348dd65b746a))
+
 ## [0.14.0](https://github.com/mrx-31415/stash-curator/compare/v0.13.0...v0.14.0) (2026-08-18)
 
 
