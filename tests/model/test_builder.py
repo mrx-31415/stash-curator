@@ -936,6 +936,25 @@ def test_model_build_version_invalidates_published_artifact(
     assert second.model_id != first.model_id
 
 
+def test_scoring_fingerprint_invalidates_published_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An algorithm change with unchanged data and config must rebuild.
+
+    Before the fingerprint reached the digest this returned reused=True and
+    served the previous algorithm's artifact.
+    """
+    connection = _database(tmp_path / "curator.sqlite3")
+    first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    monkeypatch.setattr(builder_module, "SCORING_FINGERPRINT", "0000000000000000")
+
+    second = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+
+    assert second.reused is False
+    assert second.model_id != first.model_id
+    assert second.feature_version == first.feature_version
+
+
 def test_playback_change_reuses_features_but_rebuilds_model(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
