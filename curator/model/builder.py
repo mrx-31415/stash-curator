@@ -23,6 +23,7 @@ from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
+from curator.model.fingerprint import SCORING_FINGERPRINT
 from curator.profiling import current_trace, record_duration, span
 from curator.storage import ModelStore, transaction
 from curator.storage.artifacts import (
@@ -530,11 +531,15 @@ class PreferenceModelBuilder:
         timings["labels"] = round((time.perf_counter() - stage_started) * 1000)
         record_duration("python", "model.labels", timings["labels"])
         evidence_fingerprint = self._evidence_fingerprint(labels)
+        # SCORING_FINGERPRINT makes the code that produced the artifact part of
+        # the key: without it an algorithm change with unchanged data and config
+        # yields the same model_id, and the build reuses the previous
+        # algorithm's artifact instead of rebuilding.
         model_digest = hashlib.sha256(
             (
                 f"{feature_version}\0{evidence_fingerprint}\0{self._source_fingerprint()}\0"
                 f"{self.config.canonical_json()}\0{PERFORMER_SIMILARITY_AFFINITY_CUTOFF}\0"
-                f"{MODEL_BUILD_VERSION}\0{reference_at_ms}"
+                f"{MODEL_BUILD_VERSION}\0{reference_at_ms}\0{SCORING_FINGERPRINT}"
             ).encode()
         ).hexdigest()
         model_id = f"model-{model_digest[:20]}"
@@ -570,6 +575,7 @@ class PreferenceModelBuilder:
                 "config": asdict(self.config),
                 "model_build_version": MODEL_BUILD_VERSION,
                 "reference_at_ms": reference_at_ms,
+                "scoring_fingerprint": SCORING_FINGERPRINT,
             },
             sort_keys=True,
             separators=(",", ":"),

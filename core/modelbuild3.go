@@ -632,13 +632,16 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		return drainResult{}, err
 	}
 	if os.Getenv("CURATOR_DEBUG_MODEL_DIGEST") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG model digest: fv=%s ev=%s src=%s cfg=%s cutoff=%g ver=%d ref=%d\n",
+		fmt.Fprintf(os.Stderr, "DEBUG model digest: fv=%s ev=%s src=%s cfg=%s cutoff=%g ver=%d ref=%d code=%s\n",
 			featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical(),
-			performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs)
+			performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs, scoringFingerprint)
 	}
-	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%g\x00%d\x00%d",
+	// scoringFingerprint makes the code that produced the artifact part of the
+	// key: without it an algorithm change with unchanged data and config yields
+	// the same modelID, and the build reuses the previous algorithm's artifact.
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%g\x00%d\x00%d\x00%s",
 		featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical(),
-		performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs)))
+		performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs, scoringFingerprint)))
 	modelID := fmt.Sprintf("model-%s", hexEncode(digest[:])[:20])
 	var status string
 	var validationStatus sql.NullString
@@ -677,6 +680,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		jvKey("config", parseJSONOr(modelConfigCanonical())),
 		jvKey("model_build_version", jvInt(modelBuildVersion)),
 		jvKey("reference_at_ms", jvInt(referenceAtMs)),
+		jvKey("scoring_fingerprint", jvStr(scoringFingerprint)),
 	)
 	if err == nil {
 		// The row already exists (a superseded, failed, or in-flight build of
