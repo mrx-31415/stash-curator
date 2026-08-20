@@ -25,6 +25,8 @@ import (
 const (
 	performerSimilarityAffinityCutoff = 0.005
 	modelBuildVersion                 = 4
+	affinityPrior                     = 1.0
+	affinitySiblingPrior              = 1.0
 	// Mirrors ModelConfig.curation_pair_* in curator/config.py. The product of
 	// the base confidence and the IPS cap bounds a pick's weight: keeping it
 	// under 1.0 is what stops every comparison clamping to the ceiling, which
@@ -813,6 +815,22 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	if err != nil {
 		return nil, err
 	}
+	supports := map[string]float64{}
+	numerators := map[string]float64{}
+	for featureID, values := range accumulators {
+		weights := make([]float64, 0, len(values))
+		weightedOutcomes := make([]float64, 0, len(values))
+		for _, item := range values {
+			weights = append(weights, item.weight)
+			weightedOutcomes = append(weightedOutcomes, item.weight*item.outcome)
+		}
+		supports[featureID] = sumFloats(weights)
+		numerators[featureID] = sumFloats(weightedOutcomes)
+	}
+	siblingPriors, err := modelSiblingPriors(db, sceneFeatures, supports, numerators)
+	if err != nil {
+		return nil, err
+	}
 	result := map[string]modelAffinity{}
 	for featureID, values := range accumulators {
 		studios := map[string]bool{}
@@ -833,9 +851,12 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 				}
 			}
 		}
-		support := sumFloats(weights)
-		numerator := sumFloats(weightedOutcomes)
-		affinity := numerator / (1.0 + support)
+		support := supports[featureID]
+		numerator := numerators[featureID]
+		// Shrink toward what the tag's siblings say rather than toward zero;
+		// mirrors PreferenceModelBuilder._sibling_priors' use in _affinities.
+		priorPseudo := affinityPrior * affinitySiblingPrior * siblingPriors[featureID]
+		affinity := (numerator + priorPseudo) / (affinityPrior + support)
 		result[featureID] = modelAffinity{
 			featureID:  featureID,
 			affinity:   clamp(affinity),
@@ -1190,4 +1211,99 @@ func deriveNeighborEvidence(selected []neighborTuple, labelMean, confidenceScale
 		totalWeight: denominator,
 		neighbors:   neighbors,
 	}
+}
+
+// modelSiblingPriors mirrors PreferenceModelBuilder._sibling_priors: a tag's
+// prior is the support-weighted mean of its siblings' unsmoothed affinities,
+// itself excluded. Tags with no parent, and tags whose siblings carry no
+// support, are absent and keep the previous zero prior.
+func modelSiblingPriors(
+	db dbx,
+	sceneFeatures map[string][]storedFeature,
+	supports, numerators map[string]float64,
+) (map[string]float64, error) {
+	priors := map[string]float64{}
+	if affinitySiblingPrior <= 0 {
+		return priors, nil
+	}
+	featureOfTag := map[string]string{}
+	for _, features := range sceneFeatures {
+		for _, feature := range features {
+			if feature.family != "content" {
+				continue
+			}
+			if tagID := feature.metadata.get("tag_id").asString(); tagID != "" {
+				if _, seen := featureOfTag[tagID]; !seen {
+					featureOfTag[tagID] = feature.featureID
+				}
+			}
+		}
+	}
+	if len(featureOfTag) == 0 {
+		return priors, nil
+	}
+	parents := map[string][]string{}
+	children := map[string][]string{}
+	rows, err := db.Query(`SELECT tag_id, parent_tag_id FROM tag_parent ORDER BY tag_id, parent_tag_id`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var tagID, parentTagID string
+		if err := rows.Scan(&tagID, &parentTagID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		parents[tagID] = append(parents[tagID], parentTagID)
+		children[parentTagID] = append(children[parentTagID], tagID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	tagIDs := make([]string, 0, len(parents))
+	for tagID := range parents {
+		tagIDs = append(tagIDs, tagID)
+	}
+	sort.Strings(tagIDs)
+	for _, tagID := range tagIDs {
+		featureID, ok := featureOfTag[tagID]
+		if !ok {
+			continue
+		}
+		siblingSet := map[string]bool{}
+		for _, parentTagID := range parents[tagID] {
+			for _, sibling := range children[parentTagID] {
+				if sibling != tagID {
+					siblingSet[sibling] = true
+				}
+			}
+		}
+		siblings := make([]string, 0, len(siblingSet))
+		for sibling := range siblingSet {
+			siblings = append(siblings, sibling)
+		}
+		// sort: these feed floating-point sums that must stay byte-identical
+		// run to run and against the Python oracle.
+		sort.Strings(siblings)
+		weight := 0.0
+		total := 0.0
+		for _, sibling := range siblings {
+			siblingFeature, ok := featureOfTag[sibling]
+			if !ok {
+				continue
+			}
+			support := supports[siblingFeature]
+			if support <= 0 {
+				continue
+			}
+			affinity := numerators[siblingFeature] / (affinityPrior + support)
+			total += affinity * support
+			weight += support
+		}
+		if weight > 0 {
+			priors[featureID] = total / weight
+		}
+	}
+	return priors, nil
 }
