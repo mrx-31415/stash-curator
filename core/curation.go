@@ -115,7 +115,7 @@ func curationMean(values []float64) float64 {
 
 // loadCurationContext mirrors curation.curation_context.
 func loadCurationContext(db dbx) (*curationContext, error) {
-	labels, err := modelSceneLabels(db)
+	labels, err := modelSceneLabels(db, unfittedViewCurve())
 	if err != nil {
 		return nil, err
 	}
@@ -1330,7 +1330,7 @@ func tagContextCandidatesBody(db dbx, tagID string, minSupport int) (jVal, error
 	if err != nil {
 		return jvNull(), err
 	}
-	labels, err := modelSceneLabels(db)
+	labels, err := modelSceneLabels(db, unfittedViewCurve())
 	if err != nil {
 		return jvNull(), err
 	}

@@ -219,6 +219,7 @@ def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
             "model_id",
             "status",
             "feature_version",
+            "config_json",
             "scene_count",
             "lane_count",
             "reason_scene_count",

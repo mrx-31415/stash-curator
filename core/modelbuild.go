@@ -116,34 +116,113 @@ func clamp(value float64) float64 {
 	return clampValue(value, -1, 1)
 }
 
+// modelFirstPlays mirrors PreferenceModelBuilder._fit_view_curve's query. The
+// scene_id ordering is what makes the cross-validation folds match Python's.
+func modelFirstPlays(db dbx) ([]struct {
+	Seconds  float64
+	Returned bool
+}, error) {
+	rows, err := db.Query(`
+WITH first_play AS (
+    SELECT scene_id, MIN(started_at_ms) AS first_ms
+    FROM play_session GROUP BY scene_id
+)
+SELECT s.active_seconds AS active_seconds,
+       EXISTS(
+           SELECT 1 FROM play_session later
+           WHERE later.scene_id = s.scene_id
+             AND later.started_at_ms > s.started_at_ms + 86400000
+       ) AS returned
+FROM play_session s
+JOIN first_play f
+  ON f.scene_id = s.scene_id AND f.first_ms = s.started_at_ms
+WHERE s.active_seconds > 0
+ORDER BY s.scene_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct {
+		Seconds  float64
+		Returned bool
+	}
+	for rows.Next() {
+		var seconds float64
+		var returned int64
+		if err := rows.Scan(&seconds, &returned); err != nil {
+			return nil, err
+		}
+		out = append(out, struct {
+			Seconds  float64
+			Returned bool
+		}{seconds, returned != 0})
+	}
+	return out, rows.Err()
+}
+
 // modelSceneLabels mirrors PreferenceModelBuilder._scene_labels.
-func modelSceneLabels(db dbx) (map[string]sceneLabel, error) {
+func modelSceneLabels(db dbx, fit viewCurveFit) (map[string]sceneLabel, error) {
 	type signal struct {
 		value      float64
 		confidence float64
 		signalType string
 	}
+	var curve *[3]float64
+	if fit.adopted {
+		coefficients := fit.coefficients
+		curve = &coefficients
+	}
 	signals := map[string][]signal{}
 	rows, err := db.Query(`
-SELECT scene_id, event_type, outcome, confidence, payload_json FROM behavior_event
-WHERE scene_id IS NOT NULL AND outcome IS NOT NULL ORDER BY scene_id, occurred_at_ms`)
+SELECT e.scene_id AS scene_id, e.event_type AS event_type, e.outcome AS outcome,
+       e.confidence AS confidence, e.payload_json AS payload_json,
+       e.provenance AS provenance, e.occurred_at_ms AS occurred_at_ms,
+       s.active_seconds AS active_seconds, s.started_at_ms AS started_at_ms,
+       (
+           SELECT MAX(previous.started_at_ms) FROM play_session previous
+           WHERE previous.scene_id = s.scene_id
+             AND previous.started_at_ms < s.started_at_ms
+       ) AS previous_started_ms
+FROM behavior_event e
+LEFT JOIN play_session s ON s.session_id = e.session_id
+WHERE e.scene_id IS NOT NULL AND e.outcome IS NOT NULL
+ORDER BY e.scene_id, e.occurred_at_ms`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var sceneID, eventType, payloadJSON string
+		var sceneID, eventType, payloadJSON, provenance string
 		var outcome, confidence float64
-		if err := rows.Scan(&sceneID, &eventType, &outcome, &confidence, &payloadJSON); err != nil {
+		var occurredAtMs int64
+		var activeSeconds, startedAtMs, previousStartedMs sql.NullFloat64
+		if err := rows.Scan(&sceneID, &eventType, &outcome, &confidence, &payloadJSON,
+			&provenance, &occurredAtMs, &activeSeconds, &startedAtMs, &previousStartedMs); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		signalType := eventType
+		present := map[string]bool{}
 		if parsed, err := parseJSON([]byte(payloadJSON)); err == nil {
 			if v := parsed.get("primary_signal"); v.kind == jStr && v.s != "" {
 				signalType = v.s
+				present[v.s] = true
+			}
+			if v := parsed.get("supporting_signals"); v.kind == jArr {
+				for _, item := range v.arr {
+					if item.kind == jStr {
+						present[item.s] = true
+					}
+				}
 			}
 		}
-		signals[sceneID] = append(signals[sceneID], signal{outcome, confidence, signalType})
+		if recomputed, ok := modelRecomputedOutcome(
+			activeSeconds, startedAtMs, previousStartedMs, occurredAtMs, provenance, present, curve,
+		); ok {
+			signals[sceneID] = append(signals[sceneID],
+				signal{recomputed.value, recomputed.confidence, recomputed.primarySignal})
+		} else {
+			signals[sceneID] = append(signals[sceneID], signal{outcome, confidence, signalType})
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -1190,4 +1269,43 @@ func deriveNeighborEvidence(selected []neighborTuple, labelMean, confidenceScale
 		totalWeight: denominator,
 		neighbors:   neighbors,
 	}
+}
+
+// modelRecomputedOutcome mirrors
+// PreferenceModelBuilder._recomputed_view_outcome: rebuild an occasion's
+// outcome under the fitted curve from data still on hand, since the stored
+// behavior_event.outcome was produced by whatever curve was compiled in at
+// write time.
+func modelRecomputedOutcome(
+	activeSeconds, startedAtMs, previousStartedMs sql.NullFloat64,
+	occurredAtMs int64,
+	provenance string,
+	present map[string]bool,
+	curve *[3]float64,
+) (normalizedOutcome, bool) {
+	if !activeSeconds.Valid {
+		return normalizedOutcome{}, false
+	}
+	seconds := activeSeconds.Float64
+	if !finite64(seconds) || seconds < 0 {
+		return normalizedOutcome{}, false
+	}
+	historical := provenance == "historical_import"
+	var signals []outcomeSignal
+	if view, ok := viewingOutcomeCurve(seconds, occurredAtMs, historical, curve); ok {
+		signals = append(signals, view)
+	}
+	if present["repeat"] && previousStartedMs.Valid && startedAtMs.Valid {
+		gapHours := (startedAtMs.Float64 - previousStartedMs.Float64) / 3600000.0
+		if repeat, ok := repeatOutcome(gapHours, occurredAtMs); ok {
+			signals = append(signals, repeat)
+		}
+	}
+	if present["o"] {
+		signals = append(signals, oOutcome(occurredAtMs))
+	}
+	if len(signals) == 0 {
+		return normalizedOutcome{}, false
+	}
+	return collapseSignals(signals)
 }

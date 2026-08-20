@@ -17,12 +17,19 @@ from typing import Any, cast
 from curator import core
 from curator.config import DEFAULT_CONFIG, CuratorConfig
 from curator.events.contracts import DEFAULT_CALIBRATION
+from curator.events.curves import (
+    collapse_signals,
+    o_outcome,
+    repeat_outcome,
+    viewing_outcome,
+)
 from curator.features import FeatureBuilder, FeatureStore
 from curator.features.builder import _fingerprint_table
 from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
 from curator.features.store import StoredFeature
 from curator.model.boundaries import scene_eligibility
 from curator.model.curves import blend_appeal, direct_confidence, scene_recovery
+from curator.model.watchfit import DEFAULT_VIEW_CURVE, ViewCurveFit, fit_view_curve
 from curator.profiling import current_trace, record_duration, span
 from curator.storage import ModelStore, transaction
 from curator.storage.artifacts import (
@@ -497,6 +504,11 @@ class PreferenceModelBuilder:
         self.config = config
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self.progress = progress
+        # Replaced by build(); the unadopted default keeps the shipped curve so
+        # calling _scene_labels() outside a build behaves as it always did.
+        self._view_curve_fit = ViewCurveFit(
+            DEFAULT_VIEW_CURVE, False, "not_fitted", 0, 0, math.inf, math.inf, math.inf
+        )
 
     def build(self) -> ModelBuildResult:
         started = time.perf_counter()
@@ -524,6 +536,12 @@ class PreferenceModelBuilder:
         )
         stage_started = time.perf_counter()
         reference_at_ms = (self.clock_ms() // 86_400_000) * 86_400_000
+        # Fit the watch-time response curve before labels are read: the fitted
+        # curve is what turns a session duration into a view outcome, so it has
+        # to be in hand before any label is computed. Because the labels feed
+        # the evidence fingerprint, a changed curve changes the model_id on its
+        # own -- reproducibility needs no separate versioning.
+        self._view_curve_fit = self._fit_view_curve()
         labels = self._scene_labels()
         training_labels = self._training_labels(labels)
         self._report(0.30)
@@ -570,6 +588,7 @@ class PreferenceModelBuilder:
                 "config": asdict(self.config),
                 "model_build_version": MODEL_BUILD_VERSION,
                 "reference_at_ms": reference_at_ms,
+                "view_curve": self._view_curve_fit.as_payload(),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -663,22 +682,118 @@ class PreferenceModelBuilder:
         )
         return ModelBuildResult(model_id, feature_version, count, labeled, reused, timings)
 
+    def _fit_view_curve(self) -> ViewCurveFit:
+        """Fit the watch-time response curve on this instance's first plays.
+
+        The label is an outcome the curve cannot influence: did the user come
+        back to that scene more than a day later. The ordering is fixed by
+        scene_id so cross-validation folds are assigned identically here and in
+        the Go mirror without either side needing a random seed.
+        """
+        first_plays = [
+            (float(row["active_seconds"]), bool(row["returned"]))
+            for row in self.connection.execute(
+                """
+                WITH first_play AS (
+                    SELECT scene_id, MIN(started_at_ms) AS first_ms
+                    FROM play_session GROUP BY scene_id
+                )
+                SELECT s.active_seconds AS active_seconds,
+                       EXISTS(
+                           SELECT 1 FROM play_session later
+                           WHERE later.scene_id = s.scene_id
+                             AND later.started_at_ms > s.started_at_ms + 86400000
+                       ) AS returned
+                FROM play_session s
+                JOIN first_play f
+                  ON f.scene_id = s.scene_id AND f.first_ms = s.started_at_ms
+                WHERE s.active_seconds > 0
+                ORDER BY s.scene_id
+                """
+            )
+        ]
+        return fit_view_curve(first_plays)
+
+    def _recomputed_view_outcome(
+        self, row: sqlite3.Row, payload: dict[str, Any]
+    ) -> tuple[float, float, str] | None:
+        """Re-derive an occasion's outcome under the fitted curve.
+
+        The stored `behavior_event.outcome` is whatever the curve compiled in at
+        write time produced, and the builder cannot re-run the importer, so the
+        occasion's signals are reconstructed from data that is still on hand:
+        the view signal from the session's duration, the repeat signal from the
+        gap to the previous session of the same scene, and the O signal from the
+        payload's record of which signals took part. Those three are the entire
+        signal set an occasion can carry -- confirmed against the stored data,
+        where `primary_signal` only ever takes the values view, repeat and o.
+
+        Returns None when the occasion cannot be reconstructed (no surviving
+        session row), in which case the caller keeps the stored value.
+        """
+        if row["active_seconds"] is None:
+            return None
+        active_seconds = float(row["active_seconds"])
+        if not math.isfinite(active_seconds) or active_seconds < 0:
+            return None
+        historical = str(row["provenance"]) == "historical_import"
+        occurred_at_ms = int(row["occurred_at_ms"])
+        present = {str(payload.get("primary_signal", ""))}
+        supporting = payload.get("supporting_signals")
+        if isinstance(supporting, list):
+            present.update(str(item) for item in supporting)
+
+        signals = []
+        view = viewing_outcome(
+            active_seconds,
+            occurred_at_ms,
+            historical_imputed=historical,
+            view_curve=self._view_curve_fit.coefficients if self._view_curve_fit.adopted else None,
+        )
+        if view is not None:
+            signals.append(view)
+        if "repeat" in present and row["previous_started_ms"] is not None:
+            gap_hours = (int(row["started_at_ms"]) - int(row["previous_started_ms"])) / 3_600_000
+            repeat = repeat_outcome(gap_hours, occurred_at_ms)
+            if repeat is not None:
+                signals.append(repeat)
+        if "o" in present:
+            signals.append(o_outcome(occurred_at_ms))
+        if not signals:
+            return None
+        collapsed = collapse_signals(signals)
+        if collapsed is None:
+            return None
+        return (collapsed.value, collapsed.confidence, collapsed.primary_signal)
+
     def _scene_labels(self) -> dict[str, _SceneLabel]:
         signals: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
         for row in self.connection.execute(
             """
-            SELECT scene_id, event_type, outcome, confidence, payload_json FROM behavior_event
-            WHERE scene_id IS NOT NULL AND outcome IS NOT NULL ORDER BY scene_id, occurred_at_ms
+            SELECT e.scene_id AS scene_id, e.event_type AS event_type, e.outcome AS outcome,
+                   e.confidence AS confidence, e.payload_json AS payload_json,
+                   e.provenance AS provenance, e.occurred_at_ms AS occurred_at_ms,
+                   s.active_seconds AS active_seconds, s.started_at_ms AS started_at_ms,
+                   (
+                       SELECT MAX(previous.started_at_ms) FROM play_session previous
+                       WHERE previous.scene_id = s.scene_id
+                         AND previous.started_at_ms < s.started_at_ms
+                   ) AS previous_started_ms
+            FROM behavior_event e
+            LEFT JOIN play_session s ON s.session_id = e.session_id
+            WHERE e.scene_id IS NOT NULL AND e.outcome IS NOT NULL
+            ORDER BY e.scene_id, e.occurred_at_ms
             """
         ):
             payload = json.loads(row["payload_json"])
-            signals[str(row["scene_id"])].append(
-                (
+            recomputed = self._recomputed_view_outcome(row, payload)
+            if recomputed is None:
+                recomputed = (
                     float(row["outcome"]),
                     float(row["confidence"]),
                     str(payload.get("primary_signal", row["event_type"])),
                 )
-            )
+            signals[str(row["scene_id"])].append(recomputed)
         for row in self.connection.execute(
             """
             SELECT scene_id, feedback_type, occurred_at_ms FROM feedback

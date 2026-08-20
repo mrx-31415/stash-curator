@@ -30,6 +30,7 @@ const (
 	viewRiseSeconds          = 90.0
 	viewPositiveMax          = 0.35
 	directShortExitMin       = -0.10
+	directViewConfidence     = 0.80
 )
 
 // stableEventID mirrors historical.stable_event_id.
@@ -86,6 +87,71 @@ func viewingOutcomeHistorical(activeSeconds float64, observedAtMs int64) (outcom
 		return outcomeSignal{}, false
 	}
 	return outcomeSignal{"view", value, historicalViewConfidence, observedAtMs, "historical_imputed"}, true
+}
+
+// logitProbability mirrors curves._logit_probability.
+func logitProbability(curve [3]float64, seconds float64) float64 {
+	logT := math.Log(seconds)
+	z := curve[0] + float64(curve[1]*logT) + float64(float64(curve[2]*logT)*logT)
+	if z >= 0.0 {
+		return 1.0 / (1.0 + math.Exp(-z))
+	}
+	expZ := math.Exp(z)
+	return expZ / (1.0 + expZ)
+}
+
+// viewRise mirrors curves.view_rise.
+func viewRise(activeSeconds float64, curve *[3]float64) float64 {
+	shipped := viewPositiveMax * (1 - math.Exp(-(activeSeconds-shortExitSeconds)/viewRiseSeconds))
+	if curve == nil {
+		return shipped
+	}
+	curvature := curve[2]
+	if curvature >= 0.0 {
+		return shipped
+	}
+	peakSeconds := math.Exp(-curve[1] / (2.0 * curvature))
+	if peakSeconds <= shortExitSeconds {
+		return shipped
+	}
+	atPeak := logitProbability(*curve, peakSeconds)
+	if atPeak < 1e-9 {
+		return shipped
+	}
+	scaled := logitProbability(*curve, activeSeconds) / atPeak
+	if scaled > 1.0 {
+		scaled = 1.0
+	}
+	return viewPositiveMax * scaled
+}
+
+// viewingOutcomeCurve mirrors curves.viewing_outcome with an optional fitted
+// curve. The model build passes one; the import path does not.
+func viewingOutcomeCurve(
+	activeSeconds float64, observedAtMs int64, historicalImputed bool, curve *[3]float64,
+) (outcomeSignal, bool) {
+	if !finite64(activeSeconds) || activeSeconds < 0 {
+		return outcomeSignal{}, false
+	}
+	var value float64
+	if activeSeconds < shortExitSeconds {
+		if historicalImputed {
+			return outcomeSignal{}, false
+		}
+		value = directShortExitMin * (1 - activeSeconds/shortExitSeconds)
+	} else {
+		value = viewRise(activeSeconds, curve)
+	}
+	if mathAbs(value) < 1e-12 {
+		return outcomeSignal{}, false
+	}
+	confidence := directViewConfidence
+	provenance := "direct_player"
+	if historicalImputed {
+		confidence = historicalViewConfidence
+		provenance = "historical_imputed"
+	}
+	return outcomeSignal{"view", value, confidence, observedAtMs, provenance}, true
 }
 
 // collapseSignals mirrors curves.collapse_signals.

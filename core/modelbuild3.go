@@ -610,9 +610,18 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	referenceAtMs := (nowMs / 86_400_000) * 86_400_000
 	var labels map[string]sceneLabel
 	var trainingLabels map[string]sceneLabel
+	viewFit := unfittedViewCurve()
 	err = rec.stage("labels", "model.labels", func() error {
-		var err error
-		labels, err = modelSceneLabels(db)
+		// Fit the watch-time response curve before labels are read: the fitted
+		// curve is what turns a session duration into a view outcome. The
+		// labels feed the evidence fingerprint, so a changed curve changes the
+		// modelID on its own.
+		firstPlays, err := modelFirstPlays(db)
+		if err != nil {
+			return err
+		}
+		viewFit = fitViewCurve(firstPlays)
+		labels, err = modelSceneLabels(db, viewFit)
 		if err != nil {
 			return err
 		}
@@ -677,6 +686,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		jvKey("config", parseJSONOr(modelConfigCanonical())),
 		jvKey("model_build_version", jvInt(modelBuildVersion)),
 		jvKey("reference_at_ms", jvInt(referenceAtMs)),
+		jvKey("view_curve", viewFit.payload()),
 	)
 	if err == nil {
 		// The row already exists (a superseded, failed, or in-flight build of
