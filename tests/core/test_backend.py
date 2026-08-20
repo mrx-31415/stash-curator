@@ -246,11 +246,14 @@ def assert_byte_identical(
     mode: str | None = None,
     *,
     same_path: Path,
-) -> None:
+) -> tuple[subprocess.CompletedProcess[bytes], subprocess.CompletedProcess[bytes]]:
     """Run Python and Go backends on identical fresh sidecar state at the same
     database path (so the `database` output field matches). The copy lives in
     a sibling directory and keeps the same basename, so the derived artifact
-    directory resolves identically for both implementations."""
+    directory resolves identically for both implementations.
+
+    Returns both results so a caller can assert on the output as well as on
+    the two implementations agreeing."""
     run_dir = same_path.parent / f"{same_path.stem}-backend-run"
     run_db = run_dir / same_path.name
     derived_src = same_path.parent / f"{same_path.stem}-derived"
@@ -272,6 +275,7 @@ def assert_byte_identical(
         f"stdout differs:\npython: {python_result.stdout!r}\ngo:     {go_result.stdout!r}"
     )
     assert go_result.returncode == python_result.returncode
+    return python_result, go_result
 
 
 # ── byte-identical trivial ops ──────────────────────────────────────────────
@@ -574,10 +578,11 @@ def test_fallback_entity_hook(tmp_path: Path, binary: Path, stub_stash: str) -> 
         },
         separators=(",", ":"),
     ).encode()
-    direct = run_backend(None, PLUGIN_DIR, raw, mode="entity-sync")
-    fallback = run_backend(binary, PLUGIN_DIR, raw, mode="entity-sync")
-    assert fallback.stdout == direct.stdout
-    assert fallback.returncode == direct.returncode == 0
+    # Each runner gets a fresh copy of the sidecar at the same path. Running
+    # both against the repo's own plugin/data sidecar instead made the result
+    # depend on whatever state that database had accumulated locally.
+    _, fallback = assert_byte_identical(binary, PLUGIN_DIR, raw, "entity-sync", same_path=sidecar)
+    assert fallback.returncode == 0
     output = json.loads(fallback.stdout)["output"]
     assert output["handled"] is True and output["entity_id"] == "scene-42"
 
