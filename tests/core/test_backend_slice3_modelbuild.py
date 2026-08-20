@@ -184,6 +184,73 @@ def test_model_build_recovers_from_building_row(binary: Path, tmp_path: Path) ->
     assert _artifact_schema_diff(results[0][1], results[1][1]) == ""
 
 
+def _seed_tag_hierarchy(sidecar: Path) -> None:
+    """Give the corpus a tag taxonomy so hierarchical affinity smoothing runs.
+
+    Without parents every tag borrows nothing and the smoothing is a no-op, so
+    a divergence between the two implementations would go unnoticed here.
+    """
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.execute(
+            "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
+            ("scenario", "Scenario", "tsc"),
+        )
+        connection.executemany(
+            "INSERT INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)",
+            (("good", "scenario"), ("bad", "scenario"), ("unusual", "scenario")),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_model_build_artifact_parity_with_tag_hierarchy(binary: Path, tmp_path: Path) -> None:
+    """Parity holds once tags have parents, which is what makes the sibling
+    prior do anything. The default corpus is deliberately flat, so this is the
+    only place the smoothing path is compared across implementations."""
+
+    py_dir = tmp_path / "py"
+    py_dir.mkdir()
+    py_db = py_dir / "curator.sqlite3"
+    make_feature_sidecar(py_db)
+    _seed_tag_hierarchy(py_db)
+    py_model, py_artifact = _run_python_build(py_db)
+
+    go_dir = tmp_path / "go"
+    go_dir.mkdir()
+    go_db = go_dir / "curator.sqlite3"
+    make_feature_sidecar(go_db)
+    _seed_tag_hierarchy(go_db)
+    go_model, go_artifact = _run_go_build(binary, go_db)
+
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == "", (
+        f"artifact content differs: {artifact_tolerant_diff(go_artifact, py_artifact)}"
+    )
+
+
+def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:
+    """The smoothing must actually bite: the same corpus with and without a
+    taxonomy has to produce different affinities, or the parity test above
+    would be comparing two no-ops."""
+
+    flat_dir = tmp_path / "flat"
+    flat_dir.mkdir()
+    flat_db = flat_dir / "curator.sqlite3"
+    make_feature_sidecar(flat_db)
+    flat_model, _ = _run_python_build(flat_db)
+
+    nested_dir = tmp_path / "nested"
+    nested_dir.mkdir()
+    nested_db = nested_dir / "curator.sqlite3"
+    make_feature_sidecar(nested_db)
+    _seed_tag_hierarchy(nested_db)
+    nested_model, _ = _run_python_build(nested_db)
+
+    assert nested_model != flat_model
+
+
 def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
     """Both implementations produce the same model_id and content-identical
     model artifacts; the sidecar model_version / current_model_id writes
