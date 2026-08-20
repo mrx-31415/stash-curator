@@ -1,6 +1,6 @@
 # Workpackage: Signal improvements (labels, calibration, and cache identity)
 
-Status: WP1 shipped, WP4 withdrawn on measurement, three proposed. Arising from
+Status: WP1 shipped, WP2 and WP4 withdrawn on measurement, two proposed. Arising from
 a measurement session against a real-library sidecar. Ordered by evidence
 strength, not by appeal.
 
@@ -16,9 +16,14 @@ features — roughly fifteen features per labelled example. Worse, the labels ar
 effectively single-class: 913 of 914 scored scenes are positive. The model has
 never seen a negative example it did not infer from absence.
 
-That is why WP2 and WP3 (which create labels) rank above WP5 (which uses
-existing labels better), and why several attractive-looking ideas were rejected
+That is why WP3 (which creates labels) ranks above WP5 (which uses existing
+labels better), and why several attractive-looking ideas were rejected
 outright: with this sample size the evaluation cannot resolve them.
+
+It is also why the scarcity cuts both ways. WP2 was withdrawn partly because
+the only signals able to adjudicate its outcome variable — 24 scenes with an O
+event — are too sparse to fit against. The same scarcity that makes new labels
+valuable makes claims about labels hard to check.
 
 ---
 
@@ -65,61 +70,9 @@ choice between enforcing the bump and deriving the fingerprint.
 
 ## WP2 — Re-shape the watch-time response curve, per instance
 
-**Problem.** `viewing_outcome()` is monotonically increasing in watch time:
-`view_positive_max · (1 − e^−(t−30)/90)`. Measured against an outcome the curve
-cannot influence (did the user return to that scene on a later day), the real
-relationship is an **inverted U peaking near 60 seconds**. The curve therefore
-assigns its maximum where measured outcomes are near-worst.
-
-**Evidence.** Per scene, on first play:
-
-| first-play | scenes | returned | rate | curve says |
-|---|---|---|---|---|
-| <15s | 337 | 18 | 5.3% | −0.192 |
-| 30–60s | 107 | 22 | **20.6%** | +0.054 |
-| 90–120s | 135 | 23 | 17.0% | +0.198 |
-| 3–5m | 200 | 14 | **7.0%** | +0.316 |
-| 5–10m | 58 | 5 | 8.6% | +0.347 |
-
-30–60s versus 3–5m is a 13.6-point gap at ≈3.2σ. A 3–5 minute play and a
-sub-15-second play have statistically similar outcomes and are scored half a
-point apart.
-
-A logistic fit, quadratic in log-duration, is estimable and generalises:
-`logit(p) = −3.332 + 0.734·ln t − 0.092·(ln t)²`, peak at 53s, LR test against a
-monotone fit p = 0.0092, and it wins on 5-fold held-out likelihood
-(437.45 vs 439.79 vs 442.60 for constant).
-
-**Change.** Fit three coefficients per instance at build time and store them in
-the model artifact, so they version, reproduce, and reach the digest. Keep the
-existing output range so nothing downstream sees a new contract.
-
-Guards, so a cold install is never worse off:
-
-- minimum sample (order of 200 first-plays, 30+ positives);
-- adopt only if the fit beats the shipped constants on **held-out** likelihood
-  — "it won", not "it converged";
-- require negative curvature; otherwise keep the default.
-
-Shrink the fitted coefficients toward the global default in proportion to
-sample size, so an instance moves smoothly from shipped to personal behaviour
-rather than jumping between builds.
-
-**Two known flaws in the current fit.** It is too generous below 30s (+0.134 at
-15s, where the empirical rate is well under the base rate), because a quadratic
-cannot fall fast enough at the left edge while also fitting the peak and tail —
-so keep the existing `short_exit_seconds` cliff and replace only the rise. And
-roughly 90% of sessions are `historical_imputed` rather than observed, so the
-durations are reconstructed from Stash history rather than measured directly.
-
-**Files.** `curator/events/curves.py`, `curator/events/contracts.py`,
-`core/historical.go`, model artifact schema.
-
-**Acceptance.** Fitted curve beats the shipped constants on held-out
-likelihood; guards demonstrably fall back on a synthetic cold instance.
-
-**Effort.** Medium. **Depends on.** Nothing. **Confidence.** High for the
-shape; medium for any specific parameterisation.
+**Withdrawn on measurement.** The inverted U is real, but the outcome it was
+measured against does not mean what the package assumed. See *Rejected, with
+reasons*.
 
 ---
 
@@ -200,8 +153,10 @@ the global prior — check before building.
 
 **Effort.** Medium. **Depends on.** Nothing. **Confidence.** Medium-high.
 
-Note WP2 and WP5 want the same primitive: shrinkage toward a structured prior
-in proportion to evidence. Building it once, generally, is worth considering.
+Note WP5 wants shrinkage toward a structured prior in proportion to evidence.
+WP2 wanted the same primitive; a working implementation of it, guards and all,
+is on the withdrawn `feat/watch-time-curve` branch and can be lifted from there
+rather than written again.
 
 ---
 
@@ -209,9 +164,13 @@ in proportion to evidence. Building it once, generally, is worth considering.
 
 Recorded so they are not re-derived from the same data.
 
-- **Completion ratio instead of absolute watch time.** Premise false: a short
-  play is often a *good* sign in this library, so normalising by scene length
-  does not fix the curve. Superseded by WP2, which addresses the curve's shape.
+- **Completion ratio instead of absolute watch time.** The overwhelming
+  majority of played scenes register under 20% completion, so abandonment is
+  not separable from normal use by this measure. Note that its original
+  rejection here reasoned "a short play is often a *good* sign in this
+  library", which the O-event measurement under WP2 contradicts outright: no
+  sub-30-second first play has ever produced an O. That premise came from the
+  same return-rate reading that sank WP2.
 - **Conjunctive component combination.** The observation is solid — a demoted
   cluster showed a content-to-performer ratio of 2.99 against a corpus norm of
   1.57, i.e. theme evidence carrying weak performer evidence into the top
@@ -228,6 +187,47 @@ Recorded so they are not re-derived from the same data.
   `end_seconds` — they are point events, so segment-level watching is not
   answerable, only "did the session reach this moment". Weaker than it appears
   and the most expensive to build.
+- **Re-shaping the watch-time curve against return-rate (WP2).** The inverted
+  U reproduces exactly: measured against "did the user return to this scene on
+  a later day", first plays of 30-60s return at roughly twice the base rate and
+  plays of 3-5m at well below it, a quadratic in log-duration beats both a
+  monotone and a constant fit on held-out likelihood, and the curve does assign
+  its maximum where that outcome is near-worst.
+
+  The outcome variable is the problem. It was chosen because the curve cannot
+  influence it, which addresses circularity but never establishes that it
+  tracks preference. Measured against the signals that actually state a
+  preference, watch time runs the other way. By O events — the strongest label
+  in the system, carrying `o_value = 1.0`:
+
+  | first play | scenes | with an O | vs base (2.02%) |
+  |---|---|---|---|
+  | <30s | 330 | **0** (0.00%) | p = 0.0025 |
+  | 30s-2m | 344 | 7 (2.03%) | p = 0.85 |
+  | 2-5m | 457 | 16 (3.50%) | p = 0.043 |
+
+  Not one sub-30-second first play ever produced an O. Median duration of O'd
+  scenes is 144s against 100s for the rest (Mann-Whitney p = 0.00086). That is
+  monotone in watch time — the shape the shipped curve already has, including
+  its negative limb below the short-exit threshold.
+
+  The two outcomes barely overlap: 120 scenes returned and 24 carry an O, but
+  only 9 do both. They measure different things. The likely confound is that a
+  long play is a scene consumed to satisfaction while a short one is a scene
+  sampled and returned to *because it has not been watched yet* — so return
+  rate reads as incompleteness of the first visit, not as liking.
+
+  A fitted curve was built, mirrored in Go, and measured against a real library
+  before this was caught. It moved two thirds of all labels, and the scenes it
+  demoted hardest — single plays of 8-10 minutes — were confirmed by the
+  library's owner to be among the best in it, while the ones it promoted were
+  not. Qualitative review found this before the statistics did.
+
+  Retargeting the fit at O events does not rescue the package: 24 O-positive
+  scenes sit below the 30-positive guard the package itself specifies, so the
+  fit would correctly refuse to adopt. Revisit only if a preference signal
+  accumulates enough support to fit against.
+
 - **Inferring a play's impression from a scene-plus-time-window join (WP4).**
   The acceptance bar was "a materially larger share of sessions carry an
   impression id". Measured against the same snapshot: of the unlinked sessions
@@ -255,14 +255,15 @@ Recorded so they are not re-derived from the same data.
 
 ## Sequencing
 
-WP1, WP2 and WP5 are independent. WP4 is withdrawn (see *Rejected*), which
-removes WP3's stated dependency: attribution is not going to improve, so WP3
-stands or falls on the negative class alone — which needs no attribution.
+WP1 is shipped. WP2 and WP4 are withdrawn on measurement (see *Rejected*),
+which leaves WP5 and WP3, both independent.
 
-Suggested order: **WP1** (a demonstrated defect, low effort), **WP2** (largest
-measured mis-fit), **WP5**, then **WP3**, whose own acceptance check —
-skipped scenes differing measurably from never-shown ones — should be run
-before any modelling work.
+WP4's withdrawal removes WP3's stated dependency: attribution is not going to
+improve, so WP3 stands or falls on the negative class alone, which needs none.
+Run its own acceptance check — do skipped scenes differ measurably from
+never-shown ones — before any modelling work.
+
+Suggested order: **WP5**, then **WP3**.
 
 WP1 shipped in PR #182: the digest now carries a fingerprint of the scoring
 sources, so an algorithm change with unchanged data and config no longer
@@ -270,17 +271,31 @@ reuses the previous algorithm's artifact.
 
 ## Method note
 
-Four ideas were proposed on structural plausibility and failed when measured:
+Five ideas were proposed on structural plausibility and failed when measured:
 amplifying `performer_similarity`, serialising lane-classification
-qualifications for memory, completion ratio, and — added after this document
-was first written — WP4's impression inference. Each was a real mechanism never
-sized against the thing it was meant to explain.
+qualifications for memory, completion ratio, WP4's impression inference, and
+WP2's curve re-shaping. Each was a real mechanism never sized against the thing
+it was meant to explain.
 
-WP4 is the sharpest case, because the evidence that sank it was already in this
-document. WP3's first limitation records that only 18 sessions fall within an
-hour of a showing; nobody checked that number against WP4's acceptance bar
-before ranking it second. Writing an acceptance criterion is not the same as
-evaluating it.
+WP4 and WP2 are the instructive pair, because both survived a careful reading
+of this document and failed anyway, for different reasons.
+
+WP4 was never sized against its own acceptance bar, even though the number that
+sinks it was already written here — WP3's first limitation records that only 18
+sessions fall within an hour of a showing.
+
+WP2 is the sharper lesson. Its evidence was real and reproduced exactly; what
+went unchecked was whether its *outcome variable* meant what it claimed. "An
+outcome the curve cannot influence" rules out circularity and nothing else. A
+proxy still has to be shown to track the thing being optimised, and this one
+demonstrably does not — it disagrees with every explicit preference signal in
+the data. Validate the target before fitting anything to it, and prefer a
+target the user has stated over one inferred from behaviour.
+
+It was caught by looking at the affected scenes. Any change that moves labels
+should be spot-checked against titles someone can recognise before it ships;
+two thirds of the labels moved, and the ranking looked wrong immediately to
+someone who knew the library.
 
 Size each package before implementing it. The acceptance criteria above are
 written as pre-conditions for that reason: an hour of SQL against a snapshot
