@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.0](https://github.com/mrx-31415/stash-curator/compare/v0.16.0...v0.17.0) (2026-08-21)
+
+
+### Features
+
+* **core:** attribute plays to a recent impression when no direct link exists ([#197](https://github.com/mrx-31415/stash-curator/issues/197)) ([a8267cd](https://github.com/mrx-31415/stash-curator/commit/a8267cd43631d71e00f639c10771b81ddf501884))
+* **model:** ignored-tags list and implicit-skip negatives from impressions ([#206](https://github.com/mrx-31415/stash-curator/issues/206)) ([fda48ee](https://github.com/mrx-31415/stash-curator/commit/fda48ee1a482fd5d1e7c16aff1e0fb392cb2944b))
+* **model:** score presentation overhaul — labeled Appeal/rank, shared renderers, v2 explanation schema ([#205](https://github.com/mrx-31415/stash-curator/issues/205)) ([c37efe9](https://github.com/mrx-31415/stash-curator/commit/c37efe96f48e83c7326f2885c6521e5f495f4bed))
+* **plugin:** new-user onboarding — visible descriptions, first-run popups, Help view ([#201](https://github.com/mrx-31415/stash-curator/issues/201)) ([b3fa623](https://github.com/mrx-31415/stash-curator/commit/b3fa62311a072bb0e09f65eb1819f20c4550f5ec))
+
+
+### Bug Fixes
+
+* **daemon:** retire the worker when the sidecar schema is newer than the binary ([#199](https://github.com/mrx-31415/stash-curator/issues/199)) ([afd2455](https://github.com/mrx-31415/stash-curator/commit/afd2455d9bc55be151b0a02bc164477c4173b49a))
+* **model:** fail the build loudly when feature_affinity is empty despite non-empty inputs ([#196](https://github.com/mrx-31415/stash-curator/issues/196)) ([0443f07](https://github.com/mrx-31415/stash-curator/commit/0443f07600b94b156b15b8c4c422ca8dedcee387))
+* **plugin:** make Manage → Settings 1:1 with the plugin settings view ([#198](https://github.com/mrx-31415/stash-curator/issues/198)) ([2680c70](https://github.com/mrx-31415/stash-curator/commit/2680c70368888bd83cc999b87325972d26ec141c))
+
 ## [0.16.0](https://github.com/mrx-31415/stash-curator/compare/v0.15.0...v0.16.0) (2026-08-21)
 
 
