@@ -11,6 +11,7 @@ boundary, and a broken binary fails the stage loudly.
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -218,6 +219,113 @@ else:
 def test_core_available_flag_matches_resolver(tmp_path: Path) -> None:
     assert core_module.core_available() is (core_module.core_binary() is not None)
     assert builder_module.core.core_binary() is core_module.core_binary()
+
+
+def _affinity_artifact_connection() -> sqlite3.Connection:
+    """An artifact-shaped in-memory connection with the two tables the issue
+    #186 sanity check counts, so the queries resolve exactly as on a model
+    artifact mid-build."""
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE feature_affinity (model_id TEXT, feature_id TEXT, affinity REAL)"
+    )
+    connection.execute(
+        "CREATE TABLE entity_feature (feature_version TEXT, entity_type TEXT, "
+        "entity_id TEXT, feature_id TEXT, value REAL, confidence REAL)"
+    )
+    return connection
+
+
+def test_affinity_sanity_check_rejects_computed_but_not_written() -> None:
+    """Issue #186: the build-time guard must fail loudly when the write path
+    lands fewer feature_affinity rows than the build computed in memory — the
+    mirror of core/modelbuild3.go's modelAffinitySanityCheck."""
+    artifact = _affinity_artifact_connection()
+    with pytest.raises(RuntimeError, match="feature_affinity"):
+        builder_module._affinity_sanity_check(artifact, "model-1", 3)
+
+
+def test_affinity_sanity_check_rejects_partial_write() -> None:
+    """Computed 3, wrote 1: a partial write must fail."""
+    artifact = _affinity_artifact_connection()
+    artifact.execute("INSERT INTO feature_affinity VALUES ('model-1', 'f1', 0.5)")
+    with pytest.raises(RuntimeError, match="feature_affinity"):
+        builder_module._affinity_sanity_check(artifact, "model-1", 3)
+
+
+def test_affinity_sanity_check_allows_empty_computation() -> None:
+    """A legitimately empty in-memory computation (no affinity signal) must not
+    trip the check — the guard verifies the write, not emptiness alone."""
+    artifact = _affinity_artifact_connection()
+    builder_module._affinity_sanity_check(artifact, "model-1", 0)
+
+
+def test_affinity_sanity_check_allows_fully_written() -> None:
+    """Computed 3, wrote 3: consistent, must pass."""
+    artifact = _affinity_artifact_connection()
+    artifact.execute(
+        "INSERT INTO feature_affinity VALUES ('model-1', 'f1', 0.5), "
+        "('model-1', 'f2', 0.5), ('model-1', 'f3', 0.5)"
+    )
+    builder_module._affinity_sanity_check(artifact, "model-1", 3)
+
+
+def test_model_build_fails_when_affinities_computed_but_not_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a build whose affinity computation produced rows but whose
+    write path landed none must fail loudly instead of publishing a model with
+    partial/no content signal. _affinities is forced to one affinity and the
+    feature_affinity INSERT is made a no-op to reproduce the #186 write-path
+    drop; the guard fires in _publish before the model is published."""
+    binary = builder_module.core.core_binary()
+    if binary is None:
+        pytest.skip("curator-core binary is not built")
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    monkeypatch.setattr(
+        builder_module.PreferenceModelBuilder,
+        "_affinities",
+        lambda self, scene_features, labels, absolute_label_mean: {
+            "f1": builder_module._Affinity("f1", 0.5, 0.5, 1.0, 1, {})
+        },
+    )
+    # Drop feature_affinity writes so the computed rows never reach the table.
+    original_create_artifact = builder_module.create_artifact
+
+    class _DropAffinityWrites:
+        """Wrap the artifact connection, delegating everything except
+        feature_affinity inserts, which become no-ops."""
+
+        def __init__(self, conn: sqlite3.Connection):
+            self._conn = conn
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+        def executemany(self, sql: str, seq_of_parameters):
+            if "INSERT INTO feature_affinity" in sql:
+                return
+            return self._conn.executemany(sql, seq_of_parameters)
+
+    def dropping_create_artifact(core, kind, identifier):
+        conn, temporary, final = original_create_artifact(core, kind, identifier)
+        return _DropAffinityWrites(conn), temporary, final
+
+    monkeypatch.setattr(builder_module, "create_artifact", dropping_create_artifact)
+    with pytest.raises(RuntimeError, match="feature_affinity"):
+        builder.build()
+    # The failed build must not leave a published model behind.
+    status = connection.execute(
+        "SELECT status FROM model_version ORDER BY created_at_ms DESC LIMIT 1"
+    ).fetchone()[0]
+    assert status == "failed", status
+    current = connection.execute(
+        "SELECT value FROM application_meta WHERE key='current_model_id'"
+    ).fetchone()
+    assert current is None or current[0] == "", current
 
 
 def test_model_build_kernel_result_surface(tmp_path: Path) -> None:
