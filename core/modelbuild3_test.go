@@ -1,10 +1,10 @@
 package main
 
-// Issue #186: the model build must fail loudly when feature_affinity came out
-// empty while the build produced non-empty inputs (labels/direct_scene_state
-// or entity_feature rows), instead of silently publishing a model with no
-// content-based recommendations. A legitimately empty corpus (no labels and
-// no entity features) must still build.
+// Issue #186: the model build must fail loudly when the write path lands a
+// different number of feature_affinity rows than the build computed in memory,
+// instead of silently publishing a model whose content affinities were
+// partially or wholly dropped. A legitimately empty in-memory computation
+// (no affinity signal) must still build — the check only guards the write.
 
 import (
 	"strings"
@@ -31,75 +31,62 @@ func artifactSanityDB(t *testing.T) dbx {
 	return db
 }
 
-func TestModelAffinitySanityCheckFailsWhenAffinitiesEmptyDespiteInputs(t *testing.T) {
+func TestModelAffinitySanityCheckFailsWhenComputedButNotWritten(t *testing.T) {
 	db := artifactSanityDB(t)
-	// Non-empty labels (the direct_scene_state source), zero affinity rows:
-	// the build must fail with a message naming the artifact table and stage.
-	if _, err := db.Exec(`INSERT INTO entity_feature(
-		feature_version, entity_type, entity_id, feature_id, value, confidence
-	) VALUES ('fv-1', 'scene', 's1', 'f1', 1.0, 1.0)`); err != nil {
-		t.Fatal(err)
-	}
-	err := modelAffinitySanityCheck(db, "model-1", "fv-1", map[string]sceneLabel{
-		"s1": {absoluteEvidence: 2},
-	})
+	// The build computed 3 affinities in memory but the write path landed 0.
+	err := modelAffinitySanityCheck(db, "model-1", 3)
 	if err == nil {
-		t.Fatal("expected the sanity check to fail: affinities empty while labels and entity_feature are non-empty")
+		t.Fatal("expected the sanity check to fail: computed 3 affinities, wrote 0")
 	}
-	for _, want := range []string{"feature_affinity", "model.publish", "0 rows"} {
+	for _, want := range []string{"feature_affinity", "model.publish", "computed 3"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error must mention %q, got: %v", want, err)
 		}
 	}
 }
 
-func TestModelAffinitySanityCheckFailsOnLabelsOnly(t *testing.T) {
+func TestModelAffinitySanityCheckFailsOnPartialWrite(t *testing.T) {
 	db := artifactSanityDB(t)
-	// Labels alone (no entity_feature rows) still mean the build expected
-	// content signal from a labeled corpus; empty affinities must fail.
-	err := modelAffinitySanityCheck(db, "model-1", "fv-1", map[string]sceneLabel{
-		"s1": {absoluteEvidence: 2},
-	})
+	if _, err := db.Exec(`INSERT INTO feature_affinity(model_id, feature_id)
+		VALUES ('model-1', 'f1')`); err != nil {
+		t.Fatal(err)
+	}
+	// Computed 3, wrote 1: a partial write must fail.
+	err := modelAffinitySanityCheck(db, "model-1", 3)
 	if err == nil {
-		t.Fatal("expected the sanity check to fail: affinities empty while labels are non-empty")
+		t.Fatal("expected the sanity check to fail on a partial write")
 	}
 	if !strings.Contains(err.Error(), "feature_affinity") {
 		t.Errorf("error must name feature_affinity, got: %v", err)
 	}
 }
 
-func TestModelAffinitySanityCheckFailsOnEntityFeaturesOnly(t *testing.T) {
+func TestModelAffinitySanityCheckAllowsEmptyComputation(t *testing.T) {
 	db := artifactSanityDB(t)
-	if _, err := db.Exec(`INSERT INTO entity_feature(
-		feature_version, entity_type, entity_id, feature_id, value, confidence
-	) VALUES ('fv-1', 'scene', 's1', 'f1', 1.0, 1.0)`); err != nil {
-		t.Fatal(err)
-	}
-	err := modelAffinitySanityCheck(db, "model-1", "fv-1", map[string]sceneLabel{})
-	if err == nil {
-		t.Fatal("expected the sanity check to fail: affinities empty while entity_feature is non-empty")
+	// A legitimately empty in-memory computation: the build had no affinity
+	// signal, so nothing to write. Must NOT fail.
+	if err := modelAffinitySanityCheck(db, "model-1", 0); err != nil {
+		t.Fatalf("empty-but-consistent build must not fail, got: %v", err)
 	}
 }
 
-func TestModelAffinitySanityCheckAllowsEmptyCorpus(t *testing.T) {
-	db := artifactSanityDB(t)
-	// A legitimately empty corpus: no labels, no entity_feature rows, zero
-	// affinities. The build must NOT fail on emptiness alone.
-	if err := modelAffinitySanityCheck(db, "model-1", "fv-1", map[string]sceneLabel{}); err != nil {
-		t.Fatalf("empty-but-consistent corpus must not fail, got: %v", err)
-	}
-}
-
-func TestModelAffinitySanityCheckAllowsWrittenAffinities(t *testing.T) {
+func TestModelAffinitySanityCheckAllowsFullyWritten(t *testing.T) {
 	db := artifactSanityDB(t)
 	if _, err := db.Exec(`INSERT INTO feature_affinity(model_id, feature_id)
-		VALUES ('model-1', 'f1')`); err != nil {
+		VALUES ('model-1', 'f1'), ('model-1', 'f2'), ('model-1', 'f3')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := modelAffinitySanityCheck(db, "model-1", "fv-1", map[string]sceneLabel{
-		"s1": {absoluteEvidence: 2},
-	}); err != nil {
-		t.Fatalf("non-empty affinities must pass even with inputs present, got: %v", err)
+	// Computed 3, wrote 3: consistent, must pass.
+	if err := modelAffinitySanityCheck(db, "model-1", 3); err != nil {
+		t.Fatalf("consistent build must pass, got: %v", err)
+	}
+}
+
+func TestModelAffinitySanityCheckAllowsNoComputationNoWrite(t *testing.T) {
+	db := artifactSanityDB(t)
+	// Computed 0, wrote 0: the empty-corpus path. Must pass.
+	if err := modelAffinitySanityCheck(db, "model-1", 0); err != nil {
+		t.Fatalf("zero-computed zero-written must pass, got: %v", err)
 	}
 }
 

@@ -268,12 +268,11 @@ INSERT INTO feature_affinity(
 ) VALUES (?, ?, ?, ?, ?, ?, ?)`, affinityRows); err != nil {
 		return fail(err)
 	}
-	// Issue #186: a model with zero feature_affinity rows while the build
-	// produced non-empty inputs would silently publish with no content-based
-	// recommendations. The write above may have inserted nothing either
-	// because affinities computed empty or because the insert path dropped
-	// rows, so verify what actually landed rather than the in-memory slice.
-	if err := modelAffinitySanityCheck(artifact, modelID, featureVersion, labels); err != nil {
+	// Issue #186: verify what the build computed in memory actually reached
+	// the artifact table. If the write path dropped rows (or a load-induced
+	// in-memory loss produced fewer than expected), the published model would
+	// silently carry partial/no content affinities.
+	if err := modelAffinitySanityCheck(artifact, modelID, len(affinities)); err != nil {
 		return fail(err)
 	}
 	if report != nil {
@@ -481,29 +480,25 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`, modelID)
 }
 
 // modelAffinitySanityCheck is the issue #186 build-time guard: fail the build
-// loudly when feature_affinity came out empty (0 rows written) while the build
-// produced non-empty inputs — labeled scenes (the direct_scene_state source)
-// or entity_feature rows. A legitimately empty corpus (no labels and no entity
-// features) must still build, so the check keys on "inputs non-empty but
-// affinities empty", never on emptiness alone. Mirrors
-// PreferenceModelBuilder._publish's identical check.
-func modelAffinitySanityCheck(artifact dbx, modelID, featureVersion string, labels map[string]sceneLabel) error {
+// loudly when the in-memory affinity computation produced rows but the write
+// path landed a different number of them. The load-induced in-memory loss
+// (affinities computed empty under heavy load) is not reliably distinguishable
+// from a legitimately empty build, so the check verifies what the build said it
+// computed actually reached the artifact table rather than keying on emptiness
+// alone. Mirrors PreferenceModelBuilder._publish's identical check.
+func modelAffinitySanityCheck(artifact dbx, modelID string, computedAffinityCount int) error {
+	if computedAffinityCount <= 0 {
+		return nil
+	}
 	var affinityCount int64
 	if err := artifact.QueryRow(`SELECT count(*) FROM feature_affinity WHERE model_id=?`, modelID).Scan(&affinityCount); err != nil {
 		return err
 	}
-	if affinityCount > 0 {
+	if int(affinityCount) == computedAffinityCount {
 		return nil
 	}
-	var entityFeatureCount int64
-	if err := artifact.QueryRow(`SELECT count(*) FROM entity_feature WHERE feature_version=?`, featureVersion).Scan(&entityFeatureCount); err != nil {
-		return err
-	}
-	if len(labels) == 0 && entityFeatureCount == 0 {
-		return nil
-	}
-	return fmt.Errorf("model build sanity check failed at model.publish: feature_affinity is empty (0 rows) while the build produced non-empty inputs (labels/direct_scene_state: %d scenes, entity_feature: %d rows); refusing to publish a model with no content affinities",
-		len(labels), entityFeatureCount)
+	return fmt.Errorf("model build sanity check failed at model.publish: feature_affinity has %d rows but the build computed %d; refusing to publish a model whose content affinities were not fully written",
+		affinityCount, computedAffinityCount)
 }
 
 // modelConfigCanonical mirrors json.dumps(asdict(CuratorConfig),

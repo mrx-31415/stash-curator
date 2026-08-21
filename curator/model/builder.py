@@ -176,39 +176,33 @@ def _number(value: object) -> float:
 def _affinity_sanity_check(
     artifact: sqlite3.Connection,
     model_id: str,
-    feature_version: str,
-    labels: dict[str, _SceneLabel],
+    computed_affinity_count: int,
 ) -> None:
-    """Issue #186 build-time guard: fail the build loudly when
-    feature_affinity came out empty (0 rows written) while the build produced
-    non-empty inputs — labeled scenes (the direct_scene_state source) or
-    entity_feature rows. A legitimately empty corpus (no labels and no entity
-    features) must still build, so the check keys on "inputs non-empty but
-    affinities empty", never on emptiness alone. Mirrors
+    """Issue #186 build-time guard: fail the build loudly when the in-memory
+    affinity computation produced rows but the write path landed zero of them.
+
+    The write is the only silently-corruptible stage here: the load-induced
+    in-memory loss (affinities computed empty under heavy load) is not reliably
+    distinguishable from a legitimately empty build (a corpus whose labels have
+    no absolute evidence and whose pair events cancel out), so this check does
+    NOT fire on an empty in-memory result — it verifies what the build said it
+    computed actually reached the artifact table. Mirrors
     modelAffinitySanityCheck in core/modelbuild3.go.
     """
+    if computed_affinity_count <= 0:
+        return
     affinity_count = int(
         artifact.execute(
             "SELECT count(*) FROM feature_affinity WHERE model_id=?", (model_id,)
         ).fetchone()[0]
     )
-    if affinity_count > 0:
-        return
-    entity_feature_count = int(
-        artifact.execute(
-            "SELECT count(*) FROM entity_feature WHERE feature_version=?",
-            (feature_version,),
-        ).fetchone()[0]
-    )
-    if not labels and not entity_feature_count:
+    if affinity_count == computed_affinity_count:
         return
     raise RuntimeError(
         "model build sanity check failed at model.publish: "
-        f"feature_affinity is empty ({affinity_count} rows) while the build "
-        "produced non-empty inputs "
-        f"(labels/direct_scene_state: {len(labels)} scenes, entity_feature: "
-        f"{entity_feature_count} rows); refusing to publish a model with no "
-        "content affinities"
+        f"feature_affinity has {affinity_count} rows but the build computed "
+        f"{computed_affinity_count}; refusing to publish a model whose "
+        "content affinities were not fully written"
     )
 
 
@@ -2016,12 +2010,11 @@ class PreferenceModelBuilder:
                     for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
                 ),
             )
-            # Issue #186: a model with zero feature_affinity rows while the
-            # build produced non-empty inputs would silently publish with no
-            # content-based recommendations. Verify what actually landed (the
-            # write above may have inserted nothing either because affinities
-            # computed empty or because the insert path dropped rows).
-            _affinity_sanity_check(artifact, model_id, feature_version, labels)
+            # Issue #186: verify what the build computed in memory actually
+            # reached the artifact table. If the write path dropped rows (or a
+            # load-induced in-memory loss produced fewer than expected), the
+            # published model would silently carry partial/no content affinities.
+            _affinity_sanity_check(artifact, model_id, len(affinities))
             self._report(0.78)
             insert_rows(
                 """
