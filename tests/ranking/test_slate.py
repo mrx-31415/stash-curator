@@ -622,6 +622,28 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
     } == {"for_you"}
 
 
+def test_rank_in_lane_is_relative_to_lane_best(tmp_path: Path) -> None:
+    """Issue #212: the displayed "Rank in <lane>" is the scene's lane value
+    relative to the lane's best — the top of the lane reads 1.00 — not the
+    raw absolute utility."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    LanePolicy(connection).classify("model")
+    builder = SlateBuilder(connection)
+    builder.materialize("model")
+    slate = builder.recommend("best_bets", 4)
+    raw = {
+        item.scene_id: item.lane_value
+        for item in LanePolicy(connection).load("model", lanes={"best_bets"})
+    }
+    lane_max = max(raw.values())
+    assert lane_max > 0
+    for item in slate.items:
+        assert item.lane_value == pytest.approx(raw[item.scene_id] / lane_max)
+    # The top of the lane reads 1.00; everything else is relative to it.
+    assert max(item.lane_value for item in slate.items) == pytest.approx(1.0)
+    assert all(0.0 < item.lane_value <= 1.0 for item in slate.items)
+
+
 def test_queried_score_first_lanes_match_full_materialized_order(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     classifications = LanePolicy(connection).classify("model")
