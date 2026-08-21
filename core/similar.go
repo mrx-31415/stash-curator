@@ -27,8 +27,7 @@ func (s *similarityService) setTimingKeys(keys ...string) {
 	}
 }
 
-// similarityResult mirrors SimilarityService.SimilarityResult (asdict order:
-// entity_id, similarity, appeal, rank_score, relationships, details).
+// similarityResult mirrors SimilarityService.SimilarityResult.
 type similarityResult struct {
 	entityID      string
 	similarity    float64
@@ -36,6 +35,8 @@ type similarityResult struct {
 	rankScore     float64
 	relationships []string
 	details       jVal
+	appealRaw     float64
+	explanation   jVal
 }
 
 func similarityResultJSON(r *similarityResult) jVal {
@@ -44,13 +45,35 @@ func similarityResultJSON(r *similarityResult) jVal {
 		relationships.arr = append(relationships.arr, jvStr(rel))
 	}
 	return jvObj(
-		jvKey("entity_id", jvStr(r.entityID)),
-		jvKey("similarity", jvFloat(r.similarity)),
-		jvKey("appeal", jvFloat(r.appeal)),
-		jvKey("rank_score", jvFloat(r.rankScore)),
-		jvKey("relationships", relationships),
-		jvKey("details", r.details),
+		jvKey("entity_id", jvStr(r.entityID)), jvKey("similarity", jvFloat(r.similarity)),
+		jvKey("appeal", jvFloat(r.appeal)), jvKey("appeal_raw", jvFloat(r.appealRaw)),
+		jvKey("rank_score", jvFloat(r.rankScore)), jvKey("relationships", relationships),
+		jvKey("details", r.details), jvKey("explanation", r.explanation),
 	)
+}
+
+func similarExplanation(similarity, appealRaw float64, relationships []string) jVal {
+	labels := map[string]string{"same_performer": "Same performer", "similar_performer": "Similar performer profile", "shared_content": "Shared content", "similar_structure": "Similar cast structure", "same_studio": "Same studio", "multi_hop": "Multi-hop performer connection"}
+	names := make([]string, 0, len(relationships))
+	reasons := jvArr()
+	for _, value := range relationships {
+		label := labels[value]
+		if label == "" {
+			label = value
+		}
+		names = append(names, label)
+		reasons.arr = append(reasons.arr, jvObj(jvKey("code", jvStr(value)), jvKey("label", jvStr(label)), jvKey("direction", jvStr("positive")), jvKey("magnitude", jvFloat(1)), jvKey("confidence", jvFloat(1))))
+	}
+	summary := "Closest available content match."
+	if len(names) > 0 {
+		summary = "Related through " + strings.Join(names, ", ")
+	}
+	components := jvArr()
+	components.arr = append(components.arr,
+		jvObj(jvKey("name", jvStr("content_similarity")), jvKey("label", jvStr("Similarity")), jvKey("value", jvFloat(similarity)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("appeal")), jvKey("label", jvStr("Appeal")), jvKey("value", jvFloat(appealRaw)), jvKey("scale", jvStr("-1..1")), jvKey("direction", jvStr(direction(appealRaw))), jvKey("available", jvBool(true))),
+	)
+	return jvObj(jvKey("summary", jvStr(summary)), jvKey("components", components), jvKey("reasons", reasons))
 }
 
 // similarityService mirrors SimilarityService.
@@ -714,24 +737,18 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 			performerVal = jvInt(0)
 		}
 		details := jvObj(
-			jvKey("content", jvFloat(contentValue)),
-			jvKey("performer", performerVal),
-			jvKey("structure", jvFloat(structure)),
-			jvKey("studio", jvFloat(boolFloat(sameStudio))),
-			jvKey("shared_tags", jvArr()),
-			jvKey("shared_performer_ids", sharedIDsJSON),
+			jvKey("content", jvFloat(contentValue)), jvKey("performer", performerVal),
+			jvKey("structure", jvFloat(structure)), jvKey("studio", jvFloat(boolFloat(sameStudio))),
+			jvKey("shared_tags", jvArr()), jvKey("shared_performer_ids", sharedIDsJSON),
 			jvKey("score_breakdown", jvObj(
 				jvKey("similarity", jvFloat(math.Round(0.7*similarity*1e4)/1e4)),
 				jvKey("appeal", jvFloat(math.Round(0.3*appeal*1e4)/1e4)),
 			)),
 		)
 		results = append(results, &similarityResult{
-			entityID:      candidateID,
-			similarity:    similarity,
-			appeal:        appeal,
-			rankScore:     rankScore,
-			relationships: relationships,
-			details:       details,
+			entityID: candidateID, similarity: similarity, appeal: appeal,
+			rankScore: rankScore, relationships: relationships, details: details,
+			appealRaw: candidateAppeal, explanation: similarExplanation(similarity, candidateAppeal, relationships),
 		})
 	}
 	sort.Slice(results, func(i, j int) bool {
