@@ -4486,7 +4486,10 @@
       setSavingKeys((current) => new Set(current).add(field.key));
       setFieldErrors((current) => ({ ...current, [field.key]: "" }));
       try {
-        await configurePlugin({ [field.key]: value });
+        // Stash's configurePlugin REPLACES the stored plugins.settings map
+        // (config.go's set() deletes before writing), so a single-key payload
+        // would wipe every other setting. Send the full map we already hold.
+        await configurePlugin({ ...raw, [field.key]: value });
         if (field.configKey) {
           const data = await operation({ operation: "get_config" });
           cachedConfigUpdatedAtMs = data.updated_at_ms;
@@ -4838,7 +4841,10 @@
       setDiversitySaving(true);
       setError("");
       try {
-        await configurePlugin({ diversityDisabled: !nextEnabled });
+        // Same replace-semantics guard as saveField: spread the stored map so
+        // toggling variety cannot erase the other plugins.settings keys.
+        const raw = await getPluginSettings();
+        await configurePlugin({ ...raw, diversityDisabled: !nextEnabled });
         const data = await operation({ operation: "get_config" });
         clearSlateCache();
         cachedConfigUpdatedAtMs = data.updated_at_ms;
