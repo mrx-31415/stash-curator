@@ -856,7 +856,10 @@
         React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement("div", { key: `${row.code}-${index}`, className: `curator-evidence-row curator-evidence-${row.direction || "context"}` }, React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"), React.createElement("strong", null, row.label || reasonLabel(row.code)), row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`))))
       ),
       lane?.available && lane.source_lane && React.createElement("p", { className: "curator-lane-callout" }, `Selected for ${lane.source_lane.replaceAll("_", " ")} as ${lane.subtype || "a qualified match"}.`),
-      React.createElement("details", { className: "curator-technical-details" }, React.createElement("summary", null, "Technical details"), React.createElement(ScoreBreakdown, { explanation, item }))
+      // Issue #216: never render the Technical details disclosure empty —
+      // ScoreBreakdown has rows only when the explanation carries components
+      // or an item fallback exists.
+      (explanation.components?.length || item) && React.createElement("details", { className: "curator-technical-details" }, React.createElement("summary", null, "Technical details"), React.createElement(ScoreBreakdown, { explanation, item }))
     );
   }
 
@@ -3110,7 +3113,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
