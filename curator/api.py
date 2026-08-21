@@ -34,6 +34,7 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "model_update_max_wait_minutes": 30,
     "model_update_min_interval_minutes": 60,
     "prune_tag_name": "[Prune]",
+    "ignored_tags": "",
     "expand_horizon_days": 90,
     "expand_gender": "FEMALE",
     "expand_wildcard": False,
@@ -1253,6 +1254,7 @@ class CuratorAPI:
             "model_update_max_wait_minutes",
             "model_update_min_interval_minutes",
             "prune_tag_name",
+            "ignored_tags",
             "expand_horizon_days",
             "expand_gender",
             "expand_wildcard",
@@ -1318,6 +1320,9 @@ class CuratorAPI:
             not isinstance(prune_tag, str) or not prune_tag.strip() or len(prune_tag) > 100
         ):
             raise ValueError("prune_tag_name must be a non-empty string up to 100 characters")
+        ignored_tags = values.get("ignored_tags")
+        if ignored_tags is not None and not isinstance(ignored_tags, str):
+            raise ValueError("ignored_tags must be a comma-separated string")
         horizon = values.get("expand_horizon_days")
         if horizon is not None and (not isinstance(horizon, int) or not 1 <= horizon <= 3650):
             raise ValueError("expand_horizon_days must be an integer from 1 to 3650")

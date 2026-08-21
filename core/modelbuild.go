@@ -34,6 +34,13 @@ const (
 	curationPairConfidence    = 0.15
 	curationPairSurpriseBonus = 2.0
 	curationPairIPSCap        = 2.0
+	// Mirrors ModelConfig.implicit_skip_* in curator/config.py (#146 Channel A).
+	// The base is half the deliberate-pick base (curationPairConfidence) so
+	// implicit signal never outranks explicit feedback; the issue author
+	// flagged it may need to be even weaker after live measurement.
+	implicitSkipConfidence    = 0.075
+	implicitSkipSurpriseBonus = 2.0
+	implicitSkipIPSCap        = 2.0
 )
 
 // sceneLabel mirrors _SceneLabel: outcome/confidence/effectiveEvidence cover
@@ -734,6 +741,114 @@ ORDER BY scene_id, occurred_at_ms`)
 	return events, nil
 }
 
+// modelImplicitSkipEvents mirrors _implicit_skip_events (#146 Channel A):
+// when a recommended scene is played or thumbed, the earlier-position cards
+// in the same impression are treated as weak pairwise losers. Surprise uses
+// the stored policy_score (surprise = max(0, loser_score - winner_score));
+// confidence uses the implicit base (half the deliberate-pick base) so
+// implicit signal never outranks explicit feedback. Trigger is played or
+// thumbed only. Pairs are virtual (build-time only).
+func modelImplicitSkipEvents(db dbx) ([]pairEvent, error) {
+	metadataWrong, err := metadataWrongScenes(db)
+	if err != nil {
+		return nil, err
+	}
+	type winner struct{ sceneID, impressionID string }
+	winners := map[string]winner{}
+	rows, err := db.Query(`
+SELECT ps.scene_id, ps.impression_id FROM play_session ps
+WHERE ps.impression_id IS NOT NULL
+  AND ps.provenance='direct_player' AND ` + observedPlaybackSQL + `
+UNION
+SELECT f.scene_id, f.impression_id FROM feedback f
+WHERE f.impression_id IS NOT NULL
+  AND f.feedback_type='thumb_up' AND f.reversed_by_id IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID, impressionID string
+		if err := rows.Scan(&sceneID, &impressionID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if metadataWrong[sceneID] {
+			continue
+		}
+		if _, exists := winners[sceneID]; exists {
+			continue
+		}
+		winners[sceneID] = winner{sceneID, impressionID}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	winnerScenes := make([]string, 0, len(winners))
+	for sceneID := range winners {
+		winnerScenes = append(winnerScenes, sceneID)
+	}
+	sort.Strings(winnerScenes)
+	var events []pairEvent
+	for _, winnerScene := range winnerScenes {
+		impressionID := winners[winnerScene].impressionID
+		rows, err := db.Query(`
+SELECT scene_id, position, policy_score FROM impression_item
+WHERE impression_id=? ORDER BY position`, impressionID)
+		if err != nil {
+			return nil, err
+		}
+		type item struct {
+			sceneID     string
+			position    int64
+			policyScore float64
+		}
+		var items []item
+		for rows.Next() {
+			var sceneID string
+			var position int64
+			var policyScore float64
+			if err := rows.Scan(&sceneID, &position, &policyScore); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			items = append(items, item{sceneID, position, policyScore})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		winnerPosition := int64(-1)
+		winnerScore := 0.0
+		for _, it := range items {
+			if it.sceneID == winnerScene {
+				winnerPosition = it.position
+				winnerScore = it.policyScore
+				break
+			}
+		}
+		if winnerPosition < 0 {
+			continue
+		}
+		for _, it := range items {
+			if it.position >= winnerPosition || it.sceneID == winnerScene {
+				continue
+			}
+			surprise := it.policyScore - winnerScore
+			if surprise < 0 {
+				surprise = 0
+			}
+			confidence := implicitSkipConfidence * (1.0 + implicitSkipSurpriseBonus*surprise) *
+				math.Min(implicitSkipIPSCap, 1.0)
+			if confidence > 1.0 {
+				confidence = 1.0
+			}
+			events = append(events, pairEvent{winnerScene, it.sceneID, confidence})
+		}
+	}
+	return events, nil
+}
+
 // modelAffinities mirrors _affinities.
 func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	labels map[string]sceneLabel, absoluteLabelMean float64) (map[string]modelAffinity, error) {
@@ -770,6 +885,11 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	if err != nil {
 		return nil, err
 	}
+	implicitSkipEvents, err := modelImplicitSkipEvents(db)
+	if err != nil {
+		return nil, err
+	}
+	pairEvents = append(pairEvents, implicitSkipEvents...)
 	for _, event := range pairEvents {
 		winnerFeatures := map[string]storedFeature{}
 		for _, f := range sceneFeatures[event.winnerScene] {

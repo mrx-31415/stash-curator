@@ -462,6 +462,19 @@ class FeatureBuilder:
                 "SELECT scene_id FROM source_scene ORDER BY scene_id"
             )
         ]
+        tag_names = {
+            str(row["tag_id"]): str(row["name"] or "")
+            for row in self.connection.execute("SELECT tag_id, name FROM source_tag")
+        }
+        # Exact-name ignore set: tags the user excluded from tag analysis. The
+        # name is the only match key (no bracket heuristics); a tag matching an
+        # ignored name is dropped before it can enter base_vectors, so it never
+        # contributes to document frequency, the l2 norm, entity_feature rows,
+        # affinity accumulation, or the Taste Profile.
+        ignored_names = frozenset(self.config.feature.ignored_tags)
+        ignored_tag_ids = {
+            tag_id for tag_id, name in tag_names.items() if name in ignored_names
+        }
         direct: dict[str, set[str]] = defaultdict(set)
         for row in self.connection.execute(
             """
@@ -469,11 +482,13 @@ class FeatureBuilder:
             WHERE provenance='scene' ORDER BY scene_id, tag_id
             """
         ):
+            tag_id = str(row["tag_id"])
             if (
-                roles.get(str(row["tag_id"]), TagRoleResult(TagRole.IGNORED, "missing")).role
+                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role
                 is TagRole.CONTENT
+                and tag_id not in ignored_tag_ids
             ):
-                direct[str(row["scene_id"])].add(str(row["tag_id"]))
+                direct[str(row["scene_id"])].add(tag_id)
         marker: dict[str, set[str]] = defaultdict(set)
         marker_rows = self.connection.execute(
             """
@@ -487,14 +502,22 @@ class FeatureBuilder:
         )
         for row in marker_rows:
             tag_id = str(row["tag_id"])
-            if roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role is TagRole.CONTENT:
+            if (
+                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role
+                is TagRole.CONTENT
+                and tag_id not in ignored_tag_ids
+            ):
                 marker[str(row["scene_id"])].add(tag_id)
         parents: dict[str, set[str]] = defaultdict(set)
         for row in self.connection.execute(
             "SELECT tag_id, parent_tag_id FROM tag_parent ORDER BY tag_id, parent_tag_id"
         ):
             parent = str(row["parent_tag_id"])
-            if roles.get(parent, TagRoleResult(TagRole.IGNORED, "missing")).role is TagRole.CONTENT:
+            if (
+                roles.get(parent, TagRoleResult(TagRole.IGNORED, "missing")).role
+                is TagRole.CONTENT
+                and parent not in ignored_tag_ids
+            ):
                 parents[str(row["tag_id"])].add(parent)
 
         base_vectors: dict[str, dict[str, float]] = {}
@@ -516,10 +539,6 @@ class FeatureBuilder:
         for values in base_vectors.values():
             for tag_id in values:
                 document_frequency[tag_id] += 1
-        tag_names = {
-            str(row["tag_id"]): str(row["name"] or "")
-            for row in self.connection.execute("SELECT tag_id, name FROM source_tag")
-        }
         features: list[_Feature] = []
         total = max(1, len(scene_ids))
         # Description term features: tokenize scene descriptions, compute TF-IDF

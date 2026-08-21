@@ -4329,6 +4329,12 @@
       ],
     },
     {
+      title: "Tag analysis",
+      fields: [
+        { key: "ignoredTags", configKey: "ignored_tags", type: "STRING", label: "Ignored tags", description: "Comma-separated names of tags excluded from tag analysis. Auto-generated or metadata tags like [Timestamp: Synced] do not describe the scene; exact-name match only. Empty by default." },
+      ],
+    },
+    {
       title: "Whisparr integration",
       fields: [
         { key: "whisparrUrl", type: "STRING", label: "Whisparr v3 URL", description: "Optional Whisparr base URL used by Expand scene actions." },
@@ -4336,6 +4342,20 @@
         { key: "whisparrRootFolder", type: "STRING", label: "Whisparr root folder override", description: "Optional. Leave empty to use Whisparr's first configured root folder." },
         { key: "whisparrQualityProfileId", type: "NUMBER", optional: true, label: "Whisparr quality profile ID override", description: "Optional. Leave empty to use Whisparr's fallback (or first) quality profile." },
         { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "Start a release search after adding a scene. Enabled by default." },
+      ],
+    },
+    {
+      title: "Storage",
+      fields: [
+        { key: "databasePath", type: "STRING", label: "Sidecar database path", description: "Leave empty to store data in the plugin's data directory." },
+        { key: "backupPath", type: "STRING", label: "Backup directory", description: "Leave empty to store Curator backups beside the sidecar database." },
+      ],
+    },
+    {
+      title: "Development",
+      fields: [
+        { key: "profilingEnabled", type: "BOOLEAN", label: "Enable profiling", description: "Record recent Curator operation timings for the Profiling page." },
+        { key: "pprofEnabled", type: "BOOLEAN", label: "Capture CPU profiles", description: "Write a Go CPU and heap profile per operation into the sidecar's profiles directory, browsable and downloadable from the Profiling page. Analyze with go tool pprof. Off by default; keep off unless investigating performance." },
       ],
     },
   ];
