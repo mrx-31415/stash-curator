@@ -95,8 +95,20 @@ func execMultiRow(conn *sql.Conn, statement string, rows [][]any) error {
 				stmt = expanded
 			}
 		}
-		if _, err := conn.ExecContext(context.Background(), stmt, args...); err != nil {
+		// Issue #186 audit: a statement that reports success without affecting
+		// the expected rows (a silent no-op or a partially applied write) must
+		// not look like a completed insert — the model build would publish an
+		// artifact with missing rows.
+		res, err := conn.ExecContext(context.Background(), stmt, args...)
+		if err != nil {
 			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != int64(len(batch)) {
+			return fmt.Errorf("execMultiRow: statement affected %d rows, want %d", affected, len(batch))
 		}
 	}
 	return nil
