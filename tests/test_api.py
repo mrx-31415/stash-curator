@@ -103,7 +103,12 @@ def test_slate_api_defers_explanations_until_requested(
     )
     explanation = CuratorAPI(connection).explanation(str(result["items"][0]["scene_id"]))
     assert explanation["summary"]
-    assert explanation["supporting_reasons"]
+    assert explanation["reasons"]
+    assert explanation["apiSchemaVersion"] == 2
+    assert "scores" in explanation
+    assert "evidence_fingerprint" in explanation
+    assert "lane_context" in explanation
+    assert "components" in explanation
     assert (
         connection.execute(
             "SELECT count(*) FROM impression WHERE impression_id='api-impression'"

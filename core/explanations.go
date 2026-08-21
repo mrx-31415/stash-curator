@@ -109,15 +109,17 @@ func reason(score *fullSceneScore, featureVersion, code string, value, conf floa
 // fullSceneScore carries every ModelSceneScore field the reason derivation
 // needs.
 type fullSceneScore struct {
-	modelID          string
-	sceneID          string
-	directAppeal     float64
-	directConfidence float64
-	appeal           float64
-	currentFit       float64
-	confidence       float64
-	components       jVal
-	neighbors        []jVal
+	modelID             string
+	sceneID             string
+	directAppeal        float64
+	directConfidence    float64
+	appeal              float64
+	currentFit          float64
+	confidence          float64
+	metadataConfidence  float64
+	recovery            float64
+	components          jVal
+	neighbors           []jVal
 }
 
 // fullScores mirrors RecommendationModelStore.scores for the reason path.
@@ -153,14 +155,16 @@ FROM model_scene_score WHERE model_id=? AND scene_id IN (`+placeholders+`) ORDER
 			components = jvNull()
 		}
 		result[sceneID] = &fullSceneScore{
-			modelID:          modelID2,
-			sceneID:          sceneID,
-			directAppeal:     directAppeal,
-			directConfidence: directConfidence,
-			appeal:           appeal,
-			currentFit:       currentFit,
-			confidence:       confidence,
-			components:       components,
+			modelID:            modelID2,
+			sceneID:            sceneID,
+			directAppeal:       directAppeal,
+			directConfidence:   directConfidence,
+			appeal:             appeal,
+			currentFit:         currentFit,
+			confidence:         confidence,
+			metadataConfidence: metadataConfidence,
+			recovery:           recovery,
+			components:         components,
 		}
 	}
 	rows.Close()
@@ -918,8 +922,9 @@ func getExplanationBody(pluginDir string, payload, settings jVal) (jVal, error) 
 }
 
 // renderExplanationForScene mirrors CuratorAPI.explanation on an open
-// connection: stored reasons (or derived), then the rendered summary and
-// supporting reasons. Shared by get_explanation and the inspector.
+// connection: stored reasons (or derived), then the rendered summary and the
+// versioned (apiSchemaVersion 2) payload. Shared by get_explanation and the
+// inspector.
 func renderExplanationForScene(db dbx, pluginDir, modelID, sceneID string) (jVal, error) {
 	reasons, found, err := storedReasons(db, modelID, sceneID)
 	if err != nil {
@@ -932,24 +937,82 @@ func renderExplanationForScene(db dbx, pluginDir, modelID, sceneID string) (jVal
 		}
 		reasons = derived[sceneID]
 	}
-	summary, selected, err := renderExplanation(pluginDir, db, reasons, modelID+"\x00"+sceneID)
+	summary, _, err := renderExplanation(pluginDir, db, reasons, modelID+"\x00"+sceneID)
 	if err != nil {
 		return jvNull(), err
 	}
-	all := jvArr()
-	for _, r := range reasons {
-		all.arr = append(all.arr, reasonJSON(r))
+	scores, err := fullScores(db, modelID, map[string]bool{sceneID: true})
+	if err != nil {
+		return jvNull(), err
 	}
-	supporting := jvArr()
-	for _, r := range selected {
-		supporting.arr = append(supporting.arr, reasonJSON(r))
+	score, ok := scores[sceneID]
+	if !ok {
+		return jvNull(), fmt.Errorf("unknown scene: %s", sceneID)
 	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("model_id", jvStr(modelID)),
-		jvKey("scene_id", jvStr(sceneID)),
-		jvKey("summary", jvStr(summary)),
-		jvKey("reasons", all),
-		jvKey("supporting_reasons", supporting),
-	), nil
+	lane, subtype, qualification, err := sceneLaneContext(db, modelID, sceneID)
+	if err != nil {
+		return jvNull(), err
+	}
+	laneRank := 0.0
+	if lane != "" {
+		laneRank, err = lanePercentileRank(db, modelID, sceneID, lane)
+		if err != nil {
+			return jvNull(), err
+		}
+	}
+	return buildExplanationV2(score, summary, reasons, lane, subtype, qualification, laneRank), nil
+}
+
+// sceneLaneContext mirrors build_explanation_payload's lane lookup: the scene's
+// highest lane_value row (the primary lane it was selected from).
+func sceneLaneContext(db dbx, modelID, sceneID string) (string, string, jVal, error) {
+	var lane string
+	var subtype sql.NullString
+	var qualificationJSON sql.NullString
+	err := db.QueryRow(`SELECT lane, subtype, qualification_json FROM model_scene_lane
+WHERE model_id=? AND scene_id=? ORDER BY lane_value DESC LIMIT 1`,
+		modelID, sceneID).Scan(&lane, &subtype, &qualificationJSON)
+	if err == sql.ErrNoRows {
+		return "", "", jvObj(), nil
+	}
+	if err != nil {
+		return "", "", jvNull(), err
+	}
+	var qualification jVal = jvObj()
+	if qualificationJSON.Valid && qualificationJSON.String != "" {
+		qualification, err = parseJSON([]byte(qualificationJSON.String))
+		if err != nil {
+			qualification = jvObj()
+		}
+	}
+	subtypeVal := ""
+	if subtype.Valid {
+		subtypeVal = subtype.String
+	}
+	return lane, subtypeVal, qualification, nil
+}
+
+// lanePercentileRank mirrors build_explanation_payload._lane_rank: the scene's
+// percentile within the source lane's qualified, ordered population (by
+// lane_value DESC, scene_id), before slate diversity/deduplication.
+func lanePercentileRank(db dbx, modelID, sceneID, lane string) (float64, error) {
+	rows, err := db.Query(`SELECT scene_id, lane_value FROM model_scene_lane
+WHERE model_id=? AND lane=? ORDER BY lane_value DESC, scene_id`, modelID, lane)
+	if err != nil {
+		return 0.0, err
+	}
+	defer rows.Close()
+	var ordered []pair
+	for rows.Next() {
+		var id string
+		var value float64
+		if err := rows.Scan(&id, &value); err != nil {
+			return 0.0, err
+		}
+		ordered = append(ordered, pair{id: id, value: value})
+	}
+	if err := rows.Err(); err != nil {
+		return 0.0, err
+	}
+	return percentileRank(sceneID, lane, ordered), nil
 }

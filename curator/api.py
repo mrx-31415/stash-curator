@@ -25,6 +25,99 @@ from curator.similarity import SimilarityService
 from curator.storage import transaction
 
 API_SCHEMA_VERSION = 1
+
+
+def _lane_rank(
+    connection: sqlite3.Connection,
+    model_id: str,
+    scene_id: str,
+    lane: str,
+) -> float:
+    """Percentile rank of the scene within the source lane's qualified,
+    ordered population (by lane_value DESC, scene_id) — before slate
+    diversity/deduplication. Uses the same midpoint-percentile tie handling as
+    curator/ranking/policy._percentiles."""
+    rows = connection.execute(
+        "SELECT scene_id, lane_value FROM model_scene_lane "
+        "WHERE model_id=? AND lane=? ORDER BY lane_value DESC, scene_id",
+        (model_id, lane),
+    ).fetchall()
+    ordered = [(str(row["scene_id"]), float(row["lane_value"])) for row in rows]
+    return _percentile_of(ordered, scene_id)
+
+
+def _percentile_of(ordered: list[tuple[str, float]], scene_id: str) -> float:
+    if not ordered:
+        return 0.0
+    # ordered is already sorted by lane_value DESC, scene_id; the percentile is
+    # the scene's rank position in the qualified population.
+    total = len(ordered)
+    for index, (id_, _) in enumerate(ordered):
+        if id_ == scene_id:
+            # Ties share the midpoint rank, mirroring policy._percentiles.
+            start = end = index
+            while start > 0 and ordered[start - 1][1] == ordered[index][1]:
+                start -= 1
+            while end < total - 1 and ordered[end + 1][1] == ordered[index][1]:
+                end += 1
+            denominator = max(1, total - 1)
+            return ((start + end) / 2) / denominator
+    return 0.0
+
+
+def build_explanation_payload(
+    connection: sqlite3.Connection,
+    *,
+    model_id: str,
+    scene_id: str,
+    summary: str,
+    reasons: tuple[Any, ...],
+    supporting_reasons: tuple[Any, ...],
+) -> dict[str, object]:
+    """Assemble the versioned explanation payload (apiSchemaVersion 2).
+
+    The backend owns fact ranking, materiality, units, deterministic summary
+    templates, and reason semantics. The frontend owns labels, ordering, bars,
+    radar layout, and progressive disclosure. Legacy/partial payloads render
+    through a truthful frontend fallback without fabricating Appeal evidence.
+    """
+    from curator.explanations.breakdown import build_v2_explanation
+
+    store = RecommendationModelStore(connection)
+    score = store.scores(model_id, {scene_id}).get(scene_id)
+    if score is None:
+        raise ValueError(f"unknown scene: {scene_id}")
+    lane_row = connection.execute(
+        "SELECT lane, subtype, qualification_json FROM model_scene_lane "
+        "WHERE model_id=? AND scene_id=? ORDER BY lane_value DESC LIMIT 1",
+        (model_id, scene_id),
+    ).fetchone()
+    lane = str(lane_row["lane"]) if lane_row else None
+    subtype = (
+        str(lane_row["subtype"])
+        if lane_row and lane_row["subtype"] is not None
+        else None
+    )
+    qualification = (
+        json.loads(str(lane_row["qualification_json"]))
+        if lane_row and lane_row["qualification_json"]
+        else {}
+    )
+    lane_rank = _lane_rank(connection, model_id, scene_id, lane) if lane else None
+    return build_v2_explanation(
+        model_id=model_id,
+        scene_id=scene_id,
+        summary=summary,
+        reasons=reasons,
+        supporting_reasons=supporting_reasons,
+        score=score,
+        lane=lane,
+        subtype=subtype,
+        qualification=qualification,
+        lane_rank=lane_rank,
+    )
+
+
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
     "diversity_enabled": True,
@@ -379,14 +472,14 @@ class CuratorAPI:
         if model_id is None:
             raise RuntimeError("no published model")
         explanation = ExplanationService(self.connection).explain_scene(model_id, scene_id)
-        return {
-            "schema_version": API_SCHEMA_VERSION,
-            "model_id": model_id,
-            "scene_id": scene_id,
-            "summary": explanation.summary,
-            "reasons": [asdict(reason) for reason in explanation.all_reasons],
-            "supporting_reasons": [asdict(reason) for reason in explanation.selected_reasons],
-        }
+        return build_explanation_payload(
+            self.connection,
+            model_id=model_id,
+            scene_id=scene_id,
+            summary=explanation.summary,
+            reasons=explanation.all_reasons,
+            supporting_reasons=explanation.selected_reasons,
+        )
 
     def recommendation_history(
         self,

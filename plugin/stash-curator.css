@@ -2749,6 +2749,209 @@
   background: repeating-linear-gradient(45deg, #50b86c, #50b86c 4px, #d59a52 4px, #d59a52 8px);
 }
 
+/* ---- Appeal hero (signed, zero-centered meter) ---- */
+.curator-appeal-hero {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.3rem 0;
+}
+.curator-appeal-value {
+  color: var(--curator-card-text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  min-width: 3rem;
+}
+.curator-appeal-meter-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 4rem;
+}
+.curator-appeal-meter {
+  display: flex;
+  height: 6px;
+  position: relative;
+  width: 100%;
+}
+.curator-appeal-meter-track {
+  background: var(--bs-secondary-bg, #333);
+  border-radius: var(--curator-radius-sm);
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+.curator-appeal-meter-center {
+  background: var(--curator-card-text-muted, #888);
+  height: 100%;
+  left: 50%;
+  position: absolute;
+  top: 0;
+  width: 1px;
+}
+.curator-appeal-meter-fill {
+  height: 100%;
+  position: absolute;
+  top: 0;
+}
+.curator-appeal-meter-fill.positive { background: #50b86c; }
+.curator-appeal-meter-fill.negative { background: #d59a52; }
+.curator-appeal-baseline {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+}
+
+/* ---- Named breakdown rows ---- */
+.curator-score-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.3rem 0;
+}
+.curator-score-row {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(6rem, 1fr) 2fr auto;
+  width: 100%;
+}
+.curator-score-row-label {
+  color: var(--curator-card-text-muted);
+  font-size: 0.7rem;
+}
+.curator-score-row-bar {
+  background: var(--bs-secondary-bg, #333);
+  border-radius: var(--curator-radius-sm);
+  height: 5px;
+  overflow: hidden;
+}
+.curator-score-row-fill {
+  background: #50b86c;
+  display: block;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.curator-score-row-negative .curator-score-row-fill { background: #d59a52; }
+.curator-score-row-value {
+  color: var(--curator-card-text-muted);
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+/* ---- Evidence rows (Supports / Cautions / Context) ---- */
+.curator-evidence-rows {
+  list-style: none;
+  margin: 0.3rem 0;
+  padding-left: 0;
+}
+.curator-evidence-row {
+  align-items: baseline;
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.15rem 0;
+}
+.curator-evidence-direction {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  width: 4.5rem;
+}
+.curator-evidence-supports .curator-evidence-direction { color: #50b86c; }
+.curator-evidence-cautions .curator-evidence-direction { color: #d59a52; }
+.curator-evidence-context .curator-evidence-direction { color: var(--curator-card-text-muted); }
+.curator-evidence-text {
+  color: var(--curator-card-text);
+  flex: 1 1 auto;
+}
+.curator-evidence-magnitude {
+  color: var(--curator-card-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+}
+
+/* ---- Lane callout ---- */
+.curator-lane-callout {
+  align-items: baseline;
+  border-left: 2px solid var(--lane-color, var(--curator-accent));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.3rem 0;
+  padding-left: 0.5rem;
+}
+.curator-lane-callout-label {
+  color: var(--curator-card-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.curator-lane-callout-rank {
+  color: var(--curator-card-text);
+  font-size: 0.72rem;
+}
+.curator-lane-callout-intent {
+  color: var(--curator-card-text-muted);
+  font-size: 0.68rem;
+}
+
+/* ---- Evidence fingerprint radar ---- */
+.curator-radar {
+  margin: 0.3rem 0;
+  max-width: 12rem;
+}
+.curator-radar svg {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+.curator-radar-outer {
+  fill: none;
+  stroke: var(--curator-card-border, #555);
+  stroke-width: 1;
+}
+.curator-radar-spoke {
+  stroke: var(--curator-card-border, #555);
+  stroke-width: 1;
+}
+.curator-radar-support {
+  fill: rgba(80, 184, 108, 0.35);
+  stroke: #50b86c;
+  stroke-width: 1.5;
+}
+.curator-radar-caution {
+  fill: rgba(213, 154, 82, 0.35);
+  stroke: #d59a52;
+  stroke-width: 1.5;
+}
+.curator-radar-neutral {
+  fill: rgba(128, 128, 128, 0.25);
+  stroke: #888;
+  stroke-width: 1.5;
+}
+.curator-radar-label {
+  fill: var(--curator-card-text-muted, #888);
+  font-size: 8px;
+}
+.curator-radar-label.curator-radar-no-evidence {
+  fill: var(--curator-card-text-muted, #888);
+  opacity: 0.55;
+  stroke-dasharray: 2 2;
+}
+.curator-radar-caption {
+  color: var(--curator-card-text-muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-top: 0.15rem;
+  text-align: center;
+  text-transform: uppercase;
+}
+
 /* ---- Relationship chips ---- */
 .curator-chips {
   display: flex;

@@ -767,42 +767,211 @@
     );
   }
 
-  function ScoreNode({ name, value }) {
-    if (value === null || value === undefined) return null;
-    if (typeof value !== "object") {
-      return React.createElement(
-        "div",
-        { className: "curator-score-leaf" },
-        React.createElement("span", null, name.replaceAll("_", " ")),
-        React.createElement("code", null, typeof value === "number" ? value.toFixed(3) : String(value))
-      );
-    }
-    if (Array.isArray(value)) return null;
+  // A signed zero-centered meter for Appeal (−1..1). Renders a compact
+  // horizontal track with a center notch and a fill extending right for
+  // positive, left for negative.
+  function appealMeter(value) {
+    const clamped = Math.max(-1, Math.min(1, value));
+    const pct = Math.abs(clamped) * 50;
+    const positive = clamped >= 0;
     return React.createElement(
-      "details",
-      { className: "curator-score-node" },
-      React.createElement("summary", null, name.replaceAll("_", " ")),
-      React.createElement(
-        "div",
-        { className: "curator-score-children" },
-        Object.entries(value).map(([key, child]) =>
-          React.createElement(ScoreNode, { key, name: key, value: child })
-        )
+      "div",
+      { className: "curator-appeal-meter", "aria-hidden": "true" },
+      React.createElement("span", { className: "curator-appeal-meter-track" },
+        React.createElement("span", { className: "curator-appeal-meter-center" }),
+        React.createElement("span", { className: `curator-appeal-meter-fill ${positive ? "positive" : "negative"}`, style: { width: `${pct}%`, left: positive ? "50%" : `${50 - pct}%` } })
       )
     );
   }
 
+  // The signed Appeal hero: a two-decimal value with a zero-centered meter and
+  // an "above/below your learned baseline" label.
+  function AppealHero({ appeal }) {
+    if (appeal === null || appeal === undefined) return null;
+    const above = appeal >= 0;
+    return React.createElement(
+      "div",
+      { className: "curator-appeal-hero" },
+      React.createElement("span", { className: "curator-appeal-value" }, `${appeal >= 0 ? "+" : ""}${appeal.toFixed(2)}`),
+      React.createElement("span", { className: "curator-appeal-meter-wrap" }, appealMeter(appeal)),
+      React.createElement("span", { className: `curator-appeal-baseline ${above ? "above" : "below"}` }, above ? "above your learned baseline" : "below your learned baseline")
+    );
+  }
+
+  // A single named breakdown row: a visible 0..1 bar with a real unit. Appeal
+  // and right-now fit are signed (−1..1); Similarity/Match/rank are 0..1;
+  // confidence is a percentage. `unit` drives the display: "signed" keeps the
+  // sign and centers on zero, "similarity"/"appeal" clamp to 0..1, "percent"
+  // renders as a percentage.
+  function ScoreRow({ label, value, unit }) {
+    if (value === null || value === undefined) return null;
+    let display = value;
+    let barValue = value;
+    let suffix = "";
+    let className = "curator-score-row";
+    if (unit === "percent") {
+      display = `${Math.round(value * 100)}%`;
+      barValue = Math.max(0, Math.min(1, value));
+      className += " curator-score-row-percent";
+    } else if (unit === "signed") {
+      display = `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+      barValue = Math.max(0, Math.min(1, Math.abs(value)));
+      className += value >= 0 ? " curator-score-row-positive" : " curator-score-row-negative";
+    } else {
+      display = value.toFixed(2);
+      barValue = Math.max(0, Math.min(1, value));
+    }
+    const pct = Math.round(barValue * 100);
+    return React.createElement(
+      "div",
+      { className },
+      React.createElement("span", { className: "curator-score-row-label" }, label),
+      React.createElement("span", { className: "curator-score-row-bar" },
+        React.createElement("span", { className: "curator-score-row-fill", style: { width: `${pct}%` } })
+      ),
+      React.createElement("code", { className: "curator-score-row-value" }, display)
+    );
+  }
+
+  // Named, scaled breakdown rows with real units — the plain-language
+  // replacement for the raw float tree. Novelty is NOT a model component and
+  // is never listed here (it exists only as lane context).
+  function ScoreBreakdown({ rows }) {
+    const namedRows = rows || [
+      { label: "Appeal", value: null, unit: "signed" },
+    ];
+    const visible = namedRows.filter((row) => row.value !== null && row.value !== undefined);
+    if (visible.length === 0) return null;
+    return React.createElement(
+      "div",
+      { className: "curator-score-breakdown" },
+      visible.map((row, index) =>
+        React.createElement(ScoreRow, { key: `${row.label}-${index}`, label: row.label, value: row.value, unit: row.unit })
+      )
+    );
+  }
+
+  // The backend-ranked evidence rows from the v2 payload: up to three material
+  // facts, direction-aware (Supports/Cautions/Context). Low confidence is
+  // context, not dislike; a material caution is shown when present, never a
+  // forced negative row.
+  function EvidenceRows({ reasons }) {
+    if (!reasons || reasons.length === 0) return null;
+    const rows = reasons.slice(0, 3).map((reason) => {
+      const tone = reason.direction === "positive" ? "supports"
+        : reason.direction === "negative" ? "cautions"
+        : "context";
+      return React.createElement(
+        "li",
+        { key: `${reason.code}-${reason.subject_id ?? ""}`, className: `curator-evidence-row curator-evidence-${tone}` },
+        React.createElement("span", { className: "curator-evidence-direction" }, tone === "supports" ? "Supports" : tone === "cautions" ? "Cautions" : "Context"),
+        React.createElement("span", { className: "curator-evidence-text" }, reasonLabel(reason.code)),
+        React.createElement("code", { className: "curator-evidence-magnitude" }, reason.magnitude.toFixed(2))
+      );
+    });
+    return React.createElement("ul", { className: "curator-evidence-rows" }, ...rows);
+  }
+
+  // The lane callout — a separate action-oriented explanation of why the
+  // current lane selected the scene, distinct from Appeal evidence.
+  function LaneCallout({ laneContext, laneLabel }) {
+    if (!laneContext || !laneContext.lane) return null;
+    const name = laneLabel || laneContext.lane.replaceAll("_", " ");
+    const intent = laneContext.intent || "selected";
+    const rank = laneContext.rank !== undefined ? `${Math.round(laneContext.rank * 100)}th percentile` : null;
+    return React.createElement(
+      "div",
+      { className: "curator-lane-callout" },
+      React.createElement("span", { className: "curator-lane-callout-label" }, `Rank in ${name}`),
+      rank && React.createElement("span", { className: "curator-lane-callout-rank" }, rank),
+      React.createElement("span", { className: "curator-lane-callout-intent" }, `why: ${intent.replaceAll("_", " ")}`)
+    );
+  }
+
+  // The evidence-fingerprint radar: a secondary visual summary of the six
+  // fixed axes from the versioned payload. Support and caution use two
+  // overlaid shapes; metadata coverage is a neutral gray spoke (usable
+  // resolved evidence coverage, not preference quality). Missing families use
+  // a muted dashed "No evidence" state. Renders only when the payload carries
+  // the required fixed-family data; otherwise the story/rows fallback is used.
+  function FingerprintRadar({ fingerprint }) {
+    if (!fingerprint || !fingerprint.axes) return null;
+    const keys = Object.keys(fingerprint.axes);
+    if (keys.length < 6) return null;
+    const cx = 100;
+    const cy = 100;
+    const radius = 70;
+    const angle = (index, total) => (Math.PI * 2 * index) / total - Math.PI / 2;
+    const point = (index, total, r) => [
+      cx + r * Math.cos(angle(index, total)),
+      cy + r * Math.sin(angle(index, total)),
+    ];
+    const ring = (r) => keys.map((_, index) => point(index, keys.length, r).join(",")).join(" ");
+    const shape = (tone) => {
+      const values = keys.map((key) => {
+        const axis = fingerprint.axes[key];
+        if (axis.tone !== tone) return 0;
+        return axis.present ? axis.strength : 0;
+      });
+      return keys.map((_, index) => point(index, keys.length, radius * values[index]).join(",")).join(" ");
+    };
+    const labels = keys.map((key, index) => {
+      const axis = fingerprint.axes[key];
+      const [x, y] = point(index, keys.length, radius + 16);
+      const present = axis.present;
+      return React.createElement(
+        "text",
+        { key, x, y, textAnchor: "middle", dominantBaseline: "middle", className: `curator-radar-label ${present ? "" : "curator-radar-no-evidence"}` },
+        `${axis.label}${present ? "" : " (no evidence)"}`
+      );
+    });
+    const spokes = keys.map((_, index) => {
+      const [x, y] = point(index, keys.length, radius);
+      return React.createElement("line", { key: index, x1: cx, y1: cy, x2: x, y2: y, className: "curator-radar-spoke" });
+    });
+    return React.createElement(
+      "div",
+      { className: "curator-radar" },
+      React.createElement("svg", { viewBox: "0 0 200 200", role: "img", "aria-label": "Evidence fingerprint radar" },
+        React.createElement("polygon", { points: ring(radius), className: "curator-radar-outer" }),
+        React.createElement("polygon", { points: ring(radius * 0.66), className: "curator-radar-outer" }),
+        React.createElement("polygon", { points: ring(radius * 0.33), className: "curator-radar-outer" }),
+        ...spokes,
+        React.createElement("polygon", { points: shape("support"), className: "curator-radar-support" }),
+        React.createElement("polygon", { points: shape("caution"), className: "curator-radar-caution" }),
+        React.createElement("polygon", { points: shape("neutral"), className: "curator-radar-neutral" }),
+        ...labels
+      ),
+      React.createElement("div", { className: "curator-radar-caption" }, "Evidence fingerprint")
+    );
+  }
+
+  // The full ~12-code reason inventory (codes from core/explanations.go).
   function reasonLabel(code) {
     const labels = {
       "appeal.performer_identity": "Performer match",
+      "appeal.performer_similar": "Similar performer profile",
       "appeal.content_neighbor": "Similar content",
-      // The baseline reason present on every impression regardless of lane
-      // (core/slate.go, slate_greedy.go, score_review.go all seed reasonIDs
-      // with this) — richer reasons like the two above are appended after
-      // it when they apply, but plenty of items have no reason beyond this
-      // one. The naive fallback below (last dot-segment, title-cased) turns
-      // it into the confusing bare word "Lane".
+      "appeal.studio": "Studio appeal",
+      "appeal.tag_positive": "Familiar elements",
+      "appeal.tag_negative": "Discouraged elements",
+      "appeal.tag_declared_positive": "Declared preference",
+      "appeal.tag_declared_negative": "Declared aversion",
+      "direct.positive": "Your feedback on this scene",
+      "direct.negative": "Your feedback on this scene",
+      "direct.residual": "Model residual",
+      "fit.cooldown": "Cooling down",
+      "fit.satiation": "Satiation",
+      "fit.not_now": "Not right now",
       "eligibility.lane": "Eligible for this lane",
+      "explore.challenge": "Challenges a boundary",
+      "explore.coverage": "Covers a blind spot",
+      "dormant.entity": "A dormant taste",
+      "diversity.performer": "Diversity — performer",
+      "diversity.studio": "Diversity — studio",
+      "diversity.content": "Diversity — content",
+      "fallback": "Model baseline",
+      "evidence.confidence": "Low confidence",
     };
     const fallback = code.split(".").at(-1).replaceAll("_", " ");
     return labels[code] || fallback.charAt(0).toUpperCase() + fallback.slice(1);
@@ -2108,24 +2277,28 @@
     );
   }
 
-  // Shared "Why this?"/"Score · X" details shell, used by RecommendationCard,
-  // ExternalCard, and SimilarityPanel's library-match grid. The shell (the
-  // two <details>/<summary> elements) is genuinely identical across all
-  // three; what goes inside each is not (RecommendationCard lazy-loads its
-  // explanation on toggle and shows a ScoreNode tree, the other two are
-  // static), so content stays fully caller-supplied via props rather than
-  // forcing those shapes into a shared config.
-  // The match bar is always visible in the mockup — it's the at-a-glance
-  // signal a card carries, not something worth an extra click to see.
-  // Everything else (the breakdown text/tree) stays behind the existing
-  // collapsed "Score · N" details for progressive disclosure.
-  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent }) {
+  // Shared "Why this?"/"<quantity> · X" details shell, used by
+  // RecommendationCard, ExternalCard, and SimilarityPanel's library-match
+  // grid. The shell (the two <details>/<summary> elements) is genuinely
+  // identical across all three; what goes inside each is not
+  // (RecommendationCard lazy-loads its explanation on toggle and shows a
+  // ScoreBreakdown, the other two are static), so content stays fully
+  // caller-supplied via props rather than forcing those shapes into a shared
+  // config.
+  // Every card carries two separately-labeled quantities — intrinsic Appeal
+  // plus the surface's own relative quantity (Rank in <Lane>, Similarity, or
+  // Match) — so the match bar is always visible as the at-a-glance signal and
+  // is labeled by the caller (`quantityLabel`/`quantityValue`), never a bare
+  // blended "Score". Everything else stays behind the collapsed disclosure.
+  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreContent, quantityLabel, quantityValue }) {
+    const label = quantityLabel || "Match";
+    const summaryText = quantityValue !== undefined ? `${label} · ${quantityValue}` : scoreSummary;
     return React.createElement(
       React.Fragment,
       null,
       evidenceContent !== null && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent),
-      scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, "Match"), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
-      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, scoreBarContent ? "Score breakdown" : `Score · ${scoreSummary}`), scoreContent)
+      scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, label), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, quantityValue !== undefined ? quantityValue : scoreSummary)),
+      React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, scoreBarContent ? "Score breakdown" : summaryText), scoreContent)
     );
   }
 
@@ -2242,7 +2415,7 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, (() => { let scoreDetail; if (item.similarity === undefined) { scoreDetail = `Match ${item.score.toFixed(2)} · found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreBarContent: utilityBar(item.score), scoreSummary: item.score.toFixed(2), scoreContent: React.createElement("p", null, scoreDetail) })); })()),
+      React.createElement("div", { className: "curator-card-body" }, (() => { const isMatch = item.similarity === undefined; const quantityLabel = isMatch ? "Match" : "Similarity"; let scoreDetail; if (isMatch) { scoreDetail = `found via ${item.sources.join(", ")}`; } else { scoreDetail = `Similarity ${item.similarity.toFixed(2)}` + (item.appeal !== undefined ? ` · appeal ${item.appeal.toFixed(2)}` : ""); const mh = item.details && item.details.score_breakdown && item.details.score_breakdown.multi_hop; if (mh > 0) scoreDetail += " + multi-hop " + mh.toFixed(4); } return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.why?.length ? React.createElement("p", { className: "curator-explanation" }, payload.why.join(" · ")) : null, scoreBarContent: utilityBar(item.score), scoreSummary: item.score.toFixed(2), quantityLabel, quantityValue: item.score.toFixed(2), scoreContent: React.createElement("p", null, isMatch ? `Match ${item.score.toFixed(2)} · ${scoreDetail}` : scoreDetail) })); })()),
       React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
@@ -2440,7 +2613,9 @@
     const card = React.useRef(null);
     const [explanation, setExplanation] = React.useState(
       item.explanation
-        ? { summary: item.explanation, supporting_reasons: item.supporting_reasons || [] }
+        ? (typeof item.explanation === "string"
+            ? { summary: item.explanation, supporting_reasons: item.supporting_reasons || [] }
+            : item.explanation)
         : null
     );
     const [explanationLoading, setExplanationLoading] = React.useState(false);
@@ -2535,30 +2710,28 @@
               null,
               explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
               explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
-              explanation && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
-              explanation && React.createElement(
-                "ul",
-                null,
-                explanation.supporting_reasons.map((reason, index) =>
-                  React.createElement(
-                    "li",
-                    { key: `${reason.code}-${index}` },
-                    `${reasonLabel(reason.code)} (${reason.magnitude.toFixed(2)})`
-                  )
-                )
-              )
+              explanation && explanation.summary && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
+              explanation && explanation.evidence_fingerprint && React.createElement(FingerprintRadar, { fingerprint: explanation.evidence_fingerprint }),
+              explanation && explanation.reasons && React.createElement(EvidenceRows, { reasons: explanation.reasons }),
+              explanation && explanation.lane_context && explanation.lane_context.lane && React.createElement(LaneCallout, { laneContext: explanation.lane_context, laneLabel: laneByValue.get(explanation.lane_context.lane)?.label })
             ),
             scoreBarContent: utilityBar(item.final_utility),
             scoreSummary: item.final_utility.toFixed(2),
+            quantityLabel: item.source_lane && item.source_lane !== "score_review" ? `Rank in ${laneLabel}` : "Appeal",
+            quantityValue: item.source_lane && item.source_lane !== "score_review" ? item.final_utility.toFixed(2) : `${item.appeal >= 0 ? "+" : ""}${item.appeal.toFixed(2)}`,
             scoreContent: React.createElement(
               React.Fragment,
               null,
-              React.createElement(ScoreNode, { name: "appeal", value: item.appeal }),
-              React.createElement(ScoreNode, { name: "current_fit", value: item.current_fit }),
-              React.createElement(ScoreNode, { name: "confidence", value: item.confidence }),
-              React.createElement(ScoreNode, { name: "components", value: item.components }),
-              React.createElement(ScoreNode, { name: "diversity_penalties", value: item.penalties }),
-              React.createElement(ScoreNode, { name: "diversity_bonuses", value: item.bonuses })
+              React.createElement(AppealHero, { appeal: item.appeal }),
+              React.createElement(ScoreBreakdown, { rows: [
+                { label: "Content similarity", value: (item.components?.content?.value ?? 0), unit: "similarity" },
+                { label: "Performer match", value: (item.components?.performer_identity?.value ?? 0) + (item.components?.performer_similarity?.value ?? 0), unit: "similarity" },
+                { label: "Studio appeal", value: (item.components?.studio?.value ?? 0), unit: "appeal" },
+                { label: "Direct feedback", value: (item.components?.direct?.value ?? 0), unit: "appeal" },
+                { label: "Right-now fit", value: item.current_fit, unit: "signed" },
+                { label: "Confidence", value: item.confidence, unit: "percent" },
+              ] }),
+              explanation && explanation.scores && explanation.scores.rank && item.source_lane && React.createElement(LaneCallout, { laneContext: { lane: item.source_lane, rank: explanation.scores.rank.value }, laneLabel })
             ),
           }),
           React.createElement(Feedback, { item, onRemove, onThumbDown })
@@ -2600,7 +2773,8 @@
         "td",
         null,
         item.current_model && scene && !explanation && React.createElement(Button, { size: "sm", variant: "link", onClick: explain }, "Why this now?"),
-        explanation && React.createElement("span", null, explanation.summary),
+        explanation && explanation.summary && React.createElement("span", null, explanation.summary),
+        explanation && explanation.reasons && React.createElement(EvidenceRows, { reasons: explanation.reasons }),
         error && React.createElement("small", { className: "text-danger" }, error)
       )
     );
@@ -3070,7 +3244,10 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.rank_score), scoreSummary: item.rank_score.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} · predicted appeal ${item.appeal.toFixed(2)}`) })));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.rank_score), scoreSummary: item.rank_score.toFixed(2), quantityLabel: "Similarity", quantityValue: item.rank_score.toFixed(2), scoreContent: React.createElement(React.Fragment, null, React.createElement(AppealHero, { appeal: item.appeal }), React.createElement(ScoreBreakdown, { rows: [
+                { label: "Content similarity", value: item.similarity, unit: "similarity" },
+                { label: "Appeal", value: item.appeal, unit: "signed" },
+              ] })) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -4856,7 +5033,7 @@
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
-          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane; Score is ranking utility, not a probability."),
+          laneByValue.has(lane) && React.createElement("p", null, "The colored corner icon identifies the source lane. Each card shows the scene's intrinsic Appeal plus its rank within this lane's qualified, ordered population — the rank is a percentile, not a probability."),
           laneByValue.has(lane) && slate && React.createElement(
             "p",
             { className: "curator-view-stats" },
