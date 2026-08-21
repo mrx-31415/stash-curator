@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faQuestionCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -79,12 +79,6 @@
       label: "Performer Hunt",
       icon: faCrosshairs,
       description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
-    },
-    {
-      value: "help",
-      label: "Help",
-      icon: faQuestionCircle,
-      description: "A compact in-plugin guide to what Curator is, how to get started, and where to go next.",
     },
     {
       value: "taste",
@@ -217,12 +211,10 @@
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
-  // First-run onboarding (issue #148): the welcome banner and the optional
-  // tour are both version-stamped so a future major release can re-show them
-  // without touching the mechanism. The old CurateNudge (a third, competing
-  // For You callout) was retired into this flow — these keys supersede it.
-  const ONBOARDING_KEY = "stash-curator:onboarding:v1";
-  const TOUR_KEY = "stash-curator:tour:v1";
+  const CURATE_NUDGE_KEY = "stash-curator:curate-nudge:v1";
+  // The For You nudge retires after this many answered comparisons: by then
+  // the Curate flow is discovered and Progress is the better hook.
+  const MAX_NUDGE_ROUNDS = 3;
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
@@ -334,32 +326,21 @@
     }
   }
 
-  // ── First-run onboarding storage (issue #148) ────────────────────────────
-  // Generalized from the retired CurateNudge pattern: each popup persists a
-  // version-stamped localStorage record so it shows once, survives reloads,
-  // and a future release can re-show it by bumping the version. Both records
-  // default to "not dismissed" so a fresh browser sees the flow.
-  function readOnboarding() {
+  function readCurateNudge() {
     try {
-      const value = JSON.parse(localStorage.getItem(ONBOARDING_KEY) || "null");
-      return { dismissed: !!(value && value.dismissed) };
+      const value = JSON.parse(localStorage.getItem(CURATE_NUDGE_KEY) || "null");
+      return { rounds: Number(value && value.rounds) || 0, dismissed: !!(value && value.dismissed) };
     } catch (_) {
-      return { dismissed: false };
+      return { rounds: 0, dismissed: false };
     }
   }
-  function dismissOnboarding() {
-    localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ dismissed: true }));
+  function bumpCurateRounds() {
+    const state = readCurateNudge();
+    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds + 1, dismissed: state.dismissed }));
   }
-  function readTour() {
-    try {
-      const value = JSON.parse(localStorage.getItem(TOUR_KEY) || "null");
-      return { dismissed: !!(value && value.dismissed) };
-    } catch (_) {
-      return { dismissed: false };
-    }
-  }
-  function dismissTour() {
-    localStorage.setItem(TOUR_KEY, JSON.stringify({ dismissed: true }));
+  function dismissCurateNudge() {
+    const state = readCurateNudge();
+    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds, dismissed: true }));
   }
   function persistSlateCache() {
     try {
@@ -1437,155 +1418,17 @@
     );
   }
 
-  // ── First-run onboarding (issue #148) ─────────────────────────────────────
-  // Welcome banner and optional tour, generalized from the retired
-  // CurateNudge. Both are non-modal plugin chrome: the page stays usable,
-  // ESC dismisses, the region announces via aria-live, and there is no focus
-  // trap. Each step is keyboard-reachable (a real <button>).
-  const HELP_LINKS = {
-    gettingStarted: "https://mrx-31415.github.io/stash-curator/getting-started/",
-    usingCurator: "https://mrx-31415.github.io/stash-curator/using-curator/",
-    privacy: "https://mrx-31415.github.io/stash-curator/privacy/",
-  };
-  function HelpLink({ href, children }) {
-    return React.createElement("a", { href, target: "_blank", rel: "noreferrer" }, children, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt, className: "curator-help-link-icon" }));
-  }
-  function WelcomeBanner({ onDismiss, onOpenHelp }) {
-    const handleDismiss = React.useCallback((event) => {
-      if (event.key === "Escape") onDismiss();
-    }, [onDismiss]);
+  function CurateNudge({ onOpen, onDismiss }) {
     return React.createElement(
       "div",
-      { className: "curator-welcome", role: "region", "aria-live": "polite", tabIndex: -1, onKeyDown: handleDismiss },
-      React.createElement(FontAwesomeIcon, { icon: faCompass, className: "curator-welcome-icon" }),
-      React.createElement("div", { className: "curator-welcome-body" },
-        React.createElement("strong", null, "Welcome to Curator"),
-        React.createElement("p", null, "Curator turns your library into a personal guide: it scores your scenes, explains why a card landed here, and learns what you like as you give feedback."),
-        React.createElement("p", null, "The one required first step is to sync and build your recommendation model. Until then the lanes are empty."),
-        React.createElement("div", { className: "curator-welcome-actions" },
-          React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpenHelp }, "Read the guide"),
-          React.createElement(HelpLink, { href: HELP_LINKS.gettingStarted }, "Getting started docs")
-        )
+      { className: "curator-curate-nudge" },
+      React.createElement(FontAwesomeIcon, { icon: faBullseye, className: "curator-curate-nudge-icon" }),
+      React.createElement("div", { className: "curator-curate-nudge-body" },
+        React.createElement("strong", null, "Teach the model what you like"),
+        React.createElement("p", null, "Compare scenes two at a time, for as long as you feel like. Each answer sharpens the model across every tag, performer, and studio those scenes carried.")
       ),
-      React.createElement("button", { type: "button", className: "curator-welcome-dismiss", onClick: onDismiss, title: "Dismiss welcome", "aria-label": "Dismiss welcome" }, React.createElement(FontAwesomeIcon, { icon: faXmark }))
-    );
-  }
-  // Coach-mark pointers at the key surfaces a new user must find. Each step is
-  // a small anchored banner rather than a modal overlay, so the underlying
-  // control stays visible and usable. Steps are static copy (no runtime DOM
-  // measurement) with a data-step target hint for styling.
-  const TOUR_STEPS = [
-    { step: 1, target: "lane navigation", className: "curator-tour-step-lane", title: "Pick a lane", copy: "These cards switch recommendation shelves. Start with For You, then explore the others." },
-    { step: 2, target: "Why this? on a card", className: "curator-tour-step-why", title: "Why this?", copy: "Open Why this? on any card to see the model's reason, its Appeal vs Current Fit, and confidence." },
-    { step: 3, target: "Taste Profile", className: "curator-tour-step-taste", title: "Taste Profile", copy: "Teach Curator how you feel about tags directly, instead of letting it guess from your behavior." },
-    { step: 4, target: "Curate", className: "curator-tour-step-curate", title: "Curate", copy: "Compare scenes two at a time — the fastest way to sharpen the model across every tag, performer, and studio." },
-  ];
-  function TourStep({ step, onNext, onPrev, onDismiss }) {
-    return React.createElement(
-      "div",
-      { className: `curator-tour-step ${step.className}`, role: "region", "aria-live": "polite", tabIndex: -1 },
-      React.createElement("strong", null, step.title),
-      React.createElement("p", null, step.copy),
-      React.createElement("div", { className: "curator-tour-actions" },
-        step.step > 1 && React.createElement(Button, { size: "sm", variant: "secondary", onClick: onPrev }, "Back"),
-        React.createElement(Button, { size: "sm", variant: "primary", onClick: onNext }, step.step === TOUR_STEPS.length ? "Finish" : "Next"),
-        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Don't show this again")
-      )
-    );
-  }
-  function OnboardingTour({ onDismiss }) {
-    const [stepIndex, setStepIndex] = React.useState(0);
-    const step = TOUR_STEPS[stepIndex];
-    const handleKey = React.useCallback((event) => {
-      if (event.key === "Escape") onDismiss();
-      else if (event.key === "ArrowRight" && stepIndex < TOUR_STEPS.length - 1) setStepIndex((i) => i + 1);
-      else if (event.key === "ArrowLeft" && stepIndex > 0) setStepIndex((i) => i - 1);
-    }, [onDismiss, stepIndex]);
-    if (!step) return null;
-    return React.createElement(
-      "div",
-      { className: "curator-tour", role: "region", "aria-live": "polite", onKeyDown: handleKey },
-      React.createElement("div", { className: "curator-tour-progress" }, `Step ${stepIndex + 1} of ${TOUR_STEPS.length}`),
-      React.createElement(TourStep, { step, onNext: () => (stepIndex < TOUR_STEPS.length - 1 ? setStepIndex((i) => i + 1) : onDismiss()), onPrev: () => setStepIndex((i) => Math.max(0, i - 1)), onDismiss })
-    );
-  }
-  // Package 1 — "About this view": a collapsible <details> panel per view,
-  // rendered from the same LANES/NAV_ITEMS map that drives nav tooltips, so
-  // the two can never drift. A short extra block adds "what it's for" depth.
-  const ABOUT_EXTRA = {
-    for_you: "Start here for an everyday mix of dependable matches, revisits, and a little discovery.",
-    best_bets: "When you want a reliable choice now, reach for the strongest unwatched matches.",
-    revisit: "Scenes you already enjoyed return here once enough time has passed.",
-    stretch: "Mostly familiar, with one boundary nudged to find something new.",
-    blind_spots: "Studios or tags you barely watch, corroborated by more than one signal.",
-    dormant: "A performer, studio, or tag you used to watch a lot, parked for a while.",
-    curate: "Teach the model by comparing scenes and answering tag sentiment; Progress shows what it moved.",
-    similar: "Pick a scene or performer, then compare preference-aware matches from your Library or StashDB.",
-    expand: "Optional StashDB discovery scored locally, so you can shortlist candidates before they exist in Stash.",
-    hunt: "Find scenes listed for a performer on StashDB and compare exact links to your library.",
-    taste: "Review what Curator inferred and directly teach it how you feel about tags.",
-    sentiment: "Review the model's sentiment estimates, least-appealing scenes first, with reasons and feedback.",
-    feedback: "Review recent feedback, undo a mistake, or replace an action without rewriting history.",
-    history: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
-    prune: "Curator never deletes media; it only tags review queues you can reverse from the same view.",
-    backups: "Create, inspect, and safely restore Curator sidecar backups.",
-    diagnostics: "Preview and export a privacy-safe status report for bug reports.",
-    profiling: "Inspect render and query performance profiles captured during development.",
-    settings: "Sync, discovery, prune, and Whisparr integration settings, without leaving Curator.",
-    tasks: "Live status of background Curator jobs: queue position, progress, and results.",
-    help: "A compact guide to what Curator is, how to get started, and where to go next.",
-  };
-  function AboutViewPanel({ view }) {
-    const item = NAV_ITEMS.find((entry) => entry.value === view);
-    const extra = ABOUT_EXTRA[view];
-    if (!item && !extra) return null;
-    const title = item ? item.label : (extra && view === "tasks" ? "Tasks" : view);
-    const description = item ? item.description : (extra || "");
-    return React.createElement(
-      "details",
-      { className: "curator-about-view", "aria-label": `About this view: ${title}` },
-      React.createElement("summary", null, "About this view"),
-      React.createElement("p", null, description),
-      extra && React.createElement("p", null, extra)
-    );
-  }
-
-  // Package 3 — Help/docs view: a compact in-plugin guide shipped as static
-  // data (no Markdown renderer, no network). External links to the hosted
-  // docs open in a new tab; offline the content stands alone.
-  function HelpPanel() {
-    return React.createElement(
-      "section",
-      { className: "curator-help", role: "tabpanel" },
-      React.createElement("h2", null, "Help"),
-      React.createElement("p", null, "A short guide to what Curator is and how to get the most from it. The full documentation lives on the hosted site; the links below open in a new tab."),
-      React.createElement("h3", null, "What a model is"),
-      React.createElement("p", null, "Curator builds a recommendation model from your library metadata, viewing history, and feedback. It scores every scene for how well it matches your taste and explains the reason behind each card."),
-      React.createElement("h3", null, "First sync"),
-      React.createElement("p", null, "Run Sync and build recommendations once to build the first model. Until then the recommendation lanes are empty. Progress and errors appear in Manage → Tasks and in the status pill."),
-      React.createElement("h3", null, "Glossary"),
-      React.createElement("dl", { className: "curator-help-glossary" },
-        React.createElement("dt", null, "Appeal vs Current Fit"),
-        React.createElement("dd", null, "Appeal is how strongly a scene matches your durable taste; Current Fit is how ready it is right now, factoring cooldown and freshness. Why this? separates the two."),
-        React.createElement("dt", null, "Confidence"),
-        React.createElement("dd", null, "How much viewing history backs the model's inference for a tag. More filled bars on a tag means more evidence, not a stronger preference."),
-        React.createElement("dt", null, "Lanes"),
-        React.createElement("dd", null, "The recommendation shelves (For You, Best Bets, Revisit, Stretch, Blind Spots, Dormant) that group cards by intent."),
-        React.createElement("dt", null, "Score"),
-        React.createElement("dd", null, "Ranking utility, not a probability. The colored corner icon identifies the source lane."),
-        React.createElement("dt", null, "Taste Profile answers"),
-        React.createElement("dd", null, "A direct answer about a tag is strong evidence but not a hard exclusion; Neutral is an explicit near-zero preference."),
-        React.createElement("dt", null, "Card feedback"),
-        React.createElement("dd", null, "Thumbs up/down and menu actions (Not now, Never show, Review for pruning, Metadata is wrong) are behavioral feedback that trains the model."),
-        React.createElement("dt", null, "Feedback vs Taste Profile"),
-        React.createElement("dd", null, "Card feedback is behavior-derived; Taste Profile answers are explicit tag preferences. Direct answers affect tag fit but do not count as separate behavioral corroboration.")
-      ),
-      React.createElement("h3", null, "Where to go next"),
-      React.createElement("ul", null,
-        React.createElement("li", null, React.createElement(HelpLink, { href: HELP_LINKS.gettingStarted }, "Getting started")),
-        React.createElement("li", null, React.createElement(HelpLink, { href: HELP_LINKS.usingCurator }, "Using Curator")),
-        React.createElement("li", null, React.createElement(HelpLink, { href: HELP_LINKS.privacy }, "Privacy and data safety"))
-      )
+      React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpen }, "Open Curate"),
+      React.createElement("button", { type: "button", className: "curator-curate-nudge-dismiss", onClick: onDismiss, title: "Don't show this again", "aria-label": "Dismiss" }, React.createElement(FontAwesomeIcon, { icon: faXmark }))
     );
   }
 
@@ -1742,6 +1585,7 @@
           picks: [entry.pick],
         });
         writeLastRound(entry.roundId, entry.dimension);
+        bumpCurateRounds();
         if (onCommitted) onCommitted(entry);
       } catch (failure) {
         setError(failure.message);
@@ -4786,11 +4630,7 @@
     const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
-    // First-run onboarding (issue #148): the welcome banner shows once until
-    // dismissed; the tour is offered only after a model exists (slate renders)
-    // and is dismissed independently so it never fires on an empty library.
-    const [welcomeDismissed, setWelcomeDismissed] = React.useState(readOnboarding().dismissed);
-    const [tourDismissed, setTourDismissed] = React.useState(readTour().dismissed);
+    const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
     // "?view=<maintenance item>" (taste, feedback, backups, …) keeps working
     // as a soft alias into Manage forever — it resolves lane/currentSection
     // directly with no history.replace, so old bookmarks render identically
@@ -4931,14 +4771,6 @@
     }, [slate, page]);
 
     const laneOption = NAV_ITEMS.find((option) => option.value === lane);
-    // Package 1 — which About panel to render. Nav views use their own id;
-    // Manage sections use the section; Curate uses the curate view (its
-    // SectionShell already shows the active section's description in the
-    // detail head, so the About panel covers the view as a whole).
-    const aboutView = laneOption ? laneOption.value
-      : lane === "manage" ? (currentSection || lane)
-        : lane === "curate" ? "curate"
-          : lane;
 
     const ids = slate?.items.map((item) => item.scene_id) || [];
     const scenesQuery = GQL.useFindScenesQuery({
@@ -5114,10 +4946,6 @@
           laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
       ),
-      // Package 1 — every view id renders its About panel (collapsible
-      // <details>) from the same map that drives nav tooltips. Also covers the
-      // profiling and Tasks surfaces, which have no nav item of their own.
-      ABOUT_EXTRA[aboutView] && React.createElement(AboutViewPanel, { view: aboutView }),
       laneByValue.has(lane) && filtersOpen && React.createElement(FilterBar, {
         variant: "recommendations",
         entityType: "scene",
@@ -5137,11 +4965,9 @@
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity }),
-      lane === "help" && React.createElement(HelpPanel),
-      lane === "for_you" && !welcomeDismissed && !readOnboarding().dismissed && React.createElement(WelcomeBanner, { onDismiss: () => { dismissOnboarding(); setWelcomeDismissed(true); }, onOpenHelp: () => openView("help") }),
-      lane === "for_you" && !tourDismissed && !readTour().dismissed && welcomeDismissed && laneByValue.has(lane) && slate && !loading && React.createElement(OnboardingTour, { onDismiss: () => { dismissTour(); setTourDismissed(true); } }),
-      error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now"), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => openView("help") }, " Help")),
+      error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
+      lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(

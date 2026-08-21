@@ -422,144 +422,6 @@ def test_curator_tabs_update_browser_history() -> None:
     assert 'lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),' in source
 
 
-def test_every_view_has_a_description_and_about_panel_renders() -> None:
-    """Package 1: every view id carries a description entry and renders its
-    About panel from the same map that drives nav tooltips."""
-    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    # The LANES/NAV_ITEMS map is the single source of truth; every entry has a
-    # description, and the About panel renders from that map (plus ABOUT_EXTRA).
-    assert "function AboutViewPanel({ view })" in source
-    assert 'React.createElement("summary", null, "About this view")' in source
-    assert "const ABOUT_EXTRA = {" in source
-    assert (
-        "ABOUT_EXTRA[aboutView] && React.createElement(AboutViewPanel, { view: aboutView })"
-        in source
-    )
-    # Every nav view id must have an ABOUT_EXTRA entry so the panel renders for
-    # each (the map is checked against the view inventory).
-    extra_block = source.split("const ABOUT_EXTRA = {", 1)[1].split("};", 1)[0]
-    for view in [
-        "for_you",
-        "best_bets",
-        "revisit",
-        "stretch",
-        "blind_spots",
-        "dormant",
-        "curate",
-        "similar",
-        "expand",
-        "hunt",
-        "taste",
-        "sentiment",
-        "feedback",
-        "history",
-        "prune",
-        "backups",
-        "diagnostics",
-        "profiling",
-        "settings",
-        "tasks",
-        "help",
-    ]:
-        assert re.search(rf"\b{view}\s*:", extra_block), f"missing ABOUT_EXTRA entry for {view}"
-    # Nav tooltips must keep a description so the map stays the source of truth.
-    assert (
-        'description: "A balanced shelf of strong matches, timely revisits, and '
-        'a little discovery."' in source
-    )
-    assert (
-        'description: "Inspect render and query performance profiles captured during development."'
-        in source
-    )
-    assert (
-        'description: "Live status of background Curator jobs: queue position, '
-        'progress, and results."' in source
-    )
-
-
-def test_welcome_banner_shows_once_and_dismiss_persists() -> None:
-    """Package 2: the welcome banner is non-blocking, shows once, and its
-    dismissal persists in a version-stamped localStorage key."""
-    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    assert 'const ONBOARDING_KEY = "stash-curator:onboarding:v1";' in source
-    assert "function readOnboarding()" in source
-    assert "function dismissOnboarding()" in source
-    assert "localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ dismissed: true }))" in source
-    assert "function WelcomeBanner({ onDismiss, onOpenHelp })" in source
-    assert '"Welcome to Curator"' in source
-    assert "The one required first step is to sync and build your recommendation model" in source
-    assert "curator-welcome" in source
-    assert "curator-welcome-dismiss" in source
-    assert 'role: "region"' in source
-    assert "aria-live" in source
-    # Non-modal: no focus trap, ESC dismisses.
-    assert 'event.key === "Escape"' in source
-    assert "tabIndex: -1" in source
-
-
-def test_tour_appears_only_after_first_model_and_is_dismissible() -> None:
-    """Package 2: the coach-mark tour fires only after a model exists (slate
-    renders) and is dismissed independently with a persist."""
-    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    assert 'const TOUR_KEY = "stash-curator:tour:v1";' in source
-    assert "function readTour()" in source
-    assert "function dismissTour()" in source
-    assert "function OnboardingTour({ onDismiss })" in source
-    assert "function TourStep({ step, onNext, onPrev, onDismiss })" in source
-    assert "const TOUR_STEPS = [" in source
-    # The tour only fires when the slate renders (a model exists).
-    assert "slate && !loading && React.createElement(OnboardingTour" in source
-    assert "laneByValue.has(lane) && slate" in source
-    # Each step is dismissible with one "Don't show this again" persist.
-    assert '"Don\'t show this again"' in source
-    assert '"Finish"' in source
-    assert '"Back"' in source
-    # The four coach-mark pointers.
-    assert "curator-tour-step-lane" in source
-    assert "curator-tour-step-why" in source
-    assert "curator-tour-step-taste" in source
-    assert "curator-tour-step-curate" in source
-
-
-def test_help_view_renders_without_network_and_external_links_open_new_tab() -> None:
-    """Package 3: Help is a nav view that renders static in-plugin content with
-    external doc links opening in a new tab."""
-    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    assert 'value: "help"' in source
-    assert 'label: "Help"' in source
-    assert "icon: faQuestionCircle" in source
-    assert "function HelpPanel()" in source
-    assert 'lane === "help" && React.createElement(HelpPanel)' in source
-    # The in-plugin guide ships static content (no Markdown renderer/network).
-    assert '"What a model is"' in source
-    assert '"First sync"' in source
-    assert '"Appeal vs Current Fit"' in source
-    assert '"Confidence"' in source
-    assert '"Lanes"' in source
-    assert '"Taste Profile answers"' in source
-    assert '"Feedback vs Taste Profile"' in source
-    assert '"Where to go next"' in source
-    # External links to the hosted docs open in a new tab.
-    assert "const HELP_LINKS = {" in source
-    assert "https://mrx-31415.github.io/stash-curator/getting-started/" in source
-    assert "https://mrx-31415.github.io/stash-curator/using-curator/" in source
-    assert "https://mrx-31415.github.io/stash-curator/privacy/" in source
-    assert 'target: "_blank"' in source
-    assert "function HelpLink({ href, children })" in source
-
-
-def test_help_pointer_in_no_model_empty_state() -> None:
-    """The 'no model yet' empty state keeps its sync CTA and adds the Help
-    pointer from Package 3."""
-    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
-    assert "no model exists yet" in source
-    assert "Sync and build now" in source
-    assert (
-        'React.createElement(Button, { size: "sm", variant: "secondary", '
-        'onClick: () => openView("help") }, " Help")' in source
-    )
-
-
 def test_recent_recommendations_reuse_qualified_impression_history() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
@@ -672,13 +534,10 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     assert "Ideas Curator is unsure about" in source
     assert "left.confidence - right.confidence" in source
 
-    # First-run onboarding (issue #148): the CurateNudge was retired into the
-    # welcome/tour flow, so it is gone; the generalized storage pattern remains.
-    assert "OnboardingTour" in source
-    assert "WelcomeBanner" in source
-    assert "ONBOARDING_KEY" in source
-    assert "TOUR_KEY" in source
-    assert "curator-tour-step-curate" in source
+    assert "CurateNudge" in source
+    assert "CURATE_NUDGE_KEY" in source
+    assert "MAX_NUDGE_ROUNDS" in source
+    assert "curator-curate-nudge-dismiss" in source
 
     # The scene-batch rating flow stays retired, and the round-scoped picks
     # cache is gone with the submit gate.
