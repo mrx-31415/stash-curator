@@ -166,6 +166,20 @@
     icon: faWrench,
     description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
   };
+  // Find groups the three "find new content" surfaces (Similar, Expand,
+  // Performer Hunt) under one primary nav item with inner tabs (issue #192).
+  // The inner surfaces keep their own URL ?view= lanes and filter state, so
+  // old bookmarks and per-surface state still work; the wrapper is pure nav.
+  const FIND_NAV_ITEM = {
+    value: "find",
+    label: "Find",
+    icon: faSearch,
+    description: "Find new content: similar scenes, external metadata candidates, and performer hunts.",
+  };
+  const FIND_SECTIONS = NAV_ITEMS.filter(
+    (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
+  );
+  const FIND_SECTION_VALUES = new Set(FIND_SECTIONS.map((item) => item.value));
   // Curate's own sections. Before this split the view offered "Random round"
   // and "Pick-test a hypothesis" side by side, which are the same activity with
   // a different pair-selection filter — presenting a selection policy as if it
@@ -201,8 +215,8 @@
   ];
   const TOP_NAV_ITEMS = [
     RECOMMENDATIONS_NAV_ITEM,
-    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value)),
-    MANAGE_NAV_ITEM,
+    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value) && !FIND_SECTION_VALUES.has(item.value)),
+    FIND_NAV_ITEM,
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
@@ -3709,6 +3723,8 @@
   function TasksPanel() {
     const [jobs, setJobs] = React.useState([]);
     const [error, setError] = React.useState("");
+    const [running, setRunning] = React.useState("");
+    const [message, setMessage] = React.useState("");
     function refresh() {
       operation({ operation: "get_job_status" }).then(
         (result) => { setError(""); setJobs(result.jobs || []); },
@@ -3720,11 +3736,31 @@
       const timer = setInterval(refresh, 5000);
       return () => clearInterval(timer);
     }, []);
+    async function start(taskName) {
+      setRunning(taskName);
+      setMessage("");
+      try {
+        await runTask(taskName);
+        setMessage("Task started — progress appears below.");
+        setTimeout(refresh, 1000);
+      } catch (failure) {
+        setMessage(failure.message);
+      } finally {
+        setRunning("");
+      }
+    }
     return React.createElement(
       "div",
       { className: "curator-tasks-panel" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       React.createElement("p", null, "Tasks run in Curator's own background worker, so they keep going even after the Stash-side job completes — progress and results are shown here."),
+      React.createElement(
+        "div",
+        { className: "curator-tasks-runnow" },
+        React.createElement("span", null, "Run now"),
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(running), onClick: () => start("Sync and build recommendations") }, running === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations")
+      ),
+      message && React.createElement("p", { className: "curator-header-message", role: "status" }, message),
       jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
       React.createElement(
         "ul",
@@ -3758,7 +3794,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize, onOpenManage, manageDescription }) {
     const routeLocation = useLocation();
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
@@ -3962,8 +3998,7 @@
         React.createElement(
           "div",
           { className: "curator-task-buttons" },
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: manageDescription || "Manage — settings, tasks, taste profile, backups, and diagnostics.", "aria-label": "Open Manage", onClick: onOpenManage }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
           cardSizeControl
         )
@@ -4385,8 +4420,9 @@
       : null;
     // Curate has its own sections on the same ?section= param. Resolve against
     // Curate's own list so a section left over from Manage cannot leak in.
+    // Goto-only entries (cross-view links) never become a URL section.
     const curateSection = lane === "curate"
-      ? (CURATE_SECTIONS.some((item) => item.value === route.get("section"))
+      ? (CURATE_SECTIONS.some((item) => !item.goto && item.value === route.get("section"))
         ? route.get("section")
         : CURATE_SECTIONS[0].value)
       : null;
@@ -4611,12 +4647,12 @@
             { variant: "tabs", role: "tablist", className: "curator-tabs" },
             TOP_NAV_ITEMS.map((option) => {
               const active = option.value === "recommendations" ? laneByValue.has(lane)
-                : option.value === "manage" ? lane === "manage"
+                : option.value === "find" ? FIND_SECTION_VALUES.has(lane)
                 : lane === option.value;
               const onClick = option.value === "recommendations"
                 ? () => { if (!laneByValue.has(lane)) openView("for_you"); }
-                : option.value === "manage"
-                  ? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }
+                : option.value === "find"
+                  ? () => { if (!FIND_SECTION_VALUES.has(lane)) openView(FIND_SECTIONS[0].value); }
                   : () => openView(option.value);
               return React.createElement(
                 Nav.Link,
@@ -4627,7 +4663,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize, onOpenManage: () => openManage(currentSection || MAINTENANCE_ITEMS[0].value), manageDescription: MANAGE_NAV_ITEM.description })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",
@@ -4648,6 +4684,23 @@
           React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: laneItem.icon })),
           React.createElement("span", { className: "curator-lane-card-name" }, laneItem.label),
           React.createElement("span", { className: "curator-lane-card-desc" }, laneItem.description)
+        ))
+      ),
+      FIND_SECTION_VALUES.has(lane) && React.createElement(
+        "div",
+        { className: "curator-find-switcher", role: "tablist", "aria-label": "Find content" },
+        FIND_SECTIONS.map((section) => React.createElement(
+          "button",
+          {
+            key: section.value,
+            type: "button",
+            className: "curator-find-tab",
+            "aria-pressed": lane === section.value,
+            onClick: () => openView(section.value),
+            title: section.description,
+          },
+          React.createElement(FontAwesomeIcon, { icon: section.icon }),
+          React.createElement("span", null, section.label)
         ))
       ),
       laneOption && lane !== "curate" && React.createElement(

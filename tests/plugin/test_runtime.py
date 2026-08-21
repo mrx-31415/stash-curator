@@ -406,13 +406,21 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "const routeLocation = useLocation();" in source
     assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
     assert ": () => openView(option.value);" in source
-    # The Recommendations and Manage pills must no-op when a lane/section
-    # under them is already active, or clicking the parent pill while on
-    # e.g. Best Bets would wrongly reset to For You (GH #150 Package 3).
+    # The Recommendations pill must no-op when a lane under it is already
+    # active, or clicking the parent pill while on e.g. Best Bets would
+    # wrongly reset to For You (GH #150 Package 3).
     assert '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
-    assert (
-        'if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value)' in source
-    )
+    # Manage moved out of the top nav into a header button (issue #193); the
+    # button opens the current Manage section, and openManage itself no-ops
+    # when already there.
+    assert "onOpenManage: () => openManage(currentSection || MAINTENANCE_ITEMS[0].value)" in source
+    assert "function openManage(section)" in source
+    # Find is a wrapper over Similar / Expand / Performer Hunt (issue #192).
+    assert 'value: "find"' in source
+    assert "FIND_SECTION_VALUES.has(lane)" in source
+    assert "openView(FIND_SECTIONS[0].value)" in source
+    assert 'className: "curator-find-switcher"' in source
+    assert 'className: "curator-find-tab"' in source
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
     # cannot leak into another panel, e.g. the expand performer filter.
