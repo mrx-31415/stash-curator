@@ -435,6 +435,85 @@ func TestEnqueueFailsClosedWhenWorkerUnavailable(t *testing.T) {
 	}
 }
 
+func TestIsSchemaSkewError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil is not skew", nil, false},
+		{"unknown migration versions", errors.New("database contains unknown migration versions: [33]"), true},
+		{"unknown multiple migrations", errors.New("database contains unknown migration versions: [33 34]"), true},
+		{"checksum mismatch", errors.New("migration 33 does not match the packaged checksum"), true},
+		{"unrelated open error", errors.New("database disk image is malformed"), false},
+		{"busy error", errors.New("database is locked"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSchemaSkewError(c.err); got != c.want {
+				t.Fatalf("isSchemaSkewError(%q) = %v, want %v", c.err, got, c.want)
+			}
+		})
+	}
+}
+
+func TestRunWorkerJobRetiresOnSchemaSkew(t *testing.T) {
+	pluginDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "curator.sqlite3")
+	payload := taskPayload(path, "update-model")
+	previous := openTaskSidecarFn
+	openTaskSidecarFn = func(string, jVal, jVal, string) (dbx, error) {
+		return nil, errors.New("database contains unknown migration versions: [33]")
+	}
+	defer func() { openTaskSidecarFn = previous }()
+
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	insertQueued(t, db, "job-1", "update-model", "{}", 1_700_000_000_000)
+	// The job must be marked running so the failure transition applies.
+	if _, err := db.Exec(`UPDATE curator_job SET state='running', owner_pid=?, heartbeat_at_ms=? WHERE job_id='job-1'`, os.Getpid(), nowMs()); err != nil {
+		t.Fatal(err)
+	}
+
+	retire := runWorkerJob(pluginDir, db, "job-1", 1_700_000_000_000, payload, "update-model")
+	if !retire {
+		t.Fatal("schema-skew sidecar open must signal daemon retirement")
+	}
+	if got := jobState(t, db, "job-1"); got != "failed" {
+		t.Fatalf("job left in %q, want failed", got)
+	}
+	row := jobRow(t, db, "job-1")
+	if !strings.Contains(asDBString(row["error"]), "unknown migration versions") {
+		t.Fatalf("job error not recorded: %q", asDBString(row["error"]))
+	}
+}
+
+func TestRunWorkerJobDoesNotRetireOnTransientOpenFailure(t *testing.T) {
+	pluginDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "curator.sqlite3")
+	payload := taskPayload(path, "update-model")
+	previous := openTaskSidecarFn
+	openTaskSidecarFn = func(string, jVal, jVal, string) (dbx, error) {
+		return nil, errors.New("database is locked")
+	}
+	defer func() { openTaskSidecarFn = previous }()
+
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	insertQueued(t, db, "job-1", "update-model", "{}", 1_700_000_000_000)
+	if _, err := db.Exec(`UPDATE curator_job SET state='running', owner_pid=?, heartbeat_at_ms=? WHERE job_id='job-1'`, os.Getpid(), nowMs()); err != nil {
+		t.Fatal(err)
+	}
+
+	if retire := runWorkerJob(pluginDir, db, "job-1", 1_700_000_000_000, payload, "update-model"); retire {
+		t.Fatal("transient open failure must not retire the daemon")
+	}
+}
+
 func TestRecoverOrphanJobs(t *testing.T) {
 	db, _ := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
