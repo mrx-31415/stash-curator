@@ -439,10 +439,27 @@ def test_every_view_has_a_description_and_about_panel_renders() -> None:
     # each (the map is checked against the view inventory).
     extra_block = source.split("const ABOUT_EXTRA = {", 1)[1].split("};", 1)[0]
     for view in [
-        "for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant",
-        "curate", "similar", "expand", "hunt", "taste", "sentiment", "feedback",
-        "history", "prune", "backups", "diagnostics", "profiling", "settings",
-        "tasks", "help",
+        "for_you",
+        "best_bets",
+        "revisit",
+        "stretch",
+        "blind_spots",
+        "dormant",
+        "curate",
+        "similar",
+        "expand",
+        "hunt",
+        "taste",
+        "sentiment",
+        "feedback",
+        "history",
+        "prune",
+        "backups",
+        "diagnostics",
+        "profiling",
+        "settings",
+        "tasks",
+        "help",
     ]:
         assert re.search(rf"\b{view}\s*:", extra_block), f"missing ABOUT_EXTRA entry for {view}"
     # Nav tooltips must keep a description so the map stays the source of truth.
@@ -467,16 +484,16 @@ def test_welcome_banner_shows_once_and_dismiss_persists() -> None:
     assert 'const ONBOARDING_KEY = "stash-curator:onboarding:v1";' in source
     assert "function readOnboarding()" in source
     assert "function dismissOnboarding()" in source
-    assert 'localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ dismissed: true }))' in source
+    assert "localStorage.setItem(ONBOARDING_KEY, JSON.stringify({ dismissed: true }))" in source
     assert "function WelcomeBanner({ onDismiss, onOpenHelp })" in source
     assert '"Welcome to Curator"' in source
     assert "The one required first step is to sync and build your recommendation model" in source
     assert "curator-welcome" in source
     assert "curator-welcome-dismiss" in source
-    assert "role: \"region\"" in source
+    assert 'role: "region"' in source
     assert "aria-live" in source
     # Non-modal: no focus trap, ESC dismisses.
-    assert "event.key === \"Escape\"" in source
+    assert 'event.key === "Escape"' in source
     assert "tabIndex: -1" in source
 
 
@@ -897,6 +914,7 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     # like a password field" requirement; nothing else in the panel does.
     assert '{ key: "whisparrApiKey", type: "PASSWORD"' in source
     assert 'field.type === "PASSWORD" ? "password"' in source
+
 
 def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
