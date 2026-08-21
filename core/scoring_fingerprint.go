@@ -6,4 +6,4 @@
 
 package main
 
-const scoringFingerprint = "036c04cb34ad4503"
+const scoringFingerprint = "08b3659720089de5"
