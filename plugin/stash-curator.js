@@ -3723,7 +3723,7 @@
   function TasksPanel() {
     const [jobs, setJobs] = React.useState([]);
     const [error, setError] = React.useState("");
-    const [running, setRunning] = React.useState("");
+    const [starting, setStarting] = React.useState("");
     const [message, setMessage] = React.useState("");
     function refresh() {
       operation({ operation: "get_job_status" }).then(
@@ -3736,8 +3736,66 @@
       const timer = setInterval(refresh, 5000);
       return () => clearInterval(timer);
     }, []);
+    const active = jobs.filter((job) => job.state === "queued" || job.state === "running");
+    const finished = jobs.filter((job) => job.state !== "queued" && job.state !== "running");
+    const running = active.length > 0;
+    const last = jobs[0];
+    function durationMs(job) {
+      const end = typeof job.finished_at_ms === "number" ? job.finished_at_ms : Date.now();
+      const start = typeof job.started_at_ms === "number" ? job.started_at_ms : end;
+      return Math.max(0, end - start);
+    }
+    function formatDuration(ms) {
+      const seconds = Math.round(ms / 1000);
+      if (seconds < 60) return `${seconds}s`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    }
+    function summaryLine(job) {
+      const summary = job.summary || {};
+      const scenes = typeof summary.scene_count === "number" ? `${summary.scene_count} scenes` : "";
+      if (job.job_type === "build" || job.job_type === "update-model" || job.job_type === "sync-build" || job.job_type === "full-sync-build") {
+        return scenes ? `Model built · ${scenes}` : "Model built";
+      }
+      if (job.job_type === "backup") return "Backup created";
+      if (job.job_type === "compact") return "Compaction finished";
+      if (job.job_type === "expand-refresh") return "StashDB candidates refreshed";
+      if (job.job_type === "sync-plays") return "Play history synced";
+      return scenes || "Done";
+    }
+    function taskRow(job) {
+      const label = TASK_MODE_LABELS[job.job_type] || job.job_type;
+      const pct = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null;
+      const stateLabel = job.state === "complete" ? "Done" : job.state === "running" ? "Running" : job.state.charAt(0).toUpperCase() + job.state.slice(1);
+      return React.createElement(
+        "li",
+        { key: job.job_id, className: `curator-task curator-task-${job.state}` },
+        React.createElement(
+          "div",
+          { className: "curator-task-head" },
+          React.createElement("strong", null, label),
+          React.createElement("span", { className: `curator-task-state curator-task-state-${job.state}` }, stateLabel),
+          React.createElement("span", { className: "curator-task-time" }, job.state === "running" ? `started ${formatTimeAgo(job.started_at_ms)}` : `took ${formatDuration(durationMs(job))}`)
+        ),
+        (job.state === "running" || job.state === "queued") && React.createElement(
+          "div",
+          { className: "curator-task-progress-track" },
+          React.createElement("span", { className: "curator-task-progress-fill", style: pct !== null ? { width: `${Math.round(pct * 100)}%` } : undefined })
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-task-meta" },
+          (job.state === "running" || job.state === "queued")
+            ? (pct !== null ? `${Math.round(pct * 100)}%` : job.state === "running" ? "Working" : "Queued")
+            : summaryLine(job),
+          job.error && React.createElement("span", { className: "curator-task-error" }, job.error)
+        )
+      );
+    }
+
     async function start(taskName) {
-      setRunning(taskName);
+      setStarting(taskName);
       setMessage("");
       try {
         await runTask(taskName);
@@ -3746,7 +3804,7 @@
       } catch (failure) {
         setMessage(failure.message);
       } finally {
-        setRunning("");
+        setStarting("");
       }
     }
     return React.createElement(
@@ -3758,38 +3816,32 @@
         "div",
         { className: "curator-tasks-runnow" },
         React.createElement("span", null, "Run now"),
-        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(running), onClick: () => start("Sync and build recommendations") }, running === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations")
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(starting), onClick: () => start("Sync and build recommendations") }, starting === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations")
       ),
       message && React.createElement("p", { className: "curator-header-message", role: "status" }, message),
-      jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
       React.createElement(
-        "ul",
-        { className: "curator-tasks-list" },
-        jobs.map((job) => {
-          const label = TASK_MODE_LABELS[job.job_type] || job.job_type;
-          const pct = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null;
-          return React.createElement(
-            "li",
-            { key: job.job_id, className: `curator-task curator-task-${job.state}` },
-            React.createElement(
-              "div",
-              { className: "curator-task-head" },
-              React.createElement("strong", null, label),
-              React.createElement("span", { className: "curator-task-state" }, job.state)
-            ),
-            React.createElement(
-              "div",
-              { className: "curator-task-progress-track" },
-              React.createElement("span", { className: "curator-task-progress-fill", style: pct !== null ? { width: `${Math.round(pct * 100)}%` } : undefined })
-            ),
-            React.createElement(
-              "div",
-              { className: "curator-task-meta" },
-              pct !== null ? `${Math.round(pct * 100)}%` : job.state === "running" ? "Working" : job.state,
-              job.error && React.createElement("span", { className: "curator-task-error" }, job.error)
-            )
-          );
-        })
+        "div",
+        { className: `curator-worker-status curator-worker-status-${running ? "running" : "idle"}` },
+        React.createElement("span", { className: "curator-worker-status-dot", "aria-hidden": "true" }),
+        React.createElement("strong", null, running ? "Worker running" : "Worker idle"),
+        running
+          ? `${active.length} task${active.length === 1 ? "" : "s"} active`
+          : last
+            ? `Last task: ${TASK_MODE_LABELS[last.job_type] || last.job_type} · ${formatTimeAgo(last.finished_at_ms || last.started_at_ms)}`
+            : "No tasks yet"
+      ),
+      jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
+      active.length > 0 && React.createElement(
+        "section",
+        { className: "curator-tasks-section" },
+        React.createElement("h4", { className: "curator-tasks-section-title" }, "Active"),
+        React.createElement("ul", { className: "curator-tasks-list" }, active.map(taskRow))
+      ),
+      finished.length > 0 && React.createElement(
+        "details",
+        { className: "curator-tasks-completed", open: active.length === 0 },
+        React.createElement("summary", null, `Completed (${finished.length})`),
+        React.createElement("ul", { className: "curator-tasks-list" }, finished.map(taskRow))
       )
     );
   }

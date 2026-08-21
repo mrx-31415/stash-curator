@@ -1377,6 +1377,14 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "tasks: () => React.createElement(TasksPanel)" in source
     assert "Manage → Tasks" in source
     assert "curator-tasks-list" in source
+    # Issue #211: worker status header and a collapsible Completed section.
+    assert "curator-worker-status" in source
+    assert "curator-worker-status-dot" in source
+    assert "Worker running" in source
+    assert "Worker idle" in source
+    assert 'className: "curator-tasks-completed"' in source
+    assert "Completed (" in source
+    assert "curator-task-state-" in source
     assert "Querying StashDB" not in source
     assert 'className: "curator-loading", role: "status"' in source
     assert 'className: "curator-progress"' not in source
