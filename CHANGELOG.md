@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/mrx-31415/stash-curator/compare/v0.15.0...v0.16.0) (2026-08-21)
+
+
+### Features
+
+* **model:** shrink tag affinities toward the taxonomy instead of toward zero ([0610311](https://github.com/mrx-31415/stash-curator/commit/0610311c9502ca66ef24883405751c52d6956917))
+
+
+### Bug Fixes
+
+* **model:** make the model digest identify the code that produced it ([f5f5790](https://github.com/mrx-31415/stash-curator/commit/f5f5790aa36d624d5b210e42bc0b59ccbdaf06f7))
+
 ## [0.15.0](https://github.com/mrx-31415/stash-curator/compare/v0.14.0...v0.15.0) (2026-08-20)
 
 
