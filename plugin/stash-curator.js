@@ -2597,9 +2597,12 @@
             scoreHeadline: "Appeal",
             scoreHeadlineValue: formatAppealValue(item.appeal),
             scoreHeadlineBar: scoreBar(item.appeal, true),
-            scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : scoreBar(item.appeal, true),
-            scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : "Appeal",
-            scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : formatAppealValue(item.appeal),
+            // Issue #210: score_review has no lane rank — rendering the
+            // second "Appeal" row would duplicate the headline row, so it is
+            // dropped for the pseudo-lane.
+            scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : null,
+            scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : null,
+            scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : null,
           }),
           React.createElement(Feedback, { item, onRemove, onThumbDown })
         )
