@@ -503,9 +503,19 @@ func modelAffinitySanityCheck(artifact dbx, modelID string, computedAffinityCoun
 
 // modelConfigCanonical mirrors json.dumps(asdict(CuratorConfig),
 // sort_keys=True): the feature/model/ranking sub-configs as ordered dicts.
+// The feature sub-config uses the default (empty) ignored_tags; the build
+// passes the runtime ignored_tags via modelConfigCanonicalWith so the model
+// fingerprint reflects an edited ignore list.
 func modelConfigCanonical() string {
+	return modelConfigCanonicalWith(nil)
+}
+
+// modelConfigCanonicalWith mirrors modelConfigCanonical for a given
+// ignored_tags list (nil → the empty default). The model build passes the
+// runtime ignored_tags so the model digest changes when the list changes.
+func modelConfigCanonicalWith(ignoredTags []string) string {
 	config := jvObj(
-		jvKey("feature", modelFeatureConfig()),
+		jvKey("feature", modelFeatureConfigWith(ignoredTags)),
 		jvKey("model", modelSubConfig()),
 		jvKey("ranking", rankingSubConfig()),
 		jvKey("random_seed", jvInt(31415)),
@@ -521,9 +531,16 @@ func parseJSONOr(raw string) jVal {
 	return parsed
 }
 
-// modelFeatureConfig mirrors asdict(FeatureConfig) as a jVal object.
+// modelFeatureConfig mirrors asdict(FeatureConfig) as a jVal object (default
+// ignored_tags).
 func modelFeatureConfig() jVal {
-	parsed, err := parseJSON([]byte(featureConfigCanonicalJSON()))
+	return modelFeatureConfigWith(nil)
+}
+
+// modelFeatureConfigWith mirrors asdict(FeatureConfig) for a given
+// ignored_tags list.
+func modelFeatureConfigWith(ignoredTags []string) jVal {
+	parsed, err := parseJSON([]byte(featureConfigCanonicalJSONWith(ignoredTags)))
 	if err != nil {
 		return jvObj()
 	}
@@ -548,6 +565,9 @@ func modelSubConfig() jVal {
 		jvKey("direct_confidence_scale", jvFloat(0.8)),
 		jvKey("dormancy_center_days", jvFloat(120.0)),
 		jvKey("dormancy_width_days", jvFloat(45.0)),
+		jvKey("implicit_skip_confidence", jvFloat(implicitSkipConfidence)),
+		jvKey("implicit_skip_ips_cap", jvFloat(implicitSkipIPSCap)),
+		jvKey("implicit_skip_surprise_bonus", jvFloat(implicitSkipSurpriseBonus)),
 		jvKey("minimum_neighbor_similarity", jvFloat(0.05)),
 		jvKey("neighbor_bound", jvFloat(0.2)),
 		jvKey("neighbor_confidence_scale", jvFloat(0.35)),
@@ -625,10 +645,11 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	rec := newStageRecorder()
 	timings := map[string]int64{}
 	started := time.Now()
+	ignoredTags := featureIgnoredTags(db)
 	var featureVersion string
 	err := rec.stage("", "model.features", func() error {
 		var err error
-		featureVersion, _, err = featureBuild(db, nowMs, rec, func(fraction float64) {
+		featureVersion, _, err = featureBuild(db, nowMs, ignoredTags, rec, func(fraction float64) {
 			report(0.25 * fraction)
 		})
 		return err
@@ -661,16 +682,17 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	if err != nil {
 		return drainResult{}, err
 	}
+	modelConfigCanonical := modelConfigCanonicalWith(ignoredTags)
 	if os.Getenv("CURATOR_DEBUG_MODEL_DIGEST") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG model digest: fv=%s ev=%s src=%s cfg=%s cutoff=%g ver=%d ref=%d code=%s\n",
-			featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical(),
+			featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical,
 			performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs, scoringFingerprint)
 	}
 	// scoringFingerprint makes the code that produced the artifact part of the
 	// key: without it an algorithm change with unchanged data and config yields
 	// the same modelID, and the build reuses the previous algorithm's artifact.
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%g\x00%d\x00%d\x00%s",
-		featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical(),
+		featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical,
 		performerSimilarityAffinityCutoff, modelBuildVersion, referenceAtMs, scoringFingerprint)))
 	modelID := fmt.Sprintf("model-%s", hexEncode(digest[:])[:20])
 	var status string
@@ -707,7 +729,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		return drainResult{}, err
 	}
 	modelConfigJSON := jvObj(
-		jvKey("config", parseJSONOr(modelConfigCanonical())),
+		jvKey("config", parseJSONOr(modelConfigCanonical)),
 		jvKey("model_build_version", jvInt(modelBuildVersion)),
 		jvKey("reference_at_ms", jvInt(referenceAtMs)),
 		jvKey("scoring_fingerprint", jvStr(scoringFingerprint)),

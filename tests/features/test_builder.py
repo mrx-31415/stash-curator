@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from curator.config import CuratorConfig
+from curator.config import CuratorConfig, FeatureConfig
 from curator.features import FeatureBuilder, FeatureStore
 from curator.storage import MigrationRunner, connect_database
 
@@ -197,6 +197,49 @@ def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path
         profiles["performer-1"].blocks
     )
     assert profiles["performer-2"].blocks.get("measurements") is None
+
+
+def test_ignored_tags_exclude_scene_tags_from_features(tmp_path: Path) -> None:
+    """Issue #190: a tag whose exact name is in FeatureConfig.ignored_tags is
+    dropped before feature construction, so it produces no entity_feature rows
+    and no content vector entry. Exact-name match only — a bracketed tag not
+    in the list still resolves via the existing role rules."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    config = CuratorConfig(feature=FeatureConfig(ignored_tags=("Specific Scenario",)))
+    builder = FeatureBuilder(
+        connection,
+        config,
+        clock_ms=lambda: 100,
+        progress=lambda processed, total: None,
+    )
+    result = builder.build()
+    vectors = FeatureStore(connection).scene_content_vectors(result.feature_version)
+    # scene-1 carries tag 'content' (name "Specific Scenario") and 'admin'
+    # (bracketed, so never content anyway). With 'content' ignored, scene-1 has
+    # no content tags; its parent "Scenario" only appears where a scene tags it
+    # directly (scene-2).
+    assert "tag:content" not in vectors.get("scene-1", {})
+    assert "tag:parent" not in vectors.get("scene-1", {})
+    assert "tag:parent" in vectors["scene-2"]
+    # The ignored tag must not have produced any entity_feature rows.
+    scene_features = FeatureStore(connection).entity_features(result.feature_version, "scene")
+    for features in scene_features.values():
+        for feature in features:
+            if feature.family == "content":
+                assert feature.metadata.get("tag_id") != "content"
+
+
+def test_ignored_tags_match_exact_name_only(tmp_path: Path) -> None:
+    """A partial / substring name does not match: only an exact name in the
+    list excludes the tag."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    config = CuratorConfig(feature=FeatureConfig(ignored_tags=("Scenario",)))
+    builder = FeatureBuilder(connection, config, clock_ms=lambda: 100)
+    result = builder.build()
+    vectors = FeatureStore(connection).scene_content_vectors(result.feature_version)
+    # "Scenario" is the parent tag's name, not the 'content' tag's name
+    # ("Specific Scenario"), so 'content' is still a content feature on scene-1.
+    assert "tag:content" in vectors["scene-1"]
 
 
 def test_only_feature_source_changes_publish_new_version(tmp_path: Path) -> None:

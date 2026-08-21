@@ -22,6 +22,7 @@ var defaultPluginConfig = jvObj(
 	jvKey("model_update_max_wait_minutes", jvInt(30)),
 	jvKey("model_update_min_interval_minutes", jvInt(60)),
 	jvKey("prune_tag_name", jvStr("[Prune]")),
+	jvKey("ignored_tags", jvStr("")),
 	jvKey("expand_horizon_days", jvInt(90)),
 	jvKey("expand_gender", jvStr("FEMALE")),
 	jvKey("expand_wildcard", jvBool(false)),
@@ -59,6 +60,7 @@ var settingMapping = []struct {
 	{"modelUpdateMaxWaitMinutes", "model_update_max_wait_minutes", convFloat},
 	{"modelUpdateMinIntervalMinutes", "model_update_min_interval_minutes", convFloat},
 	{"pruneTagName", "prune_tag_name", convStr},
+	{"ignoredTags", "ignored_tags", convStr},
 	{"expandHorizonDays", "expand_horizon_days", convInt},
 	{"expandGender", "expand_gender", convStr},
 	{"expandWildcard", "expand_wildcard", convBool},
@@ -278,6 +280,9 @@ func validateConfig(values jVal) error {
 		if v.kind != jStr || strings.TrimSpace(v.s) == "" || len(v.s) > 100 {
 			return fmt.Errorf("prune_tag_name must be a non-empty string up to 100 characters")
 		}
+	}
+	if v := values.get("ignored_tags"); v.kind != jNull && v.kind != jStr {
+		return fmt.Errorf("ignored_tags must be a comma-separated string")
 	}
 	if v := values.get("expand_horizon_days"); v.kind != jNull {
 		if !isJSONInt(v) {

@@ -266,6 +266,85 @@ def test_feature_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
         go_conn.close()
 
 
+def _set_sidecar_ignored_tags(path: Path, ignored: str) -> None:
+    """Set curator_config.ignored_tags on a sidecar so the Go feature-build
+    kernel reads it at build time."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "UPDATE curator_config SET config_json=?, updated_at_ms=1 WHERE singleton=1",
+            (json.dumps({"ignored_tags": ignored}, separators=(",", ":")),),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _run_python_build_ignored(sidecar: Path, ignored: tuple[str, ...]) -> tuple[str, Path]:
+    """Run Python's FeatureBuilder with a config whose ignored_tags excludes
+    the given exact names."""
+    from curator.config import CuratorConfig, FeatureConfig
+    from curator.storage import connect_database
+
+    connection = connect_database(sidecar, attach_artifacts=False)
+    try:
+        result = FeatureBuilder(
+            connection,
+            CuratorConfig(feature=FeatureConfig(ignored_tags=ignored)),
+            clock_ms=lambda: REFERENCE_MS,
+        ).build()
+        feature_version = result.feature_version
+        basename = connection.execute(
+            "SELECT artifact_basename FROM feature_build WHERE feature_version=?",
+            (feature_version,),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    return feature_version, sidecar.parent / f"{sidecar.stem}-derived" / basename
+
+
+def test_feature_build_ignored_tags_parity(binary: Path, tmp_path: Path) -> None:
+    """Issue #190: a tag whose exact name is in ignored_tags produces no
+    entity_feature rows in either implementation, and both produce the same
+    feature_version and an identical feature artifact."""
+    py_dir = tmp_path / "py"
+    py_dir.mkdir()
+    py_db = py_dir / "curator.sqlite3"
+    make_feature_sidecar(py_db)
+    _set_sidecar_ignored_tags(py_db, "Familiar Scenario,Challenging Scenario")
+    py_version, py_artifact = _run_python_build_ignored(
+        py_db, ("Familiar Scenario", "Challenging Scenario")
+    )
+
+    go_dir = tmp_path / "go"
+    go_dir.mkdir()
+    go_db = go_dir / "curator.sqlite3"
+    make_feature_sidecar(go_db)
+    _set_sidecar_ignored_tags(go_db, "Familiar Scenario,Challenging Scenario")
+    go_version, go_artifact = _run_go_build(binary, go_db)
+
+    assert go_version == py_version
+    assert go_artifact.name == py_artifact.name
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+
+    # The ignored tags ('good' -> "Familiar Scenario", 'bad' -> "Challenging
+    # Scenario") must not produce content entity_feature rows.
+    for path in (py_artifact, go_artifact):
+        connection = sqlite3.connect(path)
+        try:
+            rows = connection.execute(
+                """
+                SELECT f.name FROM entity_feature ef
+                JOIN feature_definition f USING(feature_id)
+                WHERE ef.feature_version=? AND f.name IN ('tag:good', 'tag:bad')
+                """,
+                (py_version,),
+            ).fetchall()
+            assert rows == [], path
+        finally:
+            connection.close()
+
+
 def test_feature_build_reuse_parity(binary: Path, tmp_path: Path) -> None:
     """A second build on the same sidecar reuses the published feature on
     both implementations (reuse_count bumps, no new artifact)."""

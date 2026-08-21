@@ -22,7 +22,10 @@ from curator.core import core_binary
 from curator.model.builder import PreferenceModelBuilder
 from curator.storage import connect_database
 from tests.core.compare import artifact_tolerant_diff
-from tests.core.test_backend_slice3_featurebuild import make_feature_sidecar
+from tests.core.test_backend_slice3_featurebuild import (
+    _set_sidecar_ignored_tags,
+    make_feature_sidecar,
+)
 from tests.model.test_builder import REFERENCE_MS
 
 
@@ -249,6 +252,140 @@ def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:
     nested_model, _ = _run_python_build(nested_db)
 
     assert nested_model != flat_model
+
+
+def _run_python_build_with_ignored(sidecar: Path, ignored: tuple[str, ...]) -> tuple[str, Path]:
+    from curator.config import CuratorConfig, FeatureConfig
+    from curator.storage import connect_database
+
+    connection = connect_database(sidecar, attach_artifacts=False)
+    try:
+        result = PreferenceModelBuilder(
+            connection,
+            CuratorConfig(feature=FeatureConfig(ignored_tags=ignored)),
+            clock_ms=lambda: REFERENCE_MS,
+        ).build()
+        model_id = result.model_id
+        basename = connection.execute(
+            "SELECT artifact_basename FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    return model_id, sidecar.parent / f"{sidecar.stem}-derived" / basename
+
+
+def test_model_build_ignored_tags_parity(binary: Path, tmp_path: Path) -> None:
+    """Issue #190: with ignored_tags set, both implementations produce the
+    same model_id and an identical artifact, and the ignored tag produces no
+    content feature in the feature artifact that fed the build."""
+    py_dir = tmp_path / "py"
+    py_dir.mkdir()
+    py_db = py_dir / "curator.sqlite3"
+    make_feature_sidecar(py_db)
+    _set_sidecar_ignored_tags(py_db, "Familiar Scenario,Challenging Scenario")
+    py_model, py_artifact = _run_python_build_with_ignored(
+        py_db, ("Familiar Scenario", "Challenging Scenario")
+    )
+
+    go_dir = tmp_path / "go"
+    go_dir.mkdir()
+    go_db = go_dir / "curator.sqlite3"
+    make_feature_sidecar(go_db)
+    _set_sidecar_ignored_tags(go_db, "Familiar Scenario,Challenging Scenario")
+    go_model, go_artifact = _run_go_build(binary, go_db)
+
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == "", (
+        f"artifact content differs: {artifact_tolerant_diff(go_artifact, py_artifact)}"
+    )
+    assert _artifact_schema_diff(go_artifact, py_artifact) == ""
+
+    # The ignored tags must not appear as content affinities in either model
+    # artifact. feature_id embeds the feature name hash; match via the feature
+    # definition rows in the feature artifact that the build consumed.
+    for name, sidecar in (("python", py_db), ("go", go_db)):
+        connection = sqlite3.connect(sidecar)
+        try:
+            feature_version = connection.execute(
+                "SELECT feature_version FROM model_version WHERE model_id=?", (py_model,)
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        derived = sidecar.parent / f"{sidecar.stem}-derived"
+        feature_artifact = next(derived.glob(f"feature-{feature_version}.sqlite3"))
+        connection = sqlite3.connect(feature_artifact)
+        try:
+            rows = connection.execute(
+                """
+                SELECT f.name FROM entity_feature ef
+                JOIN feature_definition f USING(feature_id)
+                WHERE ef.feature_version=? AND f.name IN ('tag:good', 'tag:bad')
+                """,
+                (feature_version,),
+            ).fetchall()
+            assert rows == [], name
+        finally:
+            connection.close()
+
+
+def _seed_implicit_skip_impression(sidecar: Path) -> None:
+    """Add an impression with an observed playback at position 2, so the model
+    build emits implicit-skip virtual pairs (winner + earlier-position losers)."""
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.execute(
+            """
+            INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+            VALUES ('imp-146', 1, 'for_you', 'builtin')
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO impression_item(impression_id, scene_id, position, policy_score,
+                reason_snapshot_json) VALUES (?, ?, ?, ?, '[]')
+            """,
+            (
+                ("imp-146", "old-good", 0, 0.9),
+                ("imp-146", "recent-good", 1, 0.8),
+                ("imp-146", "unseen-good", 2, 0.3),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO play_session(session_id, scene_id, started_at_ms, ended_at_ms,
+                active_seconds, provenance, confidence, impression_id, summary_json)
+            VALUES ('ps-146', 'unseen-good', 100, 200, 10.0, 'direct_player', 1,
+                    'imp-146', '{}')
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_model_build_implicit_skip_parity(binary: Path, tmp_path: Path) -> None:
+    """Issue #146 Channel A: with an observed playback at position 2 in an
+    impression, both implementations emit the same implicit-skip virtual pairs
+    and produce the same model_id and an identical artifact."""
+    py_dir = tmp_path / "py"
+    py_dir.mkdir()
+    py_db = py_dir / "curator.sqlite3"
+    make_feature_sidecar(py_db)
+    _seed_implicit_skip_impression(py_db)
+    py_model, py_artifact = _run_python_build(py_db)
+
+    go_dir = tmp_path / "go"
+    go_dir.mkdir()
+    go_db = go_dir / "curator.sqlite3"
+    make_feature_sidecar(go_db)
+    _seed_implicit_skip_impression(go_db)
+    go_model, go_artifact = _run_go_build(binary, go_db)
+
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == "", (
+        f"artifact content differs: {artifact_tolerant_diff(go_artifact, py_artifact)}"
+    )
+    assert _artifact_schema_diff(go_artifact, py_artifact) == ""
 
 
 def test_model_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
