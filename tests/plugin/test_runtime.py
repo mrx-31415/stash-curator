@@ -431,7 +431,10 @@ def test_every_view_has_a_description_and_about_panel_renders() -> None:
     assert "function AboutViewPanel({ view })" in source
     assert 'React.createElement("summary", null, "About this view")' in source
     assert "const ABOUT_EXTRA = {" in source
-    assert "ABOUT_EXTRA[aboutView] && React.createElement(AboutViewPanel, { view: aboutView })" in source
+    assert (
+        "ABOUT_EXTRA[aboutView] && React.createElement(AboutViewPanel, { view: aboutView })"
+        in source
+    )
     # Every nav view id must have an ABOUT_EXTRA entry so the panel renders for
     # each (the map is checked against the view inventory).
     extra_block = source.split("const ABOUT_EXTRA = {", 1)[1].split("};", 1)[0]
@@ -443,9 +446,18 @@ def test_every_view_has_a_description_and_about_panel_renders() -> None:
     ]:
         assert re.search(rf"\b{view}\s*:", extra_block), f"missing ABOUT_EXTRA entry for {view}"
     # Nav tooltips must keep a description so the map stays the source of truth.
-    assert 'description: "A balanced shelf of strong matches, timely revisits, and a little discovery."' in source
-    assert 'description: "Inspect render and query performance profiles captured during development."' in source
-    assert 'description: "Live status of background Curator jobs: queue position, progress, and results."' in source
+    assert (
+        'description: "A balanced shelf of strong matches, timely revisits, and '
+        'a little discovery."' in source
+    )
+    assert (
+        'description: "Inspect render and query performance profiles captured during development."'
+        in source
+    )
+    assert (
+        'description: "Live status of background Curator jobs: queue position, '
+        'progress, and results."' in source
+    )
 
 
 def test_welcome_banner_shows_once_and_dismiss_persists() -> None:
@@ -525,7 +537,10 @@ def test_help_pointer_in_no_model_empty_state() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     assert "no model exists yet" in source
     assert "Sync and build now" in source
-    assert 'React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => openView("help") }, " Help")' in source
+    assert (
+        'React.createElement(Button, { size: "sm", variant: "secondary", '
+        'onClick: () => openView("help") }, " Help")' in source
+    )
 
 
 def test_recent_recommendations_reuse_qualified_impression_history() -> None:
