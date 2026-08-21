@@ -2574,8 +2574,31 @@
   background: var(--curator-card-surface);
   border: 0;
   margin: 0;
+  max-width: 100%;
   padding-bottom: 0;
   width: 100%;
+}
+
+/* Issue #215: Similar performer cards must never bleed horizontally out of
+   their grid cell. Stash's native performer-card internals (Bootstrap .row
+   negative margins, fixed-width thumbnails, nowrap name rows) can force the
+   card wider than its column, so contain the card and its rows and zero the
+   row gutters. */
+.curator-card > .performer-card .row,
+.curator-card > .performer-card .card-section,
+.curator-card > .performer-card .performer-card-image {
+  margin-left: 0;
+  margin-right: 0;
+  max-width: 100%;
+}
+
+.curator-card > .performer-card .card-section-title,
+.curator-card > .performer-card .performer-card-name {
+  overflow-wrap: anywhere;
+}
+
+.curator-grid > * {
+  min-width: 0;
 }
 
 .curator-more {
