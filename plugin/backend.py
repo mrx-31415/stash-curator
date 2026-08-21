@@ -519,6 +519,7 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         "expandHorizonDays": ("expand_horizon_days", int),
         "expandGender": ("expand_gender", str),
         "expandWildcard": ("expand_wildcard", bool),
+        "ignoredTags": ("ignored_tags", str),
     }
     overrides = {
         key: convert(settings[source])
