@@ -173,6 +173,45 @@ def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
+def _affinity_sanity_check(
+    artifact: sqlite3.Connection,
+    model_id: str,
+    feature_version: str,
+    labels: dict[str, _SceneLabel],
+) -> None:
+    """Issue #186 build-time guard: fail the build loudly when
+    feature_affinity came out empty (0 rows written) while the build produced
+    non-empty inputs — labeled scenes (the direct_scene_state source) or
+    entity_feature rows. A legitimately empty corpus (no labels and no entity
+    features) must still build, so the check keys on "inputs non-empty but
+    affinities empty", never on emptiness alone. Mirrors
+    modelAffinitySanityCheck in core/modelbuild3.go.
+    """
+    affinity_count = int(
+        artifact.execute(
+            "SELECT count(*) FROM feature_affinity WHERE model_id=?", (model_id,)
+        ).fetchone()[0]
+    )
+    if affinity_count > 0:
+        return
+    entity_feature_count = int(
+        artifact.execute(
+            "SELECT count(*) FROM entity_feature WHERE feature_version=?",
+            (feature_version,),
+        ).fetchone()[0]
+    )
+    if not labels and not entity_feature_count:
+        return
+    raise RuntimeError(
+        "model build sanity check failed at model.publish: "
+        f"feature_affinity is empty ({affinity_count} rows) while the build "
+        "produced non-empty inputs "
+        f"(labels/direct_scene_state: {len(labels)} scenes, entity_feature: "
+        f"{entity_feature_count} rows); refusing to publish a model with no "
+        "content affinities"
+    )
+
+
 def _edge_matches(entry: dict[str, object]) -> list[Any]:
     """The build's similar-performer matches, validated for persistence."""
     matches = entry.get("matches")
@@ -1977,6 +2016,12 @@ class PreferenceModelBuilder:
                     for affinity in sorted(affinities.values(), key=lambda item: item.feature_id)
                 ),
             )
+            # Issue #186: a model with zero feature_affinity rows while the
+            # build produced non-empty inputs would silently publish with no
+            # content-based recommendations. Verify what actually landed (the
+            # write above may have inserted nothing either because affinities
+            # computed empty or because the insert path dropped rows).
+            _affinity_sanity_check(artifact, model_id, feature_version, labels)
             self._report(0.78)
             insert_rows(
                 """
