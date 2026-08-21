@@ -1042,9 +1042,7 @@ def test_implicit_skip_confirmation_adds_no_surprise(tmp_path: Path) -> None:
     events = builder._implicit_skip_events()
     assert len(events) == 1
     # winner 0.9 > loser 0.3 -> surprise = max(0, 0.3 - 0.9) = 0.
-    assert events[0].confidence == pytest.approx(
-        DEFAULT_CONFIG.model.implicit_skip_confidence
-    )
+    assert events[0].confidence == pytest.approx(DEFAULT_CONFIG.model.implicit_skip_confidence)
 
 
 def test_implicit_skip_raw_click_never_emits_pairs(tmp_path: Path) -> None:

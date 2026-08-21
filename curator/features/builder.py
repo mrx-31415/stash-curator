@@ -472,9 +472,7 @@ class FeatureBuilder:
         # contributes to document frequency, the l2 norm, entity_feature rows,
         # affinity accumulation, or the Taste Profile.
         ignored_names = frozenset(self.config.feature.ignored_tags)
-        ignored_tag_ids = {
-            tag_id for tag_id, name in tag_names.items() if name in ignored_names
-        }
+        ignored_tag_ids = {tag_id for tag_id, name in tag_names.items() if name in ignored_names}
         direct: dict[str, set[str]] = defaultdict(set)
         for row in self.connection.execute(
             """
@@ -484,8 +482,7 @@ class FeatureBuilder:
         ):
             tag_id = str(row["tag_id"])
             if (
-                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role
-                is TagRole.CONTENT
+                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role is TagRole.CONTENT
                 and tag_id not in ignored_tag_ids
             ):
                 direct[str(row["scene_id"])].add(tag_id)
@@ -503,8 +500,7 @@ class FeatureBuilder:
         for row in marker_rows:
             tag_id = str(row["tag_id"])
             if (
-                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role
-                is TagRole.CONTENT
+                roles.get(tag_id, TagRoleResult(TagRole.IGNORED, "missing")).role is TagRole.CONTENT
                 and tag_id not in ignored_tag_ids
             ):
                 marker[str(row["scene_id"])].add(tag_id)
@@ -514,8 +510,7 @@ class FeatureBuilder:
         ):
             parent = str(row["parent_tag_id"])
             if (
-                roles.get(parent, TagRoleResult(TagRole.IGNORED, "missing")).role
-                is TagRole.CONTENT
+                roles.get(parent, TagRoleResult(TagRole.IGNORED, "missing")).role is TagRole.CONTENT
                 and parent not in ignored_tag_ids
             ):
                 parents[str(row["tag_id"])].add(parent)
