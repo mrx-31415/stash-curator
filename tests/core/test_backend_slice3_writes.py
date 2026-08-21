@@ -670,6 +670,108 @@ def test_submit_events_view_signal_state_parity(
     assert_equivalent(states[0], states[1])
 
 
+def test_submit_events_impression_attribution_state_parity(
+    writes_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    """A play without a direct impression_id is attributed identically by both
+    backends: the most recent same-scene impression shown within the window is
+    written into play_session at write time, with the summary carrying an
+    inferred marker that stays distinguishable from an observed link."""
+    import shutil
+
+    run_dir = writes_sidecar.parent / f"{writes_sidecar.stem}-attribution-state"
+    states: list[list[tuple[object, ...]]] = []
+    for runner in (None, binary):
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir()
+        run_db = run_dir / writes_sidecar.name
+        shutil.copy2(writes_sidecar, run_db)
+        result = run_backend(
+            runner,
+            PLUGIN_DIR,
+            json.dumps(
+                {
+                    "server_connection": {
+                        "Host": "127.0.0.1",
+                        "Port": int(stub_stash.rsplit(":", 1)[1]),
+                        "Scheme": "http",
+                        "SessionCookie": {},
+                    },
+                    "args": {
+                        "operation": "submit_events",
+                        "database_path": str(run_db),
+                        "entries": [
+                            {
+                                # Within the window of imp-1 (requested 100) -> inferred link.
+                                "event_type": "play_session",
+                                "session_id": "ps-in",
+                                "scene_id": "s1",
+                                "started_at_ms": 2_000,
+                                "ended_at_ms": 2_100,
+                                "active_seconds": 45.0,
+                                "origin": "stash",
+                                "played_ranges": [],
+                                "seek_destinations_seconds": [],
+                                "nearby_marker_ids": [],
+                                "natural_completion": False,
+                            },
+                            {
+                                # After the window (100 + 30min + 1) -> no attribution.
+                                "event_type": "play_session",
+                                "session_id": "ps-stale",
+                                "scene_id": "s1",
+                                "started_at_ms": 1_800_101,
+                                "ended_at_ms": 1_800_201,
+                                "active_seconds": 1.0,
+                                "origin": "stash",
+                                "played_ranges": [],
+                                "seek_destinations_seconds": [],
+                                "nearby_marker_ids": [],
+                                "natural_completion": False,
+                            },
+                            {
+                                # A direct Curator-originated link stays observed.
+                                "event_type": "play_session",
+                                "session_id": "ps-observed",
+                                "scene_id": "s1",
+                                "started_at_ms": 3_000,
+                                "ended_at_ms": 3_100,
+                                "active_seconds": 5.0,
+                                "origin": "curator",
+                                "impression_id": "imp-1",
+                                "played_ranges": [],
+                                "seek_destinations_seconds": [],
+                                "nearby_marker_ids": [],
+                                "natural_completion": False,
+                            },
+                        ],
+                    },
+                },
+                separators=(",", ":"),
+            ).encode(),
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        connection = sqlite3.connect(run_db)
+        try:
+            rows = connection.execute(
+                "SELECT session_id, impression_id, provenance, summary_json"
+                " FROM play_session ORDER BY session_id"
+            ).fetchall()
+            states.append(rows)
+        finally:
+            connection.close()
+        shutil.rmtree(run_dir, ignore_errors=True)
+    # Byte-identical rows, including the serialized summaries.
+    assert states[0] == states[1]
+    python = {row[0]: row for row in states[0]}
+    assert python["ps-in"][1] == "imp-1"
+    assert json.loads(python["ps-in"][3])["impression_provenance"] == "inferred"
+    assert python["ps-stale"][1] is None
+    assert json.loads(python["ps-stale"][3])["impression_provenance"] is None
+    assert python["ps-observed"][1] == "imp-1"
+    assert json.loads(python["ps-observed"][3])["impression_provenance"] == "observed"
+
+
 # ── update_config ────────────────────────────────────────────────────────────
 
 
