@@ -20,22 +20,22 @@ import (
 )
 
 const (
-	curationMinBudget               = 1
-	curationMaxBudget               = 40
-	curationDefaultBudget           = 20
-	curationRatingMin               = 0
-	curationRatingMax               = 10
-	curationConfirmDelta            = 0.15
-	curationConfirmMinN             = 10
-	curationAnchorBandSize           = 200
-	curationMaxItemTags             = 8
-	curationDefaultMinSupport       = 20
-	curationContrastMinLabeled      = 4
-	curationExploreAnchors          = 3
-	curationHypothesisAnchorFraction = 0.15
+	curationMinBudget                 = 1
+	curationMaxBudget                 = 40
+	curationDefaultBudget             = 20
+	curationRatingMin                 = 0
+	curationRatingMax                 = 10
+	curationConfirmDelta              = 0.15
+	curationConfirmMinN               = 10
+	curationAnchorBandSize            = 200
+	curationMaxItemTags               = 8
+	curationDefaultMinSupport         = 20
+	curationContrastMinLabeled        = 4
+	curationExploreAnchors            = 3
+	curationHypothesisAnchorFraction  = 0.15
 	curationHypothesisControlFraction = 0.15
-	curationMaxLibraryRate           = 0.30
-	curationContrastEvidenceScale    = 8.0
+	curationMaxLibraryRate            = 0.30
+	curationContrastEvidenceScale     = 8.0
 )
 
 // suggestionExcludedCategories mirrors curation.SUGGESTION_EXCLUDED_CATEGORIES.
@@ -67,23 +67,23 @@ type curationItem struct {
 }
 
 type curationContext struct {
-	labels        map[string]bool
-	sceneIDs      map[string]bool
+	labels          map[string]bool
+	sceneIDs        map[string]bool
 	sceneTags       map[string]map[string]bool
 	scenePerformers map[string]map[string]bool
 	performerCounts map[string]int64
 	performerName   map[string]string
 	studio          map[string]string
-	sceneTitle    map[string]string
-	sceneDate     map[string]string
-	sceneDetails  map[string]string
-	tagCat        map[string]string
-	tagName       map[string]string
-	counts        map[string]int64
-	appeal        map[string]float64
-	blockedScenes map[string]bool
-	metadataWrong map[string]bool
-	interactive   map[string]bool
+	sceneTitle      map[string]string
+	sceneDate       map[string]string
+	sceneDetails    map[string]string
+	tagCat          map[string]string
+	tagName         map[string]string
+	counts          map[string]int64
+	appeal          map[string]float64
+	blockedScenes   map[string]bool
+	metadataWrong   map[string]bool
+	interactive     map[string]bool
 }
 
 func (c *curationContext) rarity(tagID string) float64 {
@@ -120,23 +120,23 @@ func loadCurationContext(db dbx) (*curationContext, error) {
 		return nil, err
 	}
 	ctx := &curationContext{
-		labels:        make(map[string]bool, len(labels)),
-		sceneIDs:      map[string]bool{},
+		labels:          make(map[string]bool, len(labels)),
+		sceneIDs:        map[string]bool{},
 		sceneTags:       map[string]map[string]bool{},
 		scenePerformers: map[string]map[string]bool{},
 		performerCounts: map[string]int64{},
 		performerName:   map[string]string{},
 		studio:          map[string]string{},
-		sceneTitle:    map[string]string{},
-		sceneDate:     map[string]string{},
-		sceneDetails:  map[string]string{},
-		tagCat:        map[string]string{},
-		tagName:       map[string]string{},
-		counts:        map[string]int64{},
-		appeal:        map[string]float64{},
-		blockedScenes: map[string]bool{},
-		metadataWrong: map[string]bool{},
-		interactive:   map[string]bool{},
+		sceneTitle:      map[string]string{},
+		sceneDate:       map[string]string{},
+		sceneDetails:    map[string]string{},
+		tagCat:          map[string]string{},
+		tagName:         map[string]string{},
+		counts:          map[string]int64{},
+		appeal:          map[string]float64{},
+		blockedScenes:   map[string]bool{},
+		metadataWrong:   map[string]bool{},
+		interactive:     map[string]bool{},
 	}
 	for sceneID := range labels {
 		ctx.labels[sceneID] = true
@@ -534,7 +534,7 @@ func curationSelectHypothesis(
 	pools := map[string][]string{}
 	var poolKeys []string
 	for _, cell := range []struct {
-		name  string
+		name   string
 		scenes map[string]bool
 	}{
 		{"L&T", intersect(base, context)},
@@ -836,7 +836,7 @@ VALUES (?, ?, ?, ?)`, batchID, item.sceneID, item.cell, anchor); err != nil {
 		contextVal = jvStr(contextTagID)
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("batch_id", jvStr(batchID)),
 		jvKey("mode", jvStr(mode)),
 		jvKey("base_tag_id", baseVal),
@@ -864,10 +864,9 @@ func poolToJVal(pool map[string]int64) jVal {
 	return out
 }
 
-
 func curationBatchItems(db dbx, batchID string) (map[string]struct {
-	cell   string
-	rated  bool
+	cell  string
+	rated bool
 }, error) {
 	rows, err := db.Query(
 		`SELECT scene_id, cell, rated FROM curation_batch_item WHERE batch_id=?`,
@@ -922,9 +921,9 @@ func submitCurationRatings(db dbx, batchID string, ratings jVal) (jVal, error) {
 	}
 	seen := map[string]bool{}
 	type normalizedRating struct {
-		sceneID string
-		value   int64
-		reason  string
+		sceneID   string
+		value     int64
+		reason    string
 		hasReason bool
 	}
 	var normalized []normalizedRating
@@ -1041,7 +1040,7 @@ UPDATE curation_batch SET status='rated' WHERE batch_id=?`, batchID); err != nil
 		statusOut = "rated"
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("accepted", jvInt(int64(len(normalized)))),
 		jvKey("batch_status", jvStr(statusOut)),
 	), nil
@@ -1203,7 +1202,7 @@ SELECT mode, base_tag_id, context_tag_id FROM curation_batch WHERE batch_id=?`,
 			)
 		}
 		return jvObj(
-			jvKey("schema_version", jvInt(1)),
+			jvKey("schema_version", jvInt(2)),
 			jvKey("batch_id", jvStr(batchID)),
 			jvKey("mode", jvStr(mode)),
 			jvKey("cells", cells),
@@ -1249,8 +1248,8 @@ SELECT mode, base_tag_id, context_tag_id FROM curation_batch WHERE batch_id=?`,
 		return jvNull(), err
 	}
 	type tagEntry struct {
-		tagID    string
-		mean     float64
+		tagID string
+		mean  float64
 	}
 	var entries []tagEntry
 	for tagID, values := range tagRows {
@@ -1298,7 +1297,7 @@ SELECT mode, base_tag_id, context_tag_id FROM curation_batch WHERE batch_id=?`,
 		summaryMean = jvFloat(curationMean(values))
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("batch_id", jvStr(batchID)),
 		jvKey("mode", jvStr(mode)),
 		jvKey("summary", jvObj(
@@ -1356,9 +1355,9 @@ func tagContextCandidatesBody(db dbx, tagID string, minSupport int) (jVal, error
 	}
 	rowsOut := jvArr()
 	type candidate struct {
-		tagID     string
-		cooccur   int64
-		contrast  *float64
+		tagID    string
+		cooccur  int64
+		contrast *float64
 	}
 	var candidates []candidate
 	for t, n := range cooc {
@@ -1445,7 +1444,7 @@ func tagContextCandidatesBody(db dbx, tagID string, minSupport int) (jVal, error
 		))
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("tag_id", jvStr(tagID)),
 		jvKey("items", rowsOut),
 	), nil
@@ -1477,7 +1476,6 @@ func curationValueStr(v jVal) string {
 		return v.kindName()
 	}
 }
-
 
 // opGetCurationBatch mirrors backend.py's get_curation_batch branch.
 func opGetCurationBatch(pluginDir string, payload jVal) (jVal, error) {
@@ -1732,10 +1730,10 @@ func pairUnlabeled(ctx *curationContext, seen map[string]bool) []string {
 }
 
 type pairCandidate struct {
-	a, b   string
-	score  float64
-	predA  float64
-	predB  float64
+	a, b  string
+	score float64
+	predA float64
+	predB float64
 }
 
 func pairCandidates(ctx *curationContext, dimension, baseTag, contextTag, performerID string, seen map[string]bool) []pairCandidate {
@@ -1998,7 +1996,7 @@ UNION SELECT scene_b FROM curation_pair WHERE status='answered'`)
 	emptyRoundID := uuid4()
 	if len(scored) == 0 {
 		return jvObj(
-			jvKey("schema_version", jvInt(1)),
+			jvKey("schema_version", jvInt(2)),
 			jvKey("round_id", jvStr(emptyRoundID)),
 			jvKey("dimension", jvStr(dimension)),
 			jvKey("pairs", jvArr()),
@@ -2110,7 +2108,7 @@ INSERT INTO curation_pair(
 		contextTagVal = jvObj(jvKey("tag_id", jvStr(contextTagID)), jvKey("name", jvStr(name)))
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("round_id", jvStr(roundID)),
 		jvKey("dimension", jvStr(dimension)),
 		jvKey("base_tag", baseTagVal),
@@ -2121,14 +2119,14 @@ INSERT INTO curation_pair(
 }
 
 type pairRow struct {
-	pairID     string
-	sceneA     string
-	sceneB     string
-	dimension  string
+	pairID      string
+	sceneA      string
+	sceneB      string
+	dimension   string
 	probability float64
-	status     string
-	winner     string
-	payload    jVal
+	status      string
+	winner      string
+	payload     jVal
 }
 
 func pairRows(db dbx, roundID string) ([]pairRow, error) {
@@ -2372,7 +2370,7 @@ INSERT INTO feedback(
 		roundStatus = "answered"
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("accepted", jvInt(int64(accepted))),
 		jvKey("skipped", jvInt(int64(skipped))),
 		jvKey("round_status", jvStr(roundStatus)),
@@ -2467,7 +2465,7 @@ func pairVerdict(db dbx, roundID string) (jVal, error) {
 		answered = matching
 	}
 	base := jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("round_id", jvStr(roundID)),
 		jvKey("dimension", jvStr(dimension)),
 		jvKey("n_answered", jvInt(int64(len(answered)))),
@@ -2731,11 +2729,11 @@ func curationImpactBody(pluginDir string, payload, settings jVal) (jVal, error) 
 
 // Impact report constants mirror curation.py's IMPACT_* values.
 const (
-	IMPACT_TOP_SCENES        = 5
-	IMPACT_TOP_ENTITIES      = 4
-	IMPACT_MIN_DELTA         = 0.01
-	IMPACT_MIN_CONTRIBUTION  = 0.0005
-	IMPACT_SCENE_POOL        = 20
+	IMPACT_TOP_SCENES       = 5
+	IMPACT_TOP_ENTITIES     = 4
+	IMPACT_MIN_DELTA        = 0.01
+	IMPACT_MIN_CONTRIBUTION = 0.0005
+	IMPACT_SCENE_POOL       = 20
 )
 
 // curationImpact mirrors curation.curation_impact: diff the two most recent

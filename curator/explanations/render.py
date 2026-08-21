@@ -8,8 +8,15 @@ from dataclasses import dataclass
 
 from curator.explanations.catalog import RealizationCatalog
 from curator.explanations.planner import EvidenceUnit, Microplanner
+from curator.explanations.presentation import (
+    evidence_fingerprint,
+    evidence_rows,
+    lane_context_payload,
+    score_components,
+    scores_payload,
+)
 from curator.explanations.reasons import Reason, ReasonGraphStore
-from curator.model import RecommendationModelStore
+from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.ranking import RecommendationItem
 from curator.storage.artifacts import artifact_attached
 
@@ -19,6 +26,11 @@ class Explanation:
     summary: str
     selected_reasons: tuple[Reason, ...]
     all_reasons: tuple[Reason, ...]
+    components: tuple[dict[str, object], ...]
+    lane_context: dict[str, object]
+    scores: dict[str, object]
+    evidence_fingerprint: dict[str, object]
+    evidence_rows: tuple[dict[str, object], ...]
 
 
 class ExplanationService:
@@ -49,16 +61,26 @@ class ExplanationService:
 
     def explain_scene(self, model_id: str, scene_id: str) -> Explanation:
         reasons = self._reasons(model_id, scene_id)
-        return self._render(reasons, f"{model_id}\0{scene_id}")
+        score = self._score(model_id, scene_id)
+        return self._render(reasons, f"{model_id}\0{scene_id}", score=score)
 
     def explain_recommendation(self, item: RecommendationItem) -> Explanation:
         model_id = self._current_model_id()
         base = self._reasons(model_id, item.scene_id)
         reasons = (*base, *self._ranking_reasons(model_id, item))
+        score = self._score(model_id, item.scene_id)
         return self._render(
             reasons,
             f"{model_id}\0{item.scene_id}\0{item.lane}\0{item.source_lane}\0{item.position}",
+            score=score,
+            item=item,
         )
+
+    def _score(self, model_id: str, scene_id: str) -> ModelSceneScore:
+        score = RecommendationModelStore(self.connection).scores(model_id, {scene_id}).get(scene_id)
+        if score is None:
+            raise RuntimeError(f"unknown scene: {scene_id}")
+        return score
 
     def _reasons(self, model_id: str, scene_id: str) -> tuple[Reason, ...]:
         key = (model_id, scene_id)
@@ -190,7 +212,17 @@ class ExplanationService:
             return "explore.coverage"
         return None
 
-    def _render(self, reasons: tuple[Reason, ...], seed: str) -> Explanation:
+    def _render(
+        self,
+        reasons: tuple[Reason, ...],
+        seed: str,
+        *,
+        score: ModelSceneScore | None = None,
+        item: RecommendationItem | None = None,
+    ) -> Explanation:
+        if score is None:
+            model_id = reasons[0].model_id if reasons else self._current_model_id()
+            score = next(iter(RecommendationModelStore(self.connection).scores(model_id).values()))
         plan = self.planner.plan(reasons)
         slots: dict[str, str] = {}
         primary = self._realize(plan.primary, "lead", seed)
@@ -202,7 +234,20 @@ class ExplanationService:
             boundary = self._realize(plan.boundary, "boundary", seed)
             slots.update(boundary=boundary, boundary_cap=_capitalize(boundary))
         summary = self.catalog.plan_variant(plan.lane, plan.shape, slots, seed)
-        return Explanation(summary, plan.selected_reasons, reasons)
+        return Explanation(
+            summary,
+            plan.selected_reasons,
+            reasons,
+            tuple(score_components(score)),
+            lane_context_payload(item),
+            scores_payload(
+                score,
+                lane=item.source_lane if item else None,
+                rank=item.lane_value if item else None,
+            ),
+            evidence_fingerprint(score),
+            tuple(evidence_rows(plan.selected_reasons)),
+        )
 
     def _realize(self, unit: EvidenceUnit, position: str, seed: str) -> str:
         reason = unit.reason

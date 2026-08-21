@@ -102,8 +102,22 @@ def test_slate_api_defers_explanations_until_requested(
         == 0
     )
     explanation = CuratorAPI(connection).explanation(str(result["items"][0]["scene_id"]))
+    assert explanation["schema_version"] == 2
     assert explanation["summary"]
     assert explanation["supporting_reasons"]
+    assert explanation["components"]
+    assert {row["name"] for row in explanation["components"]} >= {
+        "content_similarity",
+        "model_confidence",
+    }
+    assert [axis["name"] for axis in explanation["evidence_fingerprint"]["axes"]] == [
+        "content",
+        "performers",
+        "studios",
+        "similar_scenes",
+        "direct_history",
+    ]
+    assert explanation["evidence_fingerprint"]["metadata_coverage"]["available"] is True
     assert (
         connection.execute(
             "SELECT count(*) FROM impression WHERE impression_id='api-impression'"

@@ -353,3 +353,50 @@ def test_known_performer_similarity_remains_inspectable_but_not_narrated(tmp_pat
     assert similarity not in explanation.selected_reasons
     assert "Alex" in explanation.summary
     assert "Blair" not in explanation.summary
+
+
+def test_score_presentation_has_named_units_and_fixed_fingerprint_axes() -> None:
+    from curator.explanations.presentation import (
+        evidence_fingerprint,
+        score_components,
+        scores_payload,
+    )
+
+    score = SimpleNamespace(
+        appeal=0.42,
+        current_fit=0.31,
+        confidence=0.74,
+        metadata_confidence=0.81,
+        direct_appeal=0.18,
+        direct_confidence=0.65,
+        components={
+            "content": {"value": 0.22},
+            "content_neighbor": {"value": 0.11},
+            "performer_identity": {"value": 0.16},
+            "performer_similarity": {"value": 0.04},
+            "studio": {"value": -0.03},
+            "fit": {"cooldown": -0.05, "satiation": 0.02, "not_now": 0.0},
+        },
+    )
+
+    components = score_components(score)
+    assert {row["name"] for row in components} == {
+        "content_similarity",
+        "performer_match",
+        "studio_appeal",
+        "direct_feedback",
+        "right_now_fit",
+        "model_confidence",
+    }
+    assert all(row["scale"] in {"-1..1", "0..1"} for row in components)
+    assert [axis["name"] for axis in evidence_fingerprint(score)["axes"]] == [
+        "content",
+        "performers",
+        "studios",
+        "similar_scenes",
+        "direct_history",
+    ]
+    assert evidence_fingerprint(score)["metadata_coverage"]["available"] is True
+    assert scores_payload(score, lane="best_bets", rank=0.81)["rank"]["available"] is True
+    no_metadata = SimpleNamespace(**{**vars(score), "metadata_confidence": 0.0})
+    assert evidence_fingerprint(no_metadata)["metadata_coverage"]["available"] is False

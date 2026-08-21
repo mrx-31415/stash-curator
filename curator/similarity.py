@@ -22,6 +22,8 @@ class SimilarityResult:
     rank_score: float
     relationships: tuple[str, ...]
     details: dict[str, object]
+    appeal_raw: float = 0.0
+    explanation: dict[str, object] | None = None
 
 
 MULTI_HOP_BLEND_WEIGHT = 0.05
@@ -54,6 +56,53 @@ def _performer_name(connection: sqlite3.Connection, performer_id: str) -> str:
         "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
     ).fetchone()
     return str(row[0]) if row else ""
+
+
+def _similar_explanation(
+    similarity: float, appeal_raw: float, relationships: tuple[str, ...]
+) -> dict[str, object]:
+    labels = {
+        "same_performer": "Same performer",
+        "similar_performer": "Similar performer profile",
+        "shared_content": "Shared content",
+        "similar_structure": "Similar cast structure",
+        "same_studio": "Same studio",
+        "multi_hop": "Multi-hop performer connection",
+    }
+    return {
+        "summary": "Related through "
+        + ", ".join(labels.get(value, value) for value in relationships)
+        if relationships
+        else "Closest available content match.",
+        "components": [
+            {
+                "name": "content_similarity",
+                "label": "Similarity",
+                "value": similarity,
+                "scale": "0..1",
+                "direction": "positive",
+                "available": True,
+            },
+            {
+                "name": "appeal",
+                "label": "Appeal",
+                "value": appeal_raw,
+                "scale": "-1..1",
+                "direction": "positive" if appeal_raw >= 0 else "negative",
+                "available": True,
+            },
+        ],
+        "reasons": [
+            {
+                "code": value,
+                "label": labels.get(value, value),
+                "direction": "positive",
+                "magnitude": 1.0,
+                "confidence": 1.0,
+            }
+            for value in relationships
+        ],
+    }
 
 
 class SimilarityService:
@@ -279,6 +328,8 @@ class SimilarityService:
                             "appeal": round(0.3 * appeal, 4),
                         },
                     },
+                    candidate_appeal,
+                    _similar_explanation(similarity, candidate_appeal, tuple(relationships)),
                 )
             )
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))

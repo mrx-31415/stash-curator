@@ -467,7 +467,7 @@ def create_batch(
             [(batch_id, sid, cell, 1 if anchor else 0) for sid, cell, anchor in items],
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "batch_id": batch_id,
         "mode": mode,
         "base_tag_id": base_tag_id,
@@ -592,7 +592,7 @@ def submit_ratings(
                 "UPDATE curation_batch SET status='rated' WHERE batch_id=?", (batch_id,)
             )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "accepted": len(normalized),
         "batch_status": status,
     }
@@ -689,7 +689,7 @@ def verdict(connection: sqlite3.Connection, batch_id: str) -> dict[str, object]:
                 "value": value,
             }
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "batch_id": batch_id,
             "mode": mode,
             "cells": cells,
@@ -727,7 +727,7 @@ def verdict(connection: sqlite3.Connection, batch_id: str) -> dict[str, object]:
     entries.sort(key=lambda item: (-cast(float, item["mean_outcome"]), str(item["tag_id"])))
     values = list(outcomes.values())
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "batch_id": batch_id,
         "mode": mode,
         "summary": {"n": len(values), "mean_outcome": _mean(values) if values else None},
@@ -803,7 +803,7 @@ def tag_context_candidates(
             str(item["name"]),
         )
     )
-    return {"schema_version": 1, "tag_id": tag_id, "items": rows}
+    return {"schema_version": 2, "tag_id": tag_id, "items": rows}
 
 
 # ── Pairwise picks ───────────────────────────────────────────────────────────
@@ -1044,7 +1044,7 @@ def create_pair_round(
         scored.append((a, b, score, pred_a, pred_b))
     if not scored:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "round_id": str(uuid4()),
             "dimension": dimension,
             "pairs": [],
@@ -1135,7 +1135,7 @@ def create_pair_round(
             "name": context.tag_name.get(context_tag_id, context_tag_id),
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "round_id": round_id,
         "dimension": dimension,
         "base_tag": base_tag_val,
@@ -1275,7 +1275,7 @@ def submit_picks(
             coordinator.request("curation_picks")
             accepted += 1
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "accepted": accepted,
         "skipped": skipped,
         "round_status": "answered" if accepted + skipped == len(rows) else "open",
@@ -1397,7 +1397,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
                 "n": wins.get("L&T", 0) + wins.get("L&!T", 0),
             }
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "round_id": round_id,
             "dimension": dimension,
             "cells": cells,
@@ -1439,7 +1439,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
             )
         )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "round_id": round_id,
             "dimension": dimension,
             "items": items,
@@ -1484,7 +1484,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
         ]
         items.sort(key=lambda item: (-float(cast(float, item["win_rate"])), str(item["studio"])))
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "round_id": round_id,
             "dimension": dimension,
             "items": items,
@@ -1522,7 +1522,7 @@ def pair_verdict(connection: sqlite3.Connection, round_id: str) -> dict[str, obj
     ]
     items.sort(key=lambda item: (-float(cast(float, item["win_rate"])), str(item["tag_id"])))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "round_id": round_id,
         "dimension": dimension,
         "items": items,

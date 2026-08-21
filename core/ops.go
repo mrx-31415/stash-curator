@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const apiSchemaVersion = 1
+const apiSchemaVersion = 2
 
 // stashdbEndpoint mirrors curator/expand.py STASHDB.
 const stashdbEndpoint = "https://stashdb.org/graphql"

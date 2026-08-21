@@ -24,7 +24,7 @@ from curator.ranking.slate import Slate
 from curator.similarity import SimilarityService
 from curator.storage import transaction
 
-API_SCHEMA_VERSION = 1
+API_SCHEMA_VERSION = 2
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
     "diversity_enabled": True,
@@ -384,8 +384,13 @@ class CuratorAPI:
             "model_id": model_id,
             "scene_id": scene_id,
             "summary": explanation.summary,
+            "components": list(explanation.components),
             "reasons": [asdict(reason) for reason in explanation.all_reasons],
             "supporting_reasons": [asdict(reason) for reason in explanation.selected_reasons],
+            "evidence_rows": list(explanation.evidence_rows),
+            "lane_context": explanation.lane_context,
+            "scores": explanation.scores,
+            "evidence_fingerprint": explanation.evidence_fingerprint,
         }
 
     def recommendation_history(
