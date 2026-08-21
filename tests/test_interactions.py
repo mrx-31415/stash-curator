@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
+from curator.events import IMPRESSION_ATTRIBUTION_WINDOW_MS
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, PreferenceModelBuilder
 from curator.ranking import SlateBuilder
@@ -459,3 +461,126 @@ def test_short_curator_session_followed_by_another_scene_records_replacement(
         ).fetchone()[0]
         == -0.25
     )
+
+
+def test_play_attributes_to_most_recent_impression_within_window(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES (?, ?, 'for_you', 'builtin')
+        """,
+        (("imp-old", 100), ("imp-new", 500)),
+    )
+    connection.executemany(
+        """
+        INSERT INTO impression_item(
+            impression_id, scene_id, position, policy_score, reason_snapshot_json
+        ) VALUES (?, 'old-good', ?, 0.5, '[]')
+        """,
+        (("imp-old", 0), ("imp-new", 1)),
+    )
+    store = InteractionStore(connection)
+    play = {
+        "session_id": "attributed",
+        "scene_id": "old-good",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 11_000,
+        "active_seconds": 10,
+        "origin": "stash",
+        "source_route": "/scenes/old-good",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 10,
+        "final_position_seconds": 10,
+    }
+
+    assert store.submit_sessions([play]) == 1
+
+    row = connection.execute(
+        "SELECT impression_id, provenance, summary_json FROM play_session"
+        " WHERE session_id='attributed'"
+    ).fetchone()
+    assert row[0] == "imp-new"  # the most recent same-scene impression in the window
+    assert row[1] == "direct_player"  # the session-source provenance is unchanged
+    summary = json.loads(row[2])
+    assert summary["impression_id"] == "imp-new"
+    assert summary["impression_provenance"] == "inferred"
+
+
+def test_play_outside_window_or_without_impression_gets_no_attribution(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-stale', 100, 'for_you', 'builtin')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO impression_item(
+            impression_id, scene_id, position, policy_score, reason_snapshot_json
+        ) VALUES ('imp-stale', 'old-good', 0, 0.5, '[]')
+        """
+    )
+    store = InteractionStore(connection)
+    stale = {
+        "session_id": "stale",
+        "scene_id": "old-good",
+        "started_at_ms": 100 + IMPRESSION_ATTRIBUTION_WINDOW_MS + 1,
+        "ended_at_ms": 100 + IMPRESSION_ATTRIBUTION_WINDOW_MS + 10_000,
+        "active_seconds": 10,
+        "origin": "stash",
+        "source_route": "/scenes/old-good",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 10,
+        "final_position_seconds": 10,
+    }
+    unseen = {**stale, "session_id": "unseen", "scene_id": "recent-good"}
+
+    assert store.submit_sessions([stale, unseen]) == 2
+
+    for session_id in ("stale", "unseen"):
+        row = connection.execute(
+            "SELECT impression_id, summary_json FROM play_session WHERE session_id=?", (session_id,)
+        ).fetchone()
+        assert row[0] is None
+        assert json.loads(row[1])["impression_provenance"] is None
+
+
+def test_direct_impression_link_records_observed_provenance(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-direct', 100, 'for_you', 'builtin')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO impression_item(
+            impression_id, scene_id, position, policy_score, reason_snapshot_json
+        ) VALUES ('imp-direct', 'old-good', 0, 0.5, '[]')
+        """
+    )
+    store = InteractionStore(connection)
+    play = {
+        "session_id": "observed",
+        "scene_id": "old-good",
+        "started_at_ms": 1_000,
+        "ended_at_ms": 11_000,
+        "active_seconds": 10,
+        "origin": "curator",
+        "source_route": "/plugins/stash-curator",
+        "start_position_seconds": 0,
+        "maximum_position_seconds": 10,
+        "final_position_seconds": 10,
+        "impression_id": "imp-direct",
+    }
+
+    assert store.submit_sessions([play]) == 1
+
+    row = connection.execute(
+        "SELECT impression_id, summary_json FROM play_session WHERE session_id='observed'"
+    ).fetchone()
+    assert row[0] == "imp-direct"
+    assert json.loads(row[1])["impression_provenance"] == "observed"
