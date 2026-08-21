@@ -764,6 +764,12 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
             )
+        if operation == "get_stashdb_performer_search":
+            return ExpandService(connection).stashdb_performer_search(
+                _stashdb(payload),
+                str(args.get("query") or ""),
+                limit=int(args.get("limit") or 8),
+            )
         if operation == "get_shortlist":
             config = api.config()["config"]
             assert isinstance(config, dict)

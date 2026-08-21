@@ -111,6 +111,16 @@ query CuratorSimilarPerformers($input: PerformerQueryInput!) {
   }
 }
 `
+const stashdbPerformerSearchQuery = `
+query CuratorPerformerSearch($input: PerformerQueryInput!) {
+  queryPerformers(input: $input) {
+    performers {
+      id name aliases disambiguation scene_count
+      images { url width height }
+    }
+  }
+}
+`
 
 // graphqlOperationName mirrors curator.graphql.client._operation_name.
 func graphqlOperationName(document string) string {

@@ -818,6 +818,11 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
 
     assert 'operation: "get_performer_hunt"' in source
     assert 'value: "hunt"' in source
+    # Issue #218: the picker can search StashDB performers directly; the
+    # checkbox keeps local completions off the network.
+    assert 'operation: "get_stashdb_performer_search"' in source
+    assert '" Search StashDB"' in source
+    assert "external: huntExternal" in source
     assert "icon: faCrosshairs" in source
     assert 'initialType: "hunt", huntOnly: true' in source
     assert '["all", `All ${huntCounts.all}`]' in source

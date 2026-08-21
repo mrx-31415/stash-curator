@@ -2119,6 +2119,23 @@
   color: var(--curator-text);
 }
 
+.curator-toolbar-check {
+  align-items: center;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  display: inline-flex;
+  gap: 0.35rem;
+  height: 2.15rem;
+  margin: 0;
+  padding: 0 0.55rem;
+  white-space: nowrap;
+}
+
+.curator-toolbar-check input {
+  margin: 0;
+}
+
 .curator-shortlist-tab {
   border-left: 1px solid var(--curator-border);
   margin-left: 0.35rem;
