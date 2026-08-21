@@ -1122,31 +1122,36 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'className: "performer-tag-container row"' in source
     assert 'className: "image-thumbnail"' in source
     assert 'className: "tag-item tag-link badge badge-secondary"' in source
-    # RecommendationCard, ExternalCard, and SimilarityPanel's library-match
-    # grid share the "Why this?"/"Score" <details> shell via EvidenceScore;
-    # the shell markup lives once in its definition, content stays
-    # per-caller (async explain-on-toggle vs static text).
+    # RecommendationCard, ExternalCard, and SimilarityPanel share the same
+    # progressive explanation shell and the named, unit-bearing breakdown.
     assert "function EvidenceScore({ evidenceProps, evidenceContent," in source
-    assert "scoreBarContent, scoreSummary, scoreContent })" in source
+    assert (
+        'scoreBarContent, scoreSummary, scoreLabel = "Match", scoreHeadline, '
+        "scoreHeadlineValue, scoreHeadlineBar, scoreContent })" in source
+    )
     assert 'React.createElement("summary", null, "Why this?")' in source
     assert 'className: "curator-evidence", ...evidenceProps' in source
     assert "evidenceProps: { onToggle: explain }" in source
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
-    assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" :' in source
-    assert "`Score · ${scoreSummary}`)" in source
-    assert "scoreSummary: item.final_utility.toFixed(2)" in source
-    assert "scoreSummary: item.score.toFixed(2)" in source
-    assert "scoreSummary: item.rank_score.toFixed(2)" in source
+    assert "function ScoreBreakdown({ explanation, item })" in source
+    assert "function ExplanationView({ explanation, item })" in source
+    assert 'className: "curator-evidence-fingerprint"' in source
+    assert 'className: "curator-fingerprint-svg"' in source
+    assert "curator-metadata-status" in source
+    assert "Metadata covered" in source
+    assert "function fingerprintPoint(" in source
+    assert 'scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : "Appeal"' in source
+    assert "scoreHeadlineValue: formatAppealValue(item.appeal)" in source
+    assert "function clamp01(value)" in source
     assert (
-        'className: kind === "scene" ? "scene-card__details" : "curator-external-details"' in source
+        "scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : formatAppealValue(item.appeal)"
+        in source
     )
-    assert "className: `${type}-card-image`" in source
-    assert 'className: "card-section-title"' in source
-    assert "Curator never deletes media; tagging is reversible" in source
-    assert "Score is ranking utility, not a probability" in source
+    assert 'scoreLabel: "Match"' in source or "scoreLabel: label" in source
+    assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
-    assert '"appeal.content_neighbor": "Similar content"' in source
+    assert '"appeal.content_neighbor": "Similar scenes"' in source
     assert "Wildcard items are selected outside preference-derived seeds" in source
 
 
@@ -1195,7 +1200,7 @@ def test_backend_module_loads_without_starting(tmp_path: Path) -> None:
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.SCHEMA_VERSION == 1
+    assert module.SCHEMA_VERSION == 2
 
 
 def test_diagnostics_allowlist_cannot_emit_representative_private_fields(

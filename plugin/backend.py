@@ -87,7 +87,7 @@ from curator.sync import SyncService  # noqa: E402
 from curator.sync.repository import SyncRepository  # noqa: E402
 from curator.whisparr import WhisparrClient  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RUNTIME_QUERY = """
 query CuratorPluginRuntime {
   version { version }

@@ -209,7 +209,7 @@ func sidecarConfig(db dbx) (jVal, error) {
 	}
 	config := mergeObjects(defaultPluginConfig, stored)
 	return jvObj(
-		jvKey("schema_version", jvInt(1)),
+		jvKey("schema_version", jvInt(2)),
 		jvKey("config", config),
 		jvKey("updated_at_ms", jvInt(updatedAtMs)),
 	), nil
