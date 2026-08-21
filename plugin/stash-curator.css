@@ -3322,36 +3322,6 @@
   font-size: 0.85rem;
 }
 
-/* ── Curate nudge (For You) ─────────────────────────────────────────────── */
-
-.curator-curate-nudge {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  border: 1px solid rgba(107, 142, 35, 0.5);
-  border-radius: var(--curator-radius);
-  background: linear-gradient(90deg, rgba(107, 142, 35, 0.12), rgba(107, 142, 35, 0.03));
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-
-.curator-curate-nudge-icon {
-  font-size: 1.4rem;
-  color: var(--sc, #6b8e23);
-  flex-shrink: 0;
-}
-
-.curator-curate-nudge-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.curator-curate-nudge-body p {
-  margin: 0.15rem 0 0;
-  font-size: 0.85rem;
-  color: var(--curator-text-muted);
-}
-
 /* ── Impact report (verdict) ────────────────────────────────────────────── */
 
 .curator-impact {
@@ -3549,7 +3519,51 @@
   margin: 0 0 0.4rem;
 }
 
-.curator-curate-nudge-dismiss {
+/* ── First-run onboarding (issue #148) ─────────────────────────────────── */
+
+.curator-welcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius);
+  background: var(--curator-surface-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.curator-welcome-icon {
+  font-size: 1.4rem;
+  color: var(--curator-accent);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.curator-welcome-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.curator-welcome-body strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.curator-welcome-body p {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--curator-text-muted);
+}
+
+.curator-welcome-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.curator-welcome-dismiss {
   align-self: flex-start;
   background: transparent;
   border: none;
@@ -3561,7 +3575,106 @@
   border-radius: var(--curator-radius-sm);
 }
 
-.curator-curate-nudge-dismiss:hover {
+.curator-welcome-dismiss:hover {
   color: var(--curator-text);
   background: var(--curator-wash-raised);
+}
+
+.curator-tour {
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius);
+  background: var(--curator-surface-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.curator-tour-progress {
+  font-size: 0.75rem;
+  color: var(--curator-text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.curator-tour-step strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.curator-tour-step p {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--curator-text-muted);
+}
+
+.curator-tour-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+/* Package 1 — About this view panel (collapsible <details>). */
+.curator-about-view {
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  background: var(--curator-wash-raised);
+  padding: 0.5rem 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.curator-about-view summary {
+  cursor: pointer;
+  color: var(--curator-text);
+  font-weight: 600;
+}
+
+.curator-about-view p {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  color: var(--curator-text-muted);
+}
+
+/* Package 3 — Help view. */
+.curator-help {
+  margin-top: 1rem;
+}
+
+.curator-help h2 {
+  font-size: 1.2rem;
+}
+
+.curator-help h3 {
+  font-size: 1.05rem;
+  margin: 1rem 0 0.35rem;
+}
+
+.curator-help p {
+  max-width: 46rem;
+}
+
+.curator-help dl {
+  margin: 0;
+}
+
+.curator-help dt {
+  font-weight: 600;
+  margin-top: 0.6rem;
+}
+
+.curator-help dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+  color: var(--curator-text-muted);
+  max-width: 46rem;
+}
+
+.curator-help ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.curator-help-link-icon {
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--curator-text-muted);
 }
