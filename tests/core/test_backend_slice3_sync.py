@@ -44,7 +44,7 @@ def _performer(pid: str, name: str) -> dict[str, object]:
         "ethnicity": "Caucasian",
         "country": None,
         "eye_color": "Blue",
-        "hair_color": "Blonde",
+        "hair_color": "Brown",
         "height_cm": 170,
         "weight": None,
         "measurements": "34D-24-36",

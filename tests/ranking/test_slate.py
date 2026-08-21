@@ -1163,7 +1163,7 @@ def test_available_count_blocked_term_probe_excludes_scenes(tmp_path: Path) -> N
         """
         INSERT INTO feature_definition(
             feature_id, feature_version, family, name, provenance, metadata_json
-        ) VALUES ('fd-term', 'features', 'content', 'desc:anal', 'seed',
+        ) VALUES ('fd-term', 'features', 'content', 'desc:archery', 'seed',
                   '{"document_frequency": 3}')
         """
     )
@@ -1178,14 +1178,14 @@ def test_available_count_blocked_term_probe_excludes_scenes(tmp_path: Path) -> N
         """
         INSERT INTO direct_term_preference_history(
             preference_id, term, value, occurred_at_ms, blocked
-        ) VALUES ('pref-term', 'anal', 0, 3, 1)
+        ) VALUES ('pref-term', 'archery', 0, 3, 1)
         """
     )
     connection.execute(
         """
         INSERT INTO direct_term_preference(
             term, preference_id, value, occurred_at_ms, blocked
-        ) VALUES ('anal', 'pref-term', 0, 3, 1)
+        ) VALUES ('archery', 'pref-term', 0, 3, 1)
         """
     )
     connection.commit()

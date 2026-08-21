@@ -65,7 +65,7 @@ STASHDB_PERFORMERS = {
         "birth_date": "1995-01-10",
         "ethnicity": "Caucasian",
         "eye_color": "Brown",
-        "hair_color": "Blonde",
+        "hair_color": "Brown",
         "height": 168,
         "cup_size": "D",
         "band_size": "34",
