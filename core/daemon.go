@@ -43,6 +43,14 @@ var (
 	progressDebounceMs  = 500    // cap progress writes during a build
 	workerCheckMs       = 5_000  // detect replacement of the installed binary
 	workerStopWaitMs    = 2_000  // grace period before forcing stale workers down
+	// schedulerFailureLimit is the number of consecutive auto-scheduler
+	// failures (a sidecar that will not open or a build loop that cannot make
+	// progress) before the daemon retires. A runaway loop keeps re-enqueuing
+	// a task that fails at sidecar open (e.g. the installed binary is older
+	// than the sidecar's schema); retiring hands the queue back to a fresh
+	// daemon spawned by the next Curator invocation with the current binary,
+	// instead of spinning forever.
+	schedulerFailureLimit = 3
 )
 
 // workerState is written by the enqueuer (which has the Stash payload) and
@@ -203,6 +211,21 @@ var workerPidIsWorkerFn = workerPidIsWorker
 
 // stopWorkerFn is injectable so rotation tests never signal a real process.
 var stopWorkerFn = stopWorker
+
+// isSchemaSkewError reports whether a sidecar error means the installed
+// binary's migration set is older than the sidecar schema. The daemon cannot
+// make progress against such a sidecar (the open and every query fail), and
+// retrying only re-enqueues a task that can never run, so the daemon retires
+// and the next Curator invocation spawns a fresh worker with the current
+// binary.
+func isSchemaSkewError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unknown migration versions") ||
+		strings.Contains(msg, "does not match the packaged checksum")
+}
 
 func removeWorkerPidIfOwned(pluginDir string) {
 	if pid, ok := readWorkerPid(pluginDir); ok && pid == os.Getpid() {
@@ -480,6 +503,7 @@ func runDaemon(pluginDir string) {
 	autoPayload := autoPayloadFromState(state)
 	lastTick := nowMs()
 	idleSince := nowMs()
+	schedulerFailures := 0
 	for {
 		select {
 		case <-updateDetected:
@@ -510,10 +534,23 @@ func runDaemon(pluginDir string) {
 			lastTick = now
 			if enqueued, err := schedulerTick(loop, autoPayload, now); err != nil {
 				errorLog("auto-scheduler failed: " + err.Error())
+				schedulerFailures++
+				if isSchemaSkewError(err) {
+					// The installed binary is older than the sidecar schema;
+					// retrying cannot help. Retire so a fresh daemon with the
+					// current binary takes over on the next invocation.
+					infoLog("daemon retiring: schema is newer than the installed binary")
+					return
+				}
+				if schedulerFailures >= schedulerFailureLimit {
+					infoLog(fmt.Sprintf("daemon retiring after %d consecutive auto-scheduler failures", schedulerFailures))
+					return
+				}
 			} else {
 				for _, mode := range enqueued {
 					infoLog("auto-enqueued task " + mode)
 				}
+				schedulerFailures = 0
 			}
 		}
 		jobID, startedAtMs, payload, mode, err := claimQueuedJob(loop)
@@ -524,7 +561,10 @@ func runDaemon(pluginDir string) {
 		}
 		if jobID != "" {
 			idleSince = nowMs()
-			runWorkerJob(pluginDir, loop, jobID, startedAtMs, payload, mode)
+			if runWorkerJob(pluginDir, loop, jobID, startedAtMs, payload, mode) {
+				infoLog("daemon retiring: schema is newer than the installed binary")
+				return
+			}
 			// The job's peak is garbage now, and the daemon may stay resident
 			// for a while yet (see the stay-alive check below), so give the
 			// pages back rather than idling at the build's high-water mark.
@@ -537,6 +577,18 @@ func runDaemon(pluginDir string) {
 		stayAlive, stayErr := schedulerStayAlive(loop, nowMs())
 		if stayErr != nil {
 			errorLog("stay-alive check failed: " + stayErr.Error())
+			schedulerFailures++
+			if isSchemaSkewError(stayErr) {
+				infoLog("daemon retiring: schema is newer than the installed binary")
+				return
+			}
+			if schedulerFailures >= schedulerFailureLimit {
+				infoLog(fmt.Sprintf("daemon retiring after %d consecutive auto-scheduler failures", schedulerFailures))
+				return
+			}
+		} else if schedulerFailures > 0 {
+			// A healthy pass means the sidecar is reachable again; reset.
+			schedulerFailures = 0
 		}
 		if !stayAlive && nowMs()-idleSince > idleExitMs {
 			infoLog("daemon idle; exiting")
@@ -628,17 +680,21 @@ WHERE job_id=? AND state='queued'`, os.Getpid(), nowMs(), jobID)
 
 // runWorkerJob executes one claimed job with the same lifecycle as the
 // inline path: fresh artifact-attached connection, settings from the payload
-// snapshot, executeClaimedJob transitions, failures recorded on the row.
-func runWorkerJob(pluginDir string, loop dbx, jobID string, startedAtMs int64, payload jVal, mode string) {
+// snapshot, executeClaimedJob transitions, failures recorded on the row. It
+// returns true when the daemon should retire: the job's sidecar could not be
+// opened because the installed binary is older than the sidecar schema, so no
+// job can ever run and a fresh worker with the current binary must take over.
+func runWorkerJob(pluginDir string, loop dbx, jobID string, startedAtMs int64, payload jVal, mode string) bool {
 	settings := pluginSettings(payload)
-	db, err := openTaskSidecar(pluginDir, payload, settings, mode)
+	db, err := openTaskSidecarFn(pluginDir, payload, settings, mode)
 	if err != nil {
 		execImmediate(loop, `UPDATE curator_job SET state='failed', finished_at_ms=?, error=?
 WHERE job_id=? AND state='running'`, nowMs(), truncateString(err.Error(), 2000), jobID)
-		return
+		return isSchemaSkewError(err)
 	}
 	defer db.Close()
 	_, _ = executeClaimedJob(db, pluginDir, payload, mode, settings, jobID, startedAtMs)
+	return false
 }
 
 // heartbeatLoop writes liveness and watches the cooperative-cancel flag for

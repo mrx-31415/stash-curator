@@ -132,7 +132,10 @@ WHERE job_id=? AND state='queued'`, nowMs(), truncateString(failure.Error(), 200
 
 // openTaskSidecar opens the sidecar with artifact attaches on for every mode
 // except compact/vacuum, which require a core-only connection (matching
-// backend.py's reopen).
+// backend.py's reopen). It is a var so daemon tests can force an open failure
+// and assert the fail-closed retirement path.
+var openTaskSidecarFn = openTaskSidecar
+
 func openTaskSidecar(pluginDir string, payload jVal, settings jVal, mode string) (dbx, error) {
 	attach := mode != "compact" && mode != "vacuum"
 	return openSidecar(pluginDir, payload, settings, attach)
