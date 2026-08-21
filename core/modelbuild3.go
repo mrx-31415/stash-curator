@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"time"
 )
 
@@ -207,50 +209,46 @@ JOIN feature_affinity fa ON fa.feature_id = ct.feature_id AND fa.model_id = ?`, 
 	return rows, nil
 }
 
-// modelPublish mirrors PreferenceModelBuilder._publish, recording the
-// database_writing / lane_classification / varied_ordering / indexing /
-// validation / publication stage timings into rec (the caller's build
-// recorder) and returning them as the stage map.
-func modelPublish(db dbx, modelID, featureVersion string, affinities map[string]modelAffinity,
+// modelWriteTables mirrors the database-writing half of
+// PreferenceModelBuilder._publish: artifact creation through the five insert
+// batches, recording the database_writing stage timing. The
+// lane-classification and ordering stages run separately (modelPublishTail)
+// so modelBuild can release the in-memory working set first (issue #214).
+func modelWriteTables(db dbx, modelID, featureVersion string, affinities map[string]modelAffinity,
 	labels map[string]sceneLabel, scores []buildModelScore, performerSimilarity jVal,
-	nowMs int64, report func(fraction float64), rec *stageRecorder) (map[string]int64, error) {
-	var scoresByScene map[string]buildModelScore
+	report func(fraction float64), rec *stageRecorder) (dbx, string, string, error) {
 	var artifact dbx
 	var temporary, final string
-	published := false
-	fail := func(err error) (map[string]int64, error) {
-		if !published {
-			discardArtifact(artifact, temporary)
-			if _, statErr := os.Stat(temporary); os.IsNotExist(statErr) {
-				os.Remove(final)
-			}
+	fail := func(err error) (dbx, string, string, error) {
+		discardArtifact(artifact, temporary)
+		if _, statErr := os.Stat(temporary); os.IsNotExist(statErr) {
+			os.Remove(final)
 		}
-		return nil, err
+		return nil, "", "", err
 	}
 	// database_writing: Python's writing_started boundary — scores_by_scene
 	// through the five insert batches (including create_artifact and
 	// attach_build_sources, which sit between writing_started and the first
 	// insert in Python too).
 	databaseWritingStarted := time.Now()
-	scoresByScene = map[string]buildModelScore{}
+	scoresByScene := map[string]buildModelScore{}
 	for _, score := range scores {
 		scoresByScene[score.sceneID] = score
 	}
 	featurePath, err := featureArtifactPath(db, featureVersion)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	corePath, err := coreDatabasePath(db)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	artifact, temporary, final, err = createArtifact(corePath, "model", modelID)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	if err := attachBuildSources(artifact, corePath, featurePath); err != nil {
-		discardArtifact(artifact, temporary)
-		return nil, err
+		return fail(err)
 	}
 	// feature_affinity
 	affinityRows := make([][]any, 0, len(affinities))
@@ -373,6 +371,26 @@ INSERT INTO model_entity_dormancy(
 		return fail(err)
 	}
 	rec.set("database_writing", elapsedMs(databaseWritingStarted))
+	return artifact, temporary, final, nil
+}
+
+// modelPublishTail mirrors the second half of PreferenceModelBuilder._publish:
+// lane classification, ordering materialization, index creation, validation,
+// and artifact publication. Runs after modelBuild has released the in-memory
+// working set so the ordering stages don't stack their peak on top of it
+// (issue #214).
+func modelPublishTail(db dbx, artifact dbx, temporary, final, modelID, featureVersion string,
+	scoreCount int, nowMs int64, report func(fraction float64), rec *stageRecorder) (map[string]int64, error) {
+	published := false
+	fail := func(err error) (map[string]int64, error) {
+		if !published {
+			discardArtifact(artifact, temporary)
+			if _, statErr := os.Stat(temporary); os.IsNotExist(statErr) {
+				os.Remove(final)
+			}
+		}
+		return nil, err
+	}
 	// Lanes + slate inside the artifact. indexing spans from just before lane
 	// classification through index creation (Python's indexing_started).
 	indexingStarted := time.Now()
@@ -423,9 +441,9 @@ INSERT INTO model_entity_dormancy(
 		}
 		var laneState int
 		err := artifact.QueryRow(`SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID).Scan(&laneState)
-		if storedCount != int64(len(scores)) || (err != nil && err != sql.ErrNoRows) {
+		if storedCount != int64(scoreCount) || (err != nil && err != sql.ErrNoRows) {
 			return fmt.Errorf("model validation failed: scores=%d/%d, lane state=%v",
-				storedCount, len(scores), err == nil)
+				storedCount, scoreCount, err == nil)
 		}
 		var vErr error
 		summary, vErr = artifactValidate(artifact, "model", map[string]int64{
@@ -790,9 +808,27 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	report(0.35)
 	var publishTimings map[string]int64
 	err = rec.stage("", "model.publish", func() error {
-		var err error
-		publishTimings, err = modelPublish(db, modelID, featureVersion, affinities, labels,
-			scores, performerSimilarity, nowMs, report, rec)
+		artifact, temporary, final, err := modelWriteTables(db, modelID, featureVersion, affinities,
+			labels, scores, performerSimilarity, report, rec)
+		if err != nil {
+			return err
+		}
+		// Issue #214: release the in-memory working set (scene feature matrix,
+		// affinities, scores, performer edges) before the lane-classification
+		// and ordering-materialization stages so their peak memory no longer
+		// stacks on top of it.
+		scoreCount := len(scores)
+		sceneFeatures = nil
+		affinities = nil
+		scores = nil
+		performerSimilarity = jvNull()
+		// GC alone keeps the freed heap in the runtime arenas; FreeOSMemory
+		// returns it to the OS so the ordering stages' measured RSS no longer
+		// includes the released working set (issue #214).
+		runtime.GC()
+		debug.FreeOSMemory()
+		publishTimings, err = modelPublishTail(db, artifact, temporary, final, modelID,
+			featureVersion, scoreCount, nowMs, report, rec)
 		return err
 	})
 	if err != nil {

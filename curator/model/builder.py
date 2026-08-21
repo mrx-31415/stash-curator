@@ -656,15 +656,25 @@ class PreferenceModelBuilder:
             timings["scoring"] = max(0, score_total - timings["similarity"])
             record_duration("python", "model.scores", score_total)
             stage_started = time.perf_counter()
+            score_count = len(scores)
+            labeled_count = len(labels)
+            artifact, temporary, final, write_timings = self._write_model_tables(
+                model_id,
+                feature_version,
+                affinities,
+                labels,
+                scores,
+                performer_similarity_scores,
+            )
+            # Issue #214: release the build's in-memory working set (scene
+            # feature matrix, affinities, scores, performer edges) before the
+            # lane-classification and ordering-materialization stages, so their
+            # peak memory no longer stacks on top of it.
+            del scene_features, affinities, labels, training_labels, scores
+            del performer_similarity_scores
+            timings.update(write_timings)
             timings.update(
-                self._publish(
-                    model_id,
-                    feature_version,
-                    affinities,
-                    labels,
-                    scores,
-                    performer_similarity_scores,
-                )
+                self._publish_tail(artifact, temporary, final, model_id, score_count, timings)
             )
             self._report(0.98)
             record_duration(
@@ -680,7 +690,7 @@ class PreferenceModelBuilder:
         timings["cleanup"] = round((time.perf_counter() - stage_started) * 1000)
         self._report(1.0)
         timings["total"] = round((time.perf_counter() - started) * 1000)
-        return self._result(model_id, feature_version, len(labels), reused=False, timings=timings)
+        return self._result(model_id, feature_version, labeled_count, reused=False, timings=timings)
 
     def _report(self, fraction: float) -> None:
         if self.progress:
@@ -2038,7 +2048,7 @@ class PreferenceModelBuilder:
             self.connection, reference_at_ms, self.config, include_temporary=False
         )
 
-    def _publish(
+    def _write_model_tables(
         self,
         model_id: str,
         feature_version: str,
@@ -2046,14 +2056,17 @@ class PreferenceModelBuilder:
         labels: dict[str, _SceneLabel],
         scores: tuple[_Score, ...],
         performer_similarity_scores: dict[str, dict[str, object]],
-    ) -> dict[str, int]:
+    ) -> tuple[sqlite3.Connection, Path, Path, dict[str, int]]:
+        """Write the model artifact tables and return the open artifact plus
+        timings. The lane-classification and ordering stages run separately
+        (``_publish_tail``) so the build's in-memory working set can be
+        released first (issue #214)."""
         timings: dict[str, int] = {}
         writing_started = time.perf_counter()
         scores_by_scene = {score.scene_id: score for score in scores}
         feature_path = self._feature_artifact_path(feature_version)
         artifact, temporary, final = create_artifact(self.connection, "model", model_id)
         attach_build_sources(artifact, self.connection, feature_path)
-        published = False
 
         def insert_rows(sql: str, rows: Iterable[tuple[object, ...]]) -> None:
             for batch in batched(rows, 1_000):
@@ -2210,8 +2223,30 @@ class PreferenceModelBuilder:
                 ),
             )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)
-            from curator.ranking import LanePolicy, SlateBuilder
+            return artifact, temporary, final, timings
+        except Exception:
+            discard_artifact(artifact, temporary)
+            if not temporary.exists():
+                final.unlink(missing_ok=True)
+            raise
 
+    def _publish_tail(
+        self,
+        artifact: sqlite3.Connection,
+        temporary: Path,
+        final: Path,
+        model_id: str,
+        score_count: int,
+        timings: dict[str, int],
+    ) -> dict[str, int]:
+        """Lane classification, ordering materialization, indexing, validation,
+        and artifact publication. Runs after the in-memory working set
+        (features, affinities, scores) has been released so the ordering
+        stages don't stack their peak on top of it (issue #214)."""
+        from curator.ranking import LanePolicy, SlateBuilder
+
+        published = False
+        try:
             indexing_started = time.perf_counter()
             stage_started = time.perf_counter()
             LanePolicy(artifact, self.config).classify(
@@ -2260,10 +2295,10 @@ class PreferenceModelBuilder:
             lane_state = artifact.execute(
                 "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
             ).fetchone()
-            if stored_count != len(scores) or lane_state is None:
+            if stored_count != score_count or lane_state is None:
                 raise RuntimeError(
                     "model validation failed: "
-                    f"scores={stored_count}/{len(scores)}, "
+                    f"scores={stored_count}/{score_count}, "
                     f"lane state={lane_state is not None}"
                 )
             summary = validate_artifact(
