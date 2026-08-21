@@ -692,7 +692,11 @@ def test_recommendation_variety_toggle_updates_native_setting_and_cache() -> Non
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
 
     assert 'configurePlugin(plugin_id: "stash-curator", input: $input)' in source
-    assert "await configurePlugin({ diversityDisabled: !nextEnabled });" in source
+    # The toggle must spread the stored map: Stash's configurePlugin replaces
+    # the whole plugins.settings entry, so a single-key payload would wipe
+    # every other setting the panel had saved.
+    assert "const raw = await getPluginSettings();" in source
+    assert "await configurePlugin({ ...raw, diversityDisabled: !nextEnabled });" in source
     assert "configUpdatedAtMs: cachedConfigUpdatedAtMs" in source
     assert "laneByValue.has(lane) && diversityEnabled !== null" in source
     assert '"aria-pressed": diversityEnabled' in source
@@ -739,10 +743,10 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     )
     assert 'payload.data.configuration.plugins["stash-curator"] || {}' in source
 
-    # One configurePlugin call per field, on change, matching the
-    # toggleDiversity precedent this panel reuses for the diversity toggle
-    # instead of re-implementing its cache-busting side effects.
-    assert "await configurePlugin({ [field.key]: value });" in source
+    # One configurePlugin call per field, on change — spreading the stored
+    # map so a single-field save cannot wipe the other settings (Stash's
+    # ConfigurePlugin replaces the entire plugins.settings entry).
+    assert "await configurePlugin({ ...raw, [field.key]: value });" in source
 
     # Every setting the issue calls out as in scope for v1 is represented,
     # with the config-backed ones mapped to their curator_config key and the
