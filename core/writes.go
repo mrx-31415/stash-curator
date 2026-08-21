@@ -851,6 +851,7 @@ type sessionInput struct {
 	naturalCompletion      bool
 	impressionID           string
 	hasImpression          bool
+	impressionProvenance   string
 	lane                   string
 	hasLane                bool
 	impressionPosition     int64
@@ -916,6 +917,14 @@ func normalizeSession(entry jVal) (sessionInput, error) {
 	if v := entry.get("impression_id"); v.truthy() {
 		out.impressionID = v.asString()
 		out.hasImpression = true
+	}
+	if v := entry.get("impression_provenance"); v.truthy() {
+		out.impressionProvenance = v.asString()
+		if out.impressionProvenance != "observed" && out.impressionProvenance != "inferred" {
+			return sessionInput{}, fmt.Errorf("impression provenance must be 'observed', 'inferred', or null")
+		}
+	} else if out.hasImpression {
+		out.impressionProvenance = "observed"
 	}
 	if v := entry.get("lane"); v.truthy() {
 		out.lane = v.asString()
@@ -1057,6 +1066,39 @@ AND reversed_by_id IS NULL AND occurred_at_ms BETWEEN ? AND ? LIMIT 1`,
 		original.sceneID, original.sessionID, signal)
 }
 
+// impressionAttributionWindowMs mirrors
+// IMPRESSION_ATTRIBUTION_WINDOW_MS: a play that arrived without a direct
+// impression_id is attributed to the most recent impression of the same
+// scene shown within this window. Direct-player sessions average ~10s
+// (Curator observes starts, not whole plays), so the gap between a scene
+// being shown in a Curator lane and the user clicking into it is a
+// browsing-session-scale gap; 30 minutes bounds the join to the same
+// browsing session without crediting plays that came from elsewhere.
+const impressionAttributionWindowMs = int64(30 * 60 * 1000)
+
+// attributeImpression mirrors InteractionStore._attribute_impression.
+func attributeImpression(conn *sql.Conn, session sessionInput) (sessionInput, error) {
+	var impressionID string
+	err := conn.QueryRowContext(context.Background(), `
+SELECT i.impression_id
+FROM impression_item ii
+JOIN impression i ON i.impression_id = ii.impression_id
+WHERE ii.scene_id=? AND i.requested_at_ms<=? AND i.requested_at_ms>=?
+ORDER BY i.requested_at_ms DESC, i.impression_id DESC
+LIMIT 1`,
+		session.sceneID, session.startedAtMs, session.startedAtMs-impressionAttributionWindowMs).Scan(&impressionID)
+	if err == sql.ErrNoRows {
+		return session, nil
+	}
+	if err != nil {
+		return session, err
+	}
+	session.impressionID = impressionID
+	session.hasImpression = true
+	session.impressionProvenance = "inferred"
+	return session, nil
+}
+
 // submitSessions mirrors InteractionStore.submit_sessions.
 func submitSessions(db dbx, entries []jVal) (int64, error) {
 	sessions := make([]sessionInput, len(entries))
@@ -1072,6 +1114,13 @@ func submitSessions(db dbx, entries []jVal) (int64, error) {
 	err := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
 		for _, session := range sessions {
+			if !session.hasImpression {
+				attributed, err := attributeImpression(conn, session)
+				if err != nil {
+					return err
+				}
+				session = attributed
+			}
 			summary := sessionSummaryJSON(session)
 			res, err := conn.ExecContext(ctx, `
 INSERT OR IGNORE INTO play_session(
@@ -1156,6 +1205,7 @@ func sessionSummaryJSON(s sessionInput) string {
 		jvKey("final_position_seconds", jvFloat(s.finalPositionSeconds)),
 		jvKey("impression_id", optStrValue(s.impressionID, s.hasImpression)),
 		jvKey("impression_position", jvOptionalInt(s.impressionPositionPtr())),
+		jvKey("impression_provenance", optStrValue(s.impressionProvenance, s.impressionProvenance != "")),
 		jvKey("lane", optStrValue(s.lane, s.hasLane)),
 		jvKey("maximum_position_seconds", jvFloat(s.maximumPositionSeconds)),
 		jvKey("model_id", optStrValue(s.modelID, s.hasModelID)),

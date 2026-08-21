@@ -72,6 +72,15 @@ class EventCalibration:
 
 DEFAULT_CALIBRATION = EventCalibration()
 
+# A play that arrives without a direct impression_id is attributed to the most
+# recent impression of the same scene shown within this window. Direct-player
+# sessions average ~10s (Curator observes starts, not whole plays), so the gap
+# between a scene being shown in a Curator lane and the user clicking into it
+# is a browsing-session-scale gap; 30 minutes bounds the join to the same
+# browsing session without crediting plays that came from elsewhere (search,
+# later navigation) hours later.
+IMPRESSION_ATTRIBUTION_WINDOW_MS = 30 * 60 * 1000
+
 
 @dataclass(frozen=True)
 class PlayedRange:
@@ -107,6 +116,7 @@ class DirectSessionInput:
     nearby_marker_ids: tuple[str, ...] = ()
     natural_completion: bool = False
     impression_id: str | None = None
+    impression_provenance: str | None = None
     lane: str | None = None
     impression_position: int | None = None
     model_id: str | None = None
@@ -127,6 +137,8 @@ class DirectSessionInput:
             raise ValueError("session durations and positions must be non-negative")
         if self.impression_position is not None and self.impression_position < 0:
             raise ValueError("impression_position must be non-negative")
+        if self.impression_provenance not in (None, "observed", "inferred"):
+            raise ValueError("impression provenance must be 'observed', 'inferred', or null")
         if self.origin is SessionOrigin.CURATOR and self.impression_id is None:
             raise ValueError("Curator-originated sessions require an impression_id")
 

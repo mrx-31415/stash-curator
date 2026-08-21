@@ -6,11 +6,12 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from curator.config import DEFAULT_CONFIG
 from curator.events import (
+    IMPRESSION_ATTRIBUTION_WINDOW_MS,
     OBSERVED_PLAYBACK_SQL,
     DirectSessionInput,
     PlayedRange,
@@ -421,6 +422,8 @@ class InteractionStore:
         signaled = False
         with transaction(self.connection):
             for session in sessions:
+                if session.impression_id is None:
+                    session = self._attribute_impression(session)
                 try:
                     cursor = self.connection.execute(
                         """
@@ -467,6 +470,29 @@ class InteractionStore:
             if signaled:
                 ModelUpdateCoordinator(self.connection).request("session_outcome")
         return inserted
+
+    def _attribute_impression(self, session: DirectSessionInput) -> DirectSessionInput:
+        """Attribute a play that arrived without a direct impression_id to the
+        most recent impression of the same scene shown within the attribution
+        window, marking the link inferred rather than observed."""
+        row = self.connection.execute(
+            """
+            SELECT i.impression_id
+            FROM impression_item ii
+            JOIN impression i ON i.impression_id = ii.impression_id
+            WHERE ii.scene_id=? AND i.requested_at_ms<=? AND i.requested_at_ms>=?
+            ORDER BY i.requested_at_ms DESC, i.impression_id DESC
+            LIMIT 1
+            """,
+            (
+                session.scene_id,
+                session.started_at_ms,
+                session.started_at_ms - IMPRESSION_ATTRIBUTION_WINDOW_MS,
+            ),
+        ).fetchone()
+        if row is None:
+            return session
+        return replace(session, impression_id=str(row[0]), impression_provenance="inferred")
 
     def _apply_feedback(self, entry: dict[str, Any]) -> None:
         feedback_type = entry["feedback_type"]
@@ -671,6 +697,12 @@ class InteractionStore:
             PlayedRange(float(item["start_seconds"]), float(item["end_seconds"]))
             for item in entry.get("played_ranges", [])
         )
+        impression_id = str(entry["impression_id"]) if entry.get("impression_id") else None
+        impression_provenance = (
+            str(entry["impression_provenance"]) if entry.get("impression_provenance") else None
+        )
+        if impression_provenance is None and impression_id is not None:
+            impression_provenance = "observed"
         return DirectSessionInput(
             session_id=str(entry.get("session_id") or ""),
             scene_id=str(entry.get("scene_id") or ""),
@@ -688,7 +720,8 @@ class InteractionStore:
             ),
             nearby_marker_ids=tuple(str(value) for value in entry.get("nearby_marker_ids", [])),
             natural_completion=bool(entry.get("natural_completion", False)),
-            impression_id=str(entry["impression_id"]) if entry.get("impression_id") else None,
+            impression_id=impression_id,
+            impression_provenance=impression_provenance,
             lane=str(entry["lane"]) if entry.get("lane") else None,
             impression_position=(
                 int(entry["impression_position"])
