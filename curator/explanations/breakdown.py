@@ -53,6 +53,24 @@ def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
+def _as_float(value: object) -> float:
+    """Coerce an unknown-shaped qualification value to float.
+
+    ``qualification.get(...)`` returns ``object``, so ``float(...)`` is not
+    typed; a value that is ``None``, empty, or not numeric coerces to 0.0.
+    """
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _component_value(score: ModelSceneScore, name: str, default: float = 0.0) -> float:
     component = score.components.get(name)
     if not isinstance(component, dict):
@@ -229,20 +247,18 @@ def _lane_context(
     qual = qualification or {}
     if lane == "revisit":
         context["facets"] = {
-            "direct_appeal": _clamp(abs(float(qual.get("direct_appeal", 0.0) or 0.0)), 0.0, 1.0),
-            "direct_confidence": _clamp(float(qual.get("direct_confidence", 0.0) or 0.0), 0.0, 1.0),
-            "recovery": _clamp(float(qual.get("recovery", 0.0) or 0.0), 0.0, 1.0),
+            "direct_appeal": _clamp(abs(_as_float(qual.get("direct_appeal"))), 0.0, 1.0),
+            "direct_confidence": _clamp(_as_float(qual.get("direct_confidence")), 0.0, 1.0),
+            "recovery": _clamp(_as_float(qual.get("recovery")), 0.0, 1.0),
             "durable_signals": qual.get("durable_signals", []),
         }
         context["intent"] = "revisit"
     elif lane == "best_bets":
         context["facets"] = {
-            "current_fit": _clamp(float(qual.get("current_fit", 0.0) or 0.0), -1.0, 1.0),
-            "confidence": _clamp(float(qual.get("confidence", 0.0) or 0.0), 0.0, 1.0),
-            "metadata_confidence": _clamp(
-                float(qual.get("metadata_confidence", 0.0) or 0.0), 0.0, 1.0
-            ),
-            "relevance": _clamp(float(qual.get("relevance", 0.0) or 0.0), 0.0, 1.0),
+            "current_fit": _clamp(_as_float(qual.get("current_fit")), -1.0, 1.0),
+            "confidence": _clamp(_as_float(qual.get("confidence")), 0.0, 1.0),
+            "metadata_confidence": _clamp(_as_float(qual.get("metadata_confidence")), 0.0, 1.0),
+            "relevance": _clamp(_as_float(qual.get("relevance")), 0.0, 1.0),
             "corroborated": bool(qual.get("corroborated", False)),
             "direct_reliable": bool(qual.get("direct_reliable", False)),
         }
@@ -252,12 +268,8 @@ def _lane_context(
             "anchor_features": qual.get("anchor_features", []),
             "challenged_feature": qual.get("challenged_feature"),
             "challenge_kind": qual.get("challenge_kind"),
-            "anchor_strength": _clamp(
-                abs(float(qual.get("anchor_strength", 0.0) or 0.0)), 0.0, 1.0
-            ),
-            "challenge_distance": _clamp(
-                float(qual.get("challenge_distance", 0.0) or 0.0), 0.0, 1.0
-            ),
+            "anchor_strength": _clamp(abs(_as_float(qual.get("anchor_strength"))), 0.0, 1.0),
+            "challenge_distance": _clamp(_as_float(qual.get("challenge_distance")), 0.0, 1.0),
         }
         context["intent"] = "challenge"
     elif lane == "blind_spots":
