@@ -182,7 +182,7 @@ func runFeatureBuild() {
 		fail("feature-build: migrate: %v", err)
 	}
 	rec := newStageRecorder()
-	version, reused, err := featureBuild(db, payload.NowMs, rec, func(fraction float64) {
+	version, reused, err := featureBuild(db, payload.NowMs, featureIgnoredTags(db), rec, func(fraction float64) {
 		_ = writeJSONLine(map[string]any{"progress": fraction})
 	})
 	if err != nil {
@@ -457,6 +457,63 @@ func presenceCategory(value string) string {
 // description-term values, normalized, with confidence from document
 // frequency. Every input is a precomputed read-only map, so the scene pass
 // is row-independent: fixed-chunk parallel processing yields identical rows.
+// featureIgnoredTags reads the runtime ignored_tags from curator_config.
+// The plugin setting ignoredTags (a comma-separated string in Stash settings)
+// is mirrored into curator_config.config_json["ignored_tags"]. The build reads
+// it here so an edited ignore list changes the feature version and the model
+// fingerprint, and drives the feature-construction exclusion.
+func featureIgnoredTags(db dbx) []string {
+	cfg, err := sidecarConfig(db)
+	if err != nil {
+		return nil
+	}
+	raw := cfg.get("config").get("ignored_tags")
+	if raw.kind == jNull {
+		return nil
+	}
+	value := strings.TrimSpace(raw.asString())
+	if value == "" {
+		return nil
+	}
+	var ignored []string
+	for _, part := range strings.Split(value, ",") {
+		name := strings.TrimSpace(part)
+		if name != "" {
+			ignored = append(ignored, name)
+		}
+	}
+	return ignored
+}
+
+// featureIgnoredTagIDs maps the ignored tag names to their local tag_ids, so
+// the feature-construction pass can drop them by id. Only tags whose exact
+// name is in the ignore set are excluded (no bracket heuristics).
+func featureIgnoredTagIDs(db dbx, ignoredTags []string) (map[string]bool, error) {
+	if len(ignoredTags) == 0 {
+		return nil, nil
+	}
+	names := map[string]bool{}
+	for _, name := range ignoredTags {
+		names[name] = true
+	}
+	rows, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var tagID, name string
+		if err := rows.Scan(&tagID, &name); err != nil {
+			return nil, err
+		}
+		if names[strings.TrimSpace(name)] {
+			ids[tagID] = true
+		}
+	}
+	return ids, rows.Err()
+}
+
 func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 	documentFrequency map[string]int64, descByScene map[string][]string,
 	descIDF map[string]float64, descDocumentFrequency map[string]int64, tagNames map[string]string,
@@ -545,7 +602,7 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 	return features
 }
 
-func sceneFeatures(db dbx, roles map[string]tagRoleResult, rec *stageRecorder, progress func(fraction float64)) ([]featureRow, error) {
+func sceneFeatures(db dbx, roles map[string]tagRoleResult, ignoredTagIDs map[string]bool, rec *stageRecorder, progress func(fraction float64)) ([]featureRow, error) {
 	sceneRows, err := db.Query(`SELECT scene_id FROM source_scene ORDER BY scene_id`)
 	if err != nil {
 		return nil, err
@@ -574,7 +631,7 @@ func sceneFeatures(db dbx, roles map[string]tagRoleResult, rec *stageRecorder, p
 			rows.Close()
 			return nil, err
 		}
-		if roles[tagID].role == "content" {
+		if roles[tagID].role == "content" && !ignoredTagIDs[tagID] {
 			if direct[sceneID] == nil {
 				direct[sceneID] = map[string]bool{}
 			}
@@ -602,7 +659,7 @@ ORDER BY scene_id, tag_id`)
 			rows.Close()
 			return nil, err
 		}
-		if roles[tagID].role == "content" {
+		if roles[tagID].role == "content" && !ignoredTagIDs[tagID] {
 			if marker[sceneID] == nil {
 				marker[sceneID] = map[string]bool{}
 			}
@@ -624,7 +681,7 @@ ORDER BY scene_id, tag_id`)
 			rows.Close()
 			return nil, err
 		}
-		if roles[parentID].role == "content" {
+		if roles[parentID].role == "content" && !ignoredTagIDs[parentID] {
 			if parents[tagID] == nil {
 				parents[tagID] = map[string]bool{}
 			}
@@ -1160,7 +1217,7 @@ func featureID(featureVersion, entityType, family, name string) string {
 // version plus whether the published feature was reused, recording the
 // feature_* stage timings, spans, and per-stage memory into rec (mirroring
 // FeatureBuilder.build's lookup/build/publish/total keys).
-func featureBuild(db dbx, nowMs int64, rec *stageRecorder, progress func(fraction float64)) (string, bool, error) {
+func featureBuild(db dbx, nowMs int64, ignoredTags []string, rec *stageRecorder, progress func(fraction float64)) (string, bool, error) {
 	started := time.Now()
 	sourceFingerprint, err := featureSourceFingerprint(db)
 	if err != nil {
@@ -1169,7 +1226,8 @@ func featureBuild(db dbx, nowMs int64, rec *stageRecorder, progress func(fractio
 	if progress != nil {
 		progress(0.05)
 	}
-	versionHash := sha256.Sum256([]byte(sourceFingerprint + "\x00" + featureConfigCanonicalJSON()))
+	effectiveConfig := featureConfigCanonicalJSONWith(ignoredTags)
+	versionHash := sha256.Sum256([]byte(sourceFingerprint + "\x00" + effectiveConfig))
 	featureVersion := fmt.Sprintf("fv-%s", hex.EncodeToString(versionHash[:])[:20])
 	var status string
 	var validationStatus sql.NullString
@@ -1209,7 +1267,7 @@ INSERT INTO feature_build(
     feature_version, status, config_json, source_fingerprint, created_at_ms
 ) VALUES (?, 'building', ?, ?, ?)
 ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL`,
-			featureVersion, featureConfigCanonicalJSON(), sourceFingerprint, nowMs)
+			featureVersion, effectiveConfig, sourceFingerprint, nowMs)
 		return err
 	})
 	if insertErr != nil {
@@ -1229,9 +1287,13 @@ ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL`,
 		if progress != nil {
 			progress(0.10)
 		}
+		ignoredTagIDs, err := featureIgnoredTagIDs(db, ignoredTags)
+		if err != nil {
+			return err
+		}
 		if err := rec.stage("", "feature.scene_features", func() error {
 			var err error
-			sceneRows, err = sceneFeatures(db, roles, rec, progress)
+			sceneRows, err = sceneFeatures(db, roles, ignoredTagIDs, rec, progress)
 			return err
 		}); err != nil {
 			return err

@@ -955,6 +955,129 @@ def test_scoring_fingerprint_invalidates_published_artifact(
     assert second.feature_version == first.feature_version
 
 
+def test_implicit_skip_events_emit_virtual_pairs(tmp_path: Path) -> None:
+    """Issue #146 Channel A: a play at position P in an impression makes every
+    earlier-position card a loser and the played card the winner. Confidence
+    uses the stored policy_score gap (contradiction > 0, confirmation ~ 0) with
+    the implicit base (half the deliberate-pick base)."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-1', 1, 'for_you', 'builtin')
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO impression_item(impression_id, scene_id, position, policy_score,
+            reason_snapshot_json) VALUES (?, ?, ?, ?, '[]')
+        """,
+        (
+            ("imp-1", "old-good", 0, 0.9),
+            ("imp-1", "recent-good", 1, 0.8),
+            ("imp-1", "unseen-good", 2, 0.3),
+            ("imp-1", "disliked", 3, 0.5),
+        ),
+    )
+    # Play 'unseen-good' (position 2) with observed playback, linked to imp-1.
+    connection.execute(
+        """
+        INSERT INTO play_session(session_id, scene_id, started_at_ms, ended_at_ms,
+            active_seconds, provenance, confidence, impression_id, summary_json)
+        VALUES ('ps-1', 'unseen-good', 100, 200, 10.0, 'direct_player', 1, 'imp-1', '{}')
+        """
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    events = builder._implicit_skip_events()
+    # Winner at position 2 -> positions 0 and 1 are losers; position 3 is after.
+    assert sorted((e.winner_scene, e.loser_scene) for e in events) == [
+        ("unseen-good", "old-good"),
+        ("unseen-good", "recent-good"),
+    ]
+    by_loser = {e.loser_scene: e.confidence for e in events}
+    # old-good scored 0.9 vs winner 0.3 -> surprise 0.6; recent-good 0.8 -> 0.5.
+    assert by_loser["old-good"] == pytest.approx(
+        DEFAULT_CONFIG.model.implicit_skip_confidence
+        * (1 + DEFAULT_CONFIG.model.implicit_skip_surprise_bonus * 0.6)
+    )
+    assert by_loser["recent-good"] == pytest.approx(
+        DEFAULT_CONFIG.model.implicit_skip_confidence
+        * (1 + DEFAULT_CONFIG.model.implicit_skip_surprise_bonus * 0.5)
+    )
+    # Implicit signal never outranks explicit: the base is half the deliberate
+    # pick base, so at equal surprise implicit confidence stays below explicit.
+    assert DEFAULT_CONFIG.model.implicit_skip_confidence < (
+        DEFAULT_CONFIG.model.curation_pair_confidence
+    )
+
+
+def test_implicit_skip_confirmation_adds_no_surprise(tmp_path: Path) -> None:
+    """A confirmation (winner scored higher than the loser) yields surprise 0,
+    so the confidence is just the implicit base — no surprise bonus."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-1', 1, 'for_you', 'builtin')
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO impression_item(impression_id, scene_id, position, policy_score,
+            reason_snapshot_json) VALUES (?, ?, ?, ?, '[]')
+        """,
+        (
+            ("imp-1", "old-good", 0, 0.3),
+            ("imp-1", "unseen-good", 1, 0.9),
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO play_session(session_id, scene_id, started_at_ms, ended_at_ms,
+            active_seconds, provenance, confidence, impression_id, summary_json)
+        VALUES ('ps-1', 'unseen-good', 100, 200, 10.0, 'direct_player', 1, 'imp-1', '{}')
+        """
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    events = builder._implicit_skip_events()
+    assert len(events) == 1
+    # winner 0.9 > loser 0.3 -> surprise = max(0, 0.3 - 0.9) = 0.
+    assert events[0].confidence == pytest.approx(DEFAULT_CONFIG.model.implicit_skip_confidence)
+
+
+def test_implicit_skip_raw_click_never_emits_pairs(tmp_path: Path) -> None:
+    """A raw click (no observed playback, no thumb_up) never emits implicit
+    skip pairs; only played (observed) or thumbed scenes trigger them."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-1', 1, 'for_you', 'builtin')
+        """
+    )
+    connection.executemany(
+        """
+        INSERT INTO impression_item(impression_id, scene_id, position, policy_score,
+            reason_snapshot_json) VALUES (?, ?, ?, ?, '[]')
+        """,
+        (
+            ("imp-1", "old-good", 0, 0.9),
+            ("imp-1", "unseen-good", 1, 0.8),
+        ),
+    )
+    # A session with no observed playback is just a click — no signal.
+    connection.execute(
+        """
+        INSERT INTO play_session(session_id, scene_id, started_at_ms, ended_at_ms,
+            active_seconds, provenance, confidence, impression_id, summary_json)
+        VALUES ('ps-1', 'unseen-good', 100, 101, 0.0, 'direct_player', 1, 'imp-1',
+                '{"played_ranges": [], "maximum_position_seconds": 0, "start_position_seconds": 0}')
+        """
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    assert builder._implicit_skip_events() == []
+
+
 def test_playback_change_reuses_features_but_rebuilds_model(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     first = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()

@@ -59,6 +59,12 @@ class FeatureConfig:
     idf_strength: float = 0.5
     idf_cap: float = 2.5
     one_off_prior: float = 2.0
+    # Exact-name list of scene tags excluded from tag analysis. Auto-generated
+    # / metadata tags like "[Timestamp: Synced]" describe the file/import, not
+    # the scene; they pollute content features, affinity accumulation, the
+    # Taste Profile, and lane facets. Exact-name match only (no bracket
+    # heuristics — bracketing is unreliable). Empty by default.
+    ignored_tags: tuple[str, ...] = ()
     performer_block_weights: tuple[tuple[str, float], ...] = (
         ("content", 1.0),
         ("measurements", 1.0),
@@ -105,6 +111,15 @@ class ModelConfig:
     curation_pair_confidence: float = 0.15
     curation_pair_surprise_bonus: float = 2.0
     curation_pair_ips_cap: float = 2.0
+    # Implicit negatives from impressions (#146 Channel A). When a recommended
+    # scene is played or thumbed, the passed-over earlier-position cards in the
+    # same impression are treated as weak pairwise losers. The base is half the
+    # deliberate-pick base (curation_pair_confidence) so implicit signal never
+    # outranks explicit feedback; the issue author flagged it may need to be
+    # even weaker after live measurement. Config-backed so it can be tuned.
+    implicit_skip_confidence: float = 0.075
+    implicit_skip_surprise_bonus: float = 2.0
+    implicit_skip_ips_cap: float = 2.0
     not_now_days: float = 30.0
     not_now_penalty: float = 0.50
     neighbor_count: int = 12

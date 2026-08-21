@@ -4525,6 +4525,12 @@
       ],
     },
     {
+      title: "Tag analysis",
+      fields: [
+        { key: "ignoredTags", configKey: "ignored_tags", type: "STRING", label: "Ignored tags", description: "Comma-separated names of tags excluded from tag analysis. Auto-generated or metadata tags like [Timestamp: Synced] do not describe the scene; exact-name match only. Empty by default." },
+      ],
+    },
+    {
       title: "Whisparr integration",
       fields: [
         { key: "whisparrUrl", type: "STRING", label: "Whisparr v3 URL", description: "Optional Whisparr base URL used by Expand scene actions." },

@@ -469,7 +469,19 @@ func featureFingerprint() string {
 	return sha256Hex(featureConfigCanonicalJSON())
 }
 
+// featureConfigCanonicalJSON mirrors FeatureConfig.feature_json() with the
+// default (empty) ignored_tags. It is the default-config fingerprint used by
+// the read-path tag_role/config-version lookups, which always run against the
+// default feature config.
 func featureConfigCanonicalJSON() string {
+	return featureConfigCanonicalJSONWith(nil)
+}
+
+// featureConfigCanonicalJSONWith mirrors FeatureConfig.feature_json() for a
+// given ignored_tags list (nil → the empty default). The build passes the
+// runtime ignored_tags (from curator_config.ignored_tags) so the feature
+// version and model fingerprint change when the ignore list changes.
+func featureConfigCanonicalJSONWith(ignoredTags []string) string {
 	rules := jvArr()
 	rule := func(match, pattern, role string) {
 		rules.arr = append(rules.arr, jvObj(
@@ -498,6 +510,7 @@ func featureConfigCanonicalJSON() string {
 	config := jvObj(
 		jvKey("idf_cap", jvFloat(2.5)),
 		jvKey("idf_strength", jvFloat(0.5)),
+		jvKey("ignored_tags", jvStrList(ignoredTags)),
 		jvKey("marker_weight", jvFloat(0.45)),
 		jvKey("one_off_prior", jvFloat(2.0)),
 		jvKey("parent_weight", jvFloat(0.35)),

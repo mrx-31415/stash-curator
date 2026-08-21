@@ -16,7 +16,7 @@ from typing import Any, cast
 
 from curator import core
 from curator.config import DEFAULT_CONFIG, CuratorConfig
-from curator.events.contracts import DEFAULT_CALIBRATION
+from curator.events.contracts import DEFAULT_CALIBRATION, OBSERVED_PLAYBACK_SQL
 from curator.features import FeatureBuilder, FeatureStore
 from curator.features.builder import _fingerprint_table
 from curator.features.profiles import NUMERIC_BLOCKS, NUMERIC_SCALES
@@ -978,6 +978,77 @@ class PreferenceModelBuilder:
             if "winner_scene" in entry and "loser_scene" in entry
         ]
 
+    def _implicit_skip_events(self) -> list[_PairEvent]:
+        """Implicit negatives from impressions (#146 Channel A): when a
+        recommended scene is played or thumbed, the earlier-position cards in
+        the same impression are treated as weak pairwise losers.
+
+        The chosen card is the winner (+1); every earlier-position card is a
+        loser (-1). Surprise uses the stored policy_score recorded at display
+        time (surprise = max(0, loser_score - winner_score)), so a pick that
+        contradicts the model's ordering is informative while a confirmation
+        adds nothing. Confidence uses the implicit base (half the
+        deliberate-pick base) so implicit signal never outranks explicit
+        feedback. Trigger is played or thumbed only — never a raw click.
+
+        Pairs are virtual (build-time only): they are emitted here and fed to
+        the affinity accumulator, never written to the feedback table.
+        """
+        metadata_wrong = self._metadata_wrong_scenes()
+        # Positive actions linking a scene to the impression that surfaced it:
+        # an observed playback of a Curator-recommended scene, or an explicit
+        # thumb-up. A scene played or thumbed in the same impression twice is
+        # collapsed to its earliest position (the first positive action).
+        winners: dict[str, tuple[str, str]] = {}
+        for row in self.connection.execute(
+            f"""
+            SELECT ps.scene_id, ps.impression_id FROM play_session ps
+            WHERE ps.impression_id IS NOT NULL
+              AND ps.provenance='direct_player' AND {OBSERVED_PLAYBACK_SQL}
+            UNION
+            SELECT f.scene_id, f.impression_id FROM feedback f
+            WHERE f.impression_id IS NOT NULL
+              AND f.feedback_type='thumb_up' AND f.reversed_by_id IS NULL
+            """
+        ):
+            scene_id, impression_id = str(row["scene_id"]), str(row["impression_id"])
+            if scene_id in metadata_wrong or scene_id in winners:
+                continue
+            winners[scene_id] = (scene_id, impression_id)
+        events: list[_PairEvent] = []
+        for winner_scene, impression_id in sorted(winners.values()):
+            items = [
+                (str(row["scene_id"]), int(row["position"]), float(row["policy_score"]))
+                for row in self.connection.execute(
+                    """
+                    SELECT scene_id, position, policy_score FROM impression_item
+                    WHERE impression_id=? ORDER BY position
+                    """,
+                    (impression_id,),
+                )
+            ]
+            winner_position = None
+            winner_score = 0.0
+            for scene, position, score in items:
+                if scene == winner_scene:
+                    winner_position = position
+                    winner_score = score
+                    break
+            if winner_position is None:
+                continue
+            for loser_scene, position, loser_score in items:
+                if position >= winner_position or loser_scene == winner_scene:
+                    continue
+                surprise = max(0.0, loser_score - winner_score)
+                confidence = min(
+                    1.0,
+                    self.config.model.implicit_skip_confidence
+                    * (1.0 + self.config.model.implicit_skip_surprise_bonus * surprise)
+                    * min(self.config.model.implicit_skip_ips_cap, 1.0),
+                )
+                events.append(_PairEvent(winner_scene, loser_scene, confidence))
+        return events
+
     def _sibling_priors(
         self,
         scene_features: dict[str, tuple[StoredFeature, ...]],
@@ -1082,7 +1153,7 @@ class PreferenceModelBuilder:
         # share is skipped entirely (no numerator or support contribution) —
         # only what differed between the two scenes carries information. No
         # label_mean subtraction: the comparison already isolates the signal.
-        for event in self._pair_events():
+        for event in [*self._pair_events(), *self._implicit_skip_events()]:
             winner_features = {f.feature_id: f for f in scene_features.get(event.winner_scene, ())}
             loser_features = {f.feature_id: f for f in scene_features.get(event.loser_scene, ())}
             # sorted(): set difference has no defined order, and this feeds
