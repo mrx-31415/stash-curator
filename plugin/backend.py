@@ -56,6 +56,7 @@ for package_root in (PLUGIN_DIR, PLUGIN_DIR.parent):
 from curator import __version__  # noqa: E402
 from curator.api import CuratorAPI  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
+from curator.events.contracts import OBSERVED_PLAYBACK_SQL  # noqa: E402
 from curator.expand import (  # noqa: E402
     PERFORMER_HUNT_LIMIT,
     STASHDB,
@@ -996,6 +997,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return _cancel_job(connection, args)
         if operation == "get_diagnostics":
             return _diagnostics(connection)
+        if operation == "get_impression_measurement":
+            return _impression_measurement(connection)
         if operation == "list_profiles":
             return {
                 "schema_version": SCHEMA_VERSION,
@@ -1386,6 +1389,88 @@ def _diagnostics(connection: Any) -> dict[str, object]:
                 for job_type, values in sorted(durations.items())
             ],
         },
+    }
+
+
+def _impression_measurement(connection: Any) -> dict[str, object]:
+    """Issue #146 Channel B — do shown-but-skipped scenes differ measurably
+    from never-shown ones?
+
+    The implicit-negatives pre-condition gate: before shown-never-played
+    scenes can be treated as a negative signal, the skipped population has to
+    be distinguishable from scenes that were never surfaced at all. This is a
+    read-only measurement op, deliberately NOT wired into the model build.
+
+    Definitions (mirroring the build's positive-action predicate):
+    - shown: appears in impression_item (surfaced in a Curator impression).
+    - played: shown AND a positive action links the scene to that impression —
+      a play_session with provenance='direct_player' whose OBSERVED_PLAYBACK_SQL
+      predicate holds, or non-reversed feedback thumb_up.
+    - skipped: shown and not played.
+    - never-shown: in source_scene but never appears in any impression_item.
+
+    Run this on a live instance to satisfy the pre-condition:
+        operation({ operation: "get_impression_measurement" })
+
+    Outputs per-bucket counts and the display-time policy_score distribution
+    (mean/max) for each group. If skipped scenes carry systematically higher
+    policy_score than never-shown ones (the model kept pushing them and the
+    user kept passing), that is evidence the channel is worth wiring.
+    """
+    positive_action_sql = f"""
+        SELECT scene_id, impression_id FROM play_session
+        WHERE impression_id IS NOT NULL
+          AND provenance='direct_player' AND {OBSERVED_PLAYBACK_SQL}
+        UNION
+        SELECT scene_id, impression_id FROM feedback
+        WHERE impression_id IS NOT NULL
+          AND feedback_type='thumb_up' AND reversed_by_id IS NULL
+    """
+    played = {
+        (str(row["scene_id"]), str(row["impression_id"]))
+        for row in connection.execute(positive_action_sql)
+    }
+    shown = [
+        (str(row["scene_id"]), str(row["impression_id"]), float(row["policy_score"]))
+        for row in connection.execute(
+            """
+            SELECT scene_id, impression_id, policy_score FROM impression_item
+            """
+        )
+    ]
+    never_shown = {
+        str(row["scene_id"])
+        for row in connection.execute(
+            """
+            SELECT scene_id FROM source_scene
+            WHERE scene_id NOT IN (SELECT scene_id FROM impression_item)
+            """
+        )
+    }
+
+    def _bucket(items: list[tuple[str, str, float]]) -> dict[str, object]:
+        scores = [score for (_, _, score) in items]
+        return {
+            "count": len(items),
+            "mean_policy_score": (round(sum(scores) / len(scores), 6) if scores else None),
+            "max_policy_score": round(max(scores), 6) if scores else None,
+        }
+
+    played_items = [item for item in shown if (item[0], item[1]) in played]
+    skipped_items = [item for item in shown if (item[0], item[1]) not in played]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "buckets": {
+            "shown": _bucket(shown),
+            "played": _bucket(played_items),
+            "skipped": _bucket(skipped_items),
+            "never_shown": {
+                "count": len(never_shown),
+                "mean_policy_score": None,
+                "max_policy_score": None,
+            },
+        },
+        "shown_play_rate": (round(len(played_items) / len(shown), 6) if shown else None),
     }
 
 

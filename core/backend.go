@@ -163,6 +163,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetTasteProfile(pluginDir, payload)
 	case "get_diagnostics":
 		return opGetDiagnostics(pluginDir, payload)
+	case "get_impression_measurement":
+		return opGetImpressionMeasurement(pluginDir, payload)
 	case "get_expand":
 		return opGetExpand(pluginDir, payload)
 	case "get_performer_hunt":
