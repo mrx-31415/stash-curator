@@ -3569,6 +3569,18 @@
 .curator-explanation-view,
 .curator-score-breakdown { display: grid; gap: 0.55rem; }
 .curator-appeal-hero { display: grid; gap: 0.15rem; padding: 0.55rem 0.65rem; border: 1px solid var(--curator-border); border-radius: var(--curator-radius-sm); background: var(--curator-wash-raised); }
+/* Issue #213: the prose lead in "Why this?" gets the section's visual
+   language instead of bare body text. */
+.curator-explanation-view > .curator-explanation {
+  background: var(--curator-wash-raised);
+  border-left: 3px solid var(--curator-accent-secondary);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+}
 .curator-appeal-hero strong { font-size: 1.05rem; }
 .curator-appeal-hero span, .curator-fingerprint-confidence, .curator-score-row small { color: var(--curator-text-muted); font-size: 0.72rem; }
 .curator-score-positive { color: #8fbf4f; }
