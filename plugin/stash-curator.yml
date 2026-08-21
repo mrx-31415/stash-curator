@@ -104,7 +104,7 @@ settings:
     type: STRING
   ignoredTags:
     displayName: Ignored tags
-    description: Comma-separated names of tags excluded from tag analysis. Auto-generated or metadata tags like [Timestamp: Synced] do not describe the scene; exact-name match only. Empty by default.
+    description: "Comma-separated names of tags excluded from tag analysis. Auto-generated or metadata tags like [Timestamp: Synced] do not describe the scene; exact-name match only. Empty by default."
     type: STRING
   expandHorizonDays:
     displayName: Expand recent-release horizon (days)
