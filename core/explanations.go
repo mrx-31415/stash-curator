@@ -109,15 +109,17 @@ func reason(score *fullSceneScore, featureVersion, code string, value, conf floa
 // fullSceneScore carries every ModelSceneScore field the reason derivation
 // needs.
 type fullSceneScore struct {
-	modelID          string
-	sceneID          string
-	directAppeal     float64
-	directConfidence float64
-	appeal           float64
-	currentFit       float64
-	confidence       float64
-	components       jVal
-	neighbors        []jVal
+	modelID            string
+	sceneID            string
+	directAppeal       float64
+	directConfidence   float64
+	appeal             float64
+	currentFit         float64
+	confidence         float64
+	metadataConfidence float64
+	recovery           float64
+	components         jVal
+	neighbors          []jVal
 }
 
 // fullScores mirrors RecommendationModelStore.scores for the reason path.
@@ -153,14 +155,11 @@ FROM model_scene_score WHERE model_id=? AND scene_id IN (`+placeholders+`) ORDER
 			components = jvNull()
 		}
 		result[sceneID] = &fullSceneScore{
-			modelID:          modelID2,
-			sceneID:          sceneID,
-			directAppeal:     directAppeal,
-			directConfidence: directConfidence,
-			appeal:           appeal,
-			currentFit:       currentFit,
-			confidence:       confidence,
-			components:       components,
+			modelID: modelID2, sceneID: sceneID,
+			directAppeal: directAppeal, directConfidence: directConfidence,
+			appeal: appeal, currentFit: currentFit, confidence: confidence,
+			metadataConfidence: metadataConfidence, recovery: recovery,
+			components: components,
 		}
 	}
 	rows.Close()
@@ -894,6 +893,160 @@ WHERE model_id=? AND scene_id=? ORDER BY reason_index`, modelID, sceneID)
 	}
 	return reasons, len(reasons) > 0, rows.Err()
 }
+func explanationComponentValue(components jVal, name string) float64 {
+	value := components.get(name)
+	if name == "fit" && value.kind == jObj {
+		total := 0.0
+		for _, key := range []string{"cooldown", "satiation", "not_now"} {
+			total += number(value.get(key))
+		}
+		return total
+	}
+	if value.kind != jObj {
+		return 0
+	}
+	return number(value.get("value"))
+}
+
+func explanationComponent(name, label string, value float64, scale string, confidence float64, available bool) jVal {
+	value = mathMax(-1, mathMin(1, value))
+	return jvObj(
+		jvKey("name", jvStr(name)), jvKey("label", jvStr(label)),
+		jvKey("value", jvFloat(value)), jvKey("scale", jvStr(scale)),
+		jvKey("direction", jvStr(direction(value))),
+		jvKey("confidence", jvFloat(mathMax(0, mathMin(1, confidence)))),
+		jvKey("available", jvBool(available)),
+	)
+}
+
+func explanationComponents(score *fullSceneScore) jVal {
+	confidence := mathMax(0, mathMin(1, score.confidence))
+	rows := jvArr()
+	values := []struct {
+		name, label string
+		value       float64
+	}{
+		{"content_similarity", "Content similarity", explanationComponentValue(score.components, "content") + explanationComponentValue(score.components, "content_neighbor")},
+		{"performer_match", "Performer match", explanationComponentValue(score.components, "performer_identity") + explanationComponentValue(score.components, "performer_similarity")},
+		{"studio_appeal", "Studio appeal", explanationComponentValue(score.components, "studio")},
+		{"direct_feedback", "Direct feedback", score.directAppeal},
+		{"right_now_fit", "Right now", explanationComponentValue(score.components, "fit")},
+	}
+	for _, item := range values {
+		rows.arr = append(rows.arr, explanationComponent(item.name, item.label, item.value, "-1..1", confidence, mathAbs(item.value) > 1e-9))
+	}
+	rows.arr = append(rows.arr, jvObj(
+		jvKey("name", jvStr("model_confidence")), jvKey("label", jvStr("Model confidence")),
+		jvKey("value", jvFloat(confidence)), jvKey("scale", jvStr("0..1")),
+		jvKey("direction", jvStr("neutral")), jvKey("confidence", jvFloat(confidence)),
+		jvKey("available", jvBool(true)),
+	))
+	return rows
+}
+
+func explanationAxis(name string, value, confidence float64, available bool) jVal {
+	return jvObj(
+		jvKey("name", jvStr(name)),
+		jvKey("support", jvFloat(mathMax(0, mathMin(1, value)))),
+		jvKey("caution", jvFloat(mathMax(0, mathMin(1, -value)))),
+		jvKey("confidence", jvFloat(mathMax(0, mathMin(1, confidence)))),
+		jvKey("available", jvBool(available)),
+	)
+}
+
+func explanationFingerprint(score *fullSceneScore) jVal {
+	content := explanationComponentValue(score.components, "content") + explanationComponentValue(score.components, "content_neighbor")
+	performer := explanationComponentValue(score.components, "performer_identity") + explanationComponentValue(score.components, "performer_similarity")
+	studio := explanationComponentValue(score.components, "studio")
+	neighbor := explanationComponentValue(score.components, "content_neighbor")
+	axes := jvArr()
+	axes.arr = append(axes.arr,
+		explanationAxis("content", content, score.confidence, mathAbs(content) > 1e-9),
+		explanationAxis("performers", performer, score.confidence, mathAbs(performer) > 1e-9),
+		explanationAxis("studios", studio, score.confidence, mathAbs(studio) > 1e-9),
+		explanationAxis("similar_scenes", neighbor, score.confidence, mathAbs(neighbor) > 1e-9),
+		explanationAxis("direct_history", score.directAppeal, score.directConfidence, score.directConfidence > 0),
+	)
+	metadataCoverage := jvObj(
+		jvKey("available", jvBool(score.metadataConfidence > 1e-9)),
+		jvKey("value", jvFloat(mathMax(0, mathMin(1, score.metadataConfidence)))),
+		jvKey("scale", jvStr("0..1")),
+	)
+	return jvObj(jvKey("version", jvInt(1)), jvKey("axes", axes), jvKey("metadata_coverage", metadataCoverage), jvKey("confidence", jvFloat(mathMax(0, mathMin(1, score.confidence)))))
+}
+
+func explanationScores(score *fullSceneScore, lane string, rank *float64) jVal {
+	rankValue := jvNull()
+	available := false
+	if rank != nil {
+		rankValue = jvFloat(*rank)
+		available = true
+	}
+	rankLabel := "Lane rank"
+	if lane != "" {
+		rankLabel = "Rank in " + strings.Title(strings.ReplaceAll(lane, "_", " "))
+	}
+	return jvObj(
+		jvKey("appeal", jvObj(jvKey("label", jvStr("Appeal")), jvKey("value", jvFloat(score.appeal)), jvKey("scale", jvStr("-1..1")), jvKey("direction", jvStr(direction(score.appeal))))),
+		jvKey("current_fit", jvObj(jvKey("label", jvStr("Current fit")), jvKey("value", jvFloat(score.currentFit)), jvKey("scale", jvStr("-1..1")), jvKey("direction", jvStr(direction(score.currentFit))))),
+		jvKey("confidence", jvObj(jvKey("label", jvStr("Model confidence")), jvKey("value", jvFloat(score.confidence)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("neutral")))),
+		jvKey("rank", jvObj(jvKey("label", jvStr(rankLabel)), jvKey("value", rankValue), jvKey("scale", jvStr("0..1")), jvKey("relative", jvBool(true)), jvKey("lane", func() jVal {
+			if lane == "" {
+				return jvNull()
+			}
+			return jvStr(lane)
+		}()), jvKey("available", jvBool(available)))),
+	)
+}
+
+func explanationLaneContext(lane, sourceLane string, subtype jVal, qualification jVal) jVal {
+	if lane == "" && sourceLane == "" {
+		return jvObj(jvKey("available", jvBool(false)), jvKey("display_lane", jvNull()), jvKey("source_lane", jvNull()), jvKey("subtype", jvNull()))
+	}
+	return jvObj(jvKey("available", jvBool(true)), jvKey("display_lane", jvStr(lane)), jvKey("source_lane", jvStr(sourceLane)), jvKey("subtype", subtype), jvKey("qualification", qualification))
+}
+
+func explanationReasonLabel(code string) string {
+	labels := map[string]string{
+		"direct.positive": "Direct positive history", "direct.negative": "Direct negative history", "direct.residual": "Direct history adjustment",
+		"appeal.performer_identity": "Performer match", "appeal.performer_similar": "Similar performer profile", "appeal.studio": "Studio appeal", "appeal.content_neighbor": "Similar scenes",
+		"appeal.tag_positive": "Familiar content pattern", "appeal.tag_negative": "Less familiar content pattern", "appeal.tag_declared_positive": "Declared positive content preference", "appeal.tag_declared_negative": "Declared negative content preference",
+		"fit.cooldown": "Scene cooldown", "fit.satiation": "Recent repetition", "fit.not_now": "Not now feedback", "eligibility.lane": "Eligible for this lane", "explore.challenge": "Lane challenge", "explore.coverage": "Library coverage gap", "dormant.entity": "Dormant preference",
+	}
+	if label := labels[code]; label != "" {
+		return label
+	}
+	parts := strings.Split(code, ".")
+	fallback := strings.ReplaceAll(parts[len(parts)-1], "_", " ")
+	if len(fallback) > 0 {
+		return strings.ToUpper(fallback[:1]) + fallback[1:]
+	}
+	return fallback
+}
+
+func explanationReasonRows(reasons []*explanationReason) jVal {
+	candidates := make([]*explanationReason, 0, len(reasons))
+	for _, r := range reasons {
+		if strings.HasPrefix(r.code, "eligibility.") || strings.HasPrefix(r.code, "diversity.") || r.code == "fallback" || r.magnitude <= 1e-9 {
+			continue
+		}
+		candidates = append(candidates, r)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].magnitude != candidates[j].magnitude {
+			return candidates[i].magnitude > candidates[j].magnitude
+		}
+		return candidates[i].code < candidates[j].code
+	})
+	rows := jvArr()
+	for _, r := range candidates {
+		rows.arr = append(rows.arr, jvObj(jvKey("code", jvStr(r.code)), jvKey("label", jvStr(explanationReasonLabel(r.code))), jvKey("direction", jvStr(r.direction)), jvKey("magnitude", jvFloat(r.magnitude)), jvKey("confidence", jvFloat(r.confidence)), jvKey("detail", r.detail)))
+		if len(rows.arr) == 3 {
+			break
+		}
+	}
+	return rows
+}
 
 func opGetExplanation(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_explanation",
@@ -926,15 +1079,23 @@ func renderExplanationForScene(db dbx, pluginDir, modelID, sceneID string) (jVal
 		return jvNull(), err
 	}
 	if !found {
-		derived, err := deriveReasons(db, modelID, map[string]bool{sceneID: true})
-		if err != nil {
-			return jvNull(), err
+		derived, deriveErr := deriveReasons(db, modelID, map[string]bool{sceneID: true})
+		if deriveErr != nil {
+			return jvNull(), deriveErr
 		}
 		reasons = derived[sceneID]
 	}
-	summary, selected, err := renderExplanation(pluginDir, db, reasons, modelID+"\x00"+sceneID)
-	if err != nil {
-		return jvNull(), err
+	scores, scoreErr := fullScores(db, modelID, map[string]bool{sceneID: true})
+	if scoreErr != nil {
+		return jvNull(), scoreErr
+	}
+	score := scores[sceneID]
+	if score == nil {
+		return jvNull(), fmt.Errorf("unknown scene: %s", sceneID)
+	}
+	summary, selected, renderErr := renderExplanation(pluginDir, db, reasons, modelID+"\x00"+sceneID)
+	if renderErr != nil {
+		return jvNull(), renderErr
 	}
 	all := jvArr()
 	for _, r := range reasons {
@@ -945,11 +1106,12 @@ func renderExplanationForScene(db dbx, pluginDir, modelID, sceneID string) (jVal
 		supporting.arr = append(supporting.arr, reasonJSON(r))
 	}
 	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("model_id", jvStr(modelID)),
-		jvKey("scene_id", jvStr(sceneID)),
-		jvKey("summary", jvStr(summary)),
-		jvKey("reasons", all),
-		jvKey("supporting_reasons", supporting),
+		jvKey("schema_version", jvInt(apiSchemaVersion)), jvKey("model_id", jvStr(modelID)), jvKey("scene_id", jvStr(sceneID)),
+		jvKey("summary", jvStr(summary)), jvKey("components", explanationComponents(score)),
+		jvKey("reasons", all), jvKey("supporting_reasons", supporting),
+		jvKey("evidence_rows", explanationReasonRows(selected)),
+		jvKey("lane_context", explanationLaneContext("", "", jvNull(), jvNull())),
+		jvKey("scores", explanationScores(score, "", nil)),
+		jvKey("evidence_fingerprint", explanationFingerprint(score)),
 	), nil
 }
