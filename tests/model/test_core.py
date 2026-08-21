@@ -220,6 +220,100 @@ def test_core_available_flag_matches_resolver(tmp_path: Path) -> None:
     assert builder_module.core.core_binary() is core_module.core_binary()
 
 
+def _affinity_artifact_connection() -> sqlite3.Connection:
+    """An artifact-shaped in-memory connection with the two tables the issue
+    #186 sanity check counts, so the queries resolve exactly as on a model
+    artifact mid-build."""
+    import sqlite3
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE feature_affinity (model_id TEXT, feature_id TEXT, affinity REAL)"
+    )
+    connection.execute(
+        "CREATE TABLE entity_feature (feature_version TEXT, entity_type TEXT, "
+        "entity_id TEXT, feature_id TEXT, value REAL, confidence REAL)"
+    )
+    return connection
+
+
+def test_affinity_sanity_check_rejects_empty_affinities_with_inputs() -> None:
+    """Issue #186: the build-time guard must fail loudly when feature_affinity
+    is empty while the build produced non-empty inputs — the mirror of
+    core/modelbuild3.go's modelAffinitySanityCheck."""
+    artifact = _affinity_artifact_connection()
+    artifact.execute(
+        "INSERT INTO entity_feature VALUES ('fv-1', 'scene', 's1', 'f1', 1.0, 1.0)"
+    )
+    labels = {
+        "s1": builder_module._SceneLabel(0.5, 0.8, 2.0, (), absolute_outcome=1.0, absolute_evidence=2.0)
+    }
+    with pytest.raises(RuntimeError, match="feature_affinity is empty"):
+        builder_module._affinity_sanity_check(artifact, "model-1", "fv-1", labels)
+
+
+def test_affinity_sanity_check_rejects_labels_only() -> None:
+    """Labels alone (no entity_feature rows) still mean a labeled corpus whose
+    content signal vanished; empty affinities must fail."""
+    artifact = _affinity_artifact_connection()
+    labels = {
+        "s1": builder_module._SceneLabel(0.5, 0.8, 2.0, (), absolute_outcome=1.0, absolute_evidence=2.0)
+    }
+    with pytest.raises(RuntimeError, match="feature_affinity is empty"):
+        builder_module._affinity_sanity_check(artifact, "model-1", "fv-1", labels)
+
+
+def test_affinity_sanity_check_allows_empty_corpus() -> None:
+    """A legitimately empty corpus (no labels, no entity_feature rows, zero
+    affinities) must not trip the check."""
+    artifact = _affinity_artifact_connection()
+    # No rows inserted at all: empty corpus.
+    builder_module._affinity_sanity_check(artifact, "model-1", "fv-1", {})
+
+
+def test_affinity_sanity_check_allows_written_affinities() -> None:
+    """Non-empty affinities pass even with inputs present."""
+    artifact = _affinity_artifact_connection()
+    artifact.execute(
+        "INSERT INTO feature_affinity VALUES ('model-1', 'f1', 0.5)"
+    )
+    labels = {
+        "s1": builder_module._SceneLabel(0.5, 0.8, 2.0, (), absolute_outcome=1.0, absolute_evidence=2.0)
+    }
+    builder_module._affinity_sanity_check(artifact, "model-1", "fv-1", labels)
+
+
+def test_model_build_fails_when_affinities_empty_despite_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a build whose feature_affinity comes out empty while the
+    corpus has labels and entity features must fail loudly instead of
+    publishing a model with no content signal. Affinities are forced empty to
+    reproduce the #186 loss; the corpus (labels + entity features) is intact,
+    so the guard fires in _publish before the model is published."""
+    binary = builder_module.core.core_binary()
+    if binary is None:
+        pytest.skip("curator-core binary is not built")
+    connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    monkeypatch.setattr(
+        builder_module.PreferenceModelBuilder,
+        "_affinities",
+        lambda self, scene_features, labels, absolute_label_mean: {},
+    )
+    with pytest.raises(RuntimeError, match="feature_affinity is empty"):
+        builder.build()
+    # The failed build must not leave a published model behind.
+    status = connection.execute(
+        "SELECT status FROM model_version ORDER BY created_at_ms DESC LIMIT 1"
+    ).fetchone()[0]
+    assert status == "failed", status
+    current = connection.execute(
+        "SELECT value FROM application_meta WHERE key='current_model_id'"
+    ).fetchone()
+    assert current is None or current[0] == "", current
+
+
 def test_model_build_kernel_result_surface(tmp_path: Path) -> None:
     """curator-core model-build reports the full 22-key stage_timings_ms,
     per-stage memory snapshots, and final peak RSS on its result line — the
