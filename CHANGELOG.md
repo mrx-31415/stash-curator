@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.1](https://github.com/mrx-31415/stash-curator/compare/v0.17.0...v0.17.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **plugin:** preserve plugins.settings map on single-field saves ([#220](https://github.com/mrx-31415/stash-curator/issues/220)) ([b039b65](https://github.com/mrx-31415/stash-curator/commit/b039b656c5197cf814ebb9ca78d7a014ab9e43ae))
+
+
+### Reverts
+
+* remove new-user onboarding, About-this-view, and Help view ([#201](https://github.com/mrx-31415/stash-curator/issues/201)) ([#208](https://github.com/mrx-31415/stash-curator/issues/208)) ([639b347](https://github.com/mrx-31415/stash-curator/commit/639b347efb4519c4d61b3baf8455b3ab95ed3be3))
+
 ## [0.17.0](https://github.com/mrx-31415/stash-curator/compare/v0.16.0...v0.17.0) (2026-08-21)
 
 
