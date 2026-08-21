@@ -774,6 +774,44 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     assert '{ key: "whisparrApiKey", type: "PASSWORD"' in source
     assert 'field.type === "PASSWORD" ? "password"' in source
 
+    # GH #188: the Storage and Development groups surface the remaining
+    # plugin settings with the exact stash-curator.yml displayName/type text.
+    # Like the Whisparr fields they are raw plugin settings (no configKey),
+    # read back via getPluginSettings() rather than curator_config.
+    assert 'title: "Storage"' in source
+    assert 'title: "Development"' in source
+    for key, field_type, label in (
+        ("databasePath", "STRING", "Sidecar database path"),
+        ("backupPath", "STRING", "Backup directory"),
+        ("profilingEnabled", "BOOLEAN", "Enable profiling"),
+        ("pprofEnabled", "BOOLEAN", "Capture CPU profiles"),
+    ):
+        assert f'key: "{key}", type: "{field_type}", label: "{label}"' in source
+
+
+def test_settings_panel_mirrors_plugin_settings_schema() -> None:
+    """The Manage → Settings panel and the plugin settings view cannot drift:
+    every settings key in stash-curator.yml has a SETTINGS_FIELD_GROUPS entry
+    and vice versa. diversityDisabled is the one documented exception — it is
+    surfaced through the panel's own recommendation-variety toggle.
+    """
+    root = Path(__file__).parents[2]
+    manifest = (root / "plugin" / "stash-curator.yml").read_text(encoding="utf-8")
+    settings_block = manifest.split("settings:", 1)[1].split("\ntasks:", 1)[0]
+    manifest_keys = {
+        match.group(1)
+        for line in settings_block.splitlines()
+        if (match := re.match(r"^  ([A-Za-z][A-Za-z0-9]*):$", line))
+    }
+
+    source = (root / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
+    start = source.index("const SETTINGS_FIELD_GROUPS = [")
+    end = source.index("function SettingsField({")
+    panel_keys = set(re.findall(r'key: "([A-Za-z][A-Za-z0-9]*)"', source[start:end]))
+
+    assert manifest_keys - panel_keys == {"diversityDisabled"}
+    assert panel_keys - manifest_keys == set()
+
 
 def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")

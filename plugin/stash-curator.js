@@ -4338,6 +4338,20 @@
         { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "Start a release search after adding a scene. Enabled by default." },
       ],
     },
+    {
+      title: "Storage",
+      fields: [
+        { key: "databasePath", type: "STRING", label: "Sidecar database path", description: "Leave empty to store data in the plugin's data directory." },
+        { key: "backupPath", type: "STRING", label: "Backup directory", description: "Leave empty to store Curator backups beside the sidecar database." },
+      ],
+    },
+    {
+      title: "Development",
+      fields: [
+        { key: "profilingEnabled", type: "BOOLEAN", label: "Enable profiling", description: "Record recent Curator operation timings for the Profiling page." },
+        { key: "pprofEnabled", type: "BOOLEAN", label: "Capture CPU profiles", description: "Write a Go CPU and heap profile per operation into the sidecar's profiles directory, browsable and downloadable from the Profiling page. Analyze with go tool pprof. Off by default; keep off unless investigating performance." },
+      ],
+    },
   ];
 
   function SettingsField({ field, value, saving, error, onSave }) {
