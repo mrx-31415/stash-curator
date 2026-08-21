@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from curator.core import core_binary
+from tests.core.compare import assert_equivalent
 from tests.core.test_backend import PLUGIN_DIR, _with_db_path, payload, run_backend
 from tests.core.test_backend_slice1 import make_model_sidecar
-from tests.core.compare import assert_equivalent
 
 
 @pytest.fixture(scope="module")

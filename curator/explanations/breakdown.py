@@ -13,8 +13,6 @@ core/explanations.go) — not frontend rules or config-backed model inputs.
 
 from __future__ import annotations
 
-import math
-
 from curator.explanations.reasons import Reason
 from curator.model.store import ModelSceneScore
 
@@ -164,8 +162,10 @@ def _components_rows(score: ModelSceneScore) -> list[dict[str, object]]:
     right_now = _clamp(score.current_fit, -1.0, 1.0)
     confidence = _clamp(score.confidence, 0.0, 1.0)
     return [
-        {"key": "content_similarity", "label": "Content similarity", "value": content, "unit": "similarity"},
-        {"key": "performer_match", "label": "Performer match", "value": performers, "unit": "similarity"},
+        {"key": "content_similarity", "label": "Content similarity",
+         "value": content, "unit": "similarity"},
+        {"key": "performer_match", "label": "Performer match",
+         "value": performers, "unit": "similarity"},
         {"key": "studio_appeal", "label": "Studio appeal", "value": studio, "unit": "appeal"},
         {"key": "direct_feedback", "label": "Direct feedback", "value": direct, "unit": "appeal"},
         {"key": "right_now_fit", "label": "Right-now fit", "value": right_now, "unit": "appeal"},
@@ -185,17 +185,18 @@ def _ranked_reasons(reasons: tuple[Reason, ...]) -> list[Reason]:
     caution: list[Reason] = []
     neutral: list[Reason] = []
     for reason in reasons:
-        strength = reason.magnitude * reason.confidence
         if reason.direction == "positive":
             support.append(reason)
         elif reason.direction == "negative":
             caution.append(reason)
         else:
             neutral.append(reason)
-    key = lambda r: (-(r.magnitude * r.confidence), r.code, str(r.subject_id or ""))
-    support.sort(key=key)
-    caution.sort(key=key)
-    neutral.sort(key=key)
+    def strength_key(r: Reason) -> tuple[float, str, str]:
+        return (-(r.magnitude * r.confidence), r.code, str(r.subject_id or ""))
+
+    support.sort(key=strength_key)
+    caution.sort(key=strength_key)
+    neutral.sort(key=strength_key)
     return [*support, *caution, *neutral]
 
 
@@ -231,7 +232,9 @@ def _lane_context(
         context["facets"] = {
             "current_fit": _clamp(float(qual.get("current_fit", 0.0) or 0.0), -1.0, 1.0),
             "confidence": _clamp(float(qual.get("confidence", 0.0) or 0.0), 0.0, 1.0),
-            "metadata_confidence": _clamp(float(qual.get("metadata_confidence", 0.0) or 0.0), 0.0, 1.0),
+            "metadata_confidence": _clamp(
+                float(qual.get("metadata_confidence", 0.0) or 0.0), 0.0, 1.0
+            ),
             "relevance": _clamp(float(qual.get("relevance", 0.0) or 0.0), 0.0, 1.0),
             "corroborated": bool(qual.get("corroborated", False)),
             "direct_reliable": bool(qual.get("direct_reliable", False)),
@@ -242,8 +245,12 @@ def _lane_context(
             "anchor_features": qual.get("anchor_features", []),
             "challenged_feature": qual.get("challenged_feature"),
             "challenge_kind": qual.get("challenge_kind"),
-            "anchor_strength": _clamp(abs(float(qual.get("anchor_strength", 0.0) or 0.0)), 0.0, 1.0),
-            "challenge_distance": _clamp(float(qual.get("challenge_distance", 0.0) or 0.0), 0.0, 1.0),
+            "anchor_strength": _clamp(
+                abs(float(qual.get("anchor_strength", 0.0) or 0.0)), 0.0, 1.0
+            ),
+            "challenge_distance": _clamp(
+                float(qual.get("challenge_distance", 0.0) or 0.0), 0.0, 1.0
+            ),
         }
         context["intent"] = "challenge"
     elif lane == "blind_spots":

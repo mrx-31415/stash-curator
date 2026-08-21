@@ -70,7 +70,7 @@ def test_v2_evidence_fingerprint_has_six_fixed_axes(tmp_path) -> None:
             "direct_history",
             "metadata_coverage",
         }
-        for key, axis in axes.items():
+        for _key, axis in axes.items():
             assert 0.0 <= axis["strength"] <= 1.0
             assert axis["tone"] in {"support", "caution", "neutral"}
             assert isinstance(axis["present"], bool)
