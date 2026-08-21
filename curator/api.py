@@ -93,11 +93,7 @@ def build_explanation_payload(
         (model_id, scene_id),
     ).fetchone()
     lane = str(lane_row["lane"]) if lane_row else None
-    subtype = (
-        str(lane_row["subtype"])
-        if lane_row and lane_row["subtype"] is not None
-        else None
-    )
+    subtype = str(lane_row["subtype"]) if lane_row and lane_row["subtype"] is not None else None
     qualification = (
         json.loads(str(lane_row["qualification_json"]))
         if lane_row and lane_row["qualification_json"]

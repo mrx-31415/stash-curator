@@ -957,11 +957,18 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert '"Explaining…"' in source
     assert 'React.createElement("summary", null, scoreBarContent ? "Score breakdown" :' in source
     # The RecommendationCard header is pinned: Appeal plus the lane rank label.
-    assert 'quantityLabel: item.source_lane && item.source_lane !== "score_review" ? `Rank in ${laneLabel}` : "Appeal"' in source
-    assert 'quantityValue: item.source_lane && item.source_lane !== "score_review" ? item.final_utility.toFixed(2) : `${item.appeal >= 0 ? "+" : ""}${item.appeal.toFixed(2)}`' in source
+    assert (
+        'quantityLabel: item.source_lane && item.source_lane !== "score_review" '
+        '? `Rank in ${laneLabel}` : "Appeal"' in source
+    )
+    assert (
+        'quantityValue: item.source_lane && item.source_lane !== "score_review" '
+        '? item.final_utility.toFixed(2) : `${item.appeal >= 0 ? "+" : ""}'
+        "${item.appeal.toFixed(2)}`" in source
+    )
     # The ExternalCard header migrates from the bare "Score · x" to a labeled
     # Match/Similarity quantity.
-    assert "const quantityLabel = isMatch ? \"Match\" : \"Similarity\";" in source
+    assert 'const quantityLabel = isMatch ? "Match" : "Similarity";' in source
     assert "quantityLabel, quantityValue: item.score.toFixed(2)" in source
     # The SimilarityPanel header pins Similarity + Appeal.
     assert 'quantityLabel: "Similarity", quantityValue: item.rank_score.toFixed(2)' in source
@@ -972,7 +979,10 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "function EvidenceRows({ reasons })" in source
     assert "function LaneCallout({ laneContext, laneLabel })" in source
     assert "function FingerprintRadar({ fingerprint })" in source
-    assert "explanation && explanation.evidence_fingerprint && React.createElement(FingerprintRadar" in source
+    assert (
+        "explanation && explanation.evidence_fingerprint && React.createElement(FingerprintRadar"
+        in source
+    )
     assert "scoreSummary: item.final_utility.toFixed(2)" in source
     assert "scoreSummary: item.score.toFixed(2)" in source
     assert "scoreSummary: item.rank_score.toFixed(2)" in source
@@ -982,7 +992,10 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "className: `${type}-card-image`" in source
     assert 'className: "card-section-title"' in source
     assert "Curator never deletes media; tagging is reversible" in source
-    assert "Each card shows the scene's intrinsic Appeal plus its rank within this lane's qualified, ordered population" in source
+    assert (
+        "Each card shows the scene's intrinsic Appeal plus its rank within "
+        "this lane's qualified, ordered population" in source
+    )
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar content"' in source
     assert '"appeal.performer_similar": "Similar performer profile"' in source
@@ -1000,7 +1013,9 @@ def test_legacy_partial_explanation_falls_back_without_fabricating_appeal() -> N
     # The card's explanation state handles a legacy string payload and a v2
     # object payload (the ternary branches), never assuming a field exists.
     assert 'typeof item.explanation === "string"' in source
-    assert "{ summary: item.explanation, supporting_reasons: item.supporting_reasons || [] }" in source
+    assert (
+        "{ summary: item.explanation, supporting_reasons: item.supporting_reasons || [] }" in source
+    )
     # The renderers tolerate missing v2 fields without fabricating Appeal.
     assert "explanation && explanation.reasons && React.createElement(EvidenceRows" in source
     assert "explanation && explanation.lane_context && explanation.lane_context.lane" in source

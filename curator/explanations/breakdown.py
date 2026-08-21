@@ -68,9 +68,7 @@ def _component_has_evidence(score: ModelSceneScore, name: str) -> bool:
     return "value" in component
 
 
-def _percentile_rank(
-    scene_id: str, lane: str, ordered_values: list[tuple[str, float]]
-) -> float:
+def _percentile_rank(scene_id: str, lane: str, ordered_values: list[tuple[str, float]]) -> float:
     """Percentile rank of scene_id within the qualified, ordered population for
     the source lane (before slate diversity/deduplication). Ties share the
     midpoint rank, mirroring curator/ranking/policy._percentiles.
@@ -162,10 +160,18 @@ def _components_rows(score: ModelSceneScore) -> list[dict[str, object]]:
     right_now = _clamp(score.current_fit, -1.0, 1.0)
     confidence = _clamp(score.confidence, 0.0, 1.0)
     return [
-        {"key": "content_similarity", "label": "Content similarity",
-         "value": content, "unit": "similarity"},
-        {"key": "performer_match", "label": "Performer match",
-         "value": performers, "unit": "similarity"},
+        {
+            "key": "content_similarity",
+            "label": "Content similarity",
+            "value": content,
+            "unit": "similarity",
+        },
+        {
+            "key": "performer_match",
+            "label": "Performer match",
+            "value": performers,
+            "unit": "similarity",
+        },
         {"key": "studio_appeal", "label": "Studio appeal", "value": studio, "unit": "appeal"},
         {"key": "direct_feedback", "label": "Direct feedback", "value": direct, "unit": "appeal"},
         {"key": "right_now_fit", "label": "Right-now fit", "value": right_now, "unit": "appeal"},
@@ -191,6 +197,7 @@ def _ranked_reasons(reasons: tuple[Reason, ...]) -> list[Reason]:
             caution.append(reason)
         else:
             neutral.append(reason)
+
     def strength_key(r: Reason) -> tuple[float, str, str]:
         return (-(r.magnitude * r.confidence), r.code, str(r.subject_id or ""))
 

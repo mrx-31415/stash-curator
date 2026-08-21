@@ -42,6 +42,7 @@ def model_sidecar(tmp_path_factory: pytest.TempPathFactory) -> Path:
     make_model_sidecar(path)
     return path
 
+
 V2_FIELDS = (
     "apiSchemaVersion",
     "summary",
