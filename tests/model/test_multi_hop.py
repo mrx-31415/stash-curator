@@ -244,6 +244,32 @@ def _affinities_from_store(connection: sqlite3.Connection, model_id: str) -> dic
     return affinities
 
 
+def test_similar_explanation_has_lane_style_evidence_rows(tmp_path: Path) -> None:
+    """Issue #217: Similar's "Why this?" carries the same plain-language
+    evidence rows and labeled component breakdown as the recommendation
+    lanes — not just a bare Similarity/Appeal float pair."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    results = SimilarityService(connection).scenes("old-good", 20)
+    assert results
+    item = results[0]
+    explanation = item.explanation
+    assert explanation is not None
+    assert set(explanation) == {"summary", "components", "reasons", "evidence_rows"}
+    # One labeled, positive evidence row per relationship.
+    assert [row["code"] for row in explanation["evidence_rows"]] == list(item.relationships)
+    for row in explanation["evidence_rows"]:
+        assert row["direction"] == "positive"
+        assert row["confidence"] == 1.0
+        assert row["label"]
+    # The family breakdown uses the lanes' component language.
+    labels = [component["label"] for component in explanation["components"]]
+    assert "Similarity" in labels
+    assert "Content similarity" in labels
+    assert "Performer match" in labels
+    assert "Appeal" in labels
+
+
 def test_similarity_annotates_multi_hop_when_reachable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
