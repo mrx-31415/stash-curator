@@ -99,6 +99,30 @@ def _dormant_entity(classification: LaneClassification) -> str | None:
     return str(entity_id) if entity_id else None
 
 
+def _lane_value_maxes(connection: sqlite3.Connection, model_id: str) -> dict[str, float]:
+    """Per-lane max lane_value from the artifact, used to make the displayed
+    "Rank in <lane>" relative to the lane's best (issue #212)."""
+    return {
+        str(row["lane"]): float(row["max_lane_value"])
+        for row in connection.execute(
+            """
+            SELECT lane, MAX(lane_value) AS max_lane_value
+            FROM model_scene_lane WHERE model_id=? GROUP BY lane
+            """,
+            (model_id,),
+        )
+    }
+
+
+def _rank_value(lane_value: float, lane_max: float | None) -> float:
+    """Normalize a lane value against the lane's best so the top of the lane
+    reads 1.00. Lanes without a positive max (including the score_review
+    pseudo-lane) keep their raw value."""
+    if lane_max is None or lane_max <= 0:
+        return lane_value
+    return lane_value / lane_max
+
+
 @dataclass(frozen=True)
 class _Candidate:
     classification: LaneClassification
@@ -797,6 +821,9 @@ class SlateBuilder:
         scores = RecommendationModelStore(self.connection).scores(
             model_id, {candidate.classification.scene_id for candidate in new_selected}
         )
+        # The displayed "Rank in <lane>" is relative to the lane's best
+        # (issue #212) — see _load_materialized_slate.
+        lane_maxes = _lane_value_maxes(self.connection, model_id)
         items = list(prefix_items)
         selected_items = zip(new_selected, selected_utilities, strict=True)
         for position, (chosen, utility) in enumerate(selected_items, start=len(prefix_items)):
@@ -813,7 +840,10 @@ class SlateBuilder:
                     score.appeal,
                     self._live_fit.get(score.scene_id, score.current_fit),
                     score.confidence,
-                    chosen.classification.lane_value,
+                    _rank_value(
+                        chosen.classification.lane_value,
+                        lane_maxes.get(chosen.classification.lane),
+                    ),
                     utility[0],
                     utility[1],
                     utility[2],
@@ -913,6 +943,10 @@ class SlateBuilder:
                 )
                 classifications[(classification.scene_id, classification.lane)] = classification
         self._live_fit, self._live_cooldown = self._live_current_fit(model_id, direct_plays, now_ms)
+        # The displayed "Rank in <lane>" is relative to the lane's best
+        # (issue #212): normalize each item's lane_value by its source lane's
+        # max, so the top of every lane reads 1.00.
+        lane_maxes = _lane_value_maxes(self.connection, model_id)
         items = []
         for position, row in enumerate(selected_rows):
             scene_id = str(row["scene_id"])
@@ -944,7 +978,7 @@ class SlateBuilder:
                     score.appeal,
                     self._live_fit.get(scene_id, score.current_fit),
                     score.confidence,
-                    classification.lane_value,
+                    _rank_value(classification.lane_value, lane_maxes.get(source_lane)),
                     float(row["utility"]) - penalties["live_cooldown"],
                     penalties,
                     bonuses,

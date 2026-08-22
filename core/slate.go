@@ -413,6 +413,37 @@ func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool,
 
 func isFinite(f float64) bool { return !math.IsInf(f, 0) && !math.IsNaN(f) }
 
+// laneValueMaxes returns the per-lane max lane_value from model_scene_lane,
+// used to make the displayed "Rank in <lane>" relative to the lane's best
+// (issue #212).
+func laneValueMaxes(db dbx, modelID string) (map[string]float64, error) {
+	rows, err := db.Query(`SELECT lane, MAX(lane_value) FROM model_scene_lane WHERE model_id=? GROUP BY lane`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]float64{}
+	for rows.Next() {
+		var lane string
+		var maxValue float64
+		if err := rows.Scan(&lane, &maxValue); err != nil {
+			return nil, err
+		}
+		result[lane] = maxValue
+	}
+	return result, rows.Err()
+}
+
+// rankValue normalizes a lane value against the lane's best so the top of the
+// lane reads 1.00 (issue #212). Lanes without a positive max (including the
+// score_review pseudo-lane) keep their raw value.
+func rankValue(laneValue, laneMax float64) float64 {
+	if laneMax <= 0 {
+		return laneValue
+	}
+	return laneValue / laneMax
+}
+
 // loadMaterializedSlate mirrors SlateBuilder._load_materialized_slate. The
 // second return value is false when the model has no materialized lanes.
 // sceneFilter, when non-nil, additionally gates each row (get_slate's
@@ -514,6 +545,13 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 	if err != nil {
 		return builtSlate{}, false, err
 	}
+	// The displayed "Rank in <lane>" is relative to the lane's best (issue
+	// #212): normalize each item's lane_value by its source lane's max so the
+	// top of every lane reads 1.00.
+	laneMaxes, err := laneValueMaxes(db, modelID)
+	if err != nil {
+		return builtSlate{}, false, err
+	}
 	items := make([]*recommendationItem, 0, len(selectedRows))
 	for position, row := range selectedRows {
 		sceneID := row.sceneID
@@ -561,7 +599,7 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 			appeal:        score.appeal,
 			currentFit:    currentFit,
 			confidence:    score.confidence,
-			laneValue:     classification.laneValue,
+			laneValue:     rankValue(classification.laneValue, laneMaxes[row.sourceLane]),
 			finalUtility:  row.utility - liveCooldown[sceneID],
 			penalties:     penaltiesCopy,
 			bonuses:       bonuses,

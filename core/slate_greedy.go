@@ -463,6 +463,12 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 	if err != nil {
 		return builtSlate{}, err
 	}
+	// The displayed "Rank in <lane>" is relative to the lane's best (issue
+	// #212) — see loadMaterializedSlate.
+	laneMaxes, err := laneValueMaxes(db, modelID)
+	if err != nil {
+		return builtSlate{}, err
+	}
 	items := make([]*recommendationItem, 0, len(selected))
 	items = append(items, prefixItems...)
 	for offset, chosen := range newSelected {
@@ -491,7 +497,7 @@ WHERE provenance='direct_player' GROUP BY scene_id`)
 			appeal:        score.appeal,
 			currentFit:    currentFit,
 			confidence:    score.confidence,
-			laneValue:     chosen.laneValue,
+			laneValue:     rankValue(chosen.laneValue, laneMaxes[chosen.lane]),
 			finalUtility:  util.final,
 			penalties:     util.penalties,
 			bonuses:       util.bonuses,

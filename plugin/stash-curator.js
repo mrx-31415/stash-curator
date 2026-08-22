@@ -4717,7 +4717,7 @@
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
-          laneByValue.has(lane) && React.createElement("p", null, "Appeal is the model's estimate of how much you'll like a scene, on a −1..1 scale. Rank in this lane is ordering utility on a 0..1 scale, not a probability."),
+          laneByValue.has(lane) && React.createElement("p", null, "Appeal is the model's estimate of how much you'll like a scene, on a −1..1 scale. Rank in this lane is relative to the lane's best — 1.00 is the top of the lane, so it measures ordering utility, not probability. A scene can rank high while its appeal is moderate: rank includes recency and cooldown, appeal is how much you'd like it now."),
           laneByValue.has(lane) && slate && React.createElement(
             "p",
             { className: "curator-view-stats" },
