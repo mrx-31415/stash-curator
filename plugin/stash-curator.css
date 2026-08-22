@@ -500,33 +500,14 @@
 }
 
 /* ---------- Find switcher (Similar / Expand / Performer Hunt inner tabs) ---------- */
+/* Reuses the lane-card classes from the recommendation lane switcher above;
+   the container matches the lane switcher's scrollable layout. */
 .curator-find-switcher {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.6rem;
   margin: 0.35rem 0 0.8rem;
-}
-
-.curator-find-tab {
-  align-items: center;
-  background: var(--curator-surface);
-  border: 1px solid var(--curator-border);
-  border-radius: var(--curator-radius-sm);
-  color: var(--curator-text);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 0.8rem;
-  gap: 0.4rem;
-  padding: 0.35rem 0.7rem;
-}
-
-.curator-find-tab:hover {
-  border-color: var(--curator-border-strong);
-}
-
-.curator-find-tab[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--curator-accent) 14%, var(--curator-surface));
-  border-color: var(--curator-accent);
-  color: var(--curator-text);
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
 }
 
 /* ---------- Manage shell (two-pane list + detail) ---------- */

@@ -420,7 +420,14 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "FIND_SECTION_VALUES.has(lane)" in source
     assert "openView(FIND_SECTIONS[0].value)" in source
     assert 'className: "curator-find-switcher"' in source
-    assert 'className: "curator-find-tab"' in source
+    # Issue #240: Find sections render as lane-style cards (icon, name, short
+    # description) with the section's own hue, not small pills.
+    assert 'className: "curator-lane-card"' in source
+    assert "curator-lane-card-desc" in source
+    assert 'style: { "--lc": `var(--curator-hue-${section.value})` }' in source
+    # The description must stay out of the accessible name (aria-label = the
+    # section label), or substring lookups like "StashDB" match every card.
+    assert '"aria-label": section.label,' in source
     # Header order is Recommendations | Find | Curate (issue #239): Find sits
     # before the remaining primary items (Curate) rather than after them.
     expected_top_nav = "".join(
@@ -1066,7 +1073,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar scenes"' in source
-    assert "Wildcard items are selected outside preference-derived seeds" in source
+    assert "External metadata candidates, scored locally." in source
 
 
 def test_external_card_actions_are_a_named_shared_component() -> None:
