@@ -57,7 +57,10 @@ func externalTagChoicesBody(pluginDir string, payload, settings jVal) (jVal, err
 		return jvNull(), err
 	}
 	defer db.Close()
-	configVersion := "cfg-" + featureFingerprint()[:20]
+	configVersion, err := effectiveTagRoleConfigVersion(db)
+	if err != nil {
+		return jvNull(), err
+	}
 	type choiceRow struct {
 		tagID         string
 		name          string
@@ -193,7 +196,10 @@ func sceneTagChoicesBody(pluginDir string, payload, settings jVal) (jVal, error)
 		return jvNull(), err
 	}
 	defer db.Close()
-	configVersion := "cfg-" + featureFingerprint()[:20]
+	configVersion, err := effectiveTagRoleConfigVersion(db)
+	if err != nil {
+		return jvNull(), err
+	}
 	rows, err := db.Query(`SELECT t.tag_id, t.name, p.value AS direct_value,
        p.blocked AS direct_blocked
 FROM scene_tag st
