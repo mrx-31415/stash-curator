@@ -2480,27 +2480,50 @@
     );
   }
 
-  function FilterTokens({ kind, label, values, onChange, disabled = false }) {
+  function FilterTokens({ kind, label, values, onChange, disabled = false, external = false }) {
     const [query, setQuery] = React.useState("");
+    const [externalResults, setExternalResults] = React.useState([]);
     const variables = { filter: { q: query, per_page: 8 } };
     const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query || disabled });
     const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query || disabled });
-    const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query || disabled });
-    const options = kind === "tag"
-      ? tags.data?.findTags?.tags || []
-      : kind === "studio"
-        ? studios.data?.findStudios?.studios || []
-        : performers.data?.findPerformers?.performers || [];
+    const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || external || !query || disabled });
+    // Issue #218: external mode searches StashDB performers by name (debounced)
+    // so the local completion path never hits the network per keystroke.
+    React.useEffect(() => {
+      if (kind !== "performer" || !external || !query || disabled) {
+        setExternalResults([]);
+        return undefined;
+      }
+      let active = true;
+      const timer = setTimeout(() => {
+        operation({ operation: "get_stashdb_performer_search", query, limit: 8 }).then(
+          (result) => { if (active) setExternalResults(result.items || []); },
+          () => { if (active) setExternalResults([]); }
+        );
+      }, 300);
+      return () => { active = false; clearTimeout(timer); };
+    }, [kind, external, query, disabled]);
+    const options = external && kind === "performer"
+      ? externalResults.map((item) => ({ ...item, external: true }))
+      : kind === "tag"
+        ? tags.data?.findTags?.tags || []
+        : kind === "studio"
+          ? studios.data?.findStudios?.studios || []
+          : performers.data?.findPerformers?.performers || [];
     function add(item) {
       if (!values.some((value) => String(value.id) === String(item.id))) onChange([...values, item]);
       setQuery("");
+    }
+    function optionLabel(item) {
+      if (!external || kind !== "performer" || !item.disambiguation) return item.name;
+      return `${item.name} (${item.disambiguation})`;
     }
     return React.createElement(
       "label",
       { className: "curator-token-filter" },
       React.createElement("span", null, label),
       React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && options.length > 0) { event.preventDefault(); add(options[0]); } }, placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
-      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, item.name)))
+      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, optionLabel(item))))
     );
   }
 
@@ -3005,6 +3028,7 @@
         performer: null,
         huntView: "unlinked",
         huntSort: "date",
+        huntExternal: false,
         includeTags: initialFilters.includeTags || [],
         excludeTags: initialFilters.excludeTags || [],
         hidePhashMatches: initialFilters.hidePhashMatches !== false,
@@ -3021,6 +3045,7 @@
         },
         huntView: urlStringField("hunt_view", "unlinked", (value) => ["all", "linked", "unlinked"].includes(value)),
         huntSort: urlStringField("hunt_sort", "date", (value) => ["date", "score"].includes(value)),
+        huntExternal: urlBoolField("hunt_ext", false),
         includeTags: urlListField("hunt_include_tags", initialFilters.includeTags || []),
         excludeTags: urlListField("hunt_exclude_tags", initialFilters.excludeTags || []),
         hidePhashMatches: urlBoolField("hunt_hide_phash", initialFilters.hidePhashMatches !== false),
@@ -3062,7 +3087,7 @@
       },
     }, [huntOnly, initialFilters]);
     const [urlState, updateUrl] = useUrlState(expandSpec);
-    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, page, performer: huntPerformer, huntView, huntSort } = urlState;
+    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, page, performer: huntPerformer, huntView, huntSort, huntExternal } = urlState;
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
@@ -3187,7 +3212,11 @@
       entityType === "hunt" && React.createElement(
         "div",
         { className: "curator-hunt-controls" },
-        React.createElement(FilterTokens, { kind: "performer", label: huntPerformer?.external ? "External performer on StashDB" : "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external) }),
+        // Issue #218: search StashDB performers directly instead of only
+        // local performers linked to StashDB. Local stays the default and
+        // the checkbox keeps completions off the network until enabled.
+        React.createElement("label", { className: "curator-toolbar-check" }, React.createElement("input", { type: "checkbox", checked: huntExternal, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, performer: null, huntExternal: event.target.checked })) }), " Search StashDB"),
+        React.createElement(FilterTokens, { kind: "performer", label: huntPerformer?.external ? "External performer on StashDB" : "Local performer with a StashDB link", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external), external: huntExternal }),
         data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, page: 1, huntView: value })) }, label))),
         data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, huntSort: event.target.value })), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
