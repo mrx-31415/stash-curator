@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.0](https://github.com/mrx-31415/stash-curator/compare/v0.18.0...v0.19.0) (2026-08-22)
+
+
+### Features
+
+* **curate:** section tabs, Pair picks/Impact renames, Tag sentiment under Curate, Impact analysis ([#247](https://github.com/mrx-31415/stash-curator/issues/247)) ([3a1a362](https://github.com/mrx-31415/stash-curator/commit/3a1a36214e50b21e85f438240f13df5d6392352b))
+* **find:** render Find sections as lane-style cards with tightened copy ([#245](https://github.com/mrx-31415/stash-curator/issues/245)) ([69fe6d1](https://github.com/mrx-31415/stash-curator/commit/69fe6d1fe5e6a89fbad10bc9e71d3f5e4545c493))
+* **nav:** header order Recommendations | Find | Curate ([#242](https://github.com/mrx-31415/stash-curator/issues/242)) ([6f12db5](https://github.com/mrx-31415/stash-curator/commit/6f12db56db6e92fc0f73edff56a29766254b4a53))
+
+
+### Bug Fixes
+
+* **core:** fall back to the last build's tag roles when the fingerprint has none ([#246](https://github.com/mrx-31415/stash-curator/issues/246)) ([b27b18e](https://github.com/mrx-31415/stash-curator/commit/b27b18e47e4e158462a3364275f1ce207168e45b))
+* **rank:** scale the score bar to 1.0 so rank 1.00 renders full ([#243](https://github.com/mrx-31415/stash-curator/issues/243)) ([f0c8790](https://github.com/mrx-31415/stash-curator/commit/f0c8790eb8bf4ee29ecc1fd4abae5052a6d0ed94))
+
 ## [0.18.0](https://github.com/mrx-31415/stash-curator/compare/v0.17.1...v0.18.0) (2026-08-22)
 
 
