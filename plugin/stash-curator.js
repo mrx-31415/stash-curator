@@ -66,19 +66,19 @@
       value: "similar",
       label: "Similar",
       icon: faClone,
-      description: "Choose a scene or performer, then compare preference-aware matches from your Library or StashDB.",
+      description: "Preference-aware matches from your library or StashDB.",
     },
     {
       value: "expand",
       label: "Expand",
       icon: faGlobe,
-      description: "External metadata candidates scored locally. Wildcard items are selected outside preference-derived seeds.",
+      description: "External metadata candidates, scored locally.",
     },
     {
       value: "hunt",
       label: "Performer Hunt",
       icon: faCrosshairs,
-      description: "Find scenes listed for a performer on StashDB and compare them with exact links in your library.",
+      description: "StashDB performers and their scenes, checked against your library.",
     },
     {
       value: "taste",
@@ -4787,13 +4787,15 @@
           {
             key: section.value,
             type: "button",
-            className: "curator-find-tab",
+            className: "curator-lane-card",
+            style: { "--lc": `var(--curator-hue-${section.value})` },
             "aria-pressed": lane === section.value,
             onClick: () => openView(section.value),
             title: section.description,
           },
-          React.createElement(FontAwesomeIcon, { icon: section.icon }),
-          React.createElement("span", null, section.label)
+          React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: section.icon })),
+          React.createElement("span", { className: "curator-lane-card-name" }, section.label),
+          React.createElement("span", { className: "curator-lane-card-desc" }, section.description)
         ))
       ),
       laneOption && lane !== "curate" && React.createElement(
