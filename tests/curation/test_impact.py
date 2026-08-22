@@ -121,7 +121,7 @@ def make_impact_sidecar(tmp_path: Path, *, n_models: int = 2, with_artifacts: bo
     )
     connection.executemany(
         "INSERT INTO source_tag(tag_id, name, source_hash) VALUES (?, ?, ?)",
-        [("t1", "lesbian", "a"), ("t2", "threesome", "b")],
+        [("t1", "knitting", "a"), ("t2", "chess", "b")],
     )
     if n_models >= 1:
         connection.execute(
@@ -260,13 +260,13 @@ def test_impact_reports_movers(tmp_path: Path) -> None:
     assert [(t["tag_id"], t["delta"]) for t in tags["promoted"]] == [("t1", 0.1875)]
     # t2 did not move; desc:thing is not a tag.
     assert tags["demoted"] == []
-    assert tags["promoted"][0]["name"] == "lesbian"
+    assert tags["promoted"][0]["name"] == "knitting"
 
     # Scene "why": top entity contributors by |delta| that the scene carries.
     s1 = next(s for s in promoted if s["scene_id"] == "s1")
     assert s1["contributors"] == [
         {"kind": "direct", "id": "s1", "name": "Your direct feedback", "delta": 0.3125},
-        {"kind": "tag", "id": "t1", "name": "lesbian", "delta": 0.1875},
+        {"kind": "tag", "id": "t1", "name": "knitting", "delta": 0.1875},
         {"kind": "performer", "id": "p1", "name": "Alice", "delta": 0.125},
     ]
     s5 = next(s for s in promoted if s["scene_id"] == "s5")

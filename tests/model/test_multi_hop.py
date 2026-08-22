@@ -322,7 +322,7 @@ def test_similarity_excludes_scenes_carrying_a_blocked_term(tmp_path: Path) -> N
             """
             INSERT INTO feature_definition(
                 feature_id, feature_version, family, name, provenance, metadata_json
-            ) VALUES ('fd-term', ?, 'content', 'desc:anal', 'seed',
+            ) VALUES ('fd-term', ?, 'content', 'desc:archery', 'seed',
                       '{"document_frequency": 3}')
             """,
             (model.feature_version,),
@@ -344,14 +344,14 @@ def test_similarity_excludes_scenes_carrying_a_blocked_term(tmp_path: Path) -> N
             """
             INSERT INTO direct_term_preference_history(
                 preference_id, term, value, occurred_at_ms, blocked
-            ) VALUES ('pref-term', 'anal', 0, 3, 1)
+            ) VALUES ('pref-term', 'archery', 0, 3, 1)
             """
         )
         fresh.execute(
             """
             INSERT INTO direct_term_preference(
                 term, preference_id, value, occurred_at_ms, blocked
-            ) VALUES ('anal', 'pref-term', 0, 3, 1)
+            ) VALUES ('archery', 'pref-term', 0, 3, 1)
             """
         )
         fresh.commit()

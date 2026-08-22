@@ -99,7 +99,7 @@ def make_writes_sidecar(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO source_tag(tag_id, name, source_hash)
-            VALUES ('t1', 'blonde', 'h1'), ('t2', 'anal', 'h2'), ('t3', 'solo', 'h3')
+            VALUES ('t1', 'football', 'h1'), ('t2', 'archery', 'h2'), ('t3', 'cycling', 'h3')
             """
         )
         connection.execute(

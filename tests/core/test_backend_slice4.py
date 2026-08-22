@@ -115,9 +115,9 @@ def make_slice4_sidecar(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO source_tag(tag_id, name, source_hash)
-            VALUES ('t1', 'blonde', 'a'), ('t2', 'anal', 'b'),
-                   ('t3', 'solo', 'c'), ('t4', 'ponytail', 'd'),
-                   ('t5', 'anal', 'e')
+            VALUES ('t1', 'football', 'a'), ('t2', 'archery', 'b'),
+                   ('t3', 'cycling', 'c'), ('t4', 'swimming', 'd'),
+                   ('t5', 'archery', 'e')
             """
         )
         connection.execute(
@@ -238,9 +238,9 @@ def make_slice4_sidecar(path: Path) -> None:
             INSERT INTO feature_definition(
                 feature_id, feature_version, family, name, provenance, metadata_json
             ) VALUES
-                ('fd-d1', ?, 'content', 'desc:anal', 'seed', '{"document_frequency": 7}'),
-                ('fd-d2', ?, 'content', 'desc:blonde', 'seed', '{"document_frequency": 3}'),
-                ('fd-d3', ?, 'content', 'desc:solo', 'seed', '{"document_frequency": 9}')
+                ('fd-d1', ?, 'content', 'desc:archery', 'seed', '{"document_frequency": 7}'),
+                ('fd-d2', ?, 'content', 'desc:football', 'seed', '{"document_frequency": 3}'),
+                ('fd-d3', ?, 'content', 'desc:cycling', 'seed', '{"document_frequency": 9}')
             """,
             (FEATURE_VERSION, FEATURE_VERSION, FEATURE_VERSION),
         )
@@ -271,14 +271,14 @@ def make_slice4_sidecar(path: Path) -> None:
             """
             INSERT INTO direct_term_preference_history(
                 preference_id, term, value, occurred_at_ms, blocked
-            ) VALUES ('pref-d1', 'anal', 0.5, 1, 0), ('pref-d2', 'solo', 0.0, 1, 1)
+            ) VALUES ('pref-d1', 'archery', 0.5, 1, 0), ('pref-d2', 'cycling', 0.0, 1, 1)
             """
         )
         connection.execute(
             """
             INSERT INTO direct_term_preference(
                 term, preference_id, value, occurred_at_ms, blocked
-            ) VALUES ('anal', 'pref-d1', 0.5, 1, 0), ('solo', 'pref-d2', 0.0, 1, 1)
+            ) VALUES ('archery', 'pref-d1', 0.5, 1, 0), ('cycling', 'pref-d2', 0.0, 1, 1)
             """
         )
         connection.execute(
@@ -313,7 +313,7 @@ def make_slice4_sidecar(path: Path) -> None:
         connection.execute(
             """
             INSERT INTO taxonomy_tag(snapshot_id, tag_id, name)
-            VALUES ('snap-1', 'tax-1', 'Ponytail Style'), ('snap-1', 'tax-2', 'Solo')
+            VALUES ('snap-1', 'tax-1', 'Swimming Style'), ('snap-1', 'tax-2', 'Cycling')
             """
         )
         connection.execute(
@@ -367,14 +367,14 @@ def test_external_tag_choices_byte_identical(
         slice4_sidecar,
         stub_stash,
         tags=[
-            {"id": "stash-t1", "name": "blonde"},  # stable stash_id match
-            {"id": "", "name": "solo"},  # unique name match
+            {"id": "stash-t1", "name": "football"},  # stable stash_id match
+            {"id": "", "name": "cycling"},  # unique name match
             {"id": "", "name": "HairStyle"},  # taxonomy alias match
-            {"id": "", "name": "Ponytail Style"},  # taxonomy name match
-            {"id": "", "name": "anal"},  # ambiguous name -> skipped
+            {"id": "", "name": "Swimming Style"},  # taxonomy name match
+            {"id": "", "name": "archery"},  # ambiguous name -> skipped
             {"id": "missing", "name": "ghost"},  # unknown -> skipped
-            {"id": "stash-t2", "name": "anal"},  # stash_id beats ambiguity
-            {"id": "", "name": "blonde"},  # duplicate tag -> deduped
+            {"id": "stash-t2", "name": "archery"},  # stash_id beats ambiguity
+            {"id": "", "name": "football"},  # duplicate tag -> deduped
         ],
     )
     assert_slice4_identical(binary, raw, slice4_sidecar)
@@ -406,7 +406,7 @@ def test_external_tag_choices_validation_errors(
             slice4_sidecar,
             stub_stash,
             tags=[
-                {"id": "stash-t1", "name": "  blonde  "},
+                {"id": "stash-t1", "name": "  football  "},
                 "junk",
                 {},
                 {"id": "", "name": "   "},
@@ -422,7 +422,7 @@ def test_external_tag_choices_validation_errors(
 def test_scene_tag_choices_byte_identical(
     tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
 ) -> None:
-    # s1 carries t1 (blonde, direct 0.5), t2 (anal), t4 (ponytail): the
+    # s1 carries t1 (football, direct 0.5), t2 (archery), t4 (swimming): the
     # classified scene tags sorted by name with their direct preferences.
     raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="s1")
     assert_slice4_identical(binary, raw, slice4_sidecar)
@@ -431,7 +431,7 @@ def test_scene_tag_choices_byte_identical(
 def test_scene_tag_choices_unclassified_and_unknown(
     tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
 ) -> None:
-    # s3 carries only t3 (solo, blocked) — classified, with its preference.
+    # s3 carries only t3 (cycling, blocked) — classified, with its preference.
     raw = payload("get_scene_tag_choices", slice4_sidecar, stub_stash, scene_id="s3")
     assert_slice4_identical(binary, raw, slice4_sidecar)
     # Unknown scene and missing scene_id both error identically.
@@ -447,7 +447,7 @@ def test_scene_tag_choices_unclassified_and_unknown(
 def test_scene_description_tokens_byte_identical(
     tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
 ) -> None:
-    # s1 has desc:anal (df 7, direct 0.5) and desc:solo (df 9, blocked).
+    # s1 has desc:archery (df 7, direct 0.5) and desc:cycling (df 9, blocked).
     raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="s1")
     assert_slice4_identical(binary, raw, slice4_sidecar)
 
@@ -475,12 +475,12 @@ def test_submit_term_preferences_byte_identical(
         slice4_sidecar,
         stub_stash,
         entries=[
-            # overwrite the seeded anal preference
-            {"preference_id": "pref-n1", "term": "anal", "value": -0.5, "occurred_at_ms": 200},
+            # overwrite the seeded archery preference
+            {"preference_id": "pref-n1", "term": "archery", "value": -0.5, "occurred_at_ms": 200},
             # clear a term with no current preference (no-op upsert path)
-            {"preference_id": "pref-n2", "term": "blonde", "value": None, "occurred_at_ms": 300},
-            # term normalization: "HARDcore" -> "hardcore", a valid token
-            {"preference_id": "pref-n3", "term": "HARDcore", "value": 1.0, "occurred_at_ms": 400},
+            {"preference_id": "pref-n2", "term": "football", "value": None, "occurred_at_ms": 300},
+            # term normalization: "Hockey" -> "hockey", a valid token
+            {"preference_id": "pref-n3", "term": "Hockey", "value": 1.0, "occurred_at_ms": 400},
         ],
     )
     assert_slice4_identical(binary, raw, slice4_sidecar)
@@ -496,7 +496,7 @@ def test_submit_term_preferences_blocked_byte_identical(
         entries=[
             {
                 "preference_id": "pref-n4",
-                "term": "anal",
+                "term": "archery",
                 "value": 1.0,
                 "blocked": True,
                 "occurred_at_ms": 250,
@@ -517,7 +517,7 @@ def test_submit_term_preferences_validation_errors(
             slice4_sidecar,
             stub_stash,
             entries=[
-                {"preference_id": "pref-n5", "term": "anal", "value": 0.3, "occurred_at_ms": 100}
+                {"preference_id": "pref-n5", "term": "archery", "value": 0.3, "occurred_at_ms": 100}
             ],
         ),
         slice4_sidecar,
@@ -542,7 +542,7 @@ def test_submit_term_preferences_validation_errors(
             "submit_term_preferences",
             slice4_sidecar,
             stub_stash,
-            entries=[{"preference_id": "", "term": "anal", "value": 0.5, "occurred_at_ms": -1}],
+            entries=[{"preference_id": "", "term": "archery", "value": 0.5, "occurred_at_ms": -1}],
         ),
         slice4_sidecar,
     )
