@@ -1913,18 +1913,18 @@
   // segmented bar would need — an earlier version tried a segmented bar
   // keyed off item.details.score_breakdown and it silently rendered empty
   // for real Similar-panel results, since that field isn't populated there.
-  // A single clamped fill is the one thing guaranteed to have real data.
-  // Utility/appeal is usually in [0, 1], but bonuses (e.g. uncovered-content)
-  // can push final_utility modestly above 1.0 — clamping the fill to 1.0
-  // made every overflowing score (1.15, 1.16, 1.17, ...) render at the same
-  // ~100% width as a plain 0.95, erasing the difference. Scale against a
-  // slightly wider ceiling so that range is visible; anything that still
-  // exceeds the ceiling gets a distinct "off the chart" treatment rather
-  // than silently pinning to 100% again.
-  const UTILITY_BAR_CEILING = 1.2;
+  // A single clamped fill renders every surface's headline score on its
+  // documented 0..1 scale: the lane rank is normalized to the lane's best
+  // (issue #226 — the top of every lane reads 1.00), Similarity is a 0..1
+  // match score, and Prune's appeal is −1..1 with negatives clamped to an
+  // empty bar. The previous 1.2 ceiling existed for raw final_utility, which
+  // bonuses could push above 1.0 — no current caller passes it (the rank
+  // surface now receives the normalized lane_value). Anything that still
+  // exceeds 1.0 gets a distinct "off the chart" treatment rather than
+  // silently pinning to 100% again.
   function utilityBar(value) {
-    const clipped = value > UTILITY_BAR_CEILING;
-    const pct = Math.round((Math.min(UTILITY_BAR_CEILING, Math.max(0, value)) / UTILITY_BAR_CEILING) * 100);
+    const clipped = value > 1;
+    const pct = Math.round(clamp01(value) * 100);
     return React.createElement("div", { className: "curator-score-bar" },
       React.createElement("span", { className: `curator-score-bar-seg curator-score-app${clipped ? " curator-score-bar-clipped" : ""}`, style: { width: pct + "%" }, title: `Utility ${value.toFixed(3)}` })
     );
