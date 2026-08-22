@@ -1371,6 +1371,10 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
         in source
     )
     assert "curator-task-indicator-done" in css
+    # Issue #215: similar performer cards are contained in their grid cell.
+    assert ".curator-card > .performer-card .row" in css
+    assert ".curator-grid > * {" in css
+    assert "min-width: 0;" in css
     assert "health?.active_jobs" in source
     assert "?view=manage&section=tasks" in source
     assert "curatorTaskStage(job)" in source
