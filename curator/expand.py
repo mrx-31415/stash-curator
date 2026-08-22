@@ -89,6 +89,17 @@ query CuratorSimilarPerformers($input: PerformerQueryInput!) {
 }
 """
 
+PERFORMER_SEARCH = """
+query CuratorPerformerSearch($input: PerformerQueryInput!) {
+  queryPerformers(input: $input) {
+    performers {
+      id name aliases disambiguation scene_count
+      images { url width height }
+    }
+  }
+}
+"""
+
 
 def normalize_phash(value: object) -> str | None:
     normalized = str(value or "").strip().casefold()
@@ -441,6 +452,37 @@ class ExpandService:
                 " AND external_id=?",
                 ((float(item["score"]), str(item["id"])) for item in performers),
             )
+
+    def stashdb_performer_search(
+        self, client: GraphQLClient, query: str, *, limit: int = 8
+    ) -> dict[str, object]:
+        """Name search over StashDB performers for the Performer Hunt picker
+        (issue #218): lets the user hunt scenes for a performer that is not in
+        the local library."""
+        limit = max(1, min(50, limit))
+        data = client.execute(
+            PERFORMER_SEARCH,
+            {
+                "input": {
+                    "page": 1,
+                    "per_page": limit,
+                    "names": {"value": query, "modifier": "INCLUDES"},
+                }
+            },
+        )["queryPerformers"]["performers"]
+        return {
+            "items": [
+                {
+                    "id": performer["id"],
+                    "name": performer["name"],
+                    "aliases": performer.get("aliases", []),
+                    "disambiguation": performer.get("disambiguation"),
+                    "scene_count": performer.get("scene_count"),
+                    "images": performer.get("images", []),
+                }
+                for performer in data
+            ]
+        }
 
     def performer_hunt(
         self,

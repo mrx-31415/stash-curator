@@ -324,6 +324,23 @@ class _StubExpand(BaseHTTPRequestHandler):
             if input_data.get("performed_with"):
                 pool = [p for p in pool if p["id"] in {"ext-p1", "ext-p3"}]
             return {"data": {"queryPerformers": {"performers": pool}}}
+        if operation == "CuratorPerformerSearch":
+            input_data = json.loads(body)["variables"]["input"]
+            names = input_data.get("names", {})
+            needle = str(names.get("value", "")).casefold()
+            pool = [
+                {
+                    "id": performer["id"],
+                    "name": performer["name"],
+                    "aliases": performer.get("aliases", []),
+                    "disambiguation": performer.get("disambiguation"),
+                    "scene_count": performer.get("scene_count"),
+                    "images": performer.get("images", []),
+                }
+                for performer in STASHDB_PERFORMER_POOL
+                if not needle or needle in str(performer["name"]).casefold()
+            ]
+            return {"data": {"queryPerformers": {"performers": pool}}}
         return {"errors": [{"message": f"no stub for {operation}"}]}
 
     @staticmethod
@@ -335,6 +352,7 @@ class _StubExpand(BaseHTTPRequestHandler):
             "CuratorExternalLinks",
             "CuratorExpandScenes",
             "CuratorSimilarPerformers",
+            "CuratorPerformerSearch",
         ):
             if name in body:
                 return name
@@ -736,6 +754,19 @@ def test_get_performer_hunt_unlinked_byte_identical(
     # p3 has no StashDB link in the stub; both backends must raise the same
     # "selected performer is not linked to StashDB" error.
     raw = payload("get_performer_hunt", expand_sidecar, stub_stash, performer_id="p3")
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+
+
+def test_get_stashdb_performer_search_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    """Issue #218: the StashDB performer name search (Performer Hunt picker)
+    answers identically on both backends, including the not-found case."""
+    raw = payload("get_stashdb_performer_search", expand_sidecar, stub_stash, query="Performer")
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+    raw = payload(
+        "get_stashdb_performer_search", expand_sidecar, stub_stash, query="Nobody Named This"
+    )
     assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
 
 

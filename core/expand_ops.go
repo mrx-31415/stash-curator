@@ -289,6 +289,48 @@ func sortNewestKey(item jVal) newestKey {
 	return newestKey{date: date, score: pythonFloatOr(item.get("score"), 0)}
 }
 
+// opGetStashdbPerformerSearch — name search over StashDB performers for the
+// Performer Hunt picker (issue #218): lets the user hunt scenes for a
+// performer that is not in the local library.
+func opGetStashdbPerformerSearch(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_stashdb_performer_search",
+		func(settings jVal) (jVal, error) { return getStashdbPerformerSearchBody(pluginDir, payload, settings) })
+}
+
+func getStashdbPerformerSearchBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	args := payload.get("args")
+	query := argsString(args, "query", "")
+	limit := argsInt(args, "limit", 8)
+	if limit < 1 || limit > 50 {
+		limit = 8
+	}
+	clientURL, apiKey, err := stashdbClient(payload)
+	if err != nil {
+		return jvNull(), err
+	}
+	search := jvObj(
+		jvKey("page", jvInt(1)),
+		jvKey("per_page", jvInt(limit)),
+		jvKey("names", jvObj(jvKey("value", jvStr(query)), jvKey("modifier", jvStr("INCLUDES")))),
+	)
+	data, err := stashdbQuery(clientURL, apiKey, stashdbPerformerSearchQuery, jvObj(jvKey("input", search)))
+	if err != nil {
+		return jvNull(), err
+	}
+	items := jvArr()
+	for _, performer := range data.get("queryPerformers").get("performers").arr {
+		items.arr = append(items.arr, jvObj(
+			jvKey("id", performer.get("id")),
+			jvKey("name", performer.get("name")),
+			jvKey("aliases", performer.get("aliases")),
+			jvKey("disambiguation", performer.get("disambiguation")),
+			jvKey("scene_count", performer.get("scene_count")),
+			jvKey("images", performer.get("images")),
+		))
+	}
+	return jvObj(jvKey("items", items)), nil
+}
+
 // opGetPerformerHunt mirrors backend.py's _profiled-wrapped get_performer_hunt.
 func opGetPerformerHunt(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_performer_hunt",
