@@ -616,9 +616,10 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	}
 	today := time.Now()
 	cutoff := today.AddDate(0, 0, -horizonDays).Format("2006-01-02")
+	byExternalID, byPhash := sceneLinkMaps(links)
 	var candidates []jVal
 	for _, row := range rows.list() {
-		candidate := annotateLocalMatch(row, links)
+		candidate := annotateLocalMatch(row, byExternalID, byPhash)
 		match := candidate.get("curator_local_match")
 		if match.get("type").asString() != "stashdb_id" &&
 			recentScene(candidate, cutoff) &&
