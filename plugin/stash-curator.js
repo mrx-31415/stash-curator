@@ -215,8 +215,8 @@
   ];
   const TOP_NAV_ITEMS = [
     RECOMMENDATIONS_NAV_ITEM,
-    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value) && !FIND_SECTION_VALUES.has(item.value)),
     FIND_NAV_ITEM,
+    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value) && !FIND_SECTION_VALUES.has(item.value)),
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
