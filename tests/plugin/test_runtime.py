@@ -1030,6 +1030,10 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "explanation.components?.length || item" in source
     assert 'className: "curator-evidence-fingerprint"' in source
     assert 'className: "curator-fingerprint-svg"' in source
+    # Issue #213: the prose lead in "Why this?" is styled to match the section.
+    css = (Path(__file__).parents[2] / "plugin" / "stash-curator.css").read_text(encoding="utf-8")
+    assert ".curator-explanation-view > .curator-explanation" in css
+    assert "border-left: 3px solid var(--curator-accent-secondary)" in css
     assert "curator-metadata-status" in source
     assert "Metadata covered" in source
     assert "function fingerprintPoint(" in source
