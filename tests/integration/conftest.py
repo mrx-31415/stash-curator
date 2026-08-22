@@ -74,7 +74,7 @@ def seeded() -> None:
                 "findTags(tag_filter: {name: {value: $n, modifier: EQUALS}}) "
                 "{ count } }"
             ),
-            {"n": "Blowjob"},
+            {"n": "Baking"},
         )
         if data["findTags"]["count"] > 0 and os.environ.get("FORCE_SEED") != "1":
             return
