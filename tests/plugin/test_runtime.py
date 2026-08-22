@@ -425,6 +425,9 @@ def test_curator_tabs_update_browser_history() -> None:
     assert 'className: "curator-lane-card"' in source
     assert "curator-lane-card-desc" in source
     assert 'style: { "--lc": `var(--curator-hue-${section.value})` }' in source
+    # The description must stay out of the accessible name (aria-label = the
+    # section label), or substring lookups like "StashDB" match every card.
+    assert '"aria-label": section.label,' in source
     # Header order is Recommendations | Find | Curate (issue #239): Find sits
     # before the remaining primary items (Curate) rather than after them.
     expected_top_nav = "".join(

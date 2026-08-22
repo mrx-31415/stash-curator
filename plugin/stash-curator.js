@@ -4790,6 +4790,7 @@
             className: "curator-lane-card",
             style: { "--lc": `var(--curator-hue-${section.value})` },
             "aria-pressed": lane === section.value,
+            "aria-label": section.label,
             onClick: () => openView(section.value),
             title: section.description,
           },
