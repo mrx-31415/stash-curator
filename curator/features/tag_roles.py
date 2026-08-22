@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from curator.config import FeatureConfig
+from curator.config import DEFAULT_CONFIG, FeatureConfig
 from curator.taxonomy import TaxonomyMatch
 
 
@@ -23,6 +23,35 @@ class TagRoleResult:
     role: TagRole
     reason: str
     taxonomy: TaxonomyMatch | None = None
+
+
+def effective_tag_role_config_version(connection) -> str | None:
+    """Return the tag_role config_version to read tag roles under.
+
+    Mirrors core's effectiveTagRoleConfigVersion: the running FeatureConfig
+    fingerprint when the build wrote rows for it, otherwise the most complete
+    legacy config_version still present. A plugin update can leave the
+    published model's tag_role rows under an older fingerprint (the model
+    predates the last FeatureConfig change); falling back keeps the taste
+    profile, scene tag choices, and tag preferences working until the next
+    model build writes rows for the current fingerprint. Returns None when
+    tag_role has no rows at all (no build yet).
+    """
+    current = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+    row = connection.execute(
+        "SELECT 1 FROM tag_role WHERE config_version=? LIMIT 1", (current,)
+    ).fetchone()
+    if row is not None:
+        return current
+    row = connection.execute(
+        """
+        SELECT config_version FROM (
+          SELECT config_version, count(*) AS n FROM tag_role
+          GROUP BY config_version ORDER BY n DESC, config_version DESC LIMIT 1
+        )
+        """
+    ).fetchone()
+    return str(row[0]) if row is not None else None
 
 
 class TagRoleResolver:

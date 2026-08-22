@@ -425,9 +425,12 @@ func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error)
 	if preferenceID == "" || tagID == "" || occurredAtMs < 0 {
 		return tagPreferenceEntry{}, fmt.Errorf("preference_id, tag_id, and occurred_at_ms are required")
 	}
-	configVersion := "cfg-" + featureFingerprint()[:20]
+	configVersion, err := effectiveTagRoleConfigVersion(db)
+	if err != nil {
+		return tagPreferenceEntry{}, err
+	}
 	var one int
-	err := db.QueryRow(`SELECT 1 FROM tag_role WHERE config_version=? AND tag_id=?`,
+	err = db.QueryRow(`SELECT 1 FROM tag_role WHERE config_version=? AND tag_id=?`,
 		configVersion, tagID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return tagPreferenceEntry{}, fmt.Errorf("unknown or unsupported tag: %s", tagID)
