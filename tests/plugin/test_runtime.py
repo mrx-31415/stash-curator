@@ -1033,13 +1033,12 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "curator-metadata-status" in source
     assert "Metadata covered" in source
     assert "function fingerprintPoint(" in source
-    assert 'scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : "Appeal"' in source
+    assert "scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : null" in source
     assert "scoreHeadlineValue: formatAppealValue(item.appeal)" in source
     assert "function clamp01(value)" in source
-    assert (
-        "scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : formatAppealValue(item.appeal)"
-        in source
-    )
+    # Issue #210: score_review cards drop the duplicate second "Appeal" row.
+    assert "scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : null" in source
+    assert "scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : null" in source
     assert 'scoreLabel: "Match"' in source or "scoreLabel: label" in source
     assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
