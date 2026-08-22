@@ -1056,6 +1056,12 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     # Issue #210: score_review cards drop the duplicate second "Appeal" row.
     assert "scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : null" in source
     assert "scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : null" in source
+    # Issue #237: the bar scales to 1.0, so the lane's best — normalized to
+    # 1.00 by #226 — renders a full bar. The old 1.2 ceiling (raw final
+    # utility, no longer passed anywhere) is gone.
+    assert "function utilityBar(value) {" in source
+    assert "const pct = Math.round(clamp01(value) * 100);" in source
+    assert "UTILITY_BAR_CEILING" not in source
     assert 'scoreLabel: "Match"' in source or "scoreLabel: label" in source
     assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
