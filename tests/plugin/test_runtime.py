@@ -1019,6 +1019,10 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert '"Explaining…"' in source
     assert "function ScoreBreakdown({ explanation, item })" in source
     assert "function ExplanationView({ explanation, item })" in source
+    # Issue #216: the Technical details disclosure is never rendered empty —
+    # it requires explanation components or an item fallback.
+    assert "curator-technical-details" in source
+    assert "explanation.components?.length || item" in source
     assert 'className: "curator-evidence-fingerprint"' in source
     assert 'className: "curator-fingerprint-svg"' in source
     assert "curator-metadata-status" in source
