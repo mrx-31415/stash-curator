@@ -75,11 +75,11 @@ TABS: list[tuple[str, list[str]]] = [
     ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
     ("?view=expand", ["External metadata candidates", "Loading Expand cache"]),
     (
-        "?view=taste",
+        "?view=curate&section=sentiment",
         [
+            "Tag sentiment",
             "Loading taste profile",
             "No supported tags",
-            "Declared answers are strong evidence",
             # test_z_nomodel_ui's own docstring assumes it runs strictly
             # last ("no later test needs the sidecar"), but pytest's actual
             # collection order interleaves it mid-suite here (reordered
