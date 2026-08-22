@@ -2146,7 +2146,7 @@
   justify-content: center;
   left: 0.5rem;
   letter-spacing: 0.03em;
-  padding: calc(0.3rem * var(--curator-card-text-scale, 1)) calc(0.5rem * var(--curator-card-text-scale, 1));
+  padding: calc(0.32rem * var(--curator-card-text-scale, 1)) calc(0.6rem * var(--curator-card-text-scale, 1));
   position: absolute;
   top: 0.5rem;
   width: auto;
