@@ -832,26 +832,6 @@ class CuratorAPI:
             "items": candidates[:limit],
         }
 
-    def curation_batch(
-        self,
-        mode: str,
-        base_tag_id: str | None,
-        context_tag_id: str | None,
-        budget: int = 20,
-    ) -> dict[str, object]:
-        return curation.create_batch(self.connection, mode, base_tag_id, context_tag_id, budget)
-
-    def submit_curation_ratings(
-        self, batch_id: str, ratings: list[dict[str, Any]]
-    ) -> dict[str, object]:
-        return curation.submit_ratings(self.connection, batch_id, ratings)
-
-    def curation_verdict(self, batch_id: str) -> dict[str, object]:
-        return curation.verdict(self.connection, batch_id)
-
-    def tag_context_candidates(self, tag_id: str, min_support: int = 20) -> dict[str, object]:
-        return curation.tag_context_candidates(self.connection, tag_id, min_support)
-
     def curation_picks(
         self,
         dimension: str,

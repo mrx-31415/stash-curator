@@ -449,6 +449,110 @@ def test_get_diagnostics_byte_identical(model_sidecar: Path, binary: Path, stub_
     )
 
 
+def make_measurement_sidecar(path: Path) -> None:
+    """A sidecar for get_impression_measurement (#146 Channel B): a published
+    model plus a deterministic mix of played, skipped, and never-shown scenes.
+
+    - imp-play: shown scene "recent-good" with a direct_player play_session
+      linked to the impression (observed playback: active_seconds > 0).
+    - imp-thumb: shown scene "old-good" with a non-reversed thumb_up linked to
+      the impression.
+    - imp-skip: shown scene "unseen-good" with no positive action.
+    - "disliked", "unlabeled", "unusual" are in source_scene but never shown.
+    """
+    connection = _database(path)
+    try:
+        PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+        connection.executemany(
+            """
+            INSERT INTO impression(
+                impression_id, requested_at_ms, lane, model_id, config_version,
+                request_context_json
+            ) VALUES (?, ?, 'for_you', 'model-seed', 'builtin', '{}')
+            """,
+            [
+                (f"imp-{suffix}", REFERENCE_MS - i * DAY_MS)
+                for suffix, i in (("play", 10), ("thumb", 9), ("skip", 8))
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO impression_item(
+                impression_id, scene_id, position, policy_score, reason_snapshot_json
+            ) VALUES (?, ?, 0, ?, '["eligibility.lane"]')
+            """,
+            [
+                ("imp-play", "recent-good", 0.6),
+                ("imp-thumb", "old-good", 0.5),
+                ("imp-skip", "unseen-good", 0.4),
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO play_session(
+                session_id, scene_id, started_at_ms, ended_at_ms, active_seconds,
+                provenance, confidence, impression_id, summary_json
+            ) VALUES ('sess-play', 'recent-good', ?, ?, 30.0, 'direct_player', 0.8,
+                      'imp-play', '{}')
+            """,
+            (REFERENCE_MS - DAY_MS, REFERENCE_MS - DAY_MS + 30_000),
+        )
+        connection.execute(
+            """
+            INSERT INTO feedback(
+                feedback_id, scene_id, feedback_type, value, occurred_at_ms,
+                impression_id, payload_json
+            ) VALUES ('fb-thumb', 'old-good', 'thumb_up', 1.0, ?, 'imp-thumb', '{}')
+            """,
+            (REFERENCE_MS - 2 * DAY_MS,),
+        )
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        connection.close()
+
+
+def test_get_impression_measurement_byte_identical(
+    tmp_path: Path, binary: Path, stub_stash: str
+) -> None:
+    """The shown-never-played measurement op must be byte-identical between
+    Python and Go, and must classify played vs skipped vs never-shown
+    correctly (issue #146 Channel B pre-condition gate)."""
+    path = tmp_path / "curator.sqlite3"
+    make_measurement_sidecar(path)
+    raw = payload("get_impression_measurement", path, stub_stash)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, same_path=path)
+    # The op is read-only: it must not mutate the sidecar between runs, so a
+    # second identical comparison against the same source confirms stability.
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, same_path=path)
+
+
+def test_impression_measurement_counts(tmp_path: Path) -> None:
+    """Python-side behavioral check of the bucket definitions (#146 Channel B):
+    played = shown + positive action in that impression; skipped = shown and
+    not played; never_shown = in source_scene, never surfaced."""
+    from curator.storage.database import connect_database
+    from curator.storage.migrations import MigrationRunner
+    from plugin.backend import _impression_measurement
+
+    path = tmp_path / "curator.sqlite3"
+    make_measurement_sidecar(path)
+    connection = connect_database(path)
+    MigrationRunner(connection).migrate(applied_at_ms=1)
+    try:
+        report = _impression_measurement(connection)
+    finally:
+        connection.close()
+    buckets = report["buckets"]
+    assert buckets["shown"]["count"] == 3
+    assert buckets["played"]["count"] == 2  # recent-good (play) + old-good (thumb)
+    assert buckets["skipped"]["count"] == 1  # unseen-good
+    assert buckets["never_shown"]["count"] == 3  # disliked, unlabeled, unusual
+    assert report["shown_play_rate"] == pytest.approx(round(2 / 3, 6))
+    # The skipped scene's policy_score is preserved; never-shown has none.
+    assert buckets["skipped"]["mean_policy_score"] == 0.4
+    assert buckets["never_shown"]["mean_policy_score"] is None
+
+
 # ── read-path write parity ──────────────────────────────────────────────────
 
 

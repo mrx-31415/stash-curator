@@ -163,6 +163,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetTasteProfile(pluginDir, payload)
 	case "get_diagnostics":
 		return opGetDiagnostics(pluginDir, payload)
+	case "get_impression_measurement":
+		return opGetImpressionMeasurement(pluginDir, payload)
 	case "get_expand":
 		return opGetExpand(pluginDir, payload)
 	case "get_performer_hunt":
@@ -225,14 +227,6 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetInspectorEntity(pluginDir, payload)
 	case "get_tag_sentiment_follow_up":
 		return opGetTagSentimentFollowUp(pluginDir, payload)
-	case "get_curation_batch":
-		return opGetCurationBatch(pluginDir, payload)
-	case "submit_curation_ratings":
-		return opSubmitCurationRatings(pluginDir, payload)
-	case "get_curation_verdict":
-		return opGetCurationVerdict(pluginDir, payload)
-	case "get_tag_context_candidates":
-		return opGetTagContextCandidates(pluginDir, payload)
 	case "get_curation_picks":
 		return opGetCurationPicks(pluginDir, payload)
 	case "submit_curation_picks":
