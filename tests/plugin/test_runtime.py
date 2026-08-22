@@ -466,15 +466,17 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    # One control, one home: Manage > Taste Profile is the canonical per-tag
-    # surface (inferred + direct answers). Curate no longer mounts a second
-    # copy; it points at Manage > Taste Profile (issue #189).
-    assert 'function TasteProfilePanel({ embedded = false, initialStatus = "all" } = {})' in source
-    assert "React.createElement(TasteProfilePanel, { embedded: true })" in source
+    # One control, one home: the per-tag sentiment surface is a real Curate
+    # section (issue #241). Manage no longer has a Taste Profile entry and
+    # the old ?view=taste alias is gone.
+    expected_signature = 'function TasteProfilePanel({ embedded = false, initialStatus = "all",'
+    expected_signature += ' initialQuery = "" } = {})'
+    assert expected_signature in source
     assert (
-        'React.createElement(TasteProfilePanel, { embedded: true, initialStatus: "unanswered" })'
-        not in source
+        "React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery })"
+        in source
     )
+    assert "React.createElement(TasteProfilePanel, { embedded: true })" not in source
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
     assert "TAG_PREFERENCE_QUEUE_KEY" in source
@@ -489,10 +491,12 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'value: "confidence"' in source
     assert 'value: "scenes"' in source
     assert 'if (sort !== "suggested")' in source
-    # Curate links to the canonical surface instead of duplicating it.
+    # The surface is a real Curate section now — no Manage goto remains.
     assert 'label: "Tag sentiment"' in source
-    assert 'goto: "taste"' in source
-    assert 'onGoto: () => openManage("taste")' in source
+    assert 'value: "sentiment"' in source
+    assert 'goto: "taste"' not in source
+    assert 'onGoto: () => openManage("taste")' not in source
+    assert 'value: "taste"' not in source
 
 
 def test_curate_lane_renders_sectioned_stream() -> None:
@@ -503,27 +507,39 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     # between "Random round" and "Pick-test a hypothesis", which are the same
     # activity with a different pair-selection filter.
     assert "const CURATE_SECTIONS = [" in source
-    for section in ("stream", "progress"):
+    for section in ("stream", "sentiment", "progress"):
         assert f'value: "{section}"' in source
-    # "Test an idea" (hypothesis) and the duplicate "Tag sentiment" section are
-    # gone (issues #191, #189): tag-sentiment teaching is one surface in Manage.
+    # Section values stay stable; labels moved to Pair picks / Impact and
+    # Tag sentiment became a real section (issue #241) — no Manage goto.
+    assert 'label: "Pair picks"' in source
+    assert 'label: "Impact"' in source
     curate_sections_block = source.split("const CURATE_SECTIONS = [", 1)[1].split("];", 1)[0]
     assert 'value: "hypothesis"' not in curate_sections_block
-    assert 'value: "sentiment"' not in curate_sections_block
+    assert "goto" not in curate_sections_block
     # The Manage "Sentiment review" maintenance item is a different surface and
-    # must survive the Curate section removal.
+    # must survive the Curate section changes.
     assert 'label: "Sentiment review"' in source
     assert 'React.createElement("strong", null, "Random round")' not in source
     assert 'variant: "primary", disabled: picksBusy, onClick: () => generatePicks' not in source
     assert "curateTab" not in source
     assert "function SectionShell(" in source
-    assert 'navLabel: "Curate sections"' in source
+    assert '"aria-label": "Curate sections"' in source
     assert 'navLabel: "Manage sections"' in source
     assert 'lane === "curate" && React.createElement(CuratePanel,' in source
     assert "section: curateSection, onSelectSection: openCurate" in source
-    assert "function openCurate(section)" in source
+    assert "function openCurate(section, extra)" in source
     # Curate and Manage share ?section=, so switching views must clear it.
     assert '["performer", "label", "id", "type", "section"]' in source
+
+    # Impact view (renamed from Progress): full-curate-outcome summary plus
+    # declared-vs-inferred divergence with a jump into Tag sentiment.
+    assert "function CurateProgress({ onFixTag })" in source
+    assert "curator-impact-summary" in source
+    assert "curator-sentiment-divergence" in source
+    assert "Where your answers and the model disagree" in source
+    assert "Fix in Tag sentiment" in source
+    assert "Math.abs(Number(tag.direct_value) - Number(tag.inferred_value)) >= 0.3" in source
+    assert "sentTag" in source
 
     # The stream: answers post as they happen, with one buffered for undo.
     assert "function CurateStream()" in source
