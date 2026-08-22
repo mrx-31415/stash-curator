@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/mrx-31415/stash-curator/compare/v0.19.1...v0.19.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **plugin:** give card source badges more padding ([#250](https://github.com/mrx-31415/stash-curator/issues/250)) ([dcc562f](https://github.com/mrx-31415/stash-curator/commit/dcc562f1c1570c5399cbb9c42e64846e38ae3441))
+
 ## [0.19.1](https://github.com/mrx-31415/stash-curator/compare/v0.19.0...v0.19.1) (2026-08-22)
 
 
