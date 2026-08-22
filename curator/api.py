@@ -16,6 +16,7 @@ from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.expand import STASHDB, ExpandService
 from curator.explanations import ExplanationService
 from curator.features import FeatureStore
+from curator.features.tag_roles import effective_tag_role_config_version
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
 from curator.profiling import record_duration, span
@@ -560,7 +561,7 @@ class CuratorAPI:
     def get_scene_tag_choices(self, scene_id: str) -> dict[str, object]:
         if not scene_id:
             raise ValueError("scene_id is required")
-        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+        config_version = effective_tag_role_config_version(self.connection)
         items: list[dict[str, object]] = []
         for row in self.connection.execute(
             """
@@ -637,7 +638,7 @@ class CuratorAPI:
         ):
             direct[str(row["tag_id"])] = (float(row["value"]), bool(row["blocked"]))
         items: list[dict[str, object]] = []
-        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+        config_version = effective_tag_role_config_version(self.connection)
         for row in self.connection.execute(
             """
             WITH scene_counts AS (
@@ -702,7 +703,7 @@ class CuratorAPI:
             for item in tags
             if isinstance(item, dict) and (item.get("id") or item.get("name"))
         ]
-        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+        config_version = effective_tag_role_config_version(self.connection)
         rows = [
             dict(row)
             for row in self.connection.execute(
