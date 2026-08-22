@@ -21,9 +21,9 @@ from typing import ClassVar
 import pytest
 
 from curator.core import core_binary
+from tests.core.curation_fixtures import make_slice5_sidecar
 from tests.core.test_backend import payload
 from tests.core.test_backend_slice3_backups import assert_slice3_identical
-from tests.core.test_backend_slice5_curation import make_slice5_sidecar
 
 ROUND_TAG = "round-tag"
 ROUND_PERF = "round-perf"
@@ -76,13 +76,10 @@ def stub_stash() -> str:
 
 
 def make_slice6_sidecar(path: Path) -> None:
-    """The slice5 sidecar plus performers and fixture pick rounds."""
+    """The curation sidecar plus performers and fixture pick rounds."""
     make_slice5_sidecar(path)
     connection = sqlite3.connect(path)
     try:
-        # The slice5 fixture's curation_rating rows label s1/s2/s7; drop them
-        # so the pair-selection pools are non-empty.
-        connection.execute("DELETE FROM feedback WHERE feedback_type='curation_rating'")
         connection.execute(
             """
             INSERT INTO source_performer(performer_id, name, source_hash, updated_at)

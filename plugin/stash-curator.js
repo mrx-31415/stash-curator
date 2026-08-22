@@ -166,11 +166,29 @@
     icon: faWrench,
     description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
   };
+  // Find groups the three "find new content" surfaces (Similar, Expand,
+  // Performer Hunt) under one primary nav item with inner tabs (issue #192).
+  // The inner surfaces keep their own URL ?view= lanes and filter state, so
+  // old bookmarks and per-surface state still work; the wrapper is pure nav.
+  const FIND_NAV_ITEM = {
+    value: "find",
+    label: "Find",
+    icon: faSearch,
+    description: "Find new content: similar scenes, external metadata candidates, and performer hunts.",
+  };
+  const FIND_SECTIONS = NAV_ITEMS.filter(
+    (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
+  );
+  const FIND_SECTION_VALUES = new Set(FIND_SECTIONS.map((item) => item.value));
   // Curate's own sections. Before this split the view offered "Random round"
   // and "Pick-test a hypothesis" side by side, which are the same activity with
   // a different pair-selection filter — presenting a selection policy as if it
-  // were a mode is what made "which one do I use?" unanswerable. These are four
-  // genuinely different jobs, so they get the same side menu Manage uses.
+  // were a mode is what made "which one do I use?" unanswerable. These are
+  // genuinely different jobs, so they get the same side menu Manage uses. The
+  // "Test an idea" section (a tag-focused pair filter on the same stream
+  // machinery) was dropped as a distinct surface (issue #191): Stream already
+  // covers pair comparison, and the hypothesis framing added a mode without a
+  // different capability.
   const CURATE_SECTIONS = [
     {
       value: "stream",
@@ -179,28 +197,26 @@
       description: "An endless run of two-scene comparisons. Every pick teaches the model; stop whenever you like.",
     },
     {
-      value: "hypothesis",
-      label: "Test an idea",
-      icon: faBalanceScale,
-      description: "Put one question to the test: does a tag land differently with or without another alongside it?",
-    },
-    {
-      value: "sentiment",
-      label: "Tag sentiment",
-      icon: faTag,
-      description: "Tell Curator directly how you feel about a tag, instead of letting it infer from behavior.",
-    },
-    {
       value: "progress",
       label: "Progress",
       icon: faChartLine,
       description: "What your comparisons add up to, and what the latest model build moved.",
     },
+    // Direct tag teaching is one surface, not two: Manage → Taste Profile is
+    // the canonical per-tag sentiment view (inferred + direct answers). Curate
+    // points at it instead of mounting a second copy of the same control.
+    {
+      value: "goto-taste",
+      label: "Tag sentiment",
+      icon: faTag,
+      goto: "taste",
+      description: "Direct tag teaching lives in Manage → Taste Profile — one surface, one set of answers.",
+    },
   ];
   const TOP_NAV_ITEMS = [
     RECOMMENDATIONS_NAV_ITEM,
-    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value)),
-    MANAGE_NAV_ITEM,
+    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value) && !FIND_SECTION_VALUES.has(item.value)),
+    FIND_NAV_ITEM,
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
@@ -1736,264 +1752,6 @@
     );
   }
 
-  function CurateHypothesis({ onOpenProgress }) {
-    const [profile, setProfile] = React.useState(null);
-    const [suggestions, setSuggestions] = React.useState(null);
-    const [round, setRound] = React.useState(null);
-    const [index, setIndex] = React.useState(0);
-    const [verdict, setVerdict] = React.useState(null);
-    const [busy, setBusy] = React.useState(false);
-    const [loadError, setLoadError] = React.useState("");
-    const { flash, setFlash, pending, setPending, error, setError, commit } = usePickAnswers({});
-    useCuratorActivity("curate-hypothesis", !profile && !loadError, "Loading candidate tags…");
-
-    React.useEffect(() => {
-      let active = true;
-      operation({ operation: "get_taste_profile" }).then(
-        (value) => {
-          if (!active) return;
-          setProfile(value.items);
-          loadSuggestions(value.items);
-        },
-        (failure) => active && setLoadError(failure.message)
-      );
-      return () => { active = false; };
-    }, []);
-
-    async function loadSuggestions(items) {
-      // Seed from the tags the model is least sure about — low confidence over
-      // a large body of scenes — rather than the ones already rated low. An
-      // uncertain tag is where a handful of comparisons resolves the most.
-      const uncertain = (items || [])
-        .filter((item) => item.direct_value === null && Number(item.scene_count) >= 10)
-        .sort((left, right) =>
-          left.confidence - right.confidence || Number(right.scene_count) - Number(left.scene_count)
-        )
-        .slice(0, 5);
-      if (!uncertain.length) {
-        setSuggestions([]);
-        return;
-      }
-      const results = await Promise.all(uncertain.map((tag) =>
-        operation({ operation: "get_tag_context_candidates", tag_id: tag.tag_id, min_support: 20 })
-          .then((value) => value.items.map((item) => ({
-            base_tag_id: tag.tag_id,
-            base_name: tag.name,
-            base_confidence: tag.confidence,
-            context_tag_id: item.tag_id,
-            context_name: item.name,
-            cooccurrence: item.cooccurrence,
-            contrast: item.contrast,
-          })))
-          .catch(() => [])
-      ));
-      const flat = results.flat();
-      flat.sort((a, b) =>
-        (a.contrast === null ? 1 : 0) - (b.contrast === null ? 1 : 0)
-        || (b.contrast ?? -Infinity) - (a.contrast ?? -Infinity)
-        || (b.cooccurrence - a.cooccurrence)
-      );
-      const perBase = {};
-      const capped = [];
-      for (const suggestion of flat) {
-        if ((perBase[suggestion.base_tag_id] || 0) >= 3) continue;
-        perBase[suggestion.base_tag_id] = (perBase[suggestion.base_tag_id] || 0) + 1;
-        capped.push(suggestion);
-        if (capped.length >= 8) break;
-      }
-      setSuggestions(capped);
-    }
-
-    async function start(baseTag, contextTag) {
-      setBusy(true);
-      setError("");
-      try {
-        const value = await operation({
-          operation: "get_curation_picks",
-          dimension: "tag",
-          budget: CURATE_STREAM_BUDGET,
-          base_tag_id: baseTag,
-          context_tag_id: contextTag,
-        });
-        setRound(value);
-        setIndex(0);
-        setVerdict(null);
-      } catch (failure) {
-        setError(failure.message);
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    const pair = round && round.pairs[index];
-
-    function answer(value) {
-      if (flash || !pair) return;
-      setFlash({ pairId: pair.pair_id, winner: value });
-    }
-
-    function back() {
-      if (!pending || index === 0) return;
-      setPending(null);
-      setIndex((current) => current - 1);
-    }
-
-    React.useEffect(() => {
-      if (!flash || !round) return;
-      const timer = setTimeout(() => {
-        const current = round.pairs[index];
-        setFlash(null);
-        if (!current) return;
-        commit(pending);
-        setPending(pickEntry(round.round_id, "tag", current.pair_id, flash.winner));
-        setIndex((value) => value + 1);
-      }, CURATE_FLASH_MS);
-      return () => clearTimeout(timer);
-    }, [flash]);
-
-    React.useEffect(() => {
-      function onKey(event) {
-        if (flash || !pair) return;
-        const key = { ArrowLeft: "a", ArrowRight: "b", ArrowUp: "tie", ArrowDown: "skip" }[event.key];
-        if (key) {
-          event.preventDefault();
-          answer(key);
-        } else if (event.key === "Backspace") {
-          event.preventDefault();
-          back();
-        }
-      }
-      window.addEventListener("keydown", onKey);
-      return () => window.removeEventListener("keydown", onKey);
-    }, [pair, flash, pending, index]);
-
-    // The run is over: settle the buffered answer, then read the verdict.
-    React.useEffect(() => {
-      if (!round || pair || verdict || flash) return;
-      let active = true;
-      (async () => {
-        await commit(pending);
-        setPending(null);
-        try {
-          const result = await operation({
-            operation: "get_curation_pair_verdict",
-            round_id: round.round_id,
-          });
-          if (active) setVerdict(result);
-        } catch (failure) {
-          if (active) setError(failure.message);
-        }
-      })();
-      return () => { active = false; };
-    }, [round, pair, verdict, flash]);
-
-    if (round) {
-      return React.createElement(
-        "div",
-        { className: "curator-pick" },
-        React.createElement(
-          "div",
-          { className: "curator-curate-batch-header" },
-          React.createElement("strong", null, `${(round.base_tag && round.base_tag.name) || "?"} + ${(round.context_tag && round.context_tag.name) || "?"}`),
-          React.createElement("span", null, `${Math.min(index, round.pairs.length)}/${round.pairs.length} compared`),
-          React.createElement(Button, { size: "sm", variant: "link", onClick: () => { setRound(null); setVerdict(null); setIndex(0); } }, "Test something else")
-        ),
-        error && React.createElement("div", { className: "alert alert-danger" }, error),
-        round.pairs.length === 0 && React.createElement("p", null, "No matched pairs for this idea — the library has too few scenes on one side of it. Try another pairing."),
-        pair && React.createElement(PickStage, {
-          pair,
-          flash,
-          onAnswer: answer,
-          onBack: back,
-          canGoBack: Boolean(pending) && index > 0,
-          status: `${index} of ${round.pairs.length} compared`,
-        }),
-        verdict && React.createElement(HypothesisVerdict, { verdict, round, onOpenProgress })
-      );
-    }
-
-    return React.createElement(
-      "div",
-      { className: "curator-curate-started" },
-      React.createElement("p", null, "An idea is a pairing: a tag you want to understand, plus another tag that might change how it lands. Curator matches scenes so only that one difference varies, then asks you to choose."),
-      loadError && React.createElement("div", { className: "alert alert-danger" }, loadError),
-      error && React.createElement("div", { className: "alert alert-danger" }, error),
-      suggestions === null && !loadError && React.createElement("div", { role: "status" }, "Looking for ideas worth testing…"),
-      suggestions && suggestions.length === 0 && React.createElement(
-        "div",
-        { className: "alert alert-info" },
-        "No ideas to suggest yet — Curator needs a few more rated scenes before it can tell which tags it is unsure about. The Stream is the fastest way to get there."
-      ),
-      suggestions && suggestions.length > 0 && React.createElement(
-        "div",
-        { className: "curator-curate-quick" },
-        React.createElement(
-          "div",
-          { className: "curator-curate-quick-block" },
-          React.createElement("strong", null, "Ideas Curator is unsure about"),
-          suggestions.map((suggestion) => React.createElement(
-            "div",
-            { key: `pick-${suggestion.base_tag_id}:${suggestion.context_tag_id}`, className: "curator-curate-suggestion" },
-            React.createElement("span", { className: "curator-curate-suggestion-text" },
-              `${suggestion.base_name} + ${suggestion.context_name}`,
-              React.createElement("small", null, `Confidence ${Number(suggestion.base_confidence).toFixed(2)} on ${suggestion.base_name}`)
-            ),
-            React.createElement(Button, { size: "sm", variant: "primary", disabled: busy, onClick: () => start(suggestion.base_tag_id, suggestion.context_tag_id) }, busy ? "Matching…" : "Test this")
-          ))
-        )
-      )
-    );
-  }
-
-  function HypothesisVerdict({ verdict, round, onOpenProgress }) {
-    const byCell = {};
-    (verdict.cells || []).forEach((cell) => { byCell[cell.cell] = cell; });
-    const base = round.base_tag && round.base_tag.name;
-    const context = round.context_tag && round.context_tag.name;
-    const withCtx = byCell["L&T"] || { wins: 0 };
-    const withoutCtx = byCell["L&!T"] || { wins: 0 };
-    const total = withCtx.wins + withoutCtx.wins;
-    const withLabel = base && context ? `${base} + ${context}` : "With";
-    const withoutLabel = base && context ? `${base} without ${context}` : "Without";
-    let headline;
-    if (withCtx.wins > withoutCtx.wins) {
-      headline = `You preferred ${withLabel} — ${withCtx.wins} to ${withoutCtx.wins} across ${total} comparisons.`;
-    } else if (withoutCtx.wins > withCtx.wins) {
-      headline = `You preferred ${withoutLabel} — ${withoutCtx.wins} to ${withCtx.wins} across ${total} comparisons.`;
-    } else {
-      headline = `No clear preference either way — ${total} comparisons.`;
-    }
-    const rate = (wins) => (total > 0 ? wins / total : 0);
-    return React.createElement(
-      "div",
-      { className: "curator-curate-verdict" },
-      React.createElement("h3", null, "What that told us"),
-      React.createElement("p", { className: "curator-pick-verdict-headline" }, headline),
-      verdict.n_round < verdict.n_answered && React.createElement("p", { className: "curator-pick-verdict-summary" },
-        `Counting every time you have tested this pairing (${verdict.n_round} of them just now).`
-      ),
-      React.createElement(
-        "div",
-        { className: "curator-pick-verdict-rows" },
-        [[withLabel, withCtx.wins], [withoutLabel, withoutCtx.wins]].map(([label, wins]) => React.createElement(
-          "div",
-          { key: label, className: "curator-pick-verdict-row" },
-          React.createElement("span", { className: "curator-pick-verdict-row-label" }, label),
-          React.createElement(
-            "div",
-            { className: "curator-pick-verdict-track" },
-            React.createElement("div", { className: "curator-pick-verdict-fill", style: { width: `${Math.round(rate(wins) * 100)}%` } })
-          ),
-          React.createElement("span", { className: "curator-pick-verdict-count" }, wins)
-        ))
-      ),
-      React.createElement("p", { className: "curator-pick-verdict-note" },
-        "Pairs were matched so only this one relationship varied. Every answer also teaches the model about the tags, performers, and studios the scenes carried."
-      ),
-      React.createElement(Button, { size: "sm", variant: "secondary", onClick: onOpenProgress }, "See what this moved")
-    );
-  }
-
   function CurateProgress() {
     const [verdict, setVerdict] = React.useState(null);
     const [impact, setImpact] = React.useState(null);
@@ -2070,17 +1828,15 @@
     );
   }
 
-  function CuratePanel({ section, onSelectSection }) {
-    const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
+  function CuratePanel({ section, onSelectSection, onGoto }) {
+    const active = CURATE_SECTIONS.find((item) => !item.goto && item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
       stream: () => React.createElement(CurateStream),
-      hypothesis: () => React.createElement(CurateHypothesis, { onOpenProgress: () => onSelectSection("progress") }),
-      sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialStatus: "unanswered" }),
       progress: () => React.createElement(CurateProgress),
     };
     return React.createElement(
       SectionShell,
-      { items: CURATE_SECTIONS, active, onSelect: onSelectSection, navLabel: "Curate sections" },
+      { items: CURATE_SECTIONS, active, onSelect: onSelectSection, navLabel: "Curate sections", onGoto },
       bodies[active.value]()
     );
   }
@@ -3967,6 +3723,8 @@
   function TasksPanel() {
     const [jobs, setJobs] = React.useState([]);
     const [error, setError] = React.useState("");
+    const [running, setRunning] = React.useState("");
+    const [message, setMessage] = React.useState("");
     function refresh() {
       operation({ operation: "get_job_status" }).then(
         (result) => { setError(""); setJobs(result.jobs || []); },
@@ -3978,11 +3736,31 @@
       const timer = setInterval(refresh, 5000);
       return () => clearInterval(timer);
     }, []);
+    async function start(taskName) {
+      setRunning(taskName);
+      setMessage("");
+      try {
+        await runTask(taskName);
+        setMessage("Task started — progress appears below.");
+        setTimeout(refresh, 1000);
+      } catch (failure) {
+        setMessage(failure.message);
+      } finally {
+        setRunning("");
+      }
+    }
     return React.createElement(
       "div",
       { className: "curator-tasks-panel" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       React.createElement("p", null, "Tasks run in Curator's own background worker, so they keep going even after the Stash-side job completes — progress and results are shown here."),
+      React.createElement(
+        "div",
+        { className: "curator-tasks-runnow" },
+        React.createElement("span", null, "Run now"),
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(running), onClick: () => start("Sync and build recommendations") }, running === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations")
+      ),
+      message && React.createElement("p", { className: "curator-header-message", role: "status" }, message),
       jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
       React.createElement(
         "ul",
@@ -4016,7 +3794,7 @@
     );
   }
 
-  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize }) {
+  function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize, onOpenManage, manageDescription }) {
     const routeLocation = useLocation();
     const [jobs, setJobs] = React.useState([]);
     const [health, setHealth] = React.useState(null);
@@ -4220,8 +3998,7 @@
         React.createElement(
           "div",
           { className: "curator-task-buttons" },
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.", "aria-label": "Sync library changes and refresh recommendations", onClick: () => start("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync })),
-          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: "Force a recommendation refresh from already-synced data. Does not contact Stash.", "aria-label": "Rebuild recommendations without syncing Stash", onClick: () => start("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
+          React.createElement(Button, { className: "curator-icon-button", size: "sm", title: manageDescription || "Manage — settings, tasks, taste profile, backups, and diagnostics.", "aria-label": "Open Manage", onClick: onOpenManage }, React.createElement(FontAwesomeIcon, { icon: faWrench })),
           React.createElement(Button, { className: "curator-icon-button", size: "sm", title: theme === "light" ? "Switch to dark theme" : "Switch to light theme", "aria-label": theme === "light" ? "Switch to dark theme" : "Switch to light theme", onClick: onToggleTheme }, React.createElement(FontAwesomeIcon, { icon: theme === "light" ? faMoon : faSun })),
           cardSizeControl
         )
@@ -4576,7 +4353,7 @@
 
   // The side-menu shell shared by Manage and Curate: a section list on the
   // left, the active section's body on the right.
-  function SectionShell({ items, active, onSelect, navLabel, children }) {
+  function SectionShell({ items, active, onSelect, navLabel, children, onGoto }) {
     return React.createElement(
       "div",
       { className: "curator-manage-shell" },
@@ -4589,8 +4366,8 @@
             key: item.value,
             type: "button",
             className: "curator-manage-item",
-            "aria-current": item.value === active.value ? "page" : undefined,
-            onClick: () => onSelect(item.value),
+            "aria-current": item.goto ? undefined : item.value === active.value ? "page" : undefined,
+            onClick: () => (item.goto ? onGoto(item.goto) : onSelect(item.value)),
             title: item.description,
           },
           React.createElement("span", { className: "curator-manage-item-icon" }, React.createElement(FontAwesomeIcon, { icon: item.icon })),
@@ -4646,8 +4423,9 @@
       : null;
     // Curate has its own sections on the same ?section= param. Resolve against
     // Curate's own list so a section left over from Manage cannot leak in.
+    // Goto-only entries (cross-view links) never become a URL section.
     const curateSection = lane === "curate"
-      ? (CURATE_SECTIONS.some((item) => item.value === route.get("section"))
+      ? (CURATE_SECTIONS.some((item) => !item.goto && item.value === route.get("section"))
         ? route.get("section")
         : CURATE_SECTIONS[0].value)
       : null;
@@ -4875,12 +4653,12 @@
             { variant: "tabs", role: "tablist", className: "curator-tabs" },
             TOP_NAV_ITEMS.map((option) => {
               const active = option.value === "recommendations" ? laneByValue.has(lane)
-                : option.value === "manage" ? lane === "manage"
+                : option.value === "find" ? FIND_SECTION_VALUES.has(lane)
                 : lane === option.value;
               const onClick = option.value === "recommendations"
                 ? () => { if (!laneByValue.has(lane)) openView("for_you"); }
-                : option.value === "manage"
-                  ? () => { if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value); }
+                : option.value === "find"
+                  ? () => { if (!FIND_SECTION_VALUES.has(lane)) openView(FIND_SECTIONS[0].value); }
                   : () => openView(option.value);
               return React.createElement(
                 Nav.Link,
@@ -4891,7 +4669,7 @@
             })
           )
         ),
-        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize })
+        React.createElement(CuratorControls, { onRefresh: refresh, theme, onToggleTheme: toggleTheme, cardSize, onChangeCardSize: changeCardSize, onOpenManage: () => openManage(currentSection || MAINTENANCE_ITEMS[0].value), manageDescription: MANAGE_NAV_ITEM.description })
       ),
       laneByValue.has(lane) && React.createElement(
         "div",
@@ -4912,6 +4690,23 @@
           React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: laneItem.icon })),
           React.createElement("span", { className: "curator-lane-card-name" }, laneItem.label),
           React.createElement("span", { className: "curator-lane-card-desc" }, laneItem.description)
+        ))
+      ),
+      FIND_SECTION_VALUES.has(lane) && React.createElement(
+        "div",
+        { className: "curator-find-switcher", role: "tablist", "aria-label": "Find content" },
+        FIND_SECTIONS.map((section) => React.createElement(
+          "button",
+          {
+            key: section.value,
+            type: "button",
+            className: "curator-find-tab",
+            "aria-pressed": lane === section.value,
+            onClick: () => openView(section.value),
+            title: section.description,
+          },
+          React.createElement(FontAwesomeIcon, { icon: section.icon }),
+          React.createElement("span", null, section.label)
         ))
       ),
       laneOption && lane !== "curate" && React.createElement(
@@ -4964,7 +4759,7 @@
       }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
-      lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate }),
+      lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, onGoto: () => openManage("taste") }),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so

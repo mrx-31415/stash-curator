@@ -189,8 +189,9 @@ def test_curator_nav_collapse_and_manage_shell_are_click_driven(page: Page, base
     page.wait_for_timeout(500)
     assert "view=stretch" in page.url
 
-    # Manage: open it, pick a section, confirm the detail pane swaps.
-    page.locator(".curator-nav-manage").click()
+    # Manage: open it, pick a section, confirm the detail pane swaps. Manage
+    # lives in the header button now (issue #193), not a primary nav pill.
+    page.get_by_role("button", name="Open Manage").click()
     page.wait_for_timeout(800)
     assert "view=manage" in page.url
     backups_item = page.locator(".curator-manage-item").filter(
@@ -201,8 +202,8 @@ def test_curator_nav_collapse_and_manage_shell_are_click_driven(page: Page, base
     assert "section=backups" in page.url
     assert "Backups" in page.locator(".curator-manage-detail-head").inner_text()
 
-    # Clicking the already-active Manage pill must not drop the section.
-    page.locator(".curator-nav-manage").click()
+    # Clicking the already-active Manage button must not drop the section.
+    page.get_by_role("button", name="Open Manage").click()
     page.wait_for_timeout(500)
     assert "section=backups" in page.url
 

@@ -406,13 +406,21 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "const routeLocation = useLocation();" in source
     assert "history.push({ pathname: routeLocation.pathname, search: route.toString() });" in source
     assert ": () => openView(option.value);" in source
-    # The Recommendations and Manage pills must no-op when a lane/section
-    # under them is already active, or clicking the parent pill while on
-    # e.g. Best Bets would wrongly reset to For You (GH #150 Package 3).
+    # The Recommendations pill must no-op when a lane under it is already
+    # active, or clicking the parent pill while on e.g. Best Bets would
+    # wrongly reset to For You (GH #150 Package 3).
     assert '? () => { if (!laneByValue.has(lane)) openView("for_you"); }' in source
-    assert (
-        'if (lane !== "manage") openManage(currentSection || MAINTENANCE_ITEMS[0].value)' in source
-    )
+    # Manage moved out of the top nav into a header button (issue #193); the
+    # button opens the current Manage section, and openManage itself no-ops
+    # when already there.
+    assert "onOpenManage: () => openManage(currentSection || MAINTENANCE_ITEMS[0].value)" in source
+    assert "function openManage(section)" in source
+    # Find is a wrapper over Similar / Expand / Performer Hunt (issue #192).
+    assert 'value: "find"' in source
+    assert "FIND_SECTION_VALUES.has(lane)" in source
+    assert "openView(FIND_SECTIONS[0].value)" in source
+    assert 'className: "curator-find-switcher"' in source
+    assert 'className: "curator-find-tab"' in source
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
     # cannot leak into another panel, e.g. the expand performer filter.
@@ -438,12 +446,14 @@ def test_recent_recommendations_reuse_qualified_impression_history() -> None:
 def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    # One control, two homes: Manage > Taste Profile shows the full list, and
-    # Curate > Tag sentiment mounts the same panel as a "Needs answer" queue.
+    # One control, one home: Manage > Taste Profile is the canonical per-tag
+    # surface (inferred + direct answers). Curate no longer mounts a second
+    # copy; it points at Manage > Taste Profile (issue #189).
     assert 'function TasteProfilePanel({ embedded = false, initialStatus = "all" } = {})' in source
+    assert "React.createElement(TasteProfilePanel, { embedded: true })" in source
     assert (
         'React.createElement(TasteProfilePanel, { embedded: true, initialStatus: "unanswered" })'
-        in source
+        not in source
     )
     assert 'operation: "get_taste_profile"' in source
     assert 'operation: "submit_tag_preferences"' in source
@@ -459,6 +469,10 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'value: "confidence"' in source
     assert 'value: "scenes"' in source
     assert 'if (sort !== "suggested")' in source
+    # Curate links to the canonical surface instead of duplicating it.
+    assert 'label: "Tag sentiment"' in source
+    assert 'goto: "taste"' in source
+    assert 'onGoto: () => openManage("taste")' in source
 
 
 def test_curate_lane_renders_sectioned_stream() -> None:
@@ -469,8 +483,16 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     # between "Random round" and "Pick-test a hypothesis", which are the same
     # activity with a different pair-selection filter.
     assert "const CURATE_SECTIONS = [" in source
-    for section in ("stream", "hypothesis", "sentiment", "progress"):
+    for section in ("stream", "progress"):
         assert f'value: "{section}"' in source
+    # "Test an idea" (hypothesis) and the duplicate "Tag sentiment" section are
+    # gone (issues #191, #189): tag-sentiment teaching is one surface in Manage.
+    curate_sections_block = source.split("const CURATE_SECTIONS = [", 1)[1].split("];", 1)[0]
+    assert 'value: "hypothesis"' not in curate_sections_block
+    assert 'value: "sentiment"' not in curate_sections_block
+    # The Manage "Sentiment review" maintenance item is a different surface and
+    # must survive the Curate section removal.
+    assert 'label: "Sentiment review"' in source
     assert 'React.createElement("strong", null, "Random round")' not in source
     assert 'variant: "primary", disabled: picksBusy, onClick: () => generatePicks' not in source
     assert "curateTab" not in source
@@ -525,14 +547,12 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     assert 'operation: "get_curation_picks"' in source
     assert 'operation: "submit_curation_picks"' in source
     assert 'operation: "get_curation_pair_verdict"' in source
-    assert 'operation: "get_tag_context_candidates"' in source
     assert 'operation: "get_curation_impact"' in source
     assert "ImpactReport" in source
-    assert "loadSuggestions" in source
-    # Hypothesis candidates come from tags the model is unsure about, not the
-    # ones already rated low.
-    assert "Ideas Curator is unsure about" in source
-    assert "left.confidence - right.confidence" in source
+    # The dropped "Test an idea" section's suggestion plumbing is gone.
+    assert 'operation: "get_tag_context_candidates"' not in source
+    assert "loadSuggestions" not in source
+    assert "Ideas Curator is unsure about" not in source
 
     assert "CurateNudge" in source
     assert "CURATE_NUDGE_KEY" in source
