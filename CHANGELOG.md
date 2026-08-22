@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.3](https://github.com/mrx-31415/stash-curator/compare/v0.19.2...v0.19.3) (2026-08-22)
+
+
+### Bug Fixes
+
+* **plugin:** size badge font at 0.625rem and unify score bar tracks ([#252](https://github.com/mrx-31415/stash-curator/issues/252)) ([76d0a3a](https://github.com/mrx-31415/stash-curator/commit/76d0a3a7d6cc1482d4c52f1d31dd2d94509f6407))
+
 ## [0.19.2](https://github.com/mrx-31415/stash-curator/compare/v0.19.1...v0.19.2) (2026-08-22)
 
 
