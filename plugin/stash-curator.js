@@ -60,7 +60,7 @@
       value: "curate",
       label: "Curate",
       icon: faBullseye,
-      description: "Teach the model: an endless stream of scene comparisons, focused tests, tag sentiment, and what it all moved.",
+      description: "Teach the model: scene comparisons, direct tag sentiment, and what it all moved.",
     },
     {
       value: "similar",
@@ -79,13 +79,6 @@
       label: "Performer Hunt",
       icon: faCrosshairs,
       description: "StashDB performers and their scenes, checked against your library.",
-    },
-    {
-      value: "taste",
-      label: "Taste Profile",
-      icon: faTag,
-      maintenance: true,
-      description: "Review what Curator has inferred and directly teach it how you feel about tags.",
     },
     {
       value: "sentiment",
@@ -164,7 +157,7 @@
     value: "manage",
     label: "Manage",
     icon: faWrench,
-    description: "Feedback history, taste profile, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
+    description: "Feedback history, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
   };
   // Find groups the three "find new content" surfaces (Similar, Expand,
   // Performer Hunt) under one primary nav item with inner tabs (issue #192).
@@ -184,33 +177,34 @@
   // and "Pick-test a hypothesis" side by side, which are the same activity with
   // a different pair-selection filter — presenting a selection policy as if it
   // were a mode is what made "which one do I use?" unanswerable. These are
-  // genuinely different jobs, so they get the same side menu Manage uses. The
+  // Curate's own sections. Before the split the view offered "Random round"
+  // and "Pick-test a hypothesis" side by side, which are the same activity
+  // with a different pair-selection filter — presenting a selection policy as
+  // if it were a mode is what made "which one do I use?" unanswerable. The
   // "Test an idea" section (a tag-focused pair filter on the same stream
   // machinery) was dropped as a distinct surface (issue #191): Stream already
-  // covers pair comparison, and the hypothesis framing added a mode without a
-  // different capability.
+  // covers pair comparison. Tag sentiment is a real section here (issue
+  // #241): direct tag teaching lives under Curate, not Manage. Section URL
+  // values stay stable (stream / sentiment / progress) so old links keep
+  // working; only labels and order changed.
   const CURATE_SECTIONS = [
     {
       value: "stream",
-      label: "Stream",
+      label: "Pair picks",
       icon: faBullseye,
-      description: "An endless run of two-scene comparisons. Every pick teaches the model; stop whenever you like.",
+      description: "Endless two-scene comparisons; every pick teaches the model.",
+    },
+    {
+      value: "sentiment",
+      label: "Tag sentiment",
+      icon: faTag,
+      description: "Tell Curator how you feel about a tag directly.",
     },
     {
       value: "progress",
-      label: "Progress",
+      label: "Impact",
       icon: faChartLine,
-      description: "What your comparisons add up to, and what the latest model build moved.",
-    },
-    // Direct tag teaching is one surface, not two: Manage → Taste Profile is
-    // the canonical per-tag sentiment view (inferred + direct answers). Curate
-    // points at it instead of mounting a second copy of the same control.
-    {
-      value: "goto-taste",
-      label: "Tag sentiment",
-      icon: faTag,
-      goto: "taste",
-      description: "Direct tag teaching lives in Manage → Taste Profile — one surface, one set of answers.",
+      description: "What your curation added up to, and what the model build moved.",
     },
   ];
   const TOP_NAV_ITEMS = [
@@ -1206,11 +1200,13 @@
 
   const TASTE_PROFILE_PAGE_SIZE = 30;
   // `initialStatus` lets Curate open this as a queue ("Needs answer") rather
-  // than the full ~1000-tag list Manage shows.
-  function TasteProfilePanel({ embedded = false, initialStatus = "all" } = {}) {
+  // than the full ~1000-tag list Manage shows. `initialQuery` seeds the
+  // search box so the Impact view's "Fix in Tag sentiment" action lands on
+  // the tag in question.
+  function TasteProfilePanel({ embedded = false, initialStatus = "all", initialQuery = "" } = {}) {
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
-    const [query, setQuery] = React.useState("");
+    const [query, setQuery] = React.useState(initialQuery);
     const [sort, setSort] = React.useState("suggested");
     const [status, setStatus] = React.useState(initialStatus);
     const [page, setPage] = useUrlPage("page_taste");
@@ -1256,7 +1252,7 @@
       "section",
       { className: "curator-taste", "aria-labelledby": embedded ? undefined : "curator-taste-title" },
       !embedded && React.createElement("h2", { id: "curator-taste-title" }, "Taste Profile"),
-      !embedded && React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
+      React.createElement("p", null, "Declared answers are strong evidence, not hard exclusions. Clear an answer to return to behavior-derived inference."),
       React.createElement(
         "div",
         { className: "curator-taste-toolbar" },
@@ -1755,13 +1751,14 @@
     );
   }
 
-  function CurateProgress() {
+  function CurateProgress({ onFixTag }) {
     const [verdict, setVerdict] = React.useState(null);
     const [impact, setImpact] = React.useState(null);
+    const [profile, setProfile] = React.useState(null);
     const [error, setError] = React.useState("");
     const [applying, setApplying] = React.useState(false);
     const last = React.useRef(readLastRound()).current;
-    useCuratorActivity("curate-progress", !verdict && !error && Boolean(last), "Loading your progress…");
+    useCuratorActivity("curate-progress", !verdict && !error && Boolean(last), "Loading your impact…");
 
     const refresh = React.useCallback(async () => {
       if (last) {
@@ -1779,6 +1776,11 @@
       } catch (_) {
         // Impact needs two model builds and their artifacts; absence is normal.
       }
+      try {
+        setProfile(await operation({ operation: "get_taste_profile" }));
+      } catch (_) {
+        // Needs a published model; the verdict and impact sections still work.
+      }
     }, [last]);
 
     React.useEffect(() => { refresh(); }, [refresh]);
@@ -1794,11 +1796,31 @@
     }
 
     const items = (verdict && verdict.items) || [];
+    const profileItems = (profile && profile.items) || [];
+    const answeredTags = profileItems.filter((tag) => tag.direct_value !== null).length;
+    const blockedTags = profileItems.filter((tag) => tag.direct_blocked).length;
+    // Declared answers that still disagree with the model's inference are the
+    // fastest teaching opportunities; surface the biggest gaps with a jump
+    // straight to that tag's control in Tag sentiment.
+    const divergences = profileItems
+      .filter((tag) => tag.direct_value !== null
+        && Math.abs(Number(tag.direct_value) - Number(tag.inferred_value)) >= 0.3)
+      .sort((left, right) =>
+        Math.abs(Number(right.direct_value) - Number(right.inferred_value))
+        - Math.abs(Number(left.direct_value) - Number(left.inferred_value)))
+      .slice(0, 12);
     return React.createElement(
       "div",
       { className: "curator-curate-verdict" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      !last && React.createElement("div", { className: "alert alert-info" }, "No comparisons yet. Answer a few in Stream and this fills in."),
+      !last && profileItems.length === 0 && !(impact && impact.available) && React.createElement("div", { className: "alert alert-info" }, "No comparisons yet. Answer a few in Pair picks and this fills in."),
+      (verdict || profileItems.length > 0 || (impact && impact.available)) && React.createElement(
+        "div",
+        { className: "curator-impact-summary" },
+        verdict && React.createElement("span", null, `${verdict.n_answered} comparisons answered`),
+        profileItems.length > 0 && React.createElement("span", null, `${answeredTags} tags answered${blockedTags > 0 ? ` · ${blockedTags} blocked` : ""}`),
+        impact && impact.available && React.createElement("span", null, `Model built ${formatTimeAgo(impact.published_at_ms)}`)
+      ),
       verdict && React.createElement("p", { className: "curator-pick-verdict-summary" },
         `${verdict.n_answered} comparisons answered so far · win rates for the tags that differed between scenes`
       ),
@@ -1817,6 +1839,21 @@
       items.length > 0 && React.createElement("p", { className: "curator-pick-verdict-note" },
         "Rates start near 50% and separate as comparisons accumulate, so an early lead is a hint rather than a verdict."
       ),
+      divergences.length > 0 && React.createElement(
+        "section",
+        { className: "curator-sentiment-divergence" },
+        React.createElement("h3", null, "Where your answers and the model disagree"),
+        React.createElement("p", { className: "curator-impact-weak" }, "Tags you answered directly where the model's inference still differs by at least 0.3. Straightening these out teaches the model fastest."),
+        divergences.map((tag) => React.createElement(
+          "div",
+          { key: tag.tag_id, className: "curator-sentiment-divergence-row" },
+          React.createElement("div", { className: "curator-sentiment-divergence-copy" },
+            React.createElement("strong", null, tag.name),
+            React.createElement("span", null, `Declared ${formatSigned(Number(tag.direct_value))} · inferred ${formatSigned(Number(tag.inferred_value))} · confidence ${tag.confidence.toFixed(2)}`)
+          ),
+          React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => onFixTag(tag.tag_id) }, "Fix in Tag sentiment")
+        ))
+      ),
       React.createElement(
         "div",
         { className: "curator-pick-controls" },
@@ -1831,15 +1868,42 @@
     );
   }
 
-  function CuratePanel({ section, onSelectSection, onGoto }) {
-    const active = CURATE_SECTIONS.find((item) => !item.goto && item.value === section) || CURATE_SECTIONS[0];
+  function CuratePanel({ section, onSelectSection, sentimentQuery }) {
+    const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
       stream: () => React.createElement(CurateStream),
-      progress: () => React.createElement(CurateProgress),
+      sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery }),
+      progress: () => React.createElement(CurateProgress, { onFixTag: (tagId) => onSelectSection("sentiment", { sentTag: tagId }) }),
     };
     return React.createElement(
-      SectionShell,
-      { items: CURATE_SECTIONS, active, onSelect: onSelectSection, navLabel: "Curate sections", onGoto },
+      "div",
+      { className: "curator-curate" },
+      React.createElement(
+        "div",
+        { className: "curator-curate-switcher", role: "tablist", "aria-label": "Curate sections" },
+        CURATE_SECTIONS.map((item) => React.createElement(
+          "button",
+          {
+            key: item.value,
+            type: "button",
+            className: "curator-lane-card",
+            style: { "--lc": "var(--curator-hue-curate)" },
+            "aria-pressed": item.value === active.value,
+            "aria-label": item.label,
+            onClick: () => onSelectSection(item.value),
+            title: item.description,
+          },
+          React.createElement("span", { className: "curator-lane-card-icon" }, React.createElement(FontAwesomeIcon, { icon: item.icon })),
+          React.createElement("span", { className: "curator-lane-card-name" }, item.label),
+          React.createElement("span", { className: "curator-lane-card-desc" }, item.description)
+        ))
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-curate-head" },
+        React.createElement("h2", null, active.label),
+        React.createElement("p", null, active.description)
+      ),
       bodies[active.value]()
     );
   }
@@ -4427,7 +4491,6 @@
   // mounted unmodified — this is pure relocation, not a rebuild.
   const MANAGE_BODIES = {
     feedback: () => React.createElement(FeedbackHistoryPanel),
-    taste: () => React.createElement(TasteProfilePanel, { embedded: true }),
     sentiment: () => React.createElement(ScoreReviewPanel),
     history: () => React.createElement(RecommendationHistoryPanel),
     backups: () => React.createElement(BackupPanel),
@@ -4438,9 +4501,10 @@
     tasks: () => React.createElement(TasksPanel),
   };
 
-  // The side-menu shell shared by Manage and Curate: a section list on the
-  // left, the active section's body on the right.
-  function SectionShell({ items, active, onSelect, navLabel, children, onGoto }) {
+  // The side-menu shell used by Manage: a section list on the left, the
+  // active section's body on the right. (Curate uses the lane-card switcher
+  // instead — see CuratePanel.)
+  function SectionShell({ items, active, onSelect, navLabel, children }) {
     return React.createElement(
       "div",
       { className: "curator-manage-shell" },
@@ -4453,8 +4517,8 @@
             key: item.value,
             type: "button",
             className: "curator-manage-item",
-            "aria-current": item.goto ? undefined : item.value === active.value ? "page" : undefined,
-            onClick: () => (item.goto ? onGoto(item.goto) : onSelect(item.value)),
+            "aria-current": item.value === active.value ? "page" : undefined,
+            onClick: () => onSelect(item.value),
             title: item.description,
           },
           React.createElement("span", { className: "curator-manage-item-icon" }, React.createElement(FontAwesomeIcon, { icon: item.icon })),
@@ -4510,9 +4574,8 @@
       : null;
     // Curate has its own sections on the same ?section= param. Resolve against
     // Curate's own list so a section left over from Manage cannot leak in.
-    // Goto-only entries (cross-view links) never become a URL section.
     const curateSection = lane === "curate"
-      ? (CURATE_SECTIONS.some((item) => !item.goto && item.value === route.get("section"))
+      ? (CURATE_SECTIONS.some((item) => item.value === route.get("section"))
         ? route.get("section")
         : CURATE_SECTIONS[0].value)
       : null;
@@ -4693,11 +4756,14 @@
       for (const param of ["performer", "label", "id", "type"]) route.delete(param);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
-    function openCurate(section) {
-      if (lane === "curate" && section === curateSection) return;
+    function openCurate(section, extra) {
+      if (lane === "curate" && section === curateSection && (!extra || !extra.sentTag)) return;
       setFollowUps([]);
       route.set("view", "curate");
       if (section) route.set("section", section); else route.delete("section");
+      // The Impact view's "Fix in Tag sentiment" jumps pre-seed the panel's
+      // search via ?sent_tag=; plain section switches drop it again.
+      if (extra && extra.sentTag) route.set("sent_tag", extra.sentTag); else route.delete("sent_tag");
       for (const param of ["performer", "label", "id", "type"]) route.delete(param);
       history.push({ pathname: routeLocation.pathname, search: route.toString() });
     }
@@ -4849,7 +4915,7 @@
       }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
-      lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, onGoto: () => openManage("taste") }),
+      lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
       lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
       lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so
