@@ -59,7 +59,13 @@ def _performer_name(connection: sqlite3.Connection, performer_id: str) -> str:
 
 
 def _similar_explanation(
-    similarity: float, appeal_raw: float, relationships: tuple[str, ...]
+    similarity: float,
+    content_value: float,
+    performer_value: float,
+    structure: float,
+    same_studio: bool,
+    appeal_raw: float,
+    relationships: tuple[str, ...],
 ) -> dict[str, object]:
     labels = {
         "same_performer": "Same performer",
@@ -76,9 +82,41 @@ def _similar_explanation(
         else "Closest available content match.",
         "components": [
             {
-                "name": "content_similarity",
+                "name": "similarity",
                 "label": "Similarity",
                 "value": similarity,
+                "scale": "0..1",
+                "direction": "positive",
+                "available": True,
+            },
+            {
+                "name": "content_similarity",
+                "label": "Content similarity",
+                "value": content_value,
+                "scale": "0..1",
+                "direction": "positive",
+                "available": True,
+            },
+            {
+                "name": "performer_match",
+                "label": "Performer match",
+                "value": performer_value,
+                "scale": "0..1",
+                "direction": "positive",
+                "available": True,
+            },
+            {
+                "name": "cast_structure",
+                "label": "Cast structure",
+                "value": structure,
+                "scale": "0..1",
+                "direction": "positive",
+                "available": True,
+            },
+            {
+                "name": "studio_match",
+                "label": "Studio match",
+                "value": float(same_studio),
                 "scale": "0..1",
                 "direction": "positive",
                 "available": True,
@@ -99,6 +137,17 @@ def _similar_explanation(
                 "direction": "positive",
                 "magnitude": 1.0,
                 "confidence": 1.0,
+            }
+            for value in relationships
+        ],
+        "evidence_rows": [
+            {
+                "code": value,
+                "label": labels.get(value, value),
+                "direction": "positive",
+                "magnitude": 1.0,
+                "confidence": 1.0,
+                "detail": "",
             }
             for value in relationships
         ],
@@ -329,7 +378,15 @@ class SimilarityService:
                         },
                     },
                     candidate_appeal,
-                    _similar_explanation(similarity, candidate_appeal, tuple(relationships)),
+                    _similar_explanation(
+                        similarity,
+                        content_value,
+                        performer_value,
+                        structure,
+                        same_studio,
+                        candidate_appeal,
+                        tuple(relationships),
+                    ),
                 )
             )
         ranked = sorted(results, key=lambda item: (-item.rank_score, item.entity_id))

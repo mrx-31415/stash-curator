@@ -52,10 +52,11 @@ func similarityResultJSON(r *similarityResult) jVal {
 	)
 }
 
-func similarExplanation(similarity, appealRaw float64, relationships []string) jVal {
+func similarExplanation(similarity, contentValue, performerValue, structure float64, sameStudio bool, appealRaw float64, relationships []string) jVal {
 	labels := map[string]string{"same_performer": "Same performer", "similar_performer": "Similar performer profile", "shared_content": "Shared content", "similar_structure": "Similar cast structure", "same_studio": "Same studio", "multi_hop": "Multi-hop performer connection"}
 	names := make([]string, 0, len(relationships))
 	reasons := jvArr()
+	evidenceRows := jvArr()
 	for _, value := range relationships {
 		label := labels[value]
 		if label == "" {
@@ -63,17 +64,26 @@ func similarExplanation(similarity, appealRaw float64, relationships []string) j
 		}
 		names = append(names, label)
 		reasons.arr = append(reasons.arr, jvObj(jvKey("code", jvStr(value)), jvKey("label", jvStr(label)), jvKey("direction", jvStr("positive")), jvKey("magnitude", jvFloat(1)), jvKey("confidence", jvFloat(1))))
+		evidenceRows.arr = append(evidenceRows.arr, jvObj(jvKey("code", jvStr(value)), jvKey("label", jvStr(label)), jvKey("direction", jvStr("positive")), jvKey("magnitude", jvFloat(1)), jvKey("confidence", jvFloat(1)), jvKey("detail", jvStr(""))))
 	}
 	summary := "Closest available content match."
 	if len(names) > 0 {
 		summary = "Related through " + strings.Join(names, ", ")
 	}
+	studioValue := 0.0
+	if sameStudio {
+		studioValue = 1.0
+	}
 	components := jvArr()
 	components.arr = append(components.arr,
-		jvObj(jvKey("name", jvStr("content_similarity")), jvKey("label", jvStr("Similarity")), jvKey("value", jvFloat(similarity)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("similarity")), jvKey("label", jvStr("Similarity")), jvKey("value", jvFloat(similarity)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("content_similarity")), jvKey("label", jvStr("Content similarity")), jvKey("value", jvFloat(contentValue)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("performer_match")), jvKey("label", jvStr("Performer match")), jvKey("value", jvFloat(performerValue)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("cast_structure")), jvKey("label", jvStr("Cast structure")), jvKey("value", jvFloat(structure)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
+		jvObj(jvKey("name", jvStr("studio_match")), jvKey("label", jvStr("Studio match")), jvKey("value", jvFloat(studioValue)), jvKey("scale", jvStr("0..1")), jvKey("direction", jvStr("positive")), jvKey("available", jvBool(true))),
 		jvObj(jvKey("name", jvStr("appeal")), jvKey("label", jvStr("Appeal")), jvKey("value", jvFloat(appealRaw)), jvKey("scale", jvStr("-1..1")), jvKey("direction", jvStr(direction(appealRaw))), jvKey("available", jvBool(true))),
 	)
-	return jvObj(jvKey("summary", jvStr(summary)), jvKey("components", components), jvKey("reasons", reasons))
+	return jvObj(jvKey("summary", jvStr(summary)), jvKey("components", components), jvKey("reasons", reasons), jvKey("evidence_rows", evidenceRows))
 }
 
 // similarityService mirrors SimilarityService.
@@ -748,7 +758,8 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		results = append(results, &similarityResult{
 			entityID: candidateID, similarity: similarity, appeal: appeal,
 			rankScore: rankScore, relationships: relationships, details: details,
-			appealRaw: candidateAppeal, explanation: similarExplanation(similarity, candidateAppeal, relationships),
+			appealRaw: candidateAppeal,
+			explanation: similarExplanation(similarity, contentValue, performerValue, structure, sameStudio, candidateAppeal, relationships),
 		})
 	}
 	sort.Slice(results, func(i, j int) bool {
