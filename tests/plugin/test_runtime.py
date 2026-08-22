@@ -421,6 +421,19 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "openView(FIND_SECTIONS[0].value)" in source
     assert 'className: "curator-find-switcher"' in source
     assert 'className: "curator-find-tab"' in source
+    # Header order is Recommendations | Find | Curate (issue #239): Find sits
+    # before the remaining primary items (Curate) rather than after them.
+    expected_top_nav = "".join(
+        [
+            "  const TOP_NAV_ITEMS = [\n",
+            "    RECOMMENDATIONS_NAV_ITEM,\n",
+            "    FIND_NAV_ITEM,\n",
+            "    ...PRIMARY_NAV_ITEMS.filter((item) => !laneByValue.has(item.value)",
+            " && !FIND_SECTION_VALUES.has(item.value)),\n",
+            "  ];",
+        ]
+    )
+    assert expected_top_nav in source
     # Reference parameters belong to the lane that created them (hunt performer
     # and label, similar id and type); switching lanes must drop them so they
     # cannot leak into another panel, e.g. the expand performer filter.
