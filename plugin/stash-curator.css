@@ -2139,7 +2139,7 @@
   border-radius: var(--curator-radius-sm);
   color: #fff;
   display: inline-flex;
-  font-size: calc(0.55rem * var(--curator-card-text-scale, 1));
+  font-size: calc(0.625rem * var(--curator-card-text-scale, 1));
   font-weight: 700;
   gap: calc(0.3rem * var(--curator-card-text-scale, 1));
   height: auto;
@@ -3020,7 +3020,10 @@
   border-radius: var(--curator-radius-sm);
   overflow: hidden;
   margin: 6px 0 4px;
-  background: var(--bs-secondary-bg, #333);
+  /* Same track token as .curator-score-scale so the Appeal and Rank bars
+     match in both themes: --bs-secondary-bg stays dark in Stash's own
+     chrome, so Curator's light-mode data-theme toggle never reached it. */
+  background: var(--curator-wash-recessed);
 }
 .curator-score-bar-seg {
   display: block;
