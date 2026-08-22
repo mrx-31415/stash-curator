@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -81,13 +81,6 @@
       description: "StashDB performers and their scenes, checked against your library.",
     },
     {
-      value: "sentiment",
-      label: "Sentiment review",
-      icon: faBalanceScale,
-      maintenance: true,
-      description: "Review the model's sentiment estimates: least-appealing scenes first, with reasons and feedback on each card.",
-    },
-    {
       value: "feedback",
       label: "Feedback history",
       icon: faThumbsUp,
@@ -100,6 +93,13 @@
       icon: faHistory,
       maintenance: true,
       description: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
+    },
+    {
+      value: "sentiment",
+      label: "Sentiment review",
+      icon: faBalanceScale,
+      maintenance: true,
+      description: "Review the model's sentiment estimates: least-appealing scenes first, with reasons and feedback on each card.",
     },
     {
       value: "prune",
@@ -116,18 +116,18 @@
       description: "Create, inspect, and safely restore Curator sidecar backups.",
     },
     {
+      value: "tasks",
+      label: "Tasks",
+      icon: faList,
+      maintenance: true,
+      description: "Live status of background Curator jobs: queue position, progress, and results.",
+    },
+    {
       value: "diagnostics",
       label: "Diagnostics",
       icon: faWrench,
       maintenance: true,
       description: "Preview and export a privacy-safe status report for bug reports.",
-    },
-    {
-      value: "profiling",
-      label: "Profiling",
-      icon: faChartLine,
-      maintenance: true,
-      description: "Inspect render and query performance profiles captured during development.",
     },
     {
       value: "settings",
@@ -137,11 +137,11 @@
       description: "Sync, discovery, prune, and Whisparr integration settings, without leaving Curator.",
     },
     {
-      value: "tasks",
-      label: "Tasks",
-      icon: faList,
+      value: "profiling",
+      label: "Profiling",
+      icon: faChartLine,
       maintenance: true,
-      description: "Live status of background Curator jobs: queue position, progress, and results.",
+      description: "Inspect render and query performance profiles captured during development.",
     },
   ];
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
@@ -157,7 +157,7 @@
     value: "manage",
     label: "Manage",
     icon: faWrench,
-    description: "Feedback history, sentiment review, recent recommendations, backups, diagnostics, prune queues, profiling, and settings.",
+    description: "Feedback history, recent recommendations, sentiment review, prune queues, backups, tasks, diagnostics, settings, and profiling.",
   };
   // Find groups the three "find new content" surfaces (Similar, Expand,
   // Performer Hunt) under one primary nav item with inner tabs (issue #192).
@@ -4873,7 +4873,16 @@
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
           React.createElement("p", null, laneOption.description),
-          laneByValue.has(lane) && React.createElement("p", null, "Appeal is the model's estimate of how much you'll like a scene, on a −1..1 scale. Rank in this lane is relative to the lane's best — 1.00 is the top of the lane, so it measures ordering utility, not probability. A scene can rank high while its appeal is moderate: rank includes recency and cooldown, appeal is how much you'd like it now."),
+          laneByValue.has(lane) && React.createElement(
+            "details",
+            { className: "curator-view-help" },
+            React.createElement(
+              "summary",
+              { "aria-label": "What do Appeal and Rank mean?", title: "What do Appeal and Rank mean?" },
+              React.createElement(FontAwesomeIcon, { icon: faCircleQuestion })
+            ),
+            React.createElement("p", null, "Appeal is the model's estimate of how much you'll like a scene, on a −1..1 scale. Rank in this lane is relative to the lane's best — 1.00 is the top of the lane, so it measures ordering utility, not probability. A scene can rank high while its appeal is moderate: rank includes recency and cooldown, appeal is how much you'd like it now.")
+          ),
           laneByValue.has(lane) && slate && React.createElement(
             "p",
             { className: "curator-view-stats" },
