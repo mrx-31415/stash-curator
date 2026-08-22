@@ -44,7 +44,7 @@ def _database(path: Path) -> sqlite3.Connection:
         """,
         (
             ("p1", "Performer One", 1, "Black", 170, "34DD-24-36", "p1"),
-            ("p2", "Performer Two", 0, "Blonde", 168, "34D-25-36", "p2"),
+            ("p2", "Performer Two", 0, "Brown", 168, "34D-25-36", "p2"),
             ("p3", "Performer Three", 0, "Black", 171, "34DD-24-36", "p3"),
         ),
     )
