@@ -46,6 +46,7 @@
   --curator-hue-revisit: #b79ce0;
   --curator-hue-expand: #e0645c;
   --curator-hue-prune: #9aa1ab;
+  --curator-hue-curate: #4cc2a8;
 
   --curator-radius-sm: 4px;
   --curator-radius: 7px;
@@ -102,6 +103,7 @@
   --curator-hue-revisit: #7452ad;
   --curator-hue-expand: #b83f4c;
   --curator-hue-prune: #7c838c;
+  --curator-hue-curate: #2f9c85;
 }
 
 /* Stash's own native scene/performer card (Api.components.SceneCard,
@@ -499,15 +501,32 @@
   overflow: hidden;
 }
 
-/* ---------- Find switcher (Similar / Expand / Performer Hunt inner tabs) ---------- */
-/* Reuses the lane-card classes from the recommendation lane switcher above;
-   the container matches the lane switcher's scrollable layout. */
-.curator-find-switcher {
+/* ---------- Find + Curate switchers (lane-style card tabs) ---------- */
+/* Both reuse the lane-card classes from the recommendation lane switcher
+   above; the containers match the lane switcher's scrollable layout. */
+.curator-find-switcher,
+.curator-curate-switcher {
   display: flex;
   gap: 0.6rem;
   margin: 0.35rem 0 0.8rem;
   overflow-x: auto;
   padding-bottom: 0.2rem;
+/* Section head under the Curate switcher — same shape as Manage's detail
+   head, since Curate no longer uses the side-menu shell. */
+.curator-curate-head {
+  margin-bottom: 0.9rem;
+}
+
+.curator-curate-head h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.2rem;
+}
+
+.curator-curate-head p {
+  color: var(--curator-text-muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
 }
 
 /* ---------- Manage shell (two-pane list + detail) ---------- */
@@ -3704,6 +3723,62 @@
   font-size: 0.75rem;
   color: var(--curator-accent-secondary);
   margin: 0 0 0.4rem;
+}
+
+/* Impact view: the full-curate-outcome summary strip. */
+.curator-impact-summary {
+  align-items: center;
+  background: color-mix(in srgb, var(--curator-accent) 8%, var(--curator-surface));
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.2rem;
+  margin-bottom: 0.9rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.curator-impact-summary span {
+  font-size: 0.8rem;
+}
+
+/* Declared-vs-inferred divergence rows with a jump into Tag sentiment. */
+.curator-sentiment-divergence {
+  margin: 1rem 0;
+}
+
+.curator-sentiment-divergence h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.2rem;
+}
+
+.curator-sentiment-divergence-row {
+  align-items: center;
+  border-bottom: 1px solid var(--curator-border);
+  display: flex;
+  gap: 0.8rem;
+  justify-content: space-between;
+  padding: 0.45rem 0;
+}
+
+.curator-sentiment-divergence-row:last-of-type {
+  border-bottom: 0;
+}
+
+.curator-sentiment-divergence-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.curator-sentiment-divergence-copy strong {
+  font-size: 0.85rem;
+}
+
+.curator-sentiment-divergence-copy span {
+  color: var(--curator-text-muted);
+  font-size: 0.75rem;
 }
 
 .curator-curate-nudge-dismiss {
