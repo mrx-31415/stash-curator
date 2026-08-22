@@ -737,21 +737,28 @@ func (s *expandService) blockedTagNameGroups() ([]map[string]bool, error) {
 	return equivalentTagNames(s.db, names)
 }
 
-// annotateLocalMatch mirrors ExpandService._annotate_local_match.
-func annotateLocalMatch(scene jVal, links jVal) jVal {
-	externalID := scene.get("id").asString()
-	sceneIDs := links.get("scene_ids")
-	localSceneID := ""
-	if v := sceneIDs.get(externalID); v.truthy() {
-		localSceneID = v.asString()
-	} else {
-		for _, pair := range links.get("scenes").obj {
-			if pair.val.asString() == externalID {
-				localSceneID = pair.key
-				break
-			}
-		}
+// sceneLinkMaps mirrors the scene_ids/scene_phashes lookups of
+// ExpandService._annotate_local_match as hash maps. The ordered jVal links
+// maps are built once per operation and the per-row annotation is O(1): the
+// insertion-ordered jVal lookups would otherwise linearly scan every linked
+// scene per candidate (a Python dict is a hash map, so the ported loop was
+// orders of magnitude slower on large libraries).
+func sceneLinkMaps(links jVal) (byExternalID, byPhash map[string]string) {
+	byExternalID = make(map[string]string)
+	for _, pair := range links.get("scene_ids").obj {
+		byExternalID[pair.key] = pair.val.asString()
 	}
+	byPhash = make(map[string]string)
+	for _, pair := range links.get("scene_phashes").obj {
+		byPhash[pair.key] = pair.val.asString()
+	}
+	return byExternalID, byPhash
+}
+
+// annotateLocalMatch mirrors ExpandService._annotate_local_match.
+func annotateLocalMatch(scene jVal, byExternalID, byPhash map[string]string) jVal {
+	externalID := scene.get("id").asString()
+	localSceneID := byExternalID[externalID]
 	matchType := ""
 	if localSceneID != "" {
 		matchType = "stashdb_id"
@@ -765,8 +772,8 @@ func annotateLocalMatch(scene jVal, links jVal) jVal {
 			if !ok {
 				continue
 			}
-			if v := links.get("scene_phashes").get(value); v.truthy() {
-				localSceneID = v.asString()
+			if localID, found := byPhash[value]; found {
+				localSceneID = localID
 				matchType = "phash"
 				break
 			}

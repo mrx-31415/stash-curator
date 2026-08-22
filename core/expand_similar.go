@@ -601,9 +601,10 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		timings.set("retrieval", jvInt(retrievalMs))
 		recordDurationMs(trace, "python", "external_similar.retrieval", retrievalMs)
 		stageStart := time.Now()
+		byExternalID, byPhash := sceneLinkMaps(links)
 		candidates := make([]jVal, 0)
 		for _, value := range rows.list() {
-			candidate := annotateLocalMatch(value, links)
+			candidate := annotateLocalMatch(value, byExternalID, byPhash)
 			matchType := candidate.get("curator_local_match").get("type").asString()
 			if !(includeOwned || matchType != "stashdb_id") {
 				continue

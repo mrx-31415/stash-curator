@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -145,7 +146,10 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if err != nil {
 		return jvNull(), err
 	}
-	rows := make([]jVal, 0)
+	var byExternalID, byPhash map[string]string
+	if links.kind == jObj {
+		byExternalID, byPhash = sceneLinkMaps(links)
+	}
 	entityRows, err := db.Query(`SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'`, entityType)
 	if err != nil {
 		return jvNull(), err
@@ -154,6 +158,18 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if err != nil {
 		return jvNull(), err
 	}
+	// The candidate rows are materialized first so the parse/annotate/filter
+	// phase can run across all cores: each row's work is independent, and the
+	// outputs land in index-ordered slots, so the assembled rows are
+	// identical to the sequential loop (and the first payload error by row
+	// order is the one returned, matching the old behavior).
+	type expandRow struct {
+		externalID  string
+		score       float64
+		payloadJSON string
+		sourcesJSON string
+	}
+	materialized := make([]expandRow, 0)
 	for entityRows.Next() {
 		values := make([]any, len(columns))
 		scanned := make([]any, len(columns))
@@ -167,72 +183,115 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		for i, name := range columns {
 			row[name] = values[i]
 		}
-		score := asDBFloat(row["score"])
-		if score < minimumScore {
-			continue
-		}
-		payload, err := parseJSON([]byte(asDBString(row["payload_json"])))
-		if err != nil {
-			return jvNull(), err
-		}
-		// Issue #118: the stored annotation can be stale (the candidate was
-		// fetched before the local scene gained its StashDB id). Re-derive it
-		// against the current links map; the serve-time match is
-		// authoritative for the exclusion and for the served payload.
-		if links.kind == jObj && entityType == "scene" {
-			payload = annotateLocalMatch(payload, links)
-		}
-		matchType := payload.get("curator_local_match").get("type").asString()
-		if entityType == "scene" && (matchType == "stashdb_id" || (hidePhash && matchType == "phash")) {
-			continue
-		}
-		if performerID.kind != jNull && entityType == "scene" {
-			found := false
-			for _, item := range payload.get("performers").arr {
-				if item.get("performer").get("id").asString() == performerID.asString() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		if favoriteOnly && entityType == "scene" {
-			hasFavorite := false
-			for _, item := range payload.get("performers").arr {
-				if item.get("performer").get("curator_local").get("favorite").truthy() {
-					hasFavorite = true
-					break
-				}
-			}
-			if !hasFavorite {
-				continue
-			}
-		}
-		if gender != "" && !payloadMatchesGender(payload, entityType, gender) {
-			continue
-		}
-		if entityType == "scene" && !expandSceneMatches(payload, includeTags, excludeTags,
-			performerNames, studioNames, performerQuery, studioQuery,
-			includeGroups, excludeGroups, blockedGroups, blockedTerms) {
-			continue
-		}
-		sources, err := parseJSON([]byte(asDBString(row["sources_json"])))
-		if err != nil {
-			sources = jvArr()
-		}
-		rows = append(rows, jvObj(
-			jvKey("id", jvStr(asDBString(row["external_id"]))),
-			jvKey("score", jvFloat(score)),
-			jvKey("sources", sources),
-			jvKey("payload", payload),
-			jvKey("shortlisted", jvBool(shortlisted[asDBString(row["external_id"])])),
-		))
+		materialized = append(materialized, expandRow{
+			externalID:  asDBString(row["external_id"]),
+			score:       asDBFloat(row["score"]),
+			payloadJSON: asDBString(row["payload_json"]),
+			sourcesJSON: asDBString(row["sources_json"]),
+		})
 	}
 	entityRows.Close()
 	if err := entityRows.Err(); err != nil {
 		return jvNull(), err
+	}
+	results := make([]jVal, len(materialized))
+	errs := make([]error, len(materialized))
+	workers := nthreads(0)
+	if workers > len(materialized) {
+		workers = len(materialized)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	var wg sync.WaitGroup
+	jobCh := make(chan int)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobCh {
+				row := materialized[i]
+				if row.score < minimumScore {
+					continue
+				}
+				payload, err := parseJSON([]byte(row.payloadJSON))
+				if err != nil {
+					errs[i] = err
+					continue
+				}
+				// Issue #118: the stored annotation can be stale (the
+				// candidate was fetched before the local scene gained its
+				// StashDB id). Re-derive it against the current links map;
+				// the serve-time match is authoritative for the exclusion and
+				// for the served payload.
+				if links.kind == jObj && entityType == "scene" {
+					payload = annotateLocalMatch(payload, byExternalID, byPhash)
+				}
+				matchType := payload.get("curator_local_match").get("type").asString()
+				if entityType == "scene" && (matchType == "stashdb_id" || (hidePhash && matchType == "phash")) {
+					continue
+				}
+				if performerID.kind != jNull && entityType == "scene" {
+					found := false
+					for _, item := range payload.get("performers").arr {
+						if item.get("performer").get("id").asString() == performerID.asString() {
+							found = true
+							break
+						}
+					}
+					if !found {
+						continue
+					}
+				}
+				if favoriteOnly && entityType == "scene" {
+					hasFavorite := false
+					for _, item := range payload.get("performers").arr {
+						if item.get("performer").get("curator_local").get("favorite").truthy() {
+							hasFavorite = true
+							break
+						}
+					}
+					if !hasFavorite {
+						continue
+					}
+				}
+				if gender != "" && !payloadMatchesGender(payload, entityType, gender) {
+					continue
+				}
+				if entityType == "scene" && !expandSceneMatches(payload, includeTags, excludeTags,
+					performerNames, studioNames, performerQuery, studioQuery,
+					includeGroups, excludeGroups, blockedGroups, blockedTerms) {
+					continue
+				}
+				sources, err := parseJSON([]byte(row.sourcesJSON))
+				if err != nil {
+					sources = jvArr()
+				}
+				results[i] = jvObj(
+					jvKey("id", jvStr(row.externalID)),
+					jvKey("score", jvFloat(row.score)),
+					jvKey("sources", sources),
+					jvKey("payload", payload),
+					jvKey("shortlisted", jvBool(shortlisted[row.externalID])),
+				)
+			}
+		}()
+	}
+	for i := range materialized {
+		jobCh <- i
+	}
+	close(jobCh)
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return jvNull(), err
+		}
+	}
+	rows := make([]jVal, 0, len(results))
+	for _, result := range results {
+		if result.kind != jNull {
+			rows = append(rows, result)
+		}
 	}
 	if sortBy == "newest" && entityType == "scene" {
 		sort.SliceStable(rows, func(i, j int) bool {
@@ -424,8 +483,9 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 		}
 	}
 	annotated := make([]jVal, 0, len(rows.order))
+	byExternalID, byPhash := sceneLinkMaps(links)
 	for _, id := range rows.order {
-		annotated = append(annotated, annotateLocalMatch(rows.m[id], links))
+		annotated = append(annotated, annotateLocalMatch(rows.m[id], byExternalID, byPhash))
 	}
 	service := newExpandService(db)
 	scenes, _, err := service.score(annotated, sources, modelID, featureVersion, links, jvStr(performerID))
