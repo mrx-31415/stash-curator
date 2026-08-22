@@ -9,7 +9,6 @@ from collections.abc import Iterable
 from dataclasses import asdict, replace
 from typing import Any
 
-from curator.config import DEFAULT_CONFIG
 from curator.events import (
     IMPRESSION_ATTRIBUTION_WINDOW_MS,
     OBSERVED_PLAYBACK_SQL,
@@ -19,6 +18,7 @@ from curator.events import (
     quick_replacement_outcome,
     viewing_outcome,
 )
+from curator.features.tag_roles import effective_tag_role_config_version
 from curator.model import ModelUpdateCoordinator
 from curator.ranking import Slate
 from curator.storage import transaction
@@ -645,7 +645,7 @@ class InteractionStore:
             value = BLOCKED_TAG_VALUE
         if not preference_id or not tag_id or occurred_at_ms < 0:
             raise ValueError("preference_id, tag_id, and occurred_at_ms are required")
-        config_version = f"cfg-{DEFAULT_CONFIG.feature_fingerprint()[:20]}"
+        config_version = effective_tag_role_config_version(self.connection)
         if (
             self.connection.execute(
                 """

@@ -329,7 +329,10 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
 	if err := rows.Err(); err != nil {
 		return jvNull(), err
 	}
-	configVersion := "cfg-" + featureFingerprint()[:20]
+	configVersion, err := effectiveTagRoleConfigVersion(db)
+	if err != nil {
+		return jvNull(), err
+	}
 	type profileItem struct {
 		tagID      string
 		name       string
@@ -467,6 +470,37 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 // the sorted-key canonical JSON of FeatureConfig (asdict serialization).
 func featureFingerprint() string {
 	return sha256Hex(featureConfigCanonicalJSON())
+}
+
+// effectiveTagRoleConfigVersion returns the tag_role config_version the
+// published model's tag roles should be read under: the running binary's
+// FeatureConfig fingerprint when the build wrote rows for it, otherwise the
+// most complete legacy config_version still present. The latter happens when
+// the published model predates the last FeatureConfig change and no rebuild
+// has run — a plugin update would otherwise silently empty every tag-role
+// surface (taste profile, scene tag choices, external tag choices) and reject
+// tag preferences as unsupported. The next model build writes rows for the
+// current fingerprint and takes precedence again. Returns "" when tag_role
+// has no rows at all (no model build yet).
+func effectiveTagRoleConfigVersion(db dbx) (string, error) {
+	current := "cfg-" + featureFingerprint()[:20]
+	var one int
+	err := db.QueryRow(`SELECT 1 FROM tag_role WHERE config_version=? LIMIT 1`, current).Scan(&one)
+	if err == nil {
+		return current, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+	var legacy string
+	err = db.QueryRow(`SELECT config_version FROM (
+  SELECT config_version, count(*) AS n FROM tag_role GROUP BY config_version
+  ORDER BY n DESC, config_version DESC LIMIT 1
+)`).Scan(&legacy)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return legacy, err
 }
 
 // featureConfigCanonicalJSON mirrors FeatureConfig.feature_json() with the
