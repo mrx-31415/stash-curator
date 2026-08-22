@@ -1682,6 +1682,143 @@
   line-height: 1;
 }
 
+/* Manage → Tasks panel (issue #211): worker status header, grouped job
+   sections, and per-job progress/summary rows. */
+.curator-tasks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.curator-worker-status {
+  align-items: center;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.curator-worker-status-dot {
+  border-radius: 50%;
+  height: 0.6rem;
+  width: 0.6rem;
+}
+
+.curator-worker-status-running .curator-worker-status-dot {
+  background: var(--success, #198754);
+  box-shadow: 0 0 0 3px rgba(25, 135, 84, 0.15);
+}
+
+.curator-worker-status-idle .curator-worker-status-dot {
+  background: var(--curator-text-muted);
+}
+
+.curator-worker-status span:not(.curator-worker-status-dot) {
+  color: var(--curator-text-muted);
+  font-size: 0.82rem;
+}
+
+.curator-tasks-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.curator-tasks-section-title {
+  font-size: 0.85rem;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--curator-text-muted);
+}
+
+.curator-tasks-completed summary {
+  color: var(--curator-text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.curator-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.curator-task {
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.curator-task-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+}
+
+.curator-task-state {
+  border-radius: var(--curator-radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  text-transform: uppercase;
+}
+
+.curator-task-state-running {
+  background: rgba(13, 110, 253, 0.15);
+  color: #0d6efd;
+}
+
+.curator-task-state-queued {
+  background: rgba(108, 117, 125, 0.15);
+  color: var(--curator-text-muted);
+}
+
+.curator-task-state-complete {
+  background: rgba(25, 135, 84, 0.15);
+  color: #198754;
+}
+
+.curator-task-state-failed {
+  background: rgba(220, 53, 69, 0.15);
+  color: #dc3545;
+}
+
+.curator-task-state-cancelled {
+  background: rgba(108, 117, 125, 0.15);
+  color: var(--curator-text-muted);
+}
+
+.curator-task-time {
+  color: var(--curator-text-muted);
+  font-size: 0.78rem;
+  margin-left: auto;
+}
+
+.curator-task-meta {
+  color: var(--curator-text-muted);
+  font-size: 0.82rem;
+}
+
+.curator-task-error {
+  color: #dc3545;
+  display: block;
+  margin-top: 0.2rem;
+  white-space: pre-wrap;
+}
+
 .curator-header-message {
   background: var(--curator-surface);
   border: 1px solid var(--curator-border);
