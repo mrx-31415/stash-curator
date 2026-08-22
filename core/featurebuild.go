@@ -1465,9 +1465,8 @@ INSERT INTO feature_definition(
 ) VALUES (?, ?, ?, ?, 'feature_builder', ?)`, definitionRows); err != nil {
 				return err
 			}
-			sortedFeatures := append([]featureRow(nil), features...)
-			sort.SliceStable(sortedFeatures, func(i, j int) bool {
-				a, b := sortedFeatures[i], sortedFeatures[j]
+			sort.SliceStable(features, func(i, j int) bool {
+				a, b := features[i], features[j]
 				if a.entityType != b.entityType {
 					return a.entityType < b.entityType
 				}
@@ -1479,34 +1478,68 @@ INSERT INTO feature_definition(
 				}
 				return a.name < b.name
 			})
-			featureRows := make([][]any, 0, len(sortedFeatures))
-			for _, feature := range sortedFeatures {
+			// Stream the row arrays in bounded chunks instead of materializing
+			// every row as []any up front: the build holds ~1.7M feature rows
+			// at production scale, and three full [][]any copies (featureRows,
+			// searchRows, plus the sortedFeatures copy removed above) stacked
+			// the feature_database_writing peak to ~2 GB. Chunking keeps the
+			// same per-statement batching and the exact same row order, so the
+			// differential gate (SELECT * per table, rowid order) is unchanged.
+			const publishRowChunk = 4000
+			featureRows := make([][]any, 0, publishRowChunk)
+			flushFeatureRows := func() error {
+				if len(featureRows) == 0 {
+					return nil
+				}
+				if err := execMultiRow(conn, `
+INSERT INTO entity_feature(
+    feature_version, entity_type, entity_id, feature_id, value, confidence
+) VALUES (?, ?, ?, ?, ?, ?)`, featureRows); err != nil {
+					return err
+				}
+				featureRows = featureRows[:0]
+				return nil
+			}
+			searchRows := make([][]any, 0, publishRowChunk)
+			flushSearchRows := func() error {
+				if len(searchRows) == 0 {
+					return nil
+				}
+				if err := execMultiRow(conn, `
+INSERT INTO scene_content_search(
+    feature_version, feature_id, scene_id, value
+) VALUES (?, ?, ?, ?)`, searchRows); err != nil {
+					return err
+				}
+				searchRows = searchRows[:0]
+				return nil
+			}
+			for _, feature := range features {
 				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
 				featureRows = append(featureRows, []any{
 					featureVersion, feature.entityType, feature.entityID, definitions[key].featureID,
 					feature.value, feature.confidence,
 				})
+				if len(featureRows) >= publishRowChunk {
+					if err := flushFeatureRows(); err != nil {
+						return err
+					}
+				}
+				if feature.entityType == "scene" && feature.family == "content" {
+					searchRows = append(searchRows, []any{
+						featureVersion, definitions[key].featureID, feature.entityID, feature.value,
+					})
+					if len(searchRows) >= publishRowChunk {
+						if err := flushSearchRows(); err != nil {
+							return err
+						}
+					}
+				}
 			}
-			if err := execMultiRow(conn, `
-INSERT INTO entity_feature(
-    feature_version, entity_type, entity_id, feature_id, value, confidence
-) VALUES (?, ?, ?, ?, ?, ?)`, featureRows); err != nil {
+			if err := flushFeatureRows(); err != nil {
 				return err
 			}
-			searchRows := make([][]any, 0, len(sortedFeatures))
-			for _, feature := range sortedFeatures {
-				if feature.entityType != "scene" || feature.family != "content" {
-					continue
-				}
-				key := feature.entityType + "\x00" + feature.family + "\x00" + feature.name
-				searchRows = append(searchRows, []any{
-					featureVersion, definitions[key].featureID, feature.entityID, feature.value,
-				})
-			}
-			if err := execMultiRow(conn, `
-INSERT INTO scene_content_search(
-    feature_version, feature_id, scene_id, value
-) VALUES (?, ?, ?, ?)`, searchRows); err != nil {
+			if err := flushSearchRows(); err != nil {
 				return err
 			}
 			return nil

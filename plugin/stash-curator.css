@@ -384,6 +384,67 @@
   white-space: nowrap;
 }
 
+/* Question-mark disclosure for the Appeal/Rank explanation in the
+   recommendation lane guidance. The summary renders as a quiet circular
+   icon button; opening it shows the explanation as an inline popover. */
+.curator-view-help {
+  display: inline-block;
+  margin-left: 0.35rem;
+  position: relative;
+  vertical-align: middle;
+}
+
+.curator-view-help summary {
+  align-items: center;
+  border: 1px solid var(--curator-border-strong);
+  border-radius: 50%;
+  color: var(--curator-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.15rem;
+  justify-content: center;
+  list-style: none;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  width: 1.15rem;
+}
+
+.curator-view-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.curator-view-help summary:hover {
+  border-color: var(--curator-text-muted);
+  color: var(--curator-text);
+}
+
+.curator-view-help summary svg {
+  font-size: 0.7rem;
+}
+
+.curator-view-help[open] summary {
+  border-color: var(--curator-accent);
+  color: var(--curator-accent);
+}
+
+.curator-view-help p {
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius);
+  box-shadow: var(--curator-shadow-md);
+  color: var(--curator-text-muted);
+  display: block;
+  font-size: 0.76rem;
+  left: 0;
+  line-height: 1.45;
+  margin: 0.35rem 0 0;
+  max-width: 24rem;
+  padding: 0.5rem 0.6rem;
+  position: absolute;
+  top: 100%;
+  z-index: 5;
+}
+
+
 .curator-navigation {
   align-items: stretch;
   display: flex;
@@ -715,7 +776,7 @@
   margin-top: 0.1rem;
 }
 
-.curator-record-row .btn {
+.curator-record-row .btn:not(.btn-primary) {
   color: var(--curator-accent);
   flex: none;
   font-weight: 700;
@@ -2078,7 +2139,7 @@
   border-radius: var(--curator-radius-sm);
   color: #fff;
   display: inline-flex;
-  font-size: calc(0.65rem * var(--curator-card-text-scale, 1));
+  font-size: calc(0.55rem * var(--curator-card-text-scale, 1));
   font-weight: 700;
   gap: calc(0.3rem * var(--curator-card-text-scale, 1));
   height: auto;

@@ -231,9 +231,12 @@ func modelWriteTables(db dbx, modelID, featureVersion string, affinities map[str
 	// attach_build_sources, which sit between writing_started and the first
 	// insert in Python too).
 	databaseWritingStarted := time.Now()
-	scoresByScene := map[string]buildModelScore{}
-	for _, score := range scores {
-		scoresByScene[score.sceneID] = score
+	// Index by scene id rather than copying every buildModelScore struct
+	// (each carries jVal component/eligibility trees and a neighbor slice):
+	// the direct_scene_state loop only needs the score for labeled scenes.
+	scoreIndex := map[string]int{}
+	for i, score := range scores {
+		scoreIndex[score.sceneID] = i
 	}
 	featurePath, err := featureArtifactPath(db, featureVersion)
 	if err != nil {
@@ -280,14 +283,14 @@ INSERT INTO feature_affinity(
 	var stateRows [][]any
 	for _, sceneID := range sortedStringKeys(labels) {
 		label := labels[sceneID]
-		score, ok := scoresByScene[sceneID]
+		score, ok := scoreIndex[sceneID]
 		if !ok {
 			continue
 		}
 		stateRows = append(stateRows, []any{
 			modelID, sceneID, label.absoluteOutcome, label.absoluteEvidence,
 			directConfidenceOf(label.absoluteEvidence),
-			clampValue(label.absoluteOutcome-score.generalAppeal, -2, 2),
+			clampValue(label.absoluteOutcome-scores[score].generalAppeal, -2, 2),
 		})
 	}
 	if err := insertArtifactRows(artifact, `
@@ -300,8 +303,43 @@ INSERT INTO direct_scene_state(
 		report(0.81)
 	}
 	// model_scene_score
-	scoreRows := make([][]any, 0, len(scores))
-	neighborRows := make([][]any, 0)
+	// Stream the row arrays in bounded chunks: the combined score+neighbor
+	// rows are ~240k at production scale, and building every []any row up
+	// front stacked the database_writing peak to ~3 GB (each score row also
+	// marshals three JSON payloads). Chunking keeps the same per-batch
+	// statement shape and the exact same row order (scores slice order, then
+	// neighbor rank), so the differential gate is unchanged.
+	const scoreRowChunk = 2000
+	scoreRows := make([][]any, 0, scoreRowChunk)
+	neighborRows := make([][]any, 0, scoreRowChunk)
+	flushScoreRows := func() error {
+		if len(scoreRows) == 0 {
+			return nil
+		}
+		if err := insertArtifactRows(artifact, `
+INSERT INTO model_scene_score(
+    model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
+    appeal, current_fit, confidence, metadata_confidence, recovery,
+    components_json, classification_json, eligibility_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scoreRows); err != nil {
+			return err
+		}
+		scoreRows = scoreRows[:0]
+		return nil
+	}
+	flushNeighborRows := func() error {
+		if len(neighborRows) == 0 {
+			return nil
+		}
+		if err := insertArtifactRows(artifact, `
+INSERT INTO model_scene_neighbor(
+    model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
+) VALUES (?, ?, ?, ?, ?, ?, ?)`, neighborRows); err != nil {
+			return err
+		}
+		neighborRows = neighborRows[:0]
+		return nil
+	}
 	for _, score := range scores {
 		scoreRows = append(scoreRows, []any{
 			modelID, score.sceneID, score.generalAppeal, score.directAppeal,
@@ -311,6 +349,11 @@ INSERT INTO direct_scene_state(
 			classificationPayload(score.components).marshalSortedKeys(),
 			score.eligibility.marshalSortedKeys(),
 		})
+		if len(scoreRows) >= scoreRowChunk {
+			if err := flushScoreRows(); err != nil {
+				return fail(err)
+			}
+		}
 		for rank, neighbor := range score.neighbors {
 			neighborRows = append(neighborRows, []any{
 				modelID, score.sceneID, rank, neighbor.get("scene_id").asString(),
@@ -318,19 +361,16 @@ INSERT INTO direct_scene_state(
 				numberValue(neighbor.get("outcome")),
 			})
 		}
+		if len(neighborRows) >= scoreRowChunk {
+			if err := flushNeighborRows(); err != nil {
+				return fail(err)
+			}
+		}
 	}
-	if err := insertArtifactRows(artifact, `
-INSERT INTO model_scene_score(
-    model_id, scene_id, general_appeal, direct_appeal, direct_confidence,
-    appeal, current_fit, confidence, metadata_confidence, recovery,
-    components_json, classification_json, eligibility_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, scoreRows); err != nil {
+	if err := flushScoreRows(); err != nil {
 		return fail(err)
 	}
-	if err := insertArtifactRows(artifact, `
-INSERT INTO model_scene_neighbor(
-    model_id, scene_id, rank, neighbor_scene_id, similarity, weight, outcome
-) VALUES (?, ?, ?, ?, ?, ?, ?)`, neighborRows); err != nil {
+	if err := flushNeighborRows(); err != nil {
 		return fail(err)
 	}
 	if report != nil {
@@ -421,6 +461,12 @@ func modelPublishTail(db dbx, artifact dbx, temporary, final, modelID, featureVe
 	if report != nil {
 		report(0.94)
 	}
+	// materializeLanes held every greedy candidate with its content vector
+	// map; release that working set before index creation so sqlite_index_
+	// creation / indexing don't stack on top of it (the same
+	// GC+FreeOSMemory treatment modelBuild applies after modelWriteTables).
+	runtime.GC()
+	debug.FreeOSMemory()
 	if err := rec.stage("sqlite_index_creation", "model.sqlite_index_creation", func() error {
 		return artifactCreateIndexes(artifact, "model")
 	}); err != nil {
