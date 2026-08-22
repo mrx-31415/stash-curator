@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.18.0](https://github.com/mrx-31415/stash-curator/compare/v0.17.1...v0.18.0) (2026-08-22)
+
+
+### Features
+
+* **hunt:** search StashDB performers not in the local library ([#229](https://github.com/mrx-31415/stash-curator/issues/229)) ([ea52fa2](https://github.com/mrx-31415/stash-curator/commit/ea52fa275da8e7da2ccc6d1b715dd9adbf7d1f34)), closes [#218](https://github.com/mrx-31415/stash-curator/issues/218)
+* remaining-issues consolidation — Find tab, Manage button, curation cleanup ([#146](https://github.com/mrx-31415/stash-curator/issues/146), [#189](https://github.com/mrx-31415/stash-curator/issues/189), [#191](https://github.com/mrx-31415/stash-curator/issues/191), [#192](https://github.com/mrx-31415/stash-curator/issues/192), [#193](https://github.com/mrx-31415/stash-curator/issues/193), [#194](https://github.com/mrx-31415/stash-curator/issues/194)) ([#235](https://github.com/mrx-31415/stash-curator/issues/235)) ([9ea719f](https://github.com/mrx-31415/stash-curator/commit/9ea719fd720a6256deb372d04f990988d6a37d27))
+* **similar:** lane-style 'why this' — labeled evidence rows and component breakdown ([#228](https://github.com/mrx-31415/stash-curator/issues/228)) ([08aecee](https://github.com/mrx-31415/stash-curator/commit/08aecee9b4d65849804b8fb72fdcb3814022c0fb)), closes [#217](https://github.com/mrx-31415/stash-curator/issues/217)
+* **tasks:** worker status header, grouped progress, collapsible completed section ([#231](https://github.com/mrx-31415/stash-curator/issues/231)) ([649cc1d](https://github.com/mrx-31415/stash-curator/commit/649cc1d79ece8383f20a98b4675058631460d4c3)), closes [#211](https://github.com/mrx-31415/stash-curator/issues/211)
+
+
+### Bug Fixes
+
+* **rank:** make 'Rank in &lt;lane&gt;' relative to the lane's best ([#226](https://github.com/mrx-31415/stash-curator/issues/226)) ([f24032a](https://github.com/mrx-31415/stash-curator/commit/f24032a839a5b3b808d5044d8ea3a84fb256f31c)), closes [#212](https://github.com/mrx-31415/stash-curator/issues/212)
+* **sentiment:** stop rendering Appeal twice in review cards ([#230](https://github.com/mrx-31415/stash-curator/issues/230)) ([76a657f](https://github.com/mrx-31415/stash-curator/commit/76a657fb00d122978b0bc0778e869f785a3168e7)), closes [#210](https://github.com/mrx-31415/stash-curator/issues/210)
+* **similar:** contain performer cards in their grid cell ([#233](https://github.com/mrx-31415/stash-curator/issues/233)) ([ab48e73](https://github.com/mrx-31415/stash-curator/commit/ab48e734fadbb9d6d44e60becf8fc0a9744054fd)), closes [#215](https://github.com/mrx-31415/stash-curator/issues/215)
+* **why:** never render the Technical details disclosure empty ([#227](https://github.com/mrx-31415/stash-curator/issues/227)) ([5f9674a](https://github.com/mrx-31415/stash-curator/commit/5f9674a3c7a2244653cf1ae9acb6a7011020334f)), closes [#216](https://github.com/mrx-31415/stash-curator/issues/216)
+
 ## [0.17.1](https://github.com/mrx-31415/stash-curator/compare/v0.17.0...v0.17.1) (2026-08-21)
 
 
