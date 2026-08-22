@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -25,7 +26,7 @@ class TagRoleResult:
     taxonomy: TaxonomyMatch | None = None
 
 
-def effective_tag_role_config_version(connection) -> str | None:
+def effective_tag_role_config_version(connection: sqlite3.Connection) -> str | None:
     """Return the tag_role config_version to read tag roles under.
 
     Mirrors core's effectiveTagRoleConfigVersion: the running FeatureConfig
