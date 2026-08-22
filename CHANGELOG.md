@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/mrx-31415/stash-curator/compare/v0.19.0...v0.19.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **plugin:** V1 polish — card badges, lane help, settings toggle, Manage order; perf(core): cut build peak memory ([#248](https://github.com/mrx-31415/stash-curator/issues/248)) ([e7ae9a6](https://github.com/mrx-31415/stash-curator/commit/e7ae9a6ee05b20ff4d0b8c92fa9fa8533dbe9cbb))
+
 ## [0.19.0](https://github.com/mrx-31415/stash-curator/compare/v0.18.0...v0.19.0) (2026-08-22)
 
 
