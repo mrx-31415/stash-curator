@@ -1902,28 +1902,51 @@ func curationImpact(db dbx) (jVal, error) {
 		for _, e := range demotedPool {
 			sceneIDs = append(sceneIDs, e.id)
 		}
-		for _, sceneID := range sceneIDs {
+		// One batched query instead of one per scene: the pooled entity_id
+		// lookups were individual full scans of the artifact (entity_feature
+		// has no entity_id index and the predicate omits entity_type, so the
+		// PK prefix cannot narrow them), which dominated the op on large
+		// libraries. Contributors are sorted and truncated afterwards, so
+		// row order is irrelevant and the output is unchanged.
+		namesByScene := map[string][]string{}
+		if len(sceneIDs) > 0 {
+			marks := strings.TrimSuffix(strings.Repeat("?,", len(sceneIDs)), ",")
+			args := make([]any, 0, len(sceneIDs)+1)
+			args = append(args, newer.featureVersion)
+			for _, sceneID := range sceneIDs {
+				args = append(args, sceneID)
+			}
 			cr, err := fdb.Query(`
-				SELECT fd.name
+				SELECT ef.entity_id, fd.name
 				FROM entity_feature ef
 				JOIN feature_definition fd USING(feature_id)
-				WHERE ef.feature_version=? AND ef.entity_id=?`, newer.featureVersion, sceneID)
+				WHERE ef.feature_version=? AND ef.entity_id IN (`+marks+`)`, args...)
 			if err != nil {
 				fdb.Close()
 				return unavailable(), nil
 			}
+			for cr.Next() {
+				var sceneID, name string
+				if err := cr.Scan(&sceneID, &name); err != nil {
+					cr.Close()
+					fdb.Close()
+					return jvNull(), err
+				}
+				namesByScene[sceneID] = append(namesByScene[sceneID], name)
+			}
+			cr.Close()
+			if err := cr.Err(); err != nil {
+				fdb.Close()
+				return jvNull(), err
+			}
+		}
+		for _, sceneID := range sceneIDs {
 			var cands []contributor
 			directDelta := newDirect[sceneID] - oldDirect[sceneID]
 			if math.Abs(directDelta) > IMPACT_MIN_CONTRIBUTION {
 				cands = append(cands, contributor{kind: "direct", id: sceneID, name: "Your direct feedback", delta: directDelta})
 			}
-			for cr.Next() {
-				var name string
-				if err := cr.Scan(&name); err != nil {
-					cr.Close()
-					fdb.Close()
-					return jvNull(), err
-				}
+			for _, name := range namesByScene[sceneID] {
 				delta, ok := contributionDeltas[name]
 				if !ok {
 					continue
@@ -1945,11 +1968,6 @@ func curationImpact(db dbx) (jVal, error) {
 					}
 				}
 				cands = append(cands, c)
-			}
-			cr.Close()
-			if err := cr.Err(); err != nil {
-				fdb.Close()
-				return jvNull(), err
 			}
 			sort.Slice(cands, func(i, j int) bool {
 				ai, aj := math.Abs(cands[i].delta), math.Abs(cands[j].delta)

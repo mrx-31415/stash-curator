@@ -591,10 +591,10 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			args = append(args, "desc:"+term)
 		}
 		rows, err := s.db.Query(`SELECT DISTINCT ef.entity_id FROM entity_feature ef
-JOIN feature_definition fd ON fd.feature_id=ef.feature_id
 WHERE ef.feature_version=? AND ef.entity_type='scene'
-  AND fd.family='content'
-  AND fd.name IN (`+placeholders+`)`, args...)
+  AND ef.feature_id IN (
+    SELECT feature_id FROM feature_definition
+    WHERE family='content' AND name IN (`+placeholders+`))`, args...)
 		if err != nil {
 			return nil, err
 		}
