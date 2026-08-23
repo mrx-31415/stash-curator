@@ -1279,42 +1279,6 @@ type fetchPageSpec struct {
 	since    string
 }
 
-// fetchScenes runs one _fetch pass (sequential pages), mirroring the Python
-// loop exactly. Rows and sources are merged with first-seen semantics.
-func fetchScenes(clientURL, apiKey string, spec fetchPageSpec, rows *sceneRows, sources map[string]map[string]bool) (int64, bool, error) {
-	fetched := int64(0)
-	page := int64(1)
-	total := int64(0)
-	pageSize := minInt64(250, spec.limit)
-	for fetched < spec.limit {
-		pageTotal, batch, err := fetchScenesPage(clientURL, apiKey, spec, page, pageSize)
-		if err != nil {
-			return 0, false, err
-		}
-		total = pageTotal
-		accepted := batch
-		if int64(len(accepted)) > spec.limit-fetched {
-			accepted = batch[:spec.limit-fetched]
-		}
-		for _, scene := range accepted {
-			identifier := scene.get("id").asString()
-			rows.add(identifier, scene)
-			sourceSet := sources[identifier]
-			if sourceSet == nil {
-				sourceSet = map[string]bool{}
-				sources[identifier] = sourceSet
-			}
-			sourceSet[spec.source] = true
-		}
-		fetched += int64(len(accepted))
-		if len(batch) == 0 || fetched >= total {
-			break
-		}
-		page++
-	}
-	return total, fetched < total, nil
-}
-
 // fetchScenesPage executes one SCENES query page and returns (count, scenes).
 func fetchScenesPage(clientURL, apiKey string, spec fetchPageSpec, page, pageSize int64) (int64, []jVal, error) {
 	query := jvObj(
