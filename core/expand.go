@@ -1319,8 +1319,13 @@ func fetchScenesPage(clientURL, apiKey string, spec fetchPageSpec, page, pageSiz
 // stdlib worker pool: page 1 is fetched synchronously (its count fixes the
 // page count), the remaining pages run in parallel, and results merge in
 // page order so the output is identical to the sequential loop.
+// StashDB caps per_page at 500; fetching the maximum halves the round trips
+// for multi-page probes while the first-seen merge keeps the fetched rows
+// identical (pagination follows the same sort).
+const fetchPageSize = int64(500)
+
 func fetchParallel(clientURL, apiKey string, spec fetchPageSpec, rows *sceneRows, sources map[string]map[string]bool, workers int) (int64, bool, error) {
-	pageSize := minInt64(250, spec.limit)
+	pageSize := minInt64(fetchPageSize, spec.limit)
 	mergePage := func(pageTotal int64, accepted []jVal) {
 		for _, scene := range accepted {
 			identifier := scene.get("id").asString()
