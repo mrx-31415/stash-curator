@@ -599,24 +599,35 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if wildcard {
 		queries = append(queries, querySpec{"wildcard", nil, minInt64(100, int64(perSource))})
 	}
-	for position, query := range queries {
-		spec := fetchPageSpec{
+	specs := make([]fetchPageSpec, 0, len(queries))
+	for _, query := range queries {
+		specs = append(specs, fetchPageSpec{
 			source:   query.source,
 			values:   query.values,
 			limit:    query.limit,
 			modifier: "INCLUDES",
 			sort:     "DATE",
 			since:    since,
-		}
-		if _, _, err := fetchScenes(clientURL, apiKey, spec, rows, sources); err != nil {
-			return jvNull(), err
-		}
-		if progress != nil {
-			progress(200+int(pyRound(450*float64(position+1)/float64(maxInt(1, len(queries))))), 1000)
-		}
+		})
 	}
-	if progress != nil && len(queries) == 0 {
-		progress(650, 1000)
+	// Fetch every probe concurrently (pages within each probe in parallel),
+	// merging in probe order — the same merge semantics as the sequential
+	// loop, so the fetched rows are identical while the fetch phase takes
+	// max(probe) instead of the sum. The per-probe progress ticks keep their
+	// sequential values and fire once all probes have returned.
+	fetched, fetchedSources, err := fetchProbes(clientURL, apiKey, specs)
+	if err != nil {
+		return jvNull(), err
+	}
+	rows = fetched
+	sources = fetchedSources
+	if progress != nil {
+		for position := range specs {
+			progress(200+int(pyRound(450*float64(position+1)/float64(maxInt(1, len(specs))))), 1000)
+		}
+		if len(specs) == 0 {
+			progress(650, 1000)
+		}
 	}
 	today := time.Now()
 	cutoff := today.AddDate(0, 0, -horizonDays).Format("2006-01-02")
