@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.4](https://github.com/mrx-31415/stash-curator/compare/v0.19.3...v0.19.4) (2026-08-23)
+
+
+### Performance Improvements
+
+* **core:** replace remaining per-row jVal links scans with hash maps ([#256](https://github.com/mrx-31415/stash-curator/issues/256)) ([34227c0](https://github.com/mrx-31415/stash-curator/commit/34227c00dd4a88bae7f0d15889d0e29120f3851b))
+* **core:** speed up get_expand serve path 11x on live libraries ([#254](https://github.com/mrx-31415/stash-curator/issues/254)) ([c64b767](https://github.com/mrx-31415/stash-curator/commit/c64b767f9f7644430ad8b05d8ccb642fb96fd1a1))
+
 ## [0.19.3](https://github.com/mrx-31415/stash-curator/compare/v0.19.2...v0.19.3) (2026-08-22)
 
 
