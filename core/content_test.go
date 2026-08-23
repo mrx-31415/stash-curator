@@ -273,10 +273,14 @@ func TestPerformerPairHandComputed(t *testing.T) {
 		norms:  map[string]float64{"content": 0.5},
 	}
 	cacheProfileEntries(map[string]*performerProfile{"l": left, "r": right})
-	similarity, blocks := performerPair(left, right, []string{"content"}, weights, scales, numeric)
+	similarity, blocks := performerPair(left, right, []string{"content"}, weights, scales, numeric, true)
+	scoreOnly, noBlocks := performerPair(left, right, []string{"content"}, weights, scales, numeric, false)
 	// dot = 0.5, norm product = 0.5, confidence = 0.5 -> cosine = 0.5.
 	if math.Abs(similarity-0.5) > 1e-12 {
 		t.Fatalf("expected similarity 0.5, got %v", similarity)
+	}
+	if scoreOnly != similarity || noBlocks != nil {
+		t.Fatalf("score-only result = %v, %v", scoreOnly, noBlocks)
 	}
 	if !reflect.DeepEqual(blocks, map[string]float64{"content": 0.5}) {
 		t.Fatalf("unexpected blocks: %v", blocks)

@@ -298,8 +298,11 @@ func performerPair(
 	globalBlocks []string,
 	weights, scales map[string]float64,
 	numeric map[string]bool,
+	withBlocks bool,
 ) (similarity float64, blocks map[string]float64) {
-	blocks = make(map[string]float64)
+	if withBlocks {
+		blocks = make(map[string]float64)
+	}
 	var numerator, denominator float64
 	cosineZero := false
 	for _, block := range globalBlocks {
@@ -389,7 +392,9 @@ func performerPair(
 		if used {
 			denominator += weight
 			numerator += blockValue * weight
-			blocks[block] = blockValue
+			if withBlocks {
+				blocks[block] = blockValue
+			}
 		}
 	}
 	if denominator <= 0 {
@@ -468,7 +473,7 @@ func performerForProfile(
 		if knownID == profile.id {
 			continue
 		}
-		similarity, blocks := performerPair(profile, profiles[knownID], globalBlocks, payload.BlockWeights, payload.NumericScales, numeric)
+		similarity, _ := performerPair(profile, profiles[knownID], globalBlocks, payload.BlockWeights, payload.NumericScales, numeric, false)
 		if math.IsNaN(similarity) || similarity <= 0 {
 			continue
 		}
@@ -478,7 +483,6 @@ func performerForProfile(
 			similarity: similarity,
 			affinity:   affinity[0],
 			confidence: affinity[1],
-			blocks:     blocks,
 		})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -489,6 +493,10 @@ func performerForProfile(
 	})
 	if len(candidates) > 5 {
 		candidates = candidates[:5]
+	}
+	for i := range candidates {
+		_, candidates[i].blocks = performerPair(profile, profiles[candidates[i].id], globalBlocks,
+			payload.BlockWeights, payload.NumericScales, numeric, true)
 	}
 	var denominator float64
 	for _, c := range candidates {
