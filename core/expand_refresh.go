@@ -405,14 +405,18 @@ ORDER BY appeal * confidence DESC LIMIT 100`, modelID)
 			return jvNull(), err
 		}
 		studios := links.get("studios")
+		localStudioByExternal := make(map[string]string, len(studios.obj))
+		for _, pair := range studios.obj {
+			localStudioByExternal[pair.key] = pair.val.asString()
+		}
 		for rows.Next() {
 			var studioID string
 			if err := rows.Scan(&studioID); err != nil {
 				rows.Close()
 				return jvNull(), err
 			}
-			if v := studios.get(studioID); v.truthy() {
-				studioSet[v.asString()] = true
+			if externalID, ok := localStudioByExternal[studioID]; ok {
+				studioSet[externalID] = true
 			}
 		}
 		rows.Close()
