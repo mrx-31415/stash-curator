@@ -66,7 +66,7 @@ func cachedExternalLinks(db dbx, state string) (jVal, bool, error) {
 	if err != nil {
 		return jvNull(), false, nil // JSONDecodeError -> None
 	}
-	if payload.get("state").asString() != state {
+	if state != "" && payload.get("state").asString() != state {
 		return jvNull(), false, nil
 	}
 	links := payload.get("links")
@@ -175,23 +175,21 @@ func fetchLinksPage(base string, headers map[string]string, page int64) linksPag
 }
 
 func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(processed, total int)) (jVal, error) {
-	// The state hash is computed whenever a cache row can be written — also
-	// on refresh — so the cache never stores an empty state and the next
-	// non-refresh op can reuse the row (mirrors _external_links, which
-	// computes the state whenever connection is not None).
 	state := ""
 	var err error
 	if db != nil {
-		state, err = externalLinksState(payload)
-		if err != nil {
-			return jvNull(), err
-		}
 		if !refresh {
-			if cached, ok, err := cachedExternalLinks(db, state); err != nil {
+			// ponytail: cache until explicit refresh; add TTL or entity-hook invalidation if
+			// newly linked entities must appear without a manual refresh.
+			if cached, ok, err := cachedExternalLinks(db, ""); err != nil {
 				return jvNull(), err
 			} else if ok {
 				return cached, nil
 			}
+		}
+		state, err = externalLinksState(payload)
+		if err != nil {
+			return jvNull(), err
 		}
 	}
 	base, headers := stashConnection(payload)
