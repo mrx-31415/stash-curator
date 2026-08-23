@@ -1598,6 +1598,12 @@ GROUP BY p.performer_id`, modelID)
 		return nil, nil, err
 	}
 	performers := links.get("performers")
+	// The insertion-ordered jVal map is scanned per row otherwise (a Python
+	// dict is a hash map); build a Go map once so the loop is O(1) per row.
+	localByExternal := make(map[string]string, len(performers.obj))
+	for _, pair := range performers.obj {
+		localByExternal[pair.key] = pair.val.asString()
+	}
 	for rows.Next() {
 		var performerID, name string
 		var favorite, playCount int64
@@ -1605,10 +1611,7 @@ GROUP BY p.performer_id`, modelID)
 		if err := rows.Scan(&performerID, &name, &favorite, &playCount, &observedAppeal); err != nil {
 			return nil, nil, err
 		}
-		externalID := ""
-		if v := performers.get(performerID); v.truthy() {
-			externalID = v.asString()
-		}
+		externalID := localByExternal[performerID]
 		if externalID == "" {
 			continue
 		}
@@ -1797,14 +1800,18 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 		return nil, nil, err
 	}
 	studios := links.get("studios")
+	localStudioByExternal := make(map[string]string, len(studios.obj))
+	for _, pair := range studios.obj {
+		localStudioByExternal[pair.key] = pair.val.asString()
+	}
 	for appealRows.Next() {
 		var studioID string
 		var appeal float64
 		if err := appealRows.Scan(&studioID, &appeal); err != nil {
 			return nil, nil, err
 		}
-		if v := studios.get(studioID); v.truthy() {
-			externalStudioAppeal[v.asString()] = appeal
+		if externalID, ok := localStudioByExternal[studioID]; ok {
+			externalStudioAppeal[externalID] = appeal
 		}
 	}
 	appealRows.Close()
@@ -2087,6 +2094,10 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 	// walk depends only on the seed, so it is computed once and reused for
 	// every scene (Python re-walks per scene; the result is identical).
 	performers := links.get("performers")
+	localPerformerByExternal := make(map[string]string, len(performers.obj))
+	for _, pair := range performers.obj {
+		localPerformerByExternal[pair.key] = pair.val.asString()
+	}
 	if multiHopSeed.kind != jNull {
 		mh := newMultiHop(s.db, modelID)
 		if err := mh.load(); err != nil {
@@ -2108,8 +2119,8 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 				if !pid.truthy() {
 					continue
 				}
-				if local := performers.get(pid.asString()); local.truthy() {
-					localIDs[local.asString()] = true
+				if local, ok := localPerformerByExternal[pid.asString()]; ok {
+					localIDs[local] = true
 				}
 			}
 			if len(localIDs) == 0 {
@@ -2128,8 +2139,8 @@ WHERE s.studio_id IS NOT NULL GROUP BY s.studio_id`, modelID)
 	}
 
 	ownedPerformers := map[string]bool{}
-	for _, pair := range performers.obj {
-		ownedPerformers[pair.val.asString()] = true
+	for _, externalID := range localPerformerByExternal {
+		ownedPerformers[externalID] = true
 	}
 	performerOutputs := make([]scoredScene, 0)
 	for _, externalID := range performerOrder {
