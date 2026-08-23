@@ -272,6 +272,8 @@ func TestPerformerPairHandComputed(t *testing.T) {
 		blocks: map[string]map[string]profileValue{"content": {"a": {value: 0.5, confidence: 0.5}}},
 		norms:  map[string]float64{"content": 0.5},
 	}
+	cacheProfileKeys(left)
+	cacheProfileKeys(right)
 	similarity, blocks := performerPair(left, right, []string{"content"}, weights, scales, numeric)
 	// dot = 0.5, norm product = 0.5, confidence = 0.5 -> cosine = 0.5.
 	if math.Abs(similarity-0.5) > 1e-12 {
