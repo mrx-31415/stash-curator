@@ -239,7 +239,7 @@ def _external_links_state(payload: dict[str, Any]) -> str:
 
 
 def _cached_external_links(
-    connection: sqlite3.Connection, state: str
+    connection: sqlite3.Connection, state: str | None
 ) -> dict[str, dict[str, str]] | None:
     row = connection.execute(
         "SELECT value FROM application_meta WHERE key=?", (EXTERNAL_LINKS_CACHE_KEY,)
@@ -250,7 +250,7 @@ def _cached_external_links(
         payload = json.loads(str(row[0]))
     except json.JSONDecodeError:
         return None
-    if payload.get("state") != state:
+    if state is not None and payload.get("state") != state:
         return None
     links = payload.get("links")
     return links if isinstance(links, dict) else None
@@ -271,11 +271,13 @@ def _external_links(
     walk (issue #110: the expand-refresh bar used to sit at 5% for the whole
     library walk).
     """
-    state = _external_links_state(payload) if connection is not None else ""
     if connection is not None and not refresh:
-        cached = _cached_external_links(connection, state)
+        # ponytail: cache until explicit refresh; add TTL or entity-hook invalidation if
+        # newly linked entities must appear without a manual refresh.
+        cached = _cached_external_links(connection, None)
         if cached is not None:
             return cached
+    state = _external_links_state(payload) if connection is not None else ""
     result: dict[str, dict[str, str]] = {
         "scenes": {},
         "scene_ids": {},
