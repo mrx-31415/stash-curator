@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.19.6](https://github.com/mrx-31415/stash-curator/compare/v0.19.5...v0.19.6) (2026-08-23)
+
+
+### Performance Improvements
+
+* **core:** batch curation-impact feature reads; index blocked-term lookup ([#261](https://github.com/mrx-31415/stash-curator/issues/261)) ([8055290](https://github.com/mrx-31415/stash-curator/commit/8055290daae8bc0a429132de17d5108df74cd817))
+* **core:** cache performer profile keys ([61cec7a](https://github.com/mrx-31415/stash-curator/commit/61cec7abcaa41055ec80b3bfc7d40eceecc21814))
+* **core:** cache performer profile keys ([2a2eb82](https://github.com/mrx-31415/stash-curator/commit/2a2eb8287653fb832f0c634945f7aa256d20fc72))
+* **core:** defer performer match details ([e07f586](https://github.com/mrx-31415/stash-curator/commit/e07f5860783c1f2c6fab6267d69bd9dca4befa70))
+* **core:** defer performer match details ([efdba2b](https://github.com/mrx-31415/stash-curator/commit/efdba2b2522c159f7a095dd03aab56a933d4a309))
+* **core:** memoize curation coverage sort; fetch StashDB at max page size ([#263](https://github.com/mrx-31415/stash-curator/issues/263)) ([ac4fb1d](https://github.com/mrx-31415/stash-curator/commit/ac4fb1ddbd823cf88e9e0193f93da326d0010410))
+* **core:** merge cached performer entries ([243c249](https://github.com/mrx-31415/stash-curator/commit/243c249fd8996892a8c1fe24876db2ced8a37a1c))
+* **core:** merge cached performer entries ([5300572](https://github.com/mrx-31415/stash-curator/commit/5300572391989653d8eda524bc5b65c1a47c61cb))
+* **core:** merge performer entries by ordinal ([29f88e6](https://github.com/mrx-31415/stash-curator/commit/29f88e6547fb3e1672b539b8e952c603bd1c45db))
+* **core:** merge performer entries by ordinal ([4f1bd31](https://github.com/mrx-31415/stash-curator/commit/4f1bd31830f144e7247b6addb40da594482a9713))
+* skip external-link state query on cache hits ([9ad509b](https://github.com/mrx-31415/stash-curator/commit/9ad509b1e3cdcb38f97ff918219dc12fd108ddc6))
+* skip external-link state query on cache hits ([423d085](https://github.com/mrx-31415/stash-curator/commit/423d085a5cf15999f9035d829b32f483022e4467))
+
 ## [0.19.5](https://github.com/mrx-31415/stash-curator/compare/v0.19.4...v0.19.5) (2026-08-23)
 
 
