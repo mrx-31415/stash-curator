@@ -233,6 +233,33 @@ func removeWorkerPidIfOwned(pluginDir string) {
 	}
 }
 
+// handoverWorker hands the resident worker to the newly installed binary:
+// refresh the worker-state fingerprint, drop the pid file, and spawn the
+// successor (os.Executable() resolves the replaced file, so the spawn is the
+// new generation). Best-effort — on any failure the next Curator invocation
+// spawns the new generation as before, so the daemon is never left in a
+// worse state than without the handover.
+func handoverWorker(pluginDir string) {
+	fresh, err := readWorkerState(pluginDir)
+	if err != nil {
+		return
+	}
+	fingerprint, err := workerBinaryFingerprint(pluginDir)
+	if err != nil {
+		return
+	}
+	fresh.BinaryFingerprint = fingerprint
+	if err := writeWorkerState(pluginDir, fresh); err != nil {
+		return
+	}
+	// Drop the pid before spawning: the successor refuses to start while a
+	// live worker pid is recorded. The deferred removeWorkerPidIfOwned on
+	// exit is ownership-guarded, so it cannot remove the successor's pid.
+	removeWorkerPidIfOwned(pluginDir)
+	infoLog("daemon handing over to the updated binary")
+	_ = spawnWorkerFn(pluginDir)
+}
+
 func stopWorker(pid int) error {
 	if !pidAlive(pid) {
 		return nil
@@ -508,7 +535,11 @@ func runDaemon(pluginDir string) {
 		select {
 		case <-updateDetected:
 			// Let an active job finish, but do not claim more work under the
-			// old executable. The next invocation starts the new generation.
+			// old executable. Hand over to the new generation immediately so
+			// scheduled work keeps firing even when no Curator invocation
+			// follows the plugin update (an idle system would otherwise miss
+			// the next schedule window until the next op).
+			handoverWorker(pluginDir)
 			infoLog("daemon stopped after plugin update")
 			return
 		default:

@@ -344,6 +344,53 @@ func TestEnsureWorkerIgnoresReusedPID(t *testing.T) {
 		t.Fatalf("reused PID handling: stop=%d spawn=%d", stopCalls, spawnCalls)
 	}
 }
+func TestHandoverWorkerSpawnsSuccessor(t *testing.T) {
+	pluginDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(pluginDir, name)
+	if err := os.WriteFile(binary, []byte("new-generation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldFingerprint, err := workerBinaryFingerprint(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The resident worker: its own pid in the pid file and a state row for
+	// the previous generation.
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkerState(pluginDir, workerState{BinaryFingerprint: "old-generation"}); err != nil {
+		t.Fatal(err)
+	}
+	spawned := 0
+	previousSpawn := spawnWorkerFn
+	spawnWorkerFn = func(string) error { spawned++; return nil }
+	defer func() { spawnWorkerFn = previousSpawn }()
+
+	handoverWorker(pluginDir)
+
+	if spawned != 1 {
+		t.Fatalf("successor spawns = %d, want 1", spawned)
+	}
+	if _, err := os.Stat(workerPidPath(pluginDir)); !os.IsNotExist(err) {
+		t.Fatalf("pid file not removed: %v", err)
+	}
+	state, err := readWorkerState(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.BinaryFingerprint != oldFingerprint {
+		t.Fatalf("state fingerprint = %q, want %q (the installed binary)", state.BinaryFingerprint, oldFingerprint)
+	}
+}
+
 func TestWorkerUpdateWatcherDetectsReplacement(t *testing.T) {
 	pluginDir := t.TempDir()
 	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH
