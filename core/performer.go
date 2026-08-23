@@ -42,9 +42,10 @@ type profileValue struct {
 }
 
 type performerProfile struct {
-	id     string
-	blocks map[string]map[string]profileValue
-	norms  map[string]float64
+	id         string
+	blocks     map[string]map[string]profileValue
+	norms      map[string]float64
+	sortedKeys map[string][]string
 	// keys holds each block's name set; populated by the query-time
 	// similarity path (readProfiles leaves it nil).
 	keys map[string]map[string]bool
@@ -84,15 +85,17 @@ func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (m
 	}
 	for _, profile := range profiles {
 		profile.norms = make(map[string]float64, len(profile.blocks))
+		profile.sortedKeys = make(map[string][]string, len(profile.blocks))
 		for block, values := range profile.blocks {
-			if numeric[block] {
-				continue
-			}
 			keys := make([]string, 0, len(values))
 			for key := range values {
 				keys = append(keys, key)
 			}
 			sort.Strings(keys)
+			profile.sortedKeys[block] = keys
+			if numeric[block] {
+				continue
+			}
 			var sumSquares float64
 			for _, key := range keys {
 				sumSquares += values[key].value * values[key].value
@@ -101,6 +104,21 @@ func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (m
 		}
 	}
 	return profiles, nil
+}
+
+func cacheProfileKeys(profile *performerProfile) {
+	if profile.sortedKeys != nil {
+		return
+	}
+	profile.sortedKeys = make(map[string][]string, len(profile.blocks))
+	for block, values := range profile.blocks {
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		profile.sortedKeys[block] = keys
+	}
 }
 
 // performerMatch is one entry of the production "matches" list (top-3).
@@ -128,6 +146,28 @@ func sortedSharedKeys(left, right map[string]profileValue) []string {
 		}
 	}
 	sort.Strings(keys)
+	return keys
+}
+
+func sharedProfileKeys(left, right *performerProfile, block string,
+	leftValues, rightValues map[string]profileValue) []string {
+	leftKeys, leftOK := left.sortedKeys[block]
+	rightKeys, rightOK := right.sortedKeys[block]
+	if !leftOK || !rightOK {
+		return sortedSharedKeys(leftValues, rightValues)
+	}
+	keys := make([]string, 0, min(len(leftKeys), len(rightKeys)))
+	for i, j := 0, 0; i < len(leftKeys) && j < len(rightKeys); {
+		if leftKeys[i] < rightKeys[j] {
+			i++
+		} else if leftKeys[i] > rightKeys[j] {
+			j++
+		} else {
+			keys = append(keys, leftKeys[i])
+			i++
+			j++
+		}
+	}
 	return keys
 }
 
@@ -168,6 +208,9 @@ func performerSimilarityScores(
 	profiles map[string]*performerProfile,
 	numeric map[string]bool,
 ) map[string]any {
+	for _, profile := range profiles {
+		cacheProfileKeys(profile)
+	}
 	profileIDs := make([]string, 0, len(profiles))
 	for id := range profiles {
 		profileIDs = append(profileIDs, id)
@@ -275,7 +318,7 @@ func performerPair(
 			if !leftOK || !rightOK {
 				continue
 			}
-			keys := sortedSharedKeys(leftValues, rightValues)
+			keys := sharedProfileKeys(left, right, block, leftValues, rightValues)
 			var total float64
 			count := 0
 			for _, key := range keys {
@@ -304,7 +347,7 @@ func performerPair(
 				cosineZero = true
 				continue
 			}
-			keys := sortedSharedKeys(leftValues, rightValues)
+			keys := sharedProfileKeys(left, right, block, leftValues, rightValues)
 			var dot, confidenceSum float64
 			count := 0
 			for _, key := range keys {
