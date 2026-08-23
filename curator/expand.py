@@ -947,7 +947,7 @@ class ExpandService:
                 ).fetchone()
             )
             profiles = (
-                FeatureStore(self.connection).performer_profiles(feature_version)
+                FeatureStore(self.connection).performer_profiles(feature_version, target_performers)
                 if feature_version
                 else {}
             )
@@ -1078,7 +1078,7 @@ class ExpandService:
         elif entity_type == "performer":
             feature_version = FeatureStore(self.connection).current_version()
             target = (
-                FeatureStore(self.connection).performer_profiles(feature_version).get(entity_id)
+                FeatureStore(self.connection).performer_profiles(feature_version, [entity_id]).get(entity_id)
                 if feature_version
                 else None
             )
@@ -1250,7 +1250,7 @@ class ExpandService:
             }:
                 ethnicity = ""
             target = (
-                FeatureStore(self.connection).performer_profiles(feature_version).get(entity_id)
+                FeatureStore(self.connection).performer_profiles(feature_version, [entity_id]).get(entity_id)
             )
             if target is not None:
                 target = self._with_age(target, target_row["birthdate"])

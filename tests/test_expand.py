@@ -1142,7 +1142,8 @@ def test_external_similarity_loads_only_positive_anchor_profiles(
         value["tags"] == {"value": ["external-tag"], "modifier": "INCLUDES"}
         for value in tag_queries
     )
-    assert {"p1"} in requested
+    assert requested
+    assert all(value is not None and set(value) <= {"p1"} for value in requested)
 
 
 def test_targeted_scene_similar_probes_both_sorts_and_tight_tag_sets(

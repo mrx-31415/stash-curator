@@ -162,7 +162,11 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 		}
 		var profiles map[string]*performerProfile
 		if featureVersion != "" {
-			profiles, err = performerProfilesAll(s.db, featureVersion)
+			targetProfileIDs := make(map[string]bool, len(targetPerformers))
+			for _, performerID := range targetPerformers {
+				targetProfileIDs[performerID] = true
+			}
+			profiles, err = performerProfilesForIDs(s.db, featureVersion, targetProfileIDs)
 			if err != nil {
 				return jvNull(), err
 			}
@@ -330,7 +334,7 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 		}
 		var target *performerProfile
 		if featureVersion != "" {
-			profiles, err := performerProfilesAll(s.db, featureVersion)
+			profiles, err := performerProfilesForIDs(s.db, featureVersion, map[string]bool{entityID: true})
 			if err != nil {
 				return jvNull(), err
 			}
@@ -479,6 +483,7 @@ func whyForShared(tags jVal, shared map[string]bool, exactPerformer bool, perfor
 
 // profileMatchFull mirrors ExpandService._profile_match, also returning the
 // per-block similarities and weights for the why attributes.
+//
 //go:noinline
 func profileMatchFull(left, right *performerProfile, weights map[string]float64) (float64, float64, map[string]float64, map[string]float64) {
 	total, sims, used := performerSimilarity(left, right, weights)
@@ -659,7 +664,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		}
 		var target *performerProfile
 		if featureVersion != "" {
-			profiles, err := performerProfilesAll(db, featureVersion)
+			profiles, err := performerProfilesForIDs(db, featureVersion, map[string]bool{entityID: true})
 			if err != nil {
 				return jvNull(), err
 			}
