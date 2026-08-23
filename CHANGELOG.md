@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.5](https://github.com/mrx-31415/stash-curator/compare/v0.19.4...v0.19.5) (2026-08-23)
+
+
+### Bug Fixes
+
+* **core:** hand over the worker daemon to a new binary immediately ([#259](https://github.com/mrx-31415/stash-curator/issues/259)) ([329ccc8](https://github.com/mrx-31415/stash-curator/commit/329ccc813f129cbf07777bb9d4ecfc7c57212065))
+
+
+### Performance Improvements
+
+* **core:** fetch expand-refresh probes concurrently ([#257](https://github.com/mrx-31415/stash-curator/issues/257)) ([1a98266](https://github.com/mrx-31415/stash-curator/commit/1a98266c9540043edf531631a667ec21898fb615))
+
 ## [0.19.4](https://github.com/mrx-31415/stash-curator/compare/v0.19.3...v0.19.4) (2026-08-23)
 
 
