@@ -1599,7 +1599,7 @@ def test_backend_profiles_only_when_enabled_and_exposes_profile_api(
     assert module._api(payload, "clear_profiles", {"profilingEnabled": False})["deleted"] == 1
 
 
-def test_external_links_reuse_the_last_scan_until_stash_reports_a_change(
+def test_external_links_reuse_the_last_scan_until_explicit_refresh(
     tmp_path: Path,
 ) -> None:
     backend = Path(__file__).parents[2] / "plugin" / "backend.py"
@@ -1655,11 +1655,14 @@ def test_external_links_reuse_the_last_scan_until_stash_reports_a_change(
 
     state["updated_at"] = "2026-02-02T00:00:00Z"
     module._external_links({}, connection)
-    assert scanned == 3, "an edited library must invalidate the cache"
+    assert scanned == 2, "normal reads should not revalidate a cached library"
 
     state["count"] = 2
     module._external_links({}, connection)
-    assert scanned == 4, "an added or deleted link must invalidate the cache"
+    assert scanned == 2, "normal reads should not revalidate a cached library"
+
+    module._external_links({}, connection, refresh=True)
+    assert scanned == 3, "the refresh task must force a rescan after library changes"
 
 
 def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
