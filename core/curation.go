@@ -698,8 +698,17 @@ func mapEqual(a, b map[string]bool) bool {
 // per-scene cap.
 func orthogonalPairs(ctx *curationContext, budget int, seen map[string]bool) []pairCandidate {
 	unlabeled := pairUnlabeled(ctx, seen)
+	// sceneCoverage is a pure function of the scene; the sort comparator
+	// used to recompute it per comparison (O(n log n) calls, each building
+	// and sorting the scene's tag/performer lists), which dominated the op
+	// on large libraries. Precompute once — identical values, identical
+	// ordering, byte-identical output.
+	coverage := make(map[string]float64, len(unlabeled))
+	for _, sceneID := range unlabeled {
+		coverage[sceneID] = sceneCoverage(ctx, sceneID)
+	}
 	sort.Slice(unlabeled, func(i, j int) bool {
-		ci, cj := sceneCoverage(ctx, unlabeled[i]), sceneCoverage(ctx, unlabeled[j])
+		ci, cj := coverage[unlabeled[i]], coverage[unlabeled[j]]
 		if ci != cj {
 			return ci > cj
 		}
