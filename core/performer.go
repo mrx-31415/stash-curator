@@ -42,8 +42,9 @@ type profileValue struct {
 }
 
 type profileBlockEntry struct {
-	key   string
-	value profileValue
+	key     string
+	ordinal int
+	value   profileValue
 }
 
 type performerProfile struct {
@@ -88,16 +89,10 @@ func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (m
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	cacheProfileEntries(profiles)
 	for _, profile := range profiles {
 		profile.norms = make(map[string]float64, len(profile.blocks))
-		profile.sortedBlock = make(map[string][]profileBlockEntry, len(profile.blocks))
-		for block, values := range profile.blocks {
-			entries := make([]profileBlockEntry, 0, len(values))
-			for key, value := range values {
-				entries = append(entries, profileBlockEntry{key: key, value: value})
-			}
-			sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
-			profile.sortedBlock[block] = entries
+		for block, entries := range profile.sortedBlock {
 			if numeric[block] {
 				continue
 			}
@@ -111,18 +106,52 @@ func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (m
 	return profiles, nil
 }
 
-func cacheProfileEntries(profile *performerProfile) {
-	if profile.sortedBlock != nil {
+func cacheProfileEntries(profiles map[string]*performerProfile) {
+	complete := true
+	for _, profile := range profiles {
+		if len(profile.sortedBlock) != len(profile.blocks) {
+			complete = false
+			break
+		}
+	}
+	if complete {
 		return
 	}
-	profile.sortedBlock = make(map[string][]profileBlockEntry, len(profile.blocks))
-	for block, values := range profile.blocks {
-		entries := make([]profileBlockEntry, 0, len(values))
-		for key, value := range values {
-			entries = append(entries, profileBlockEntry{key: key, value: value})
+	blockNames := make(map[string]map[string]bool)
+	for _, profile := range profiles {
+		for block, values := range profile.blocks {
+			names := blockNames[block]
+			if names == nil {
+				names = make(map[string]bool)
+				blockNames[block] = names
+			}
+			for key := range values {
+				names[key] = true
+			}
 		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
-		profile.sortedBlock[block] = entries
+	}
+	ordinals := make(map[string]map[string]int, len(blockNames))
+	for block, names := range blockNames {
+		keys := make([]string, 0, len(names))
+		for key := range names {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		ordinals[block] = make(map[string]int, len(keys))
+		for ordinal, key := range keys {
+			ordinals[block][key] = ordinal
+		}
+	}
+	for _, profile := range profiles {
+		profile.sortedBlock = make(map[string][]profileBlockEntry, len(profile.blocks))
+		for block, values := range profile.blocks {
+			entries := make([]profileBlockEntry, 0, len(values))
+			for key, value := range values {
+				entries = append(entries, profileBlockEntry{key: key, ordinal: ordinals[block][key], value: value})
+			}
+			sort.Slice(entries, func(i, j int) bool { return entries[i].ordinal < entries[j].ordinal })
+			profile.sortedBlock[block] = entries
+		}
 	}
 }
 
@@ -178,9 +207,7 @@ func performerSimilarityScores(
 	profiles map[string]*performerProfile,
 	numeric map[string]bool,
 ) map[string]any {
-	for _, profile := range profiles {
-		cacheProfileEntries(profile)
-	}
+	cacheProfileEntries(profiles)
 	profileIDs := make([]string, 0, len(profiles))
 	for id := range profiles {
 		profileIDs = append(profileIDs, id)
@@ -291,11 +318,11 @@ func performerPair(
 			var total float64
 			count := 0
 			for i, j := 0, 0; i < len(leftEntries) && j < len(rightEntries); {
-				if leftEntries[i].key < rightEntries[j].key {
+				if leftEntries[i].ordinal < rightEntries[j].ordinal {
 					i++
 					continue
 				}
-				if leftEntries[i].key > rightEntries[j].key {
+				if leftEntries[i].ordinal > rightEntries[j].ordinal {
 					j++
 					continue
 				}
@@ -329,11 +356,11 @@ func performerPair(
 			var dot, confidenceSum float64
 			count := 0
 			for i, j := 0, 0; i < len(leftEntries) && j < len(rightEntries); {
-				if leftEntries[i].key < rightEntries[j].key {
+				if leftEntries[i].ordinal < rightEntries[j].ordinal {
 					i++
 					continue
 				}
-				if leftEntries[i].key > rightEntries[j].key {
+				if leftEntries[i].ordinal > rightEntries[j].ordinal {
 					j++
 					continue
 				}
