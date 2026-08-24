@@ -237,7 +237,7 @@ func runTaskMode(db dbx, pluginDir string, payload jVal, mode string, settings j
 		return taskSyncPlays(db, pluginDir, payload, settings)
 	case "expand-refresh":
 		return taskExpandRefresh(db, pluginDir, payload, settings)
-	case "build", "update-model":
+	case "build", "force-build", "update-model":
 		return taskBuild(db, pluginDir, payload, mode)
 	case "sync-build", "full-sync-build":
 		return taskSyncBuild(db, pluginDir, payload, mode, settings)
@@ -440,8 +440,14 @@ func taskBuild(db dbx, pluginDir string, payload jVal, mode string) (jVal, error
 			infoLog(fmt.Sprintf("Building recommendation model: %d%%", milestone*10))
 		}
 	}
-	if mode == "build" {
+	if mode == "build" || mode == "force-build" {
 		if err := withTxn(db, func(conn *sql.Conn) error {
+			if mode == "force-build" {
+				if _, err := conn.ExecContext(context.Background(),
+					`UPDATE model_version SET status='superseded' WHERE status='published'`); err != nil {
+					return err
+				}
+			}
 			return coordinatorRequest(conn, "manual_build", nowMs())
 		}); err != nil {
 			return jvNull(), err
