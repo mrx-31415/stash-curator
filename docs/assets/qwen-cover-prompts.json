@@ -1,0 +1,21 @@
+{
+  "size": "1536*864",
+  "negative_prompt": "people, person, face, body, skin, nudity, lingerie, sexual content, suggestive content, text, letters, numbers, logo, watermark, brand, UI, interface, frame, collage, photograph of a real location",
+  "prompts": [
+    {"id": "cobalt-atrium", "prompt": "abstract cinematic cover art, deep cobalt architectural atrium made from translucent glass planes, a single warm pool of light, refined premium streaming artwork, minimal geometric composition, rich navy shadows, subtle film grain, 16:9"},
+    {"id": "amber-horizon", "prompt": "abstract cinematic cover art, layered amber and ochre horizon forms like sculpted paper dunes, dark midnight-blue sky, one distant glow, restrained premium streaming artwork, tactile paper grain, 16:9"},
+    {"id": "teal-prism", "prompt": "abstract cinematic cover art, teal glass prisms casting clean light refractions across a near-black surface, quiet modern gallery lighting, premium streaming artwork, precise geometric composition, 16:9"},
+    {"id": "violet-ridge", "prompt": "abstract cinematic cover art, violet twilight ridges rendered as soft folded fabric and mist, cool indigo shadows, one thin silver highlight, elegant premium streaming artwork, 16:9"},
+    {"id": "verdant-mineral", "prompt": "abstract cinematic cover art, forest-green mineral slabs and moss-colored translucent stone, deep charcoal negative space, directional studio light, tasteful premium streaming artwork, 16:9"},
+    {"id": "coral-current", "prompt": "abstract cinematic cover art, coral and burgundy flowing paper-cut contours over a dark navy background, one electric-blue accent, sophisticated editorial composition, premium streaming artwork, 16:9"},
+    {"id": "silver-orbit", "prompt": "abstract cinematic cover art, matte graphite field with a suspended silver orbit and soft blue bloom, clean high-end science-fiction mood without characters, premium streaming artwork, 16:9"},
+    {"id": "indigo-rain", "prompt": "abstract cinematic cover art, indigo rain lines passing over blurred blue-black glass, tiny warm reflections, atmospheric nocturnal mood, elegant premium streaming artwork, 16:9"},
+    {"id": "terracotta-steps", "prompt": "abstract cinematic cover art, terracotta monolithic steps emerging from a black void, soft peach side light, calm surreal architectural study, premium streaming artwork, 16:9"},
+    {"id": "arctic-lens", "prompt": "abstract cinematic cover art, frosted cyan lens shapes over a deep navy field, crystalline edges, faint aurora illumination, crisp modern premium streaming artwork, 16:9"},
+    {"id": "plum-velvet", "prompt": "abstract cinematic cover art, dark plum velvet folds intersected by a single sapphire beam, luxurious restrained material study, near-black background, premium streaming artwork, 16:9"},
+    {"id": "golden-wire", "prompt": "abstract cinematic cover art, thin golden wire arcs hovering above a charcoal-blue surface, soft shadows and subtle reflections, minimalist luxury editorial design, premium streaming artwork, 16:9"},
+    {"id": "ocean-grid", "prompt": "abstract cinematic cover art, deep ocean-blue grid distorted beneath translucent water ripples, low-contrast teal highlights, calm technical elegance, premium streaming artwork, 16:9"},
+    {"id": "ember-fog", "prompt": "abstract cinematic cover art, dim ember-orange light diffused through graphite fog, layered soft volumetric forms, sophisticated low-key cinema mood, premium streaming artwork, 16:9"},
+    {"id": "lavender-arch", "prompt": "abstract cinematic cover art, lavender concrete arches framing a midnight-blue gradient, one soft circular moonlike glow, quiet surreal architecture, premium streaming artwork, 16:9"}
+  ]
+}
