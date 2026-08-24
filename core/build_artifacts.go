@@ -181,7 +181,7 @@ func createArtifact(corePath, kind, identifier string) (dbx, string, string, err
 	if err != nil {
 		return nil, "", "", err
 	}
-	for _, pragma := range []string{"PRAGMA journal_mode = OFF", "PRAGMA synchronous = OFF"} {
+	for _, pragma := range []string{"PRAGMA journal_mode = OFF", "PRAGMA synchronous = OFF", "PRAGMA temp_store = MEMORY"} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
 			os.Remove(temporary)
