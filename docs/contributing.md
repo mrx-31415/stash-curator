@@ -11,7 +11,8 @@ understood, reviewed, and verified by a person responsible for the change.
 
 ## Set up and verify
 
-Requirements are Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requirements are Python 3.12+, [uv](https://docs.astral.sh/uv/), and Go for full
+verification or packaging.
 
 ```bash
 uv sync --locked
@@ -33,14 +34,10 @@ use synthetic data and need no live Stash or StashDB access.
 
 | Area | Purpose |
 | --- | --- |
-| `curator/sync/`, `curator/graphql/` | Stash ingestion |
-| `curator/events/` | Outcome normalization and durable events |
-| `curator/features/`, `curator/taxonomy/` | Sparse features and tag roles |
-| `curator/model/`, `curator/ranking/` | Preference estimates and varied slates |
-| `curator/similarity.py`, `curator/expand.py` | Local and external discovery |
-| `curator/explanations/` | Structured reasons and deterministic wording |
-| `curator/storage/sql/` | Immutable SQLite migrations |
-| `plugin/` | Stash backend bridge and browser UI |
+| `core/` | Production Go core: Stash integration, SQLite, model, discovery, and tasks |
+| `curator/`, `backend.py` | Development and differential-test oracle; not production runtime |
+| `curator/explanations/realizations.json` | Explanation catalog included with the plugin |
+| `plugin/` | Launcher, manifest, and browser UI |
 | `tests/` | Synthetic unit and integration coverage |
 
 ## Privacy rules
@@ -56,7 +53,9 @@ SQLite migrations are ordered, immutable, checksummed, and transactional. Add a 
 migration; never edit one that may have been applied, reset a sidecar to hide a
 migration defect, or expose readers to partially published model state.
 
-The plugin archive contains `plugin/`, `curator/`, and the license. Documentation is
+The plugin archive contains the plugin UI and launcher, explanation realization catalog,
+per-platform Go binaries, manifest, and license—not the full Python `curator` package
+or `plugin/backend.py`. Documentation is
 built independently from `docs/` with GitHub Pages' native Jekyll action, then the
 archive and index are copied into the same deployment so docs and install source go
 live atomically. Historical design and research live in `docs/archive/` and are
