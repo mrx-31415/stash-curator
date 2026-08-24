@@ -104,12 +104,13 @@ def collect(key: str, jobs: list[dict[str, object]], output_dir: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", type=Path, default=ROOT / "qwen-cover-prompts.json")
     parser.add_argument("--output", type=Path, default=Path("/tmp/stash-curator-qwen-covers"))
     parser.add_argument("--limit", type=int)
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--collect", action="store_true")
     args = parser.parse_args()
-    manifest = json.loads((ROOT / "qwen-cover-prompts.json").read_text())
+    manifest = json.loads(args.manifest.read_text())
     args.output.mkdir(parents=True, exist_ok=True)
     prompts = manifest["prompts"][: args.limit]
     jobs_path = args.output / "jobs.json"
