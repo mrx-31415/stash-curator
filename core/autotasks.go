@@ -70,13 +70,12 @@ VALUES (?, ?, 'queued', ?, ?, ?)`, jobID, mode, now, now, payloadRaw); err != ni
 	return enqueued, err
 }
 
-// modelRebuilding reports whether a model-touching job is running (build,
-// update-model, sync-build, full-sync-build), matching health's query.
+// modelRebuilding reports whether a model-touching job is running, matching health's query.
 func modelRebuilding(db dbx, now int64) (bool, error) {
 	var probe int
 	err := db.QueryRow(`SELECT 1 FROM curator_job
 WHERE state='running' AND started_at_ms>? AND job_type IN (
-    'build', 'update-model', 'sync-build', 'full-sync-build'
+    'build', 'force-build', 'update-model', 'sync-build', 'full-sync-build'
 ) LIMIT 1`, now-6*3_600_000).Scan(&probe)
 	if err == nil {
 		return true, nil
