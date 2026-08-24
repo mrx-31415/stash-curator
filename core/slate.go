@@ -214,7 +214,7 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 		return jvNull(), err
 	}
 	rebuilding, err := scanExists(db, `SELECT 1 FROM curator_job
-WHERE state='running' AND job_type IN ('build', 'update-model', 'sync-build', 'full-sync-build') LIMIT 1`)
+WHERE state='running' AND job_type IN ('build', 'force-build', 'update-model', 'sync-build', 'full-sync-build') LIMIT 1`)
 	if err != nil {
 		return jvNull(), err
 	}

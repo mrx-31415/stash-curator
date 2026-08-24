@@ -3750,6 +3750,7 @@
     "sync-build": "Sync and build recommendations",
     "full-sync-build": "Full sync and build recommendations",
     build: "Rebuild recommendation model",
+    "force-build": "Force rebuild recommendation model",
     "update-model": "Apply recent Curator feedback",
     prepare: "Prepare recommendation pages",
     "sync-plays": "Sync recent plays",
@@ -3854,7 +3855,7 @@
     function summaryLine(job) {
       const summary = job.summary || {};
       const scenes = typeof summary.scene_count === "number" ? `${summary.scene_count} scenes` : "";
-      if (job.job_type === "build" || job.job_type === "update-model" || job.job_type === "sync-build" || job.job_type === "full-sync-build") {
+      if (job.job_type === "build" || job.job_type === "force-build" || job.job_type === "update-model" || job.job_type === "sync-build" || job.job_type === "full-sync-build") {
         return scenes ? `Model built · ${scenes}` : "Model built";
       }
       if (job.job_type === "backup") return "Backup created";
@@ -3915,7 +3916,8 @@
         "div",
         { className: "curator-tasks-runnow" },
         React.createElement("span", null, "Run now"),
-        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(starting), onClick: () => start("Sync and build recommendations") }, starting === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations")
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(starting), onClick: () => start("Sync and build recommendations") }, starting === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations"),
+        React.createElement(Button, { size: "sm", variant: "outline-danger", disabled: Boolean(starting), onClick: () => start("Force rebuild recommendation model") }, starting === "Force rebuild recommendation model" ? "Starting…" : "Force rebuild model")
       ),
       message && React.createElement("p", { className: "curator-header-message", role: "status" }, message),
       React.createElement(

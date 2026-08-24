@@ -12,7 +12,7 @@ import (
 // diagnosticJobTypes mirrors backend.py's DIAGNOSTIC_JOB_TYPES.
 var diagnosticJobTypes = map[string]bool{
 	"sync-build": true, "full-sync-build": true, "sync-plays": true,
-	"build": true, "update-model": true, "prepare": true,
+	"build": true, "force-build": true, "update-model": true, "prepare": true,
 	"backup": true, "compact": true, "vacuum": true, "expand-refresh": true,
 }
 

@@ -437,6 +437,12 @@ func TestTaskPermissionFailureDoesNotOpenSidecar(t *testing.T) {
 	}
 }
 
+func TestTaskModeNativeIncludesForceBuild(t *testing.T) {
+	if !taskModeNative("force-build") {
+		t.Fatal("force-build must be handled by the native task dispatcher")
+	}
+}
+
 func TestBackupValidationFailureRemovesSnapshot(t *testing.T) {
 	db, _ := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
