@@ -107,6 +107,25 @@ func TestAttachActiveArtifacts(t *testing.T) {
 	}
 }
 
+func TestCreateArtifactUsesEphemeralPragmas(t *testing.T) {
+	artifact, temporary, _, err := createArtifact(filepath.Join(t.TempDir(), "curator.sqlite3"), "model", "model-"+strings.Repeat("a", 20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer discardArtifact(artifact, temporary)
+	var journalMode string
+	var synchronous int
+	if err := artifact.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if journalMode != "off" || synchronous != 0 {
+		t.Fatalf("artifact pragmas = journal_mode=%q synchronous=%d, want off/0", journalMode, synchronous)
+	}
+}
+
 // A registry pointing at a missing artifact fails with the Python-equivalent
 // message.
 func TestAttachActiveArtifactsMissingFile(t *testing.T) {

@@ -181,6 +181,13 @@ func createArtifact(corePath, kind, identifier string) (dbx, string, string, err
 	if err != nil {
 		return nil, "", "", err
 	}
+	for _, pragma := range []string{"PRAGMA journal_mode = OFF", "PRAGMA synchronous = OFF"} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			os.Remove(temporary)
+			return nil, "", "", err
+		}
+	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version=%d", artifactSchemaVersion)); err != nil {
 		db.Close()
 		os.Remove(temporary)
