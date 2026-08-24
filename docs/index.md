@@ -25,8 +25,8 @@ wide: true
 ## Recommendations
 
 <section class="showcase">
-  <div class="showcase-copy"><span class="pill">For You</span><h3>Reasons, not mystery scores</h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore. Open “Why this?” to inspect the evidence, confidence, and timing behind a card.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-recommendations.png' | relative_url }}" alt="Synthetic Recommendations demo with abstract Scene cards and an inspectable Why this explanation" width="1200" height="675" loading="lazy" decoding="async"></div>
+  <div class="showcase-copy"><span class="pill">Tour</span><h3>Recommendations, Find, and Curate</h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore. Switch to Find for related scenes, then Curate to teach the model with quick comparisons.</p></div>
+  <div class="capture"><img src="{{ '/assets/showcase-navigation.gif' | relative_url }}" alt="Curator navigation moving between Recommendations, Find, and Curate with fictional cinematic scene cards" width="1280" height="820" loading="lazy" decoding="async"></div>
 </section>
 
 <section class="showcase">
