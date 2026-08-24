@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.20.0](https://github.com/mrx-31415/stash-curator/compare/v0.19.6...v0.20.0) (2026-08-24)
+
+
+### Features
+
+* add force model rebuild task ([ef36330](https://github.com/mrx-31415/stash-curator/commit/ef36330c5c8950aaa24de7b35ad88d98d1490ba9))
+* add force model rebuild task ([0578141](https://github.com/mrx-31415/stash-curator/commit/05781418a72aa6d8f221e6f606db21c53214e17e))
+
+
+### Bug Fixes
+
+* replace zombie curator workers ([a167dc3](https://github.com/mrx-31415/stash-curator/commit/a167dc3e34e79c2af435da4bda03f77b1497230e))
+* replace zombie curator workers ([08ec329](https://github.com/mrx-31415/stash-curator/commit/08ec329a06c4c4dda80f7bad005f6dcaa198c8bf))
+
+
+### Performance Improvements
+
+* keep temporary artifact stores in memory ([4a1f228](https://github.com/mrx-31415/stash-curator/commit/4a1f2284d80b56dcc32a25d6f28c020890f61c48))
+* keep temporary artifact stores in memory ([231e2b2](https://github.com/mrx-31415/stash-curator/commit/231e2b216e34f06fcb60be3d3327fbafba89a723))
+* relax temporary artifact durability ([a0832fd](https://github.com/mrx-31415/stash-curator/commit/a0832fd7504ca670d238a18a2913bc9ebc2202ea))
+* relax temporary artifact durability ([3dee8aa](https://github.com/mrx-31415/stash-curator/commit/3dee8aa09364f050f6a81e8bea9003c98f8786da))
+
 ## [0.19.6](https://github.com/mrx-31415/stash-curator/compare/v0.19.5...v0.19.6) (2026-08-23)
 
 
