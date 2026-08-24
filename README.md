@@ -9,7 +9,9 @@ Stash Curator is a local-first recommendation and curation plugin for
 and direct feedback to recommend scenes from your library, explains why an item
 appears, and keeps the preference model in a separate SQLite database you control.
 
-![Synthetic Curator Recommendations demo with abstract scene cards and an inspectable explanation](docs/assets/showcase-recommendations.png)
+![Curator tour through recommendation lanes, Similar, Pair picks, and Tag sentiment](docs/assets/showcase-navigation.gif)
+
+![Curator Recommendations with fictional cinematic scene cards and inspectable scores](docs/assets/showcase-recommendations.png)
 
 ## Install
 
