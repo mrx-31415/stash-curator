@@ -38,13 +38,22 @@ func forceKillWorker(pid int) error {
 	return syscall.Kill(pid, syscall.SIGKILL)
 }
 
-// pidAlive reports whether a process with the given pid exists (signal 0).
+func procZombie(stat []byte) bool {
+	end := bytes.LastIndexByte(stat, ')')
+	return end >= 0 && len(stat) > end+2 && stat[end+2] == 'Z'
+}
+
+// pidAlive reports whether a non-zombie process with the given pid exists.
 func pidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
+	if err != nil && err != syscall.EPERM {
+		return false
+	}
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	return err != nil || !procZombie(stat)
 }
 
 // daemonSysProcAttr detaches the worker into its own session so it survives
