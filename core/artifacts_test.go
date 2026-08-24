@@ -115,14 +115,18 @@ func TestCreateArtifactUsesEphemeralPragmas(t *testing.T) {
 	defer discardArtifact(artifact, temporary)
 	var journalMode string
 	var synchronous int
+	var tempStore int
 	if err := artifact.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
 		t.Fatal(err)
 	}
 	if err := artifact.QueryRow("PRAGMA synchronous").Scan(&synchronous); err != nil {
 		t.Fatal(err)
 	}
-	if journalMode != "off" || synchronous != 0 {
-		t.Fatalf("artifact pragmas = journal_mode=%q synchronous=%d, want off/0", journalMode, synchronous)
+	if err := artifact.QueryRow("PRAGMA temp_store").Scan(&tempStore); err != nil {
+		t.Fatal(err)
+	}
+	if journalMode != "off" || synchronous != 0 || tempStore != 2 {
+		t.Fatalf("artifact pragmas = journal_mode=%q synchronous=%d temp_store=%d, want off/0/2", journalMode, synchronous, tempStore)
 	}
 }
 
