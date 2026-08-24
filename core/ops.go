@@ -29,6 +29,7 @@ var taskDisplayNames = map[string]string{
 	"sync-build":      "Sync and build recommendations",
 	"full-sync-build": "Full sync and build recommendations",
 	"build":           "Rebuild recommendation model",
+	"force-build":     "Force rebuild recommendation model",
 	"update-model":    "Apply recent Curator feedback",
 	"sync-plays":      "Sync recent plays",
 	"prepare":         "Prepare recommendation pages",

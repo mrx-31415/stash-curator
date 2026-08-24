@@ -151,6 +151,10 @@ tasks:
     description: Force a recommendation refresh from already-synced data without contacting Stash.
     execArgs:
       - build
+  - name: Force rebuild recommendation model
+    description: Recompute and republish the model even when Curator would otherwise reuse the current artifact.
+    execArgs:
+      - force-build
   - name: Apply recent Curator feedback
     description: Publish pending feedback and playback signals without blocking the Curator page.
     execArgs:

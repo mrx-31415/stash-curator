@@ -116,7 +116,7 @@ func writeOutput(output jVal) {
 func taskModeNative(mode string) bool {
 	switch mode {
 	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh",
-		"build", "update-model", "sync-build", "full-sync-build":
+		"build", "force-build", "update-model", "sync-build", "full-sync-build":
 		return true
 	}
 	return false
