@@ -2896,16 +2896,17 @@
   object-fit: cover;
   width: 100%;
 }
-.curator-preview-tile .curator-preview-video.scene-card-preview-video {
-  height: 100%;
-  object-fit: cover;
-  width: 100%;
-}
 .curator-preview-tile .card-section {
   height: 100%;
   margin: 0;
   overflow: hidden;
   padding: 0;
+}
+/* SFW switch: Stash's scene-card classes break custom wall tiles, so mirror its
+   blur by detecting when wall media is blurred (syncSfwBlur observer) and
+   applying a strong Curator-side blur only then. */
+.curator-sfw .curator-preview-tile .card-section {
+  filter: blur(12px);
 }
 .curator-preview-affinity {
   align-items: center;

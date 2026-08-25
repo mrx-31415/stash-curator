@@ -2376,7 +2376,7 @@
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign}`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
         React.createElement("div", { className: "card-section" },
-          React.createElement("video", { ref: keepMuted, className: "curator-preview-video scene-card-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+          React.createElement("video", { ref: keepMuted, className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
         )
       ),
       React.createElement("span", { className: "curator-preview-lane", style: { color: laneColor }, title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
@@ -5334,6 +5334,27 @@
   attachPlayer(location.pathname);
   flushQueue();
   flushTagPreferenceQueue();
+  // Mirror Stash's SFW blur onto the preview wall. Stash's own scene-card
+  // classes break custom wall tiles, so detect SFW from whether the wall media
+  // is actually blurred and apply a strong Curator-side blur when it is. Stash
+  // mutates the DOM often, so the check is debounced.
+  let sfwTimer = null;
+  function syncSfwBlur() {
+    clearTimeout(sfwTimer);
+    sfwTimer = setTimeout(() => {
+      const media = document.querySelectorAll(".curator-preview-tile .card-section, .curator-preview-tile .curator-preview-video");
+      let blurred = false;
+      for (const el of media) {
+        const filter = window.getComputedStyle(el).filter;
+        if (filter && filter !== "none") { blurred = true; break; }
+      }
+      document.body.classList.toggle("curator-sfw", blurred);
+    }, 100);
+  }
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(syncSfwBlur).observe(document.body, { attributes: true, childList: true, subtree: true });
+    syncSfwBlur();
+  }
   function scheduleModelMaintenance() {
     operation({ operation: "health" })
       .then((health) => {
