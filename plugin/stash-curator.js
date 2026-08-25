@@ -2351,26 +2351,21 @@
     const laneColor = `var(--curator-hue-${lane}, var(--curator-accent))`;
     function onEnter() { setHovered(true); }
     function onLeave() { setHovered(false); }
-    // The SFW toggle can restart/unmute wall media outside React; force muted on
-    // every play/volumechange so playback never leaks sound, and carry the Stash
-    // scene-card SFW contract classes so the wall blurs with the rest of the UI.
-    const videoRef = React.useRef(null);
-    React.useEffect(() => {
-      const el = videoRef.current;
-      if (!el) return;
-      const forceMuted = () => { el.muted = true; el.defaultMuted = true; };
-      forceMuted();
-      el.addEventListener("play", forceMuted);
-      el.addEventListener("volumechange", forceMuted);
-      return () => {
-        el.removeEventListener("play", forceMuted);
-        el.removeEventListener("volumechange", forceMuted);
-      };
-    }, []);
+    // Mute synchronously at attach (mobile requires muted *before* the autoplay
+    // check) and re-assert whenever the browser plays or changes volume — the
+    // SFW toggle can restart/unmute wall media outside React. The tile also
+    // carries the Stash scene-card SFW contract classes so it blurs with the UI.
+    function keepMuted(node) {
+      if (!node) return;
+      node.muted = true;
+      node.defaultMuted = true;
+      node.onplay = () => { node.muted = true; };
+      node.onvolumechange = () => { node.muted = true; };
+    }
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign} scene-card`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
         React.createElement("div", { className: "card-section" },
-          React.createElement("video", { ref: videoRef, className: "curator-preview-video scene-card-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+          React.createElement("video", { ref: keepMuted, className: "curator-preview-video scene-card-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
         )
       ),
       React.createElement("span", { className: "curator-preview-lane", style: { color: laneColor }, title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
