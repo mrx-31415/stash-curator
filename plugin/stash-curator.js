@@ -2352,16 +2352,28 @@
     function onEnter() { setHovered(true); }
     function onLeave() { setHovered(false); }
     // Mute synchronously at attach (mobile requires muted *before* the autoplay
-    // check) and re-assert whenever the browser plays or changes volume — the
-    // SFW toggle can restart/unmute wall media outside React. The tile also
-    // carries the Stash scene-card SFW contract classes so it blurs with the UI.
+    // check) so playback starts silently; a separate effect re-mutes via
+    // addEventListener if the SFW toggle unmutes/restarts the media outside
+    // React. The tile also carries the Stash scene-card SFW contract classes so
+    // it blurs with the UI.
+    const videoRef = React.useRef(null);
     function keepMuted(node) {
       if (!node) return;
+      videoRef.current = node;
       node.muted = true;
       node.defaultMuted = true;
-      node.onplay = () => { node.muted = true; };
-      node.onvolumechange = () => { node.muted = true; };
     }
+    React.useEffect(() => {
+      const el = videoRef.current;
+      if (!el) return;
+      const forceMuted = () => { el.muted = true; el.defaultMuted = true; };
+      el.addEventListener("play", forceMuted);
+      el.addEventListener("volumechange", forceMuted);
+      return () => {
+        el.removeEventListener("play", forceMuted);
+        el.removeEventListener("volumechange", forceMuted);
+      };
+    }, []);
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign} scene-card`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
         React.createElement("div", { className: "card-section" },
