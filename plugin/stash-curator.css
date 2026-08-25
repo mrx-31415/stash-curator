@@ -2885,6 +2885,13 @@
   overflow: hidden;
   position: relative;
 }
+.curator-preview-tile.scene-card {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  display: block;
+  margin: 0;
+  padding: 0;
+}
 .curator-preview-link {
   display: block;
   height: 100%;
