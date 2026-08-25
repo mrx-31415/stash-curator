@@ -2331,44 +2331,46 @@
     );
   }
 
+  function wallLaneIcon(lane) {
+    const known = laneByValue.get(lane);
+    if (known) return known.icon;
+    const map = { score_review: faBalanceScale, similar: faClone, prune: faBroom, curate: faBullseye, expand: faGlobe, hunt: faCrosshairs };
+    return map[lane] || faCompass;
+  }
   function PreviewWallToggle({ wall, onToggle }) {
-    return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Preview wall");
+    return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Wall");
   }
   function PreviewTile({ entry, index }) {
     const [hovered, setHovered] = React.useState(false);
-    const { scene_id, scene, affinity, hoverContent } = entry;
+    const { scene_id, scene, affinity, lane } = entry;
     const title = scene?.title || `Scene ${scene_id}`;
     const hasAffinity = affinity !== undefined && affinity !== null;
     const label = hasAffinity ? formatAppealValue(affinity) : "";
     const sign = !hasAffinity || affinity === 0 ? "neutral" : affinity < 0 ? "negative" : "positive";
+    const laneLabel = laneByValue.get(lane)?.label || "Curator";
     function onEnter() { setHovered(true); }
     function onLeave() { setHovered(false); }
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign}`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
-        React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+        React.createElement("div", { className: "card-section" },
+          React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+        )
       ),
+      React.createElement("span", { className: "curator-preview-lane", title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
       hasAffinity && React.createElement("span", { className: "curator-preview-affinity", title: `Curator affinity ${label}`, "aria-label": `Curator affinity ${label}` }, React.createElement(FontAwesomeIcon, { icon: faCompass }), React.createElement("span", null, label)),
-      hovered && React.createElement("div", { className: "curator-preview-hover", onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave }, hoverContent)
+      hovered && React.createElement("div", { className: "curator-preview-hover", onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave }, React.createElement("span", { className: "curator-preview-hover-title" }, title))
     );
   }
   function PreviewWall({ entries }) {
     return React.createElement("div", { className: "curator-preview-wall" }, entries.map((entry, index) => React.createElement(PreviewTile, { key: `${entry.scene_id}:${index}`, entry, index })));
   }
-  function RecommendationWall({ visibleItems, scenes, onRemove, onThumbDown, laneLabel }) {
-    const entries = visibleItems.map((item) => {
-      const scene = scenes.get(String(item.scene_id));
-      return {
-        scene_id: item.scene_id,
-        scene,
-        affinity: item.appeal,
-        hoverContent: React.createElement("div", null,
-          React.createElement("div", { className: "curator-preview-hover-title" }, scene?.title || `Scene ${item.scene_id}`),
-          laneLabel && React.createElement("p", { className: "curator-preview-hover-why" }, `Selected from ${laneLabel}`),
-          React.createElement("div", { className: "curator-preview-hover-appeal" }, scoreBar(item.appeal, true)),
-          React.createElement(Feedback, { item, onRemove, onThumbDown })
-        ),
-      };
-    });
+  function RecommendationWall({ visibleItems, scenes, lane }) {
+    const entries = visibleItems.map((item) => ({
+      scene_id: item.scene_id,
+      scene: scenes.get(String(item.scene_id)),
+      affinity: item.appeal,
+      lane: item.source_lane || lane,
+    }));
     return React.createElement(PreviewWall, { entries });
   }
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown }) {
@@ -2974,17 +2976,11 @@
       ? items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           return {
             scene_id: item.entity_id,
             scene: entity,
             affinity: (item.appeal * 2) - 1,
-            hoverContent: React.createElement("div", null,
-              React.createElement("div", { className: "curator-preview-hover-title" }, entity.title || `Scene ${item.entity_id}`),
-              item.explanation?.summary && React.createElement("p", { className: "curator-preview-hover-why" }, item.explanation.summary),
-              React.createElement("div", { className: "curator-preview-hover-appeal" }, scoreBar((item.appeal * 2) - 1, true)),
-              React.createElement(Feedback, { item: feedbackItem, onRemove: removeSimilar, onThumbDown: showFollowUp })
-            ),
+            lane: "similar",
           };
         }).filter(Boolean)
       : [];
@@ -3120,12 +3116,7 @@
             scene_id: item.scene_id,
             scene,
             affinity: item.appeal,
-            hoverContent: React.createElement("div", null,
-              React.createElement("div", { className: "curator-preview-hover-title" }, scene.title || `Scene ${item.scene_id}`),
-              item.evidence?.length > 0 && React.createElement("p", { className: "curator-preview-hover-why" }, item.evidence.join(" · ")),
-              React.createElement("div", { className: "curator-preview-hover-appeal" }, item.appeal !== null ? scoreBar(item.appeal, true) : null),
-              React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && (item.suspect || item.breadth) && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
-            ),
+            lane: "prune",
           };
         }).filter(Boolean)
       : [];
@@ -4354,7 +4345,7 @@
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes below the current appeal threshold."),
       data && !loading && (wall
-        ? React.createElement(RecommendationWall, { visibleItems, scenes, onRemove: remove, onThumbDown: showFollowUp, laneLabel: "Sentiment review" })
+        ? React.createElement(RecommendationWall, { visibleItems, scenes, lane: "score_review" })
         : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp })))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Sentiment review pages" })
@@ -5069,7 +5060,7 @@
           null,
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Nothing qualifies for this lane right now."), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
           wall
-            ? React.createElement(RecommendationWall, { visibleItems, scenes, onRemove: remove, onThumbDown: showFollowUp, laneLabel: laneOption.label })
+            ? React.createElement(RecommendationWall, { visibleItems, scenes, lane })
             : React.createElement(
               "section",
               { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
