@@ -2821,15 +2821,6 @@
   outline-offset: 2px;
 }
 
-.curator-context-link {
-  background: var(--curator-gradient-brand) !important;
-  border-radius: var(--curator-radius-lg);
-  box-shadow: var(--curator-shadow-glow);
-  color: var(--curator-text);
-  height: 1.9rem;
-  padding: 0;
-  width: 1.9rem;
-}
 .curator-affinity-pill {
   align-items: center;
   background: var(--curator-surface-raised);
@@ -2837,6 +2828,7 @@
   border-radius: 999px;
   box-shadow: var(--curator-shadow-sm);
   color: var(--curator-text);
+  cursor: pointer;
   display: inline-flex;
   font-size: 0.8rem;
   font-weight: 600;
@@ -2845,6 +2837,7 @@
   line-height: 1;
   margin-left: 0.4rem;
   padding: 0 0.6rem;
+  text-decoration: none;
   vertical-align: middle;
   white-space: nowrap;
 }

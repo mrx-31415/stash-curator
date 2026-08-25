@@ -5283,7 +5283,11 @@
     }
     return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
   });
-  function CuratorAffinityPill({ type, id }) {
+  // The affinity pill doubles as the Similar link: one compact control shows the
+  // curator affinity (or a dash when the model has no evidence) and navigates to
+  // Curator's Similar view for this asset. Always rendered so the Similar entry
+  // point is present regardless of model evidence.
+  function CuratorAffinityPill({ type, id, label }) {
     const [value, setValue] = React.useState(null);
     React.useEffect(() => {
       let active = true;
@@ -5296,17 +5300,18 @@
         .catch(() => { if (active) setValue(null); });
       return () => { active = false; };
     }, [type, id]);
-    if (value === null) return null;
-    const label = formatAppealValue(value);
-    const sign = value < 0 ? "negative" : value > 0 ? "positive" : "neutral";
-    return React.createElement("span", {
+    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
+    const valueLabel = value === null ? "—" : formatAppealValue(value);
+    const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
+    return React.createElement(NavLink, {
       className: `curator-affinity-pill curator-affinity-${sign}`,
-      title: `Curator affinity ${label}`,
-      "aria-label": `Curator affinity ${label}`,
+      to: `/plugins/stash-curator?${query}`,
+      title: `Find similar ${type}s with Curator · affinity ${valueLabel}`,
+      "aria-label": `Find similar ${type}s with Curator (affinity ${valueLabel})`,
     },
       React.createElement(FontAwesomeIcon, { icon: faCompass }),
-      React.createElement("span", { className: "curator-affinity-value" }, label),
-      React.createElement("span", { className: "curator-affinity-bar", "aria-hidden": "true" }, React.createElement("span", { className: "curator-affinity-bar-fill", style: { width: `${Math.min(100, Math.abs(value) * 100)}%` } }))
+      React.createElement("span", { className: "curator-affinity-value" }, valueLabel),
+      React.createElement("span", { className: "curator-affinity-bar", "aria-hidden": "true" }, React.createElement("span", { className: "curator-affinity-bar-fill", style: { width: `${value === null ? 0 : Math.min(100, Math.abs(value) * 100)}%` } }))
     );
   }
   function CuratorContextLink({ type, id, label, target }) {
@@ -5314,9 +5319,8 @@
     React.useEffect(() => {
       setHost(document.querySelector(target));
     }, [target]);
-    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
     if (!host) return null;
-    return ReactDOM.createPortal(React.createElement(React.Fragment, null, React.createElement(NavLink, { className: "btn minimal curator-context-link curator-brand-mark", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })), React.createElement(CuratorAffinityPill, { type, id })), host);
+    return ReactDOM.createPortal(React.createElement(CuratorAffinityPill, { type, id, label }), host);
   }
   Api.patch.after("ScenePage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
