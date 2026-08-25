@@ -256,6 +256,19 @@ class CuratorAPI:
             feature_version = self.connection.execute(
                 "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
             ).fetchone()[0]
+            affinity_row = self.connection.execute(
+                """
+                SELECT fa.affinity, fa.confidence
+                FROM feature_affinity fa
+                JOIN feature_definition fd ON fd.feature_id = fa.feature_id
+                WHERE fa.model_id = ?
+                  AND fd.feature_version = ?
+                  AND fd.name = ?
+                """,
+                (model_id, feature_version, f"performer:{entity_id}"),
+            ).fetchone()
+            affinity = affinity_row[0] if affinity_row is not None else None
+            confidence = affinity_row[1] if affinity_row is not None else None
             matches = FeatureStore(self.connection).similar_performers(
                 str(feature_version),
                 entity_id,
@@ -268,6 +281,8 @@ class CuratorAPI:
                 "entity_id": entity_id,
                 "model_id": model_id,
                 "profile": dict(row),
+                "affinity": affinity,
+                "confidence": confidence,
                 "similar": [
                     {
                         "performer_id": performer_id,
