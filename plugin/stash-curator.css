@@ -2896,6 +2896,11 @@
   object-fit: cover;
   width: 100%;
 }
+.curator-preview-tile .curator-preview-video.scene-card-preview-video {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
 .curator-preview-tile .card-section {
   height: 100%;
   margin: 0;
