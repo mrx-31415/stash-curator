@@ -2348,17 +2348,24 @@
     const label = hasAffinity ? formatAppealValue(affinity) : "";
     const sign = !hasAffinity || affinity === 0 ? "neutral" : affinity < 0 ? "negative" : "positive";
     const laneLabel = laneByValue.get(lane)?.label || "Curator";
+    const laneColor = `var(--curator-hue-${lane}, var(--curator-accent))`;
     function onEnter() { setHovered(true); }
     function onLeave() { setHovered(false); }
+    // Stash's SFW toggle re-renders the wall; re-assert muted on every commit so
+    // the toggle never starts playback with sound (React's `muted` prop is
+    // unreliable across re-renders for <video>).
+    function keepMuted(node) { if (node) { node.muted = true; node.defaultMuted = true; } }
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign}`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
         React.createElement("div", { className: "card-section" },
-          React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+          React.createElement("video", { ref: keepMuted, className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
         )
       ),
-      React.createElement("span", { className: "curator-preview-lane", title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
-      hasAffinity && React.createElement("span", { className: "curator-preview-affinity", title: `Curator affinity ${label}`, "aria-label": `Curator affinity ${label}` }, React.createElement(FontAwesomeIcon, { icon: faCompass }), React.createElement("span", null, label)),
-      hovered && React.createElement("div", { className: "curator-preview-hover", onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave }, React.createElement("span", { className: "curator-preview-hover-title" }, title))
+      React.createElement("span", { className: "curator-preview-lane", style: { color: laneColor }, title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
+      hovered && React.createElement("div", { className: "curator-preview-hover", onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
+        hasAffinity && React.createElement("span", { className: "curator-preview-affinity", title: `Curator affinity ${label}`, "aria-label": `Curator affinity ${label}` }, React.createElement(FontAwesomeIcon, { icon: faCompass }), React.createElement("span", null, label)),
+        React.createElement("span", { className: "curator-preview-hover-title" }, title)
+      )
     );
   }
   function PreviewWall({ entries }) {
