@@ -2821,48 +2821,56 @@
   outline-offset: 2px;
 }
 
-.curator-affinity-pill {
+.curator-context-group {
   align-items: center;
-  background: var(--curator-surface-raised);
-  border: 1px solid var(--curator-border);
-  border-radius: 999px;
-  box-shadow: var(--curator-shadow-sm);
-  color: var(--curator-text);
-  cursor: pointer;
   display: inline-flex;
-  font-size: 0.8rem;
-  font-weight: 600;
-  gap: 0.35rem;
-  height: 1.9rem;
-  line-height: 1;
-  margin-left: 0.4rem;
-  padding: 0 0.6rem;
-  text-decoration: none;
+  gap: 0.45rem;
   vertical-align: middle;
-  white-space: nowrap;
 }
-.curator-affinity-pill .curator-affinity-value {
-  font-variant-numeric: tabular-nums;
+.curator-context-button {
+  align-items: center;
+  background: var(--curator-gradient-brand) !important;
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-shadow-glow);
+  color: var(--curator-text);
+  display: inline-flex;
+  height: 1.9rem;
+  justify-content: center;
+  text-decoration: none;
+  width: 1.9rem;
 }
-.curator-affinity-pill.curator-affinity-positive .curator-affinity-value {
-  color: #5cc19c;
+.curator-context-button:hover,
+.curator-context-button:focus {
+  text-decoration: none;
 }
-.curator-affinity-pill.curator-affinity-negative .curator-affinity-value {
-  color: #e0645c;
+.curator-affinity-gauge {
+  height: 1.9rem;
+  position: relative;
+  width: 1.9rem;
 }
-.curator-affinity-pill .curator-affinity-bar {
-  background: var(--curator-wash-recessed);
-  border-radius: 999px;
-  height: 3px;
-  overflow: hidden;
-  width: 2.2rem;
-}
-.curator-affinity-pill .curator-affinity-bar-fill {
+.curator-affinity-gauge-ring {
   display: block;
   height: 100%;
+  width: 100%;
 }
-.curator-affinity-pill.curator-affinity-positive .curator-affinity-bar-fill {
-  background: #5cc19c;
+.curator-affinity-gauge-value {
+  color: var(--curator-text);
+  font-size: 0.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  left: 0;
+  line-height: 1;
+  position: absolute;
+  right: 0;
+  text-align: center;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.curator-affinity-gauge.curator-affinity-positive .curator-affinity-gauge-value {
+  color: #5cc19c;
+}
+.curator-affinity-gauge.curator-affinity-negative .curator-affinity-gauge-value {
+  color: #e0645c;
 }
 .curator-preview-wall {
   display: grid;

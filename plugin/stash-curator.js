@@ -5287,8 +5287,29 @@
   // curator affinity (or a dash when the model has no evidence) and navigates to
   // Curator's Similar view for this asset. Always rendered so the Similar entry
   // point is present regardless of model evidence.
-  function CuratorAffinityPill({ type, id, label }) {
+  // Circular gauge around the affinity value (replaces the flat bar). The ring
+  // fill tracks |affinity| and the value is tinted by sign; a dash when there is
+  // no model evidence.
+  function CuratorAffinityGauge({ value }) {
+    const radius = 15;
+    const circumference = 2 * Math.PI * radius;
+    const magnitude = value === null ? 0 : Math.min(1, Math.abs(value));
+    const offset = circumference * (1 - magnitude);
+    const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
+    const valueLabel = value === null ? "—" : formatAppealValue(value);
+    const color = sign === "positive" ? "#5cc19c" : sign === "negative" ? "#e0645c" : "#adb5bd";
+    return React.createElement("span", { className: `curator-affinity-gauge curator-affinity-${sign}`, title: `Curator affinity ${valueLabel}`, "aria-label": `Curator affinity ${valueLabel}` },
+      React.createElement("svg", { className: "curator-affinity-gauge-ring", viewBox: "0 0 36 36", "aria-hidden": "true" },
+        React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: "rgba(127,127,127,0.25)", strokeWidth: 3 }),
+        React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: color, strokeWidth: 3, strokeDasharray: String(circumference), strokeDashoffset: String(offset), strokeLinecap: "round", transform: "rotate(-90 18 18)" })
+      ),
+      React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
+    );
+  }
+  function CuratorContextLink({ type, id, label, target }) {
+    const [host, setHost] = React.useState(null);
     const [value, setValue] = React.useState(null);
+    React.useEffect(() => { setHost(document.querySelector(target)); }, [target]);
     React.useEffect(() => {
       let active = true;
       operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id) })
@@ -5300,27 +5321,15 @@
         .catch(() => { if (active) setValue(null); });
       return () => { active = false; };
     }, [type, id]);
-    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
-    const valueLabel = value === null ? "—" : formatAppealValue(value);
-    const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
-    return React.createElement(NavLink, {
-      className: `curator-affinity-pill curator-affinity-${sign}`,
-      to: `/plugins/stash-curator?${query}`,
-      title: `Find similar ${type}s with Curator · affinity ${valueLabel}`,
-      "aria-label": `Find similar ${type}s with Curator (affinity ${valueLabel})`,
-    },
-      React.createElement(FontAwesomeIcon, { icon: faCompass }),
-      React.createElement("span", { className: "curator-affinity-value" }, valueLabel),
-      React.createElement("span", { className: "curator-affinity-bar", "aria-hidden": "true" }, React.createElement("span", { className: "curator-affinity-bar-fill", style: { width: `${value === null ? 0 : Math.min(100, Math.abs(value) * 100)}%` } }))
-    );
-  }
-  function CuratorContextLink({ type, id, label, target }) {
-    const [host, setHost] = React.useState(null);
-    React.useEffect(() => {
-      setHost(document.querySelector(target));
-    }, [target]);
     if (!host) return null;
-    return ReactDOM.createPortal(React.createElement(CuratorAffinityPill, { type, id, label }), host);
+    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
+    return ReactDOM.createPortal(
+      React.createElement("div", { className: "curator-context-group" },
+        React.createElement(NavLink, { className: "curator-context-button", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
+        React.createElement(CuratorAffinityGauge, { value })
+      ),
+      host
+    );
   }
   Api.patch.after("ScenePage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
