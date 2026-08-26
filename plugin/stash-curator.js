@@ -5306,10 +5306,9 @@
       React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
     );
   }
-  function CuratorContextLink({ type, id, label, target, afterLabel }) {
+  function CuratorContextLink({ type, id, label, target }) {
     const [host, setHost] = React.useState(null);
     const [value, setValue] = React.useState(null);
-    const groupRef = React.useRef(null);
     React.useEffect(() => { setHost(document.querySelector(target)); }, [target]);
     React.useEffect(() => {
       let active = true;
@@ -5322,22 +5321,10 @@
         .catch(() => { if (active) setValue(null); });
       return () => { active = false; };
     }, [type, id]);
-    // Slot the control after an anchor control in the host (e.g. the Organize
-    // button) when afterLabel is given; otherwise keep the createPortal spot.
-    React.useLayoutEffect(() => {
-      const group = groupRef.current;
-      if (!host || !group || !afterLabel) return;
-      let anchor = null;
-      for (const el of host.querySelectorAll("button, a, [role='button']")) {
-        const text = `${el.textContent || ""} ${el.getAttribute("title") || ""} ${el.getAttribute("aria-label") || ""}`.toLowerCase();
-        if (text.includes(afterLabel.toLowerCase())) { anchor = el; break; }
-      }
-      if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(group, anchor.nextSibling);
-    }, [host, afterLabel]);
     if (!host) return null;
     const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
     return ReactDOM.createPortal(
-      React.createElement("div", { ref: groupRef, className: "curator-context-group" },
+      React.createElement("div", { className: "curator-context-group" },
         React.createElement(NavLink, { className: "curator-context-button", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
         React.createElement(CuratorAffinityGauge, { value })
       ),
@@ -5345,7 +5332,7 @@
     );
   }
   Api.patch.after("ScenePage", function (props, _, result) {
-    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar", afterLabel: "organiz" }));
+    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
   });
   Api.patch.after("PerformerPage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}`, target: "#performer-page .name-icons" }));
