@@ -36,13 +36,10 @@ Stage 4 is complete. A native backup validated, restartable legacy compaction re
 95,678,464 bytes, and post-restart installed verification passes. Schema-1 artifacts,
 durable state, all pre-existing backups, and the protected pre-repair copy remain.
 
-The compiled core (Phase 2) is delivered: the content-neighbor and
-performer-similarity kernels are ported to Go with identical semantics, wired
-into the model build as a subprocess (compiled core > numpy > pure Python),
-with a pytest differential gate against numpy (seeded synthetic corpora, 1e-9
-floats, exact ids), cross-thread determinism, and the full unit suite green
-with the binary active. Distribution (Phase 3) ships per-arch binaries in the
-plugin zip with runtime select and a pure-Python fallback.
+The compiled core is delivered as the single production runtime. Its kernel ports
+retain a pytest differential gate against the Python/numpy oracle (seeded synthetic
+corpora, 1e-9 floats, exact ids) and cross-thread determinism; the plugin zip ships
+per-platform binaries selected by the launcher, with no Python backend fallback.
 
 ## Open acceptance work
 
@@ -197,17 +194,15 @@ cold-cache tooling are now built in (`stage_timings_ms` restored to the full
   the SQLite feature artifact; NDJSON progress + result; deterministic across
   goroutine counts. Build: `scripts/build_core.sh` (version from
   pyproject.toml). Dev dependency only.
-- `curator/core.py` — resolver + protocol probe + subprocess runner; the
-  builder dispatches compiled core > numpy > pure Python
-  (`curator/model/builder.py`).
+- `curator/core.py` — development resolver/protocol oracle for differential tests;
+  the packaged launcher dispatches directly to the compiled core.
 - Differential gate: `tests/core/test_core.py` + `tests/model/test_core.py`
   (seeded synthetic corpora; skip without a built binary). `scripts/verify`
   gained `core` mode and gates `full`; CI has a `core` job and setup-go on the
   quality job.
 - One documented exact-mirror decision: the performer stage reproduces numpy's
   masked-NaN behavior (pairs where either profile lacks a global cosine block
-  are excluded) — the pure-Python fallback differs; see the planning doc
-  section 8.
+  are excluded); see the planning doc section 8.
 
 ## Guardrails
 
