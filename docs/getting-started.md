@@ -27,7 +27,7 @@ to open it.
 Select **Sync library** in Curator's toolbar. The corresponding Stash task is named
 **Sync and build recommendations**. It incrementally reads metadata and history,
 normalizes evidence, and publishes the first model with indexed recommendation
-orders. Progress and errors appear in Curator and on Stash's Tasks page.
+orders. Progress and errors appear in Curator and under **Manage → Tasks**.
 
 A full reconciliation is available as **Full sync and build recommendations** on the
 Tasks page. Use it when source records were deleted or an incremental sync appears
@@ -36,7 +36,7 @@ out of date; it is not required for routine refreshes.
 The first sync and model build may take several minutes on a large library and can
 use significant CPU, memory, and disk space. Leave the Stash task running until
 Curator reports that the model is ready. Progress and the full task log are available
-from the Curator status indicator and Stash's Tasks page.
+from the Curator status indicator and **Manage → Tasks**.
 
 ## Choose the right refresh
 
@@ -48,19 +48,13 @@ from the Curator status indicator and Stash's Tasks page.
 | **Apply recent Curator feedback** | You want to publish queued playback or feedback sooner | No |
 | **Refresh Expand cache** | You want new StashDB candidates | Stash and StashDB |
 
-## Optional acceleration
+## Runtime compatibility
 
-Curator runs entirely on Python's standard library plus a compiled Go core
-(`curator-core`) that ships inside the plugin zip — no installation step, no
-network access. The compiled core accelerates the two similarity stages
-(content neighbors and performer similarity) and the multi-hop reach walk,
-which are the largest part of a first build. There is nothing to install: just
-run **Sync and build recommendations** as usual.
-
-The Go binary is optional in the sense that every path degrades gracefully if
-it is missing or incompatible — the plugin reports a clear error for build
-stages instead of silently running slower. Updating the plugin replaces both
-the Python code and the per-platform binaries.
+Curator ships a required compiled Go core (`curator-core`) for supported Linux,
+Windows, and macOS amd64/arm64 platforms. Stash still starts the small Python launcher,
+which selects the matching binary. There is nothing to install: run **Sync and build
+recommendations** as usual. A missing or unsupported binary reports a compatibility or
+reinstall error; Curator does not fall back to another runtime.
 
 ## Configure
 
@@ -97,9 +91,11 @@ Curator feedback request a smaller preference rebuild automatically. Those updat
 are batched, so a recommendation may not change immediately after one action. Use
 **Apply recent Curator feedback** when you want to publish pending changes now.
 
-Stash does not give plugins a reliable background scheduler or startup hook, so
-unattended syncs must call **Sync and build recommendations** through Stash's task API
-from a host scheduler.
+Enable **Automatic background tasks** to let Curator's persistent worker apply pending
+model updates and sync recent plays without an open browser tab. **Scheduled Expand
+refresh**, **Scheduled sync and build**, and **Scheduled backup** are optional and off
+by default; configure their timing in plugin settings. Check worker status and job
+progress under **Manage → Tasks**.
 
 Plugin updates come from the same source URL. Back up first, update in Stash, allow
 database migrations to finish, then load Curator and confirm the model is ready.

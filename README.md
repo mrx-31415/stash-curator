@@ -4,18 +4,32 @@
 <h1 align="center">Stash Curator</h1>
 <p align="center"><strong>Navigate your library, guided by your taste.</strong></p>
 
-Stash Curator is a local-first recommendation and discovery plugin for
+Stash Curator is a local-first recommendation and curation plugin for
 [Stash](https://github.com/stashapp/stash). It uses library metadata, viewing history,
 and direct feedback to recommend scenes from your library, explains why an item
 appears, and keeps the preference model in a separate SQLite database you control.
 
-![Stash Curator's For You lane showing varied recommendations](docs/assets/showcase-recommendations.png)
+<p align="center">
+  <img src="docs/assets/showcase-navigation.gif" alt="Curator tour with pointer-driven clicks through recommendation lanes, Pair picks, and Tag sentiment" width="960">
+</p>
+
+<p align="center">
+  <img src="docs/assets/showcase-recommendations.png" alt="Curator Recommendations with fictional cinematic scene cards and inspectable scores" width="680">
+</p>
+
+<p align="center">
+  <img src="docs/assets/showcase-find.png" alt="Curator Find view showing related fictional cinematic scene cards" width="680">
+</p>
+
+<p align="center">
+  <img src="docs/assets/showcase-curate.png" alt="Curator Pair picks with fictional cinematic scene cards" width="680">
+</p>
 
 ## Install
 
 Preview requirements: **Stash v0.31** and **Python 3.12+** available to Stash's
-plugin runtime. Local recommendations do not require StashDB. No third-party
-packages are required; optional NumPy acceleration is installed by one Stash task.
+plugin runtime. Local recommendations do not require StashDB. The required platform
+binary ships with the plugin; no runtime package installation is needed.
 Add this source under
 **Settings → Plugins → Available Plugins**:
 
@@ -30,14 +44,13 @@ for first-build expectations, configuration, updates, and backups.
 ## What it does
 
 - **Recommendations:** For You balances dependable matches, revisits, and discovery;
-  Best Bets, Revisit, Stretch, and Blind Spots let you choose the kind of slate.
-- **Explanations:** “Why this?” shows why an item fits, how strong the evidence is,
-  and whether timing changed its place.
-- **Similar:** find related scenes and performers in your library or compare separate
-  external StashDB candidates.
-- **Expand:** optionally browse StashDB metadata, scored against your local model.
-- **Prune:** review poor matches and add or remove a reversible tag; Curator never
-  deletes media.
+  Best Bets, Revisit, Stretch, Blind Spots, and Dormant let you choose the slate.
+  “Why this?” makes the evidence inspectable.
+- **Find:** Similar connects related local scenes and performers; Expand and Performer
+  Hunt optionally explore StashDB metadata against your local model.
+- **Curate:** Pair picks teach shared preferences, Tag sentiment corrects a belief
+  directly, and Impact shows what a later model build changed. Manage keeps review,
+  backups, tasks, and settings together; Prune is always reversible and never deletes media.
 
 Curator separates long-term **Appeal** from **Current Fit**, then builds varied lanes
 instead of sorting everything by one opaque score. Read [how recommendations work](docs/recommendations.md)
@@ -53,9 +66,9 @@ the configured tag. Whisparr receives only an item you explicitly send. See [Pri
 ## Status
 
 Stash Curator is **Preview / pre-1.0**. The first sync/model build can take several
-minutes on a large library. StashDB discovery is optional, and Curator has no built-in
-background scheduler. The runtime is dependency-free; NumPy is optional. Development
-uses [uv](https://docs.astral.sh/uv/); see [Contributing](docs/contributing.md).
+minutes on a large library. A persistent background worker can apply model and recent-play
+updates without an open tab; scheduled Expand refresh, sync/build, and backups are optional.
+Development uses [uv](https://docs.astral.sh/uv/); see [Contributing](docs/contributing.md).
 
 ## Project provenance
 

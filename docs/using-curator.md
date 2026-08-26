@@ -36,7 +36,7 @@ queued durably in the browser during transient failures and applied in a batched
 model update. A later explicit action can reverse earlier feedback; one action may
 not change the next recommendation immediately.
 
-Open **Taste Profile** to review tag beliefs and answer with a fixed sentiment
+Under **Curate → Tag sentiment**, review tag beliefs and answer with a fixed sentiment
 from strong dislike to strong like. A direct answer is strong evidence rather than a
 hard exclusion; **Neutral** is an explicit near-zero preference, while **Clear
 answer** returns the tag to behavior-derived inference. Answers are queued locally
@@ -50,7 +50,15 @@ with up to three relevant content tags. Answer only the tags that contributed to
 problem, or choose a scene-specific or metadata explanation; the original thumbs down
 remains independent.
 
-## Similar
+## Curate
+
+**Pair picks** presents two scenes at a time. Choosing one teaches shared preferences
+across their tags, performers, and studios. **Tag sentiment** is the direct correction
+path described above. **Impact** compares model builds so you can see what subsequent
+curation moved. Use **Manage** for operational and review surfaces such as tasks,
+backups, feedback history, diagnostics, and settings.
+
+## Find
 
 Open Similar from Curator or the compass action on a Stash scene or performer.
 Library results use content overlap and preference-aware performer profiles. Switch
@@ -65,7 +73,7 @@ separate and the reference entity stays visible.
 Local matches use the configured page size. StashDB Similar keeps up to 100 matches
 from one remote search and pages that stable result locally.
 
-## Expand
+### Expand
 
 Expand is optional StashDB discovery. Refresh its cache from Curator or with the
 **Refresh Expand cache** task, then browse scenes and performers, save filters, or
@@ -80,7 +88,9 @@ scene you explicitly select.
 Use the tag action on an external scene to rate its tags that map exactly to local
 tags; this does not create scene-level feedback for media outside the library.
 
-The top-level Performer Hunt view queries StashDB directly for scenes listed for a selected local
+### Performer Hunt
+
+Performer Hunt queries StashDB directly for scenes listed for a selected local
 performer with a StashDB identity. It compares exact StashDB scene links and separates
 All, In library, and Not linked locally results; unlinked does not mean definitively
 missing because local scenes without StashDB identities cannot be matched. Queries
@@ -106,6 +116,8 @@ removed from the same view or in Stash.
 
 ## Routine maintenance
 
+- Curator's background worker can apply pending model updates and recent-play syncs;
+  optionally schedule Expand refresh, sync/build, and backups in plugin settings.
 - Sync after meaningful library or metadata changes; a full sync reconciles deletions and
   tag merges that targeted entity hooks do not cover.
 - Run the first sync/build before expecting recommendation lanes to contain results.

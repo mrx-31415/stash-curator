@@ -41,20 +41,11 @@ source cache ──► normalized events                  StashDB
   connection details, applies plugin settings, opens SQLite, and dispatches
   interactive operations, one-shot tasks, and the entity-sync hook mode; it
   also implements the model-build kernels.
-- `curator/graphql/` and `curator/sync/` incrementally copy the required Stash facts.
-- `curator/events/` conservatively reconstructs history and stores direct outcomes.
-- `curator/features/`, `curator/model/`, and `curator/ranking/` publish immutable
-  feature/model versions with indexed score-first queries and stable varied lane
-  orders.
-- `curator/similarity.py`, `curator/expand.py`, and `curator/explanations/` serve
-  Similar, StashDB discovery, and factual reasons.
-- `curator/core.py` and the compiled Go core (`core/`, shipped as per-arch
-  `curator-core-<goos>-<goarch>` binaries in the plugin zip) implement the
-  content-neighbor, performer-similarity, and multi-hop PageRank kernels; the
-  builder and `curator/model/multi_hop.py` invoke them as subprocesses. The
-  binary is the single runtime implementation — a missing or incompatible
-  binary fails build stages with a clear error. numpy/networkx remain
-  dev-only oracles for the differential test gate (`tests/oracle.py`).
+- `core/` is the production Go implementation: ingestion, events, model versions,
+  recommendation lanes, Similar, external discovery, explanations, and SQLite access.
+- `curator/` and `backend.py` remain development/test oracles; they are not shipped as
+  a production backend. The explanation realization catalog is the sole runtime resource
+  retained from `curator/`.
 - `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
 
 ## Data flow and failure boundaries
@@ -73,9 +64,9 @@ lightweight play-only sync keeps cooldown and recovery context current between f
 Stash entity hooks (scene, performer, studio, and tag create/update/destroy) record each
 changed entity in a pending queue, and the preference-rebuild task drains that queue
 (fetching the entity by id or removing it on destroy) before rebuilding, so the model
-always sees fresh source data while bulk edits pay no inline fetch cost. Full
-sync/build and Expand refresh remain one-shot tasks because Stash provides no plugin
-background scheduler/startup hook.
+always sees fresh source data while bulk edits pay no inline fetch cost. The persistent
+worker applies automatic model updates and recent-play syncs without an open browser tab.
+It also maintains scheduled-task records for optional Expand refresh, sync/build, and backups.
 
 Direct tag sentiments keep append-only replacement history plus one current value per
 tag. Model publication blends that value into the shared content affinity, so local
