@@ -214,7 +214,23 @@
   ];
   const EVENT_QUEUE_KEY = "stash-curator:event-queue:v1";
   const THEME_STORAGE_KEY = "stash-curator:theme";
-  const CARD_SIZE_STORAGE_KEY = "stash-curator:card-size";
+  const WALL_STORAGE_KEY = "stash-curator:preview-wall:v1";
+  const WALL_CAP = 20;
+  function readWallMode() {
+    try {
+      return window.localStorage.getItem(WALL_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function writeWallMode(value) {
+    try {
+      window.localStorage.setItem(WALL_STORAGE_KEY, value ? "1" : "0");
+    } catch {
+      // localStorage can be unavailable (private browsing); the toggle
+      // still works for the session, it just won't persist.
+    }
+  }
   const CARD_SIZE_MIN = 14;
   const CARD_SIZE_MAX = 32;
   const CARD_SIZE_DEFAULT = 22;
@@ -2315,6 +2331,73 @@
     );
   }
 
+  function wallLaneIcon(lane) {
+    const known = laneByValue.get(lane);
+    if (known) return known.icon;
+    const map = { score_review: faBalanceScale, similar: faClone, prune: faBroom, curate: faBullseye, expand: faGlobe, hunt: faCrosshairs };
+    return map[lane] || faCompass;
+  }
+  function PreviewWallToggle({ wall, onToggle }) {
+    return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Wall");
+  }
+  function PreviewTile({ entry, index }) {
+    const [hovered, setHovered] = React.useState(false);
+    const { scene_id, scene, affinity, lane } = entry;
+    const title = scene?.title || `Scene ${scene_id}`;
+    const hasAffinity = affinity !== undefined && affinity !== null;
+    const label = hasAffinity ? formatAppealValue(affinity) : "";
+    const sign = !hasAffinity || affinity === 0 ? "neutral" : affinity < 0 ? "negative" : "positive";
+    const laneLabel = laneByValue.get(lane)?.label || "Curator";
+    const laneColor = `var(--curator-hue-${lane}, var(--curator-accent))`;
+    function onEnter() { setHovered(true); }
+    function onLeave() { setHovered(false); }
+    // Mute synchronously at attach (mobile requires muted *before* the autoplay
+    // check) so playback starts silently; a separate effect re-mutes via
+    // addEventListener if the SFW toggle unmutes/restarts the media outside
+    // React. The media sits in card-section so Stash's SFW switch blurs it.
+    const videoRef = React.useRef(null);
+    function keepMuted(node) {
+      if (!node) return;
+      videoRef.current = node;
+      node.muted = true;
+      node.defaultMuted = true;
+    }
+    React.useEffect(() => {
+      const el = videoRef.current;
+      if (!el) return;
+      const forceMuted = () => { el.muted = true; el.defaultMuted = true; };
+      el.addEventListener("play", forceMuted);
+      el.addEventListener("volumechange", forceMuted);
+      return () => {
+        el.removeEventListener("play", forceMuted);
+        el.removeEventListener("volumechange", forceMuted);
+      };
+    }, []);
+    return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign}`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
+      React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
+        React.createElement("div", { className: "card-section" },
+          React.createElement("video", { ref: keepMuted, className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+        )
+      ),
+      React.createElement("span", { className: "curator-preview-lane", style: { color: laneColor }, title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),
+      hovered && React.createElement("div", { className: "curator-preview-hover", onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
+        hasAffinity && React.createElement("span", { className: "curator-preview-affinity", title: `Curator affinity ${label}`, "aria-label": `Curator affinity ${label}` }, React.createElement(FontAwesomeIcon, { icon: faCompass }), React.createElement("span", null, label)),
+        React.createElement("span", { className: "curator-preview-hover-title" }, title)
+      )
+    );
+  }
+  function PreviewWall({ entries }) {
+    return React.createElement("div", { className: "curator-preview-wall" }, entries.map((entry, index) => React.createElement(PreviewTile, { key: `${entry.scene_id}:${index}`, entry, index })));
+  }
+  function RecommendationWall({ visibleItems, scenes, lane }) {
+    const entries = visibleItems.map((item) => ({
+      scene_id: item.scene_id,
+      scene: scenes.get(String(item.scene_id)),
+      affinity: item.appeal,
+      lane: item.source_lane || lane,
+    }));
+    return React.createElement(PreviewWall, { entries });
+  }
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
@@ -2653,7 +2736,7 @@
     // three are about ranking a candidate against a source entity or a
     // remote catalog, not about narrowing a pre-picked set.
     const rankingOnly = variant !== "recommendations";
-    const minimumMin = variant === "expand" ? "-0.2" : "0";
+    const minimumMin = variant === "expand" ? "-1" : "0";
     const genderAriaLabel = variant === "expand" ? "External performer gender" : "Performer gender";
     const favoriteExtra = variant === "expand" ? { title: "Show only scenes containing a performer favorited in your local library", "aria-pressed": favoriteOnly } : {};
     return React.createElement(
@@ -2739,6 +2822,14 @@
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const [followUps, setFollowUps] = React.useState([]);
+    const [wall, setWall] = React.useState(readWallMode);
+    function toggleWall() {
+      setWall((value) => {
+        const next = !value;
+        writeWallMode(next);
+        return next;
+      });
+    }
     const codeVersionRef = React.useRef("");
     useCuratorActivity("similar", loading, "Finding close matches…");
     const sceneSearch = GQL.useFindScenesQuery({
@@ -2906,6 +2997,18 @@
       return React.createElement("span", { className: "curator-chips" }, ...chips);
     }
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
+    const similarWallEntries = entityType === "scene" && source === "library" && result
+      ? items.map((item) => {
+          const entity = entities.get(String(item.entity_id));
+          if (!entity) return null;
+          return {
+            scene_id: item.entity_id,
+            scene: entity,
+            affinity: (item.appeal * 2) - 1,
+            lane: "similar",
+          };
+        }).filter(Boolean)
+      : [];
     return React.createElement(
       "section",
       { className: "curator-similar" },
@@ -2926,6 +3029,7 @@
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        entityType === "scene" && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
         React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
       filtersOpen && React.createElement(FilterBar, {
@@ -2953,7 +3057,7 @@
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      result && source === "library" && React.createElement(
+      result && source === "library" && (entityType === "scene" && wall ? React.createElement(PreviewWall, { entries: similarWallEntries }) : React.createElement(
         "div",
         { className: "curator-grid" },
         items.map((item) => {
@@ -2968,7 +3072,7 @@
           }
           return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), entity.details && React.createElement("p", { className: "curator-card-description curator-card-description-local" }, entity.details), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove: removeSimilar, onThumbDown: showFollowUp })));
         })
-      ),
+      )),
       result && source === "stashdb" && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
@@ -2999,6 +3103,14 @@
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [version, setVersion] = React.useState(0);
+    const [wall, setWall] = React.useState(readWallMode);
+    function toggleWall() {
+      setWall((value) => {
+        const next = !value;
+        writeWallMode(next);
+        return next;
+      });
+    }
     useCuratorActivity("prune", loading, "Reviewing prune evidence…");
     React.useEffect(() => {
       let active = true;
@@ -3021,6 +3133,18 @@
       skip: ids.length === 0,
     });
     const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    const pruneWallEntries = wall && data
+      ? data.items.map((item) => {
+          const scene = scenes.get(String(item.scene_id));
+          if (!scene) return null;
+          return {
+            scene_id: item.scene_id,
+            scene,
+            affinity: item.appeal,
+            lane: "prune",
+          };
+        }).filter(Boolean)
+      : [];
     function refresh() { setVersion((value) => value + 1); }
     async function tag(sceneIds, tagged) {
       try {
@@ -3050,12 +3174,13 @@
           [["candidates", "Candidates"], ["tagged", "Tagged"], ["explicit", "Explicit dislikes"], ["suspects", "Model suspects"], ["breadth", "Broad & unwatched"]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: view === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, view: value, page: 1 })) }, label))
         ),
         view !== "tagged" && view !== "breadth" && React.createElement("label", { className: "curator-prune-aggressiveness", title: "Move right to include less certain predicted dislikes." }, React.createElement("span", null, aggressiveness < 0.34 ? "Conservative" : aggressiveness < 0.67 ? "Balanced" : "Aggressive"), React.createElement("input", { type: "range", className: "curator-range", min: 0, max: 1, step: 0.05, value: aggressiveness, onChange: (event) => updateUrl((s) => ({ ...s, aggressiveness: Number(event.target.value), page: 1 })), "aria-label": "Prune prediction aggressiveness" })),
-        view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`)
+        view !== "tagged" && React.createElement(Button, { size: "sm", variant: "danger", disabled: !ids.length, onClick: tagPage }, `Tag visible (${ids.length})`),
+        React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall })
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reviewing prune evidence…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, view === "suspects" ? "No scenes cross this prediction threshold. Direct dislikes appear under Explicit dislikes; suspects need a rebuilt model with enough repeated negative evidence." : view === "breadth" ? "No studio in your library is both this broad and this unwatched." : "Nothing in this view."),
-      data && React.createElement(
+      data && (wall ? React.createElement(PreviewWall, { entries: pruneWallEntries }) : React.createElement(
         "div",
         { className: "curator-grid" },
         data.items.map((item) => {
@@ -3075,7 +3200,7 @@
             React.createElement("div", { className: "curator-prune-actions" }, React.createElement(Button, { size: "sm", variant: item.tagged ? "secondary" : "danger", onClick: () => tag([item.scene_id], !item.tagged) }, item.tagged ? `Undo ${data.tag_name}` : `Tag ${data.tag_name}`), !item.tagged && (item.suspect || item.breadth) && !item.explicit && React.createElement(Button, { size: "sm", variant: "link", onClick: () => dismiss(item.scene_id) }, "Dismiss"))
           );
         })
-      ),
+      )),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Prune pages" })
     );
   }
@@ -4187,6 +4312,14 @@
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [followUps, setFollowUps] = React.useState([]);
+    const [wall, setWall] = React.useState(readWallMode);
+    function toggleWall() {
+      setWall((value) => {
+        const next = !value;
+        writeWallMode(next);
+        return next;
+      });
+    }
     useCuratorActivity("score-review", loading, "Loading sentiment review…");
     React.useEffect(() => {
       let active = true;
@@ -4229,16 +4362,16 @@
         "div",
         { className: "curator-expand-toolbar" },
         React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: order, onChange: (event) => updateUrl((s) => ({ ...s, order: event.target.value, page: 1 })), "aria-label": "Sort sentiment review" }, React.createElement("option", { value: "asc" }, "Least appealing first"), React.createElement("option", { value: "desc" }, "Most appealing first"))),
-        React.createElement("label", { className: "curator-prune-aggressiveness", title: "Show scenes at or below this appeal threshold." }, React.createElement("span", null, `Appeal ≤ ${threshold.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: -1, max: 1, step: 0.05, value: threshold, onChange: (event) => updateUrl((s) => ({ ...s, maxAppeal: Number(event.target.value), page: 1 })), "aria-label": "Maximum appeal threshold" }))
+        React.createElement("label", { className: "curator-prune-aggressiveness", title: "Show scenes at or below this appeal threshold." }, React.createElement("span", null, `Appeal ≤ ${threshold.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: -1, max: 1, step: 0.05, value: threshold, onChange: (event) => updateUrl((s) => ({ ...s, maxAppeal: Number(event.target.value), page: 1 })), "aria-label": "Maximum appeal threshold" })),
+        React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall })
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading sentiment review…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes below the current appeal threshold."),
-      data && !loading && React.createElement(
-        "section",
-        { className: "curator-grid", "aria-live": "polite" },
-        visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+      data && !loading && (wall
+        ? React.createElement(RecommendationWall, { visibleItems, scenes, lane: "score_review" })
+        : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp })))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Sentiment review pages" })
     );
@@ -4615,6 +4748,14 @@
     }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
+    const [wall, setWall] = React.useState(readWallMode);
+    function toggleWall() {
+      setWall((value) => {
+        const next = !value;
+        writeWallMode(next);
+        return next;
+      });
+    }
     const [followUps, setFollowUps] = React.useState([]);
     const [theme, setTheme] = React.useState(() => {
       try {
@@ -4910,6 +5051,7 @@
             React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
             diversityEnabled ? " Balanced" : " Score-first"
           ),
+          laneByValue.has(lane) && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
           laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
           laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
@@ -4942,11 +5084,13 @@
           React.Fragment,
           null,
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Nothing qualifies for this lane right now."), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
-          React.createElement(
-            "section",
-            { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
-            visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
-          ),
+          wall
+            ? React.createElement(RecommendationWall, { visibleItems, scenes, lane })
+            : React.createElement(
+              "section",
+              { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
+              visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+            ),
           React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )
     );
@@ -5139,14 +5283,53 @@
     }
     return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
   });
+  // The affinity pill doubles as the Similar link: one compact control shows the
+  // curator affinity (or a dash when the model has no evidence) and navigates to
+  // Curator's Similar view for this asset. Always rendered so the Similar entry
+  // point is present regardless of model evidence.
+  // Circular gauge around the affinity value (replaces the flat bar). The ring
+  // fill tracks |affinity| and the value is tinted by sign; a dash when there is
+  // no model evidence.
+  function CuratorAffinityGauge({ value }) {
+    const radius = 15;
+    const circumference = 2 * Math.PI * radius;
+    const magnitude = value === null ? 0 : Math.min(1, Math.abs(value));
+    const offset = circumference * (1 - magnitude);
+    const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
+    const valueLabel = value === null ? "—" : formatAppealValue(value);
+    const color = sign === "positive" ? "#5cc19c" : sign === "negative" ? "#e0645c" : "#adb5bd";
+    return React.createElement("span", { className: `curator-affinity-gauge curator-affinity-${sign}`, title: `Curator affinity ${valueLabel}`, "aria-label": `Curator affinity ${valueLabel}` },
+      React.createElement("svg", { className: "curator-affinity-gauge-ring", viewBox: "0 0 36 36", "aria-hidden": "true" },
+        React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: "rgba(127,127,127,0.25)", strokeWidth: 3 }),
+        React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: color, strokeWidth: 3, strokeDasharray: String(circumference), strokeDashoffset: String(offset), strokeLinecap: "round", transform: "rotate(-90 18 18)" })
+      ),
+      React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
+    );
+  }
   function CuratorContextLink({ type, id, label, target }) {
     const [host, setHost] = React.useState(null);
+    const [value, setValue] = React.useState(null);
+    React.useEffect(() => { setHost(document.querySelector(target)); }, [target]);
     React.useEffect(() => {
-      setHost(document.querySelector(target));
-    }, [target]);
-    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
+      let active = true;
+      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id) })
+        .then((data) => {
+          if (!active) return;
+          const raw = type === "scene" ? data?.score?.appeal : data?.affinity;
+          setValue(typeof raw === "number" ? raw : null);
+        })
+        .catch(() => { if (active) setValue(null); });
+      return () => { active = false; };
+    }, [type, id]);
     if (!host) return null;
-    return ReactDOM.createPortal(React.createElement(NavLink, { className: "btn minimal curator-context-link curator-brand-mark", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })), host);
+    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
+    return ReactDOM.createPortal(
+      React.createElement("div", { className: "curator-context-group" },
+        React.createElement(NavLink, { className: "curator-context-button", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
+        React.createElement(CuratorAffinityGauge, { value })
+      ),
+      host
+    );
   }
   Api.patch.after("ScenePage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
@@ -5164,6 +5347,27 @@
   attachPlayer(location.pathname);
   flushQueue();
   flushTagPreferenceQueue();
+  // Mirror Stash's SFW blur onto the preview wall. Stash's own scene-card
+  // classes break custom wall tiles, so detect SFW from whether the wall media
+  // is actually blurred and apply a strong Curator-side blur when it is. Stash
+  // mutates the DOM often, so the check is debounced.
+  let sfwTimer = null;
+  function syncSfwBlur() {
+    clearTimeout(sfwTimer);
+    sfwTimer = setTimeout(() => {
+      const media = document.querySelectorAll(".curator-preview-tile .card-section, .curator-preview-tile .curator-preview-video");
+      let blurred = false;
+      for (const el of media) {
+        const filter = window.getComputedStyle(el).filter;
+        if (filter && filter !== "none") { blurred = true; break; }
+      }
+      document.body.classList.toggle("curator-sfw", blurred);
+    }, 100);
+  }
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(syncSfwBlur).observe(document.body, { attributes: true, childList: true, subtree: true });
+    syncSfwBlur();
+  }
   function scheduleModelMaintenance() {
     operation({ operation: "health" })
       .then((health) => {
