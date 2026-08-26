@@ -138,10 +138,9 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 // getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter
 // args (includeTags/excludeTags/performerIDs/studioIDs/gender) narrow the
 // lane's already-classified candidates the same way get_similar narrows its
-// candidates; they don't change ranking. A filtered request always
-// recomputes total from a full candidate fetch, the same way an exploration
-// request does, since the cached eligibility count doesn't know about
-// filters.
+// candidates; they don't change ranking. A filtered materialized request
+// scans candidate IDs for its exact total but hydrates only the requested
+// page; exploratory requests still recompute the full slate.
 func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid recommendation page")
@@ -163,11 +162,9 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 	if err != nil {
 		return jvNull(), err
 	}
-	hasFilters := sceneFilter != nil
-
 	var total int64 = -1
-	if exploration == 0 && !hasFilters {
-		total, err = availableCount(db, modelID, lane, diversityEnabled, excluded)
+	if exploration == 0 {
+		total, err = availableCount(db, modelID, lane, diversityEnabled, excluded, sceneFilter)
 		if err != nil {
 			return jvNull(), err
 		}
@@ -818,10 +815,10 @@ func minInt64(a, b int64) int64 {
 }
 
 // availableCount mirrors SlateBuilder.available_count: -1 signals None (no
-// model or no materialized lanes). The per-lane count is cached in
-// application_meta under an eligibility fingerprint; the cache write is part
-// of the read path and must be replicated.
-func availableCount(db dbx, modelID, lane string, diversityEnabled bool, excluded map[string]bool) (int64, error) {
+// model or no materialized lanes). Unfiltered per-lane counts are cached in
+// application_meta under an eligibility fingerprint; filtered counts are
+// request-specific and bypass the cache.
+func availableCount(db dbx, modelID, lane string, diversityEnabled bool, excluded map[string]bool, sceneFilter func(string) bool) (int64, error) {
 	if modelID == "" {
 		return -1, nil
 	}
@@ -834,24 +831,27 @@ func availableCount(db dbx, modelID, lane string, diversityEnabled bool, exclude
 		ordering = "score_first"
 	}
 	queryScoreFirst := !diversityEnabled && queriedScoreFirstLanes[lane]
-	fingerprint, err := eligibilityFingerprint(db)
-	if err != nil {
-		return 0, err
-	}
-	cacheKey := "eligibility_count:" + modelID + ":" + lane + ":" + ordering
-	var value string
-	err = db.QueryRow(`SELECT value FROM application_meta WHERE key=?`, cacheKey).Scan(&value)
-	if err == nil {
-		payload, perr := parseJSON([]byte(value))
-		if perr == nil && payload.get("fingerprint").asString() == fingerprint {
-			total := pythonInt(payload.get("count")) - excludedEligibleCount(db, excluded)
-			if total < 0 {
-				total = 0
-			}
-			return total, nil
+	var fingerprint, cacheKey string
+	if sceneFilter == nil {
+		fingerprint, err = eligibilityFingerprint(db)
+		if err != nil {
+			return 0, err
 		}
-	} else if err != sql.ErrNoRows {
-		return 0, err
+		cacheKey = "eligibility_count:" + modelID + ":" + lane + ":" + ordering
+		var value string
+		err = db.QueryRow(`SELECT value FROM application_meta WHERE key=?`, cacheKey).Scan(&value)
+		if err == nil {
+			payload, perr := parseJSON([]byte(value))
+			if perr == nil && payload.get("fingerprint").asString() == fingerprint {
+				total := pythonInt(payload.get("count")) - excludedEligibleCount(db, excluded)
+				if total < 0 {
+					total = 0
+				}
+				return total, nil
+			}
+		} else if err != sql.ErrNoRows {
+			return 0, err
+		}
 	}
 	var rows *sql.Rows
 	if queryScoreFirst {
@@ -893,14 +893,15 @@ WHERE model_id=? AND lane=? AND ordering=?`, modelID, lane, ordering)
 	}
 	total := int64(0)
 	for _, r := range chunk {
-		if materializedRowIsEligible(r.sceneID, r.sourceLane, eligibility, filter) {
+		if materializedRowIsEligible(r.sceneID, r.sourceLane, eligibility, filter) &&
+			(sceneFilter == nil || sceneFilter(r.sceneID) && !excluded[r.sceneID]) {
 			total++
 		}
 	}
-	payload := jvObj(
-		jvKey("fingerprint", jvStr(fingerprint)),
-		jvKey("count", jvInt(total)),
-	)
+	if sceneFilter != nil {
+		return total, nil
+	}
+	payload := jvObj(jvKey("fingerprint", jvStr(fingerprint)), jvKey("count", jvInt(total)))
 	if err := execImmediate(db, `INSERT INTO application_meta(key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, cacheKey, payload.marshalCompact()); err != nil {
 		return 0, err
