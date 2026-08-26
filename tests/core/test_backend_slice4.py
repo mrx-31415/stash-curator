@@ -23,6 +23,7 @@ from typing import ClassVar
 
 import pytest
 
+from curator.api import CuratorAPI
 from curator.config import DEFAULT_CONFIG
 from curator.core import core_binary
 from tests.core.test_backend import PLUGIN_DIR, make_sidecar, payload, run_backend
@@ -232,6 +233,25 @@ def make_slice4_sidecar(path: Path) -> None:
                 ('fd-t4', ?, 0.9, 0.9, 0.7, 1)
             """,
             (MODEL_ID, MODEL_ID, MODEL_ID, MODEL_ID),
+        )
+        connection.execute(
+            """
+            INSERT INTO feature_definition(
+                feature_id, feature_version, family, name, provenance, metadata_json
+            ) VALUES
+                ('pf-perf-p1', ?, 'performer_identity', 'performer:p1', 'seed', '{}')
+            """,
+            (FEATURE_VERSION,),
+        )
+        connection.execute(
+            """
+            INSERT INTO feature_affinity(
+                feature_id, model_id, affinity, confidence, effective_support,
+                distinct_scene_count
+            ) VALUES
+                ('pf-perf-p1', ?, 0.62, 0.85, 0.5, 1)
+            """,
+            (MODEL_ID,),
         )
         connection.execute(
             """
@@ -589,6 +609,21 @@ def test_inspector_performer_byte_identical(
         "get_inspector_entity", slice4_sidecar, stub_stash, entity_type="performer", entity_id="p1"
     )
     assert_slice4_identical(binary, raw, slice4_sidecar)
+
+
+def test_inspector_performer_affinity_value(slice4_sidecar: Path) -> None:
+    """The performer branch surfaces the raw feature_affinity for the
+    performer's identity feature, or null when the model has no evidence."""
+    connection = sqlite3.connect(slice4_sidecar)
+    connection.row_factory = sqlite3.Row
+    try:
+        result = CuratorAPI(connection).inspector("performer", "p1")
+        assert result["affinity"] == pytest.approx(0.62)
+        assert result["confidence"] == pytest.approx(0.85)
+        assert CuratorAPI(connection).inspector("performer", "p2")["affinity"] is None
+        assert CuratorAPI(connection).inspector("performer", "p2")["confidence"] is None
+    finally:
+        connection.close()
 
 
 def test_inspector_performer_error_paths(
