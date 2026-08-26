@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.0](https://github.com/mrx-31415/stash-curator/compare/v0.20.0...v0.21.0) (2026-08-26)
+
+
+### Features
+
+* expand affinity floor to -1, curator-affinity pill, and scene preview wall ([#280](https://github.com/mrx-31415/stash-curator/issues/280)) ([2284fb3](https://github.com/mrx-31415/stash-curator/commit/2284fb3f7c169499932eea07b70cac05deeb6dcd))
+
+
+### Performance Improvements
+
+* avoid hydrating full filtered slates ([#275](https://github.com/mrx-31415/stash-curator/issues/275)) ([de239ad](https://github.com/mrx-31415/stash-curator/commit/de239adf61d454e73f1b7f7c3154e7e5662ea420))
+
+
+### Documentation
+
+* refresh v1 product guidance ([#276](https://github.com/mrx-31415/stash-curator/issues/276)) ([2097d28](https://github.com/mrx-31415/stash-curator/commit/2097d286b7a4cd46301749c4ce56b0464075ee16))
+
 ## [0.20.0](https://github.com/mrx-31415/stash-curator/compare/v0.19.6...v0.20.0) (2026-08-24)
 
 
