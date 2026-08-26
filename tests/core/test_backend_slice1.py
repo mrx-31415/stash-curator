@@ -315,6 +315,29 @@ def test_get_slate_studio_and_gender_filters_byte_identical(
     )
 
 
+def test_get_slate_filtered_page_and_exclusions_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_slate",
+        model_sidecar,
+        stub_stash,
+        lane="for_you",
+        count=1,
+        page=2,
+        performer_ids=["p1"],
+        exclude_scene_ids=["unseen-good"],
+        impression_id="fixed-impression-slate-filtered-page",
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=model_sidecar,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+
+
 def test_replace_item_byte_identical(model_sidecar: Path, binary: Path, stub_stash: str) -> None:
     raw = payload(
         "replace_item", model_sidecar, stub_stash, lane="for_you", exclude_scene_ids=["old-good"]
