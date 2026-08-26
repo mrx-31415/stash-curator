@@ -493,12 +493,21 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 		if err != nil {
 			return jvNull(), err
 		}
+		affinity, confidence, hasAffinity := performerAffinity(db, modelID, featureVersion, entityID)
+		affinityVal := jvNull()
+		confidenceVal := jvNull()
+		if hasAffinity {
+			affinityVal = jvFloat(affinity)
+			confidenceVal = jvFloat(confidence)
+		}
 		return jvObj(
 			jvKey("schema_version", jvInt(apiSchemaVersion)),
 			jvKey("entity_type", jvStr(entityType)),
 			jvKey("entity_id", jvStr(entityID)),
 			jvKey("model_id", jvStr(modelID)),
 			jvKey("profile", profile),
+			jvKey("affinity", affinityVal),
+			jvKey("confidence", confidenceVal),
 			jvKey("similar", similar),
 		), nil
 	}
@@ -599,6 +608,21 @@ func similarPerformers(db dbx, featureVersion, performerID string, count int) (j
 		))
 	}
 	return out, nil
+}
+
+// performerAffinity mirrors the inspector's performer affinity lookup: the
+// raw feature_affinity entry for the performer's identity feature (name
+// 'performer:<id>'), or none when the model has no evidence for it.
+func performerAffinity(db dbx, modelID, featureVersion, performerID string) (float64, float64, bool) {
+	var affinity, confidence float64
+	err := db.QueryRow(`SELECT fa.affinity, fa.confidence
+FROM feature_affinity fa JOIN feature_definition fd ON fd.feature_id = fa.feature_id
+WHERE fa.model_id = ? AND fd.feature_version = ? AND fd.name = ?`,
+		modelID, featureVersion, "performer:"+performerID).Scan(&affinity, &confidence)
+	if err != nil {
+		return 0, 0, false
+	}
+	return affinity, confidence, true
 }
 
 // ── get_tag_sentiment_follow_up ────────────────────────────────────────────
