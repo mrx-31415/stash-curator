@@ -4042,7 +4042,8 @@
         { className: "curator-tasks-runnow" },
         React.createElement("span", null, "Run now"),
         React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(starting), onClick: () => start("Sync and build recommendations") }, starting === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations"),
-        React.createElement(Button, { size: "sm", variant: "outline-danger", disabled: Boolean(starting), onClick: () => start("Force rebuild recommendation model") }, starting === "Force rebuild recommendation model" ? "Starting…" : "Force rebuild model")
+        React.createElement(Button, { size: "sm", variant: "outline-danger", disabled: Boolean(starting), onClick: () => start("Force rebuild recommendation model") }, starting === "Force rebuild recommendation model" ? "Starting…" : "Force rebuild model"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(starting), onClick: () => start("Force rebuild Expand cache") }, starting === "Force rebuild Expand cache" ? "Starting…" : "Force rebuild Expand cache")
       ),
       message && React.createElement("p", { className: "curator-header-message", role: "status" }, message),
       React.createElement(
@@ -4423,6 +4424,9 @@
         { key: "expandWildcard", configKey: "expand_wildcard", type: "BOOLEAN", label: "Expand popularity wildcard", description: "Include a small trending/popular sample outside preference-derived seeds." },
         { key: "expandGender", configKey: "expand_gender", type: "SELECT", options: SETTINGS_GENDER_OPTIONS, label: "External performer gender", description: "Default StashDB gender filter for Expand and Similar. Default Female; choose All genders for no filter." },
         { key: "expandHorizonDays", configKey: "expand_horizon_days", type: "NUMBER", label: "Expand recent-release horizon (days)", description: "Recent-release window used by Expand. Default 90." },
+        { key: "expandCandidateLimit", configKey: "expand_candidate_limit", type: "NUMBER", label: "Expand candidate limit", description: "Maximum StashDB scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh." },
+        { key: "expandSimilarSeedTopK", configKey: "expand_similar_seed_top_k", type: "NUMBER", label: "Expand similar-performer seed top-K", description: "Chase look-alikes for the K strongest favourite performers into the Expand seed set. 0 disables. Default 20." },
+        { key: "expandSimilarSeedPerFavorite", configKey: "expand_similar_seed_per_favorite", type: "NUMBER", label: "Expand similar-performer seeds per favourite", description: "How many closest look-alikes per favourite are added as Expand seeds. 0 disables. Default 5." },
       ],
     },
     {

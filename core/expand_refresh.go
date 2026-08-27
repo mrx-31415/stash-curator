@@ -350,10 +350,11 @@ func recentScene(scene jVal, cutoff string) bool {
 }
 
 // refreshSeeds mirrors ExpandService._seeds.
-func refreshSeeds(s *expandService, modelID, featureVersion string, links jVal) (jVal, error) {
+func refreshSeeds(s *expandService, clientURL, apiKey, modelID, featureVersion string, links jVal,
+	similarTopK, similarPerFavorite int, gender, ethnicity string) (jVal, error) {
 	topRows, err := s.db.Query(`
 SELECT scene_id FROM model_scene_score WHERE model_id=?
-ORDER BY appeal * confidence DESC LIMIT 100`, modelID)
+ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -385,17 +386,42 @@ ORDER BY appeal * confidence DESC LIMIT 100`, modelID)
 		}
 		return externalIDs[i] < externalIDs[j]
 	})
-	performers := jvArr()
+	basePerformers := make([]string, 0, len(externalIDs))
 	for _, externalID := range externalIDs {
 		if evidence[externalID].strength > 0 {
-			performers.arr = append(performers.arr, jvStr(externalID))
+			basePerformers = append(basePerformers, externalID)
 		}
 	}
+	expandedPerformers := expandSimilarPerformers(s, clientURL, apiKey, basePerformers, evidence,
+		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity)
+	performers := jvArr()
+	for _, externalID := range expandedPerformers {
+		performers.arr = append(performers.arr, jvStr(externalID))
+	}
+	playedRows, err := s.db.Query(`
+SELECT scene_id FROM source_scene ORDER BY play_count DESC, updated_at DESC LIMIT 200`)
+	if err != nil {
+		return jvNull(), err
+	}
+	var played []string
+	for playedRows.Next() {
+		var sceneID string
+		if err := playedRows.Scan(&sceneID); err != nil {
+			playedRows.Close()
+			return jvNull(), err
+		}
+		played = append(played, sceneID)
+	}
+	playedRows.Close()
+	if err := playedRows.Err(); err != nil {
+		return jvNull(), err
+	}
+	studioScope := dedupe(append(append([]string(nil), top...), played...))
 	studioSet := map[string]bool{}
-	if len(top) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(top)), ",")
-		args := make([]any, len(top))
-		for i, id := range top {
+	if len(studioScope) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(studioScope)), ",")
+		args := make([]any, len(studioScope))
+		for i, id := range studioScope {
 			args[i] = id
 		}
 		rows, err := s.db.Query(fmt.Sprintf(
@@ -429,8 +455,8 @@ ORDER BY appeal * confidence DESC LIMIT 100`, modelID)
 		sortedStudios = append(sortedStudios, id)
 	}
 	sort.Strings(sortedStudios)
-	if len(sortedStudios) > 30 {
-		sortedStudios = sortedStudios[:30]
+	if len(sortedStudios) > 60 {
+		sortedStudios = sortedStudios[:60]
 	}
 	studiosArr := jvArr()
 	for _, id := range sortedStudios {
@@ -507,9 +533,81 @@ ORDER BY a.affinity * a.confidence DESC LIMIT 50`, modelID, featureVersion)
 	), nil
 }
 
+// expandSimilarPerformers mirrors ExpandService._expand_similar_performers:
+// chase the strongest favourites into StashDB and pull their closest look-alikes so
+// the seed set reaches performers the model has affinity for but has not seen.
+// Best-effort: any failure degrades to the base seed set.
+func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []string,
+	evidence map[string]*performerEvidence, featureVersion string, topK, perFavorite int,
+	gender, ethnicity string) []string {
+	if topK <= 0 || perFavorite <= 0 || len(base) == 0 {
+		return base
+	}
+	profiles, err := performerProfilesAll(s.db, featureVersion)
+	if err != nil || len(profiles) == 0 {
+		return base
+	}
+	weights := performerBlockWeightsMap()
+	recorded := time.Now().Format("2006-01-02")
+	ids := make([]string, 0, len(evidence))
+	for id := range evidence {
+		ids = append(ids, id)
+	}
+	sort.SliceStable(ids, func(i, j int) bool {
+		a, b := evidence[ids[i]], evidence[ids[j]]
+		if a.strength != b.strength {
+			return a.strength > b.strength
+		}
+		return ids[i] < ids[j]
+	})
+	type scoredPerformer struct {
+		sim float64
+		id  string
+	}
+	added := map[string]bool{}
+	var additions []string
+	limit := topK
+	if limit > len(ids) {
+		limit = len(ids)
+	}
+	for _, externalID := range ids[:limit] {
+		target, ok := profiles[evidence[externalID].localID]
+		if !ok {
+			continue
+		}
+		pool, err := fetchPerformerPool(clientURL, apiKey, target, gender, ethnicity, externalID)
+		if err != nil {
+			continue
+		}
+		var scored []scoredPerformer
+		for _, performer := range pool {
+			profile := expandProfile(performer, jvStr(recorded))
+			if len(profileConflicts(profile, target)) > 0 {
+				continue
+			}
+			sim, _ := profileMatch(profile, target, weights)
+			scored = append(scored, scoredPerformer{sim: sim, id: performer.get("id").asString()})
+		}
+		sort.SliceStable(scored, func(i, j int) bool { return scored[i].sim > scored[j].sim })
+		for i := 0; i < perFavorite && i < len(scored); i++ {
+			eid := scored[i].id
+			if _, known := evidence[eid]; known || added[eid] {
+				continue
+			}
+			added[eid] = true
+			additions = append(additions, eid)
+		}
+	}
+	if len(additions) == 0 {
+		return base
+	}
+	return append(append([]string(nil), base...), additions...)
+}
+
 // expandRefresh mirrors ExpandService.refresh and returns the summary dict.
 func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int,
-	gender string, wildcard bool, nowMs int64, progress func(processed, total int)) (jVal, error) {
+	gender, ethnicity string, wildcard bool, candidateLimit int, similarTopK, similarPerFavorite int,
+	forceFull bool, nowMs int64, progress func(processed, total int)) (jVal, error) {
 	fetchedAtMs := nowMs
 	// The taxonomy check and seed load used to be markerless: on a large
 	// library the bar sat at 5% for the whole stretch. The 50/150 ticks
@@ -539,7 +637,8 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if progress != nil {
 		progress(150, 1000)
 	}
-	seeds, err := refreshSeeds(s, modelID, featureVersion, links)
+	seeds, err := refreshSeeds(s, clientURL, apiKey, modelID, featureVersion, links,
+		similarTopK, similarPerFavorite, gender, ethnicity)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -558,7 +657,14 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	} else if err != nil && err != sql.ErrNoRows {
 		return jvNull(), err
 	}
-	if since != "" && !supportsIncrementalFetch(clientURL, apiKey) {
+	if forceFull {
+		// A force rebuild is the dev escape hatch for scenes a watermark could never
+		// surface: it ignores the incremental cursor and re-fetches the whole window.
+		since = ""
+	} else if since != "" && !supportsIncrementalFetch(clientURL, apiKey) {
+		// The live stashdb instance predates the updated_at SceneQueryInput field, so
+		// the watermark queries would fail validation; fall back to a full fetch there
+		// while newer instances keep the incremental behavior.
 		since = ""
 	}
 	rows := &sceneRows{m: map[string]jVal{}}
@@ -580,7 +686,7 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if wildcard {
 		active++
 	}
-	perSource := maxInt(1, int(math.Ceil(1000.0/float64(maxInt(1, active)))))
+	perSource := maxInt(1, int(math.Ceil(float64(candidateLimit)/float64(maxInt(1, active)))))
 	type querySpec struct {
 		source string
 		values []string
@@ -686,12 +792,14 @@ ON CONFLICT(entity_type, external_id) DO UPDATE SET
 		}
 		if _, err := conn.ExecContext(ctx, `
 DELETE FROM external_entity
-WHERE entity_type='scene' AND pool='candidate' AND (
+WHERE entity_type='scene' AND pool IN ('candidate', 'explore') AND (
     (json_extract(payload_json, '$.release_date') IS NOT NULL
      AND json_extract(payload_json, '$.release_date') < ?)
     OR (json_extract(payload_json, '$.release_date') IS NULL
         AND json_extract(payload_json, '$.production_date') IS NOT NULL
         AND json_extract(payload_json, '$.production_date') < ?)
+) AND external_id NOT IN (
+    SELECT external_id FROM external_shortlist WHERE entity_type='scene'
 )`, cutoff, cutoff); err != nil {
 			return err
 		}

@@ -287,6 +287,7 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         links,
         now_ms=REFERENCE_MS,
         candidate_limit=10,
+        similar_top_k=0,
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
@@ -521,7 +522,7 @@ def test_refresh_is_incremental_and_preserves_the_candidate_pool(tmp_path: Path)
     service = ExpandService(connection)
     client = NoChangeStashDB()
 
-    first = service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=10)
+    first = service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=10, similar_top_k=0)
     assert first["incremental"] is False
     assert not any("updated_at" in item for item in client.inputs)
 
@@ -529,7 +530,9 @@ def test_refresh_is_incremental_and_preserves_the_candidate_pool(tmp_path: Path)
     # the previous fetched_at and keeps every existing row.
     client.changed = False
     client.inputs.clear()
-    second = service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+    second = service.refresh(
+        client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10, similar_top_k=0
+    )
     assert second["incremental"] is True
     assert client.inputs
     assert all("updated_at" in item for item in client.inputs)
@@ -573,6 +576,112 @@ def test_refresh_preserves_explore_rows_from_hunts_and_similar(tmp_path: Path) -
         ]
         == 1
     )
+
+
+class SeedExpansionStashDB(FakeStashDB):
+    """Dispatches the performer-pool popularity query in addition to scene queries."""
+
+    def execute(self, document: str, variables: dict[str, object]):
+        input_data = variables["input"]
+        if input_data.get("sort") == "POPULARITY":
+            self.inputs.append(input_data)
+            lookalike = {
+                "id": "lookalike-performer",
+                "name": "Lookalike Performer",
+                "gender": "FEMALE",
+                "ethnicity": "Caucasian",
+                "hair_color": "Brown",
+                "eye_color": "Blue",
+                "height": 170,
+                "scene_count": 200,
+                "tattoos": [],
+                "piercings": [],
+                "images": [],
+            }
+            return {"queryPerformers": {"performers": [lookalike]}}
+        return super().execute(document, variables)
+
+
+def test_seed_expansion_chases_similar_performers_into_scenes(tmp_path: Path) -> None:
+    """A performer StashDB ranks near the user's own favourites is pulled into the
+    seed set even though she is not in the local library, and her scenes are then
+    fetched (issue: scenes by look-alike performers were invisible to Expand)."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    client = SeedExpansionStashDB()
+    ExpandService(connection).refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=100)
+    scene_queries = [item for item in client.inputs if item.get("sort") == "DATE"]
+    assert scene_queries
+    assert any(
+        "lookalike-performer" in (item.get("performers", {}).get("value") or [])
+        for item in scene_queries
+    )
+
+
+def test_refresh_ages_out_explore_rows_but_preserves_shortlisted(tmp_path: Path) -> None:
+    """The explore pool ages out with the candidate pool, so on-demand hunts cannot
+    grow the sidecar without bound, but anything the user pinned survives."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {"old-good": "owned-external-scene"},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {},
+    }
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10, similar_top_k=0)
+    service._merge_external(
+        "scene",
+        [
+            {
+                "id": "old-explore",
+                "payload": {"release_date": "2020-01-01"},
+                "score": 0.5,
+                "sources": ["similar"],
+            },
+            {
+                "id": "recent-explore",
+                "payload": {"release_date": date.today().isoformat()},
+                "score": 0.5,
+                "sources": ["similar"],
+            },
+            {
+                "id": "shortlisted-old",
+                "payload": {"release_date": "2020-01-01"},
+                "score": 0.5,
+                "sources": ["similar"],
+            },
+        ],
+    )
+    connection.execute(
+        "INSERT INTO external_shortlist(entity_type, external_id, payload_json, score, "
+        "added_at_ms) VALUES ('scene', 'shortlisted-old', '{}', 0.5, 0)"
+    )
+    connection.commit()
+
+    service.refresh(
+        NoChangeStashDB(),
+        links,
+        now_ms=REFERENCE_MS + 86_400_000,
+        candidate_limit=10,
+        similar_top_k=0,
+    )
+
+    pools = {
+        str(row["external_id"]): str(row["pool"])
+        for row in connection.execute(
+            "SELECT external_id, pool FROM external_entity WHERE external_id IN "
+            "('old-explore','recent-explore','shortlisted-old')"
+        )
+    }
+    assert "old-explore" not in pools
+    assert pools["recent-explore"] == "explore"
+    assert pools["shortlisted-old"] == "explore"
 
 
 def test_rescore_candidates_refreshes_stored_scores_after_a_model_change(
@@ -667,7 +776,7 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
     client = PagedStashDB()
     service = ExpandService(connection)
 
-    service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=2)
+    service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=2, similar_top_k=0)
     assert [item["id"] for item in service.results("scene")["items"]] == [
         "external-scene-1",
         "external-scene-2",

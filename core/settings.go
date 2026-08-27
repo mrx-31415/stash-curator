@@ -26,6 +26,9 @@ var defaultPluginConfig = jvObj(
 	jvKey("expand_horizon_days", jvInt(90)),
 	jvKey("expand_gender", jvStr("FEMALE")),
 	jvKey("expand_wildcard", jvBool(false)),
+	jvKey("expand_candidate_limit", jvInt(1000)),
+	jvKey("expand_similar_seed_top_k", jvInt(20)),
+	jvKey("expand_similar_seed_per_favorite", jvInt(5)),
 	jvKey("auto_tasks_enabled", jvBool(false)),
 	jvKey("schedule_expand_refresh_enabled", jvBool(false)),
 	jvKey("schedule_expand_refresh_interval_hours", jvInt(24)),
@@ -64,6 +67,9 @@ var settingMapping = []struct {
 	{"expandHorizonDays", "expand_horizon_days", convInt},
 	{"expandGender", "expand_gender", convStr},
 	{"expandWildcard", "expand_wildcard", convBool},
+	{"expandCandidateLimit", "expand_candidate_limit", convInt},
+	{"expandSimilarSeedTopK", "expand_similar_seed_top_k", convInt},
+	{"expandSimilarSeedPerFavorite", "expand_similar_seed_per_favorite", convInt},
 	{"autoTasksEnabled", "auto_tasks_enabled", convBool},
 	{"scheduleExpandRefreshEnabled", "schedule_expand_refresh_enabled", convBool},
 	{"scheduleExpandRefreshIntervalHours", "schedule_expand_refresh_interval_hours", convFloat},
@@ -298,6 +304,33 @@ func validateConfig(values jVal) error {
 	}
 	if v := values.get("expand_wildcard"); v.kind != jNull && v.kind != jBool {
 		return fmt.Errorf("expand_wildcard must be true or false")
+	}
+	if v := values.get("expand_candidate_limit"); v.kind != jNull {
+		if !isJSONInt(v) {
+			return fmt.Errorf("expand_candidate_limit must be an integer from 100 to 10000")
+		}
+		n := pythonInt(v)
+		if n < 100 || n > 10000 {
+			return fmt.Errorf("expand_candidate_limit must be an integer from 100 to 10000")
+		}
+	}
+	if v := values.get("expand_similar_seed_top_k"); v.kind != jNull {
+		if !isJSONInt(v) {
+			return fmt.Errorf("expand_similar_seed_top_k must be an integer from 0 to 200")
+		}
+		n := pythonInt(v)
+		if n < 0 || n > 200 {
+			return fmt.Errorf("expand_similar_seed_top_k must be an integer from 0 to 200")
+		}
+	}
+	if v := values.get("expand_similar_seed_per_favorite"); v.kind != jNull {
+		if !isJSONInt(v) {
+			return fmt.Errorf("expand_similar_seed_per_favorite must be an integer from 0 to 50")
+		}
+		n := pythonInt(v)
+		if n < 0 || n > 50 {
+			return fmt.Errorf("expand_similar_seed_per_favorite must be an integer from 0 to 50")
+		}
 	}
 	return nil
 }

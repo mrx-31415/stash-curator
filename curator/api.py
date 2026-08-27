@@ -39,6 +39,9 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "expand_horizon_days": 90,
     "expand_gender": "FEMALE",
     "expand_wildcard": False,
+    "expand_candidate_limit": 1_000,
+    "expand_similar_seed_top_k": 20,
+    "expand_similar_seed_per_favorite": 5,
     "auto_tasks_enabled": False,
     "schedule_expand_refresh_enabled": False,
     "schedule_expand_refresh_interval_hours": 24,
@@ -1259,6 +1262,9 @@ class CuratorAPI:
             "expand_horizon_days",
             "expand_gender",
             "expand_wildcard",
+            "expand_candidate_limit",
+            "expand_similar_seed_top_k",
+            "expand_similar_seed_per_favorite",
             "auto_tasks_enabled",
             "schedule_expand_refresh_enabled",
             "schedule_expand_refresh_interval_hours",
@@ -1333,3 +1339,18 @@ class CuratorAPI:
         wildcard = values.get("expand_wildcard")
         if wildcard is not None and not isinstance(wildcard, bool):
             raise ValueError("expand_wildcard must be true or false")
+        candidate_limit = values.get("expand_candidate_limit")
+        if candidate_limit is not None and (
+            not isinstance(candidate_limit, int) or not 100 <= candidate_limit <= 10_000
+        ):
+            raise ValueError("expand_candidate_limit must be an integer from 100 to 10000")
+        similar_top_k = values.get("expand_similar_seed_top_k")
+        if similar_top_k is not None and (
+            not isinstance(similar_top_k, int) or not 0 <= similar_top_k <= 200
+        ):
+            raise ValueError("expand_similar_seed_top_k must be an integer from 0 to 200")
+        similar_per_favorite = values.get("expand_similar_seed_per_favorite")
+        if similar_per_favorite is not None and (
+            not isinstance(similar_per_favorite, int) or not 0 <= similar_per_favorite <= 50
+        ):
+            raise ValueError("expand_similar_seed_per_favorite must be an integer from 0 to 50")

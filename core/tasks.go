@@ -237,6 +237,8 @@ func runTaskMode(db dbx, pluginDir string, payload jVal, mode string, settings j
 		return taskSyncPlays(db, pluginDir, payload, settings)
 	case "expand-refresh":
 		return taskExpandRefresh(db, pluginDir, payload, settings)
+	case "expand-rebuild":
+		return taskExpandRebuild(db, pluginDir, payload, settings)
 	case "build", "force-build", "update-model":
 		return taskBuild(db, pluginDir, payload, mode)
 	case "sync-build", "full-sync-build":
@@ -325,11 +327,56 @@ func taskExpandRefresh(db dbx, pluginDir string, payload jVal, settings jVal) (j
 	}
 	var summary jVal
 	err = pythonSpan("task.expand_refresh", func() error {
+		summary, err = expandRefresh(db, base, apiKey, links,
+			int(pythonInt(cfg.get("expand_horizon_days"))),
+			cfg.get("expand_gender").asString(),
+			"",
+			cfg.get("expand_wildcard").truthy(),
+			int(pythonInt(cfg.get("expand_candidate_limit"))),
+			int(pythonInt(cfg.get("expand_similar_seed_top_k"))),
+			int(pythonInt(cfg.get("expand_similar_seed_per_favorite"))),
+			false,
+			nowMs(), mappedProgress(0.08, 0.98))
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	progressLog(0.98)
+	return summary, nil
+}
+
+// taskExpandRebuild mirrors backend.py's expand-rebuild mode: a full,
+// non-incremental refresh that re-pulls the whole window and ignores the
+// watermark, so scenes a recent incremental pass missed are re-fetched.
+func taskExpandRebuild(db dbx, pluginDir string, payload jVal, settings jVal) (jVal, error) {
+	progressLog(0.05)
+	config, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	cfg := config.get("config")
+	infoLog("Force rebuilding full Expand candidate window")
+	base, apiKey, err := stashdbClient(payload)
+	if err != nil {
+		return jvNull(), err
+	}
+	links, err := externalLinksRefresh(payload, db, mappedProgress(0.05, 0.08))
+	if err != nil {
+		return jvNull(), err
+	}
+	var summary jVal
+	err = pythonSpan("task.expand_rebuild", func() error {
 		var err error
 		summary, err = expandRefresh(db, base, apiKey, links,
 			int(pythonInt(cfg.get("expand_horizon_days"))),
 			cfg.get("expand_gender").asString(),
+			"",
 			cfg.get("expand_wildcard").truthy(),
+			int(pythonInt(cfg.get("expand_candidate_limit"))),
+			int(pythonInt(cfg.get("expand_similar_seed_top_k"))),
+			int(pythonInt(cfg.get("expand_similar_seed_per_favorite"))),
+			true,
 			nowMs(), mappedProgress(0.08, 0.98))
 		return err
 	})

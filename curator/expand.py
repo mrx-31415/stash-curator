@@ -262,6 +262,10 @@ class ExpandService:
         gender: str = "FEMALE",
         wildcard: bool = False,
         candidate_limit: int = 1_000,
+        similar_top_k: int = 20,
+        similar_per_favorite: int = 5,
+        ethnicity: str = "",
+        force_full: bool = False,
         now_ms: int | None = None,
         progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, object]:
@@ -284,7 +288,16 @@ class ExpandService:
         feature_version = str(model[0])
         if progress:
             progress(150, 1_000)
-        seeds = self._seeds(model_id, feature_version, links)
+        seeds = self._seeds(
+            client,
+            model_id,
+            feature_version,
+            links,
+            similar_top_k=similar_top_k,
+            similar_per_favorite=similar_per_favorite,
+            gender=gender,
+            ethnicity=ethnicity,
+        )
         if progress:
             progress(200, 1_000)
         cache = self.connection.execute(
@@ -297,7 +310,11 @@ class ExpandService:
             since = datetime.fromtimestamp(int(cache["fetched_at_ms"]) / 1000, UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
-        if since is not None and not self._supports_incremental_fetch(client):
+        # A force rebuild is the dev escape hatch for scenes a watermark could never
+        # surface: it ignores the incremental cursor and re-fetches the whole window.
+        if force_full:
+            since = None
+        elif since is not None and not self._supports_incremental_fetch(client):
             # The live stashdb instance predates the updated_at SceneQueryInput field, so
             # the watermark queries would fail validation; fall back to a full fetch there
             # while newer instances keep the incremental behavior.
@@ -363,18 +380,22 @@ class ExpandService:
                     for item in items
                 ),
             )
-            # Candidates fetched while recent age out of the discovery window; drop them so
-            # an incremental refresh cannot grow the pool without bound.
+            # Scenes fetched while recent age out of the discovery window; drop them so an
+            # incremental refresh cannot grow the pool without bound. The explore rows from
+            # hunts and similar probes age out the same way (they re-fetch on demand), but
+            # anything the user shortlisted is preserved.
             cutoff_iso = cutoff.isoformat()
             self.connection.execute(
                 """
                 DELETE FROM external_entity
-                WHERE entity_type='scene' AND pool='candidate' AND (
+                WHERE entity_type='scene' AND pool IN ('candidate', 'explore') AND (
                     (json_extract(payload_json, '$.release_date') IS NOT NULL
                      AND json_extract(payload_json, '$.release_date') < ?)
                     OR (json_extract(payload_json, '$.release_date') IS NULL
                         AND json_extract(payload_json, '$.production_date') IS NOT NULL
                         AND json_extract(payload_json, '$.production_date') < ?)
+                ) AND external_id NOT IN (
+                    SELECT external_id FROM external_shortlist WHERE entity_type='scene'
                 )
                 """,
                 (cutoff_iso, cutoff_iso),
@@ -1691,14 +1712,23 @@ class ExpandService:
         return result
 
     def _seeds(
-        self, model_id: str, feature_version: str, links: dict[str, dict[str, str]]
+        self,
+        client: GraphQLClient,
+        model_id: str,
+        feature_version: str,
+        links: dict[str, dict[str, str]],
+        *,
+        similar_top_k: int = 20,
+        similar_per_favorite: int = 5,
+        gender: str = "",
+        ethnicity: str = "",
     ) -> dict[str, list[str]]:
         top = [
             str(row[0])
             for row in self.connection.execute(
                 """
                 SELECT scene_id FROM model_scene_score WHERE model_id=?
-                ORDER BY appeal * confidence DESC LIMIT 100
+                ORDER BY appeal * confidence DESC LIMIT 500
                 """,
                 (model_id,),
             )
@@ -1711,15 +1741,44 @@ class ExpandService:
             )
             if float(item["strength"]) > 0
         ]
-        studios = {
-            links["studios"][str(row[0])]
-            for row in self.connection.execute(
-                f"SELECT DISTINCT studio_id FROM source_scene WHERE scene_id IN "
-                f"({','.join('?' for _ in top)}) AND studio_id IS NOT NULL",
-                top,
+        # A performer outside the library but similar to the user's own favorites never
+        # reaches the seed set through evidence alone (that only sees local performers).
+        # Chase the strongest favorites into StashDB and pull their closest look-alikes so
+        # the pool reaches scenes by performers the model has affinity for but has not seen.
+        if client is not None and similar_top_k > 0 and similar_per_favorite > 0 and performers:
+            performers = self._expand_similar_performers(
+                client,
+                performers,
+                evidence,
+                model_id,
+                feature_version,
+                links,
+                similar_top_k,
+                similar_per_favorite,
+                gender,
+                ethnicity,
             )
-            if str(row[0]) in links["studios"]
-        }
+        played = [
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT scene_id FROM source_scene
+                ORDER BY play_count DESC, updated_at DESC LIMIT 200
+                """
+            )
+        ]
+        studio_scope = list(dict.fromkeys((*top, *played)))
+        studios: set[str] = set()
+        if studio_scope:
+            studios = {
+                links["studios"][str(row[0])]
+                for row in self.connection.execute(
+                    f"SELECT DISTINCT studio_id FROM source_scene WHERE scene_id IN "
+                    f"({','.join('?' for _ in studio_scope)}) AND studio_id IS NOT NULL",
+                    studio_scope,
+                )
+                if str(row[0]) in links["studios"]
+            }
         local_tags = [
             str(row[0]).removeprefix("tag:")
             for row in self.connection.execute(
@@ -1749,9 +1808,60 @@ class ExpandService:
         ]
         return {
             "performers": performers,
-            "studios": sorted(studios)[:30],
+            "studios": sorted(studios)[:60],
             "tags": tags,
         }
+
+    def _expand_similar_performers(
+        self,
+        client: GraphQLClient,
+        base: list[str],
+        evidence: dict[str, dict[str, Any]],
+        model_id: str,
+        feature_version: str,
+        links: dict[str, dict[str, str]],
+        top_k: int,
+        per_favorite: int,
+        gender: str,
+        ethnicity: str,
+    ) -> list[str]:
+        # Best-effort enrichment: it must never fail an Expand refresh. A lookup-alike pass
+        # is only worth the seed breadth it adds, so any failure (a StashDB instance that
+        # predates a query, a missing profile, or a broken response) degrades to base seeds.
+        try:
+            profiles = FeatureStore(self.connection).performer_profiles(feature_version)
+        except Exception:
+            return base
+        if not profiles:
+            return base
+        weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
+        recorded = date.today().isoformat()
+        additions: list[str] = []
+        ranked = sorted(
+            evidence.items(), key=lambda value: (-float(value[1]["strength"]), value[0])
+        )
+        for external_id, info in ranked[:top_k]:
+            target = profiles.get(info["local_id"])
+            if target is None:
+                continue
+            try:
+                pool = self._fetch_performer_pool(
+                    client, target, gender, ethnicity, performed_with=external_id
+                )
+            except (GraphQLError, KeyError, TypeError):
+                continue
+            scored: list[tuple[float, str]] = []
+            for performer in pool:
+                profile = self._profile(performer, recorded)
+                if self._profile_conflicts(profile, target):
+                    continue
+                similarity, _match, _coverage = self._profile_match(profile, target, weights)
+                scored.append((similarity, str(performer["id"])))
+            scored.sort(key=lambda value: value[0], reverse=True)
+            for _similarity, external in scored[:per_favorite]:
+                if external not in evidence and external not in additions:
+                    additions.append(external)
+        return list(dict.fromkeys((*base, *additions)))
 
     @staticmethod
     def _fetch(
