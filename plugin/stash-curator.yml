@@ -118,6 +118,18 @@ settings:
     displayName: Expand popularity wildcard
     description: Include a small trending/popular sample outside preference-derived seeds.
     type: BOOLEAN
+  expandCandidateLimit:
+    displayName: Expand candidate limit
+    description: Maximum number of StashDB scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh.
+    type: NUMBER
+  expandSimilarSeedTopK:
+    displayName: Expand similar-performer seed top-K
+    description: Chase look-alikes for the K strongest favourite performers into the Expand seed set. 0 disables. Default 20.
+    type: NUMBER
+  expandSimilarSeedPerFavorite:
+    displayName: Expand similar-performer seeds per favourite
+    description: How many closest look-alikes per favourite are added as Expand seeds. 0 disables. Default 5.
+    type: NUMBER
   whisparrUrl:
     displayName: Whisparr v3 URL
     description: Optional Whisparr base URL used by Expand scene actions.
@@ -183,6 +195,10 @@ tasks:
     description: Refresh promising StashDB scenes and performers without affecting library sync.
     execArgs:
       - expand-refresh
+  - name: Force rebuild Expand cache
+    description: Full non-incremental Expand rebuild that re-fetches the whole recent window, capturing scenes a watermark refresh may have missed. Developer use; slower than a normal refresh.
+    execArgs:
+      - expand-rebuild
 hooks:
   - name: Sync changed entity
     description: Import or remove a single entity after a Stash create, update, or delete, so the sidecar stays current without a full sync.
