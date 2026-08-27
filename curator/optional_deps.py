@@ -1,8 +1,9 @@
-"""Optional accelerated dependencies with a pure-Python fallback.
+"""Optional accelerated dependency (numpy) for the dev/test oracle.
 
-The plugin ships without third-party packages. When the "Install optional
-dependencies" task has installed numpy into the plugin-local venv, the accelerated
-model stages use it; every other environment keeps the pure-Python implementations.
+The compiled core is the single runtime implementation, so numpy is not shipped
+or used by the plugin. It is imported by the differential-test oracle
+(`tests/oracle.py`) so the Go kernels can be pinned against an independent
+reference on seeded synthetic corpora.
 """
 
 from __future__ import annotations

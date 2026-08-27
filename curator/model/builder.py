@@ -455,69 +455,6 @@ def _entity_dormancy_rows(
     return rows
 
 
-def _numpy_cosine_matrix(
-    np: Any,
-    values: Any,
-    known_values: Any,
-    confidences: Any,
-    known_confidences: Any,
-    norms: Any,
-    known_norms: Any,
-) -> Any:
-    """Vectorized block cosine for profile blocks that use the shared-key dot product.
-
-    Matches the pure-Python _cosine: dot over shared keys divided by the product of
-    norms, scaled by the mean of the pairwise minimum confidences, clamped to [0, 1].
-    """
-    dot = values @ known_values.T
-    # Shared counts never exceed the feature count, so float32 is exact and uses the
-    # BLAS matmul path; the confidence mean is then computed in float64.
-    shared = ((values != 0).astype(np.float32) @ (known_values != 0).astype(np.float32).T).astype(
-        np.float64
-    )
-    confidence_sum = np.zeros((values.shape[0], known_values.shape[0]), dtype=np.float64)
-    for column in range(values.shape[1]):
-        if not confidences[:, column].any() or not known_confidences[:, column].any():
-            continue
-        confidence_sum += np.minimum.outer(confidences[:, column], known_confidences[:, column])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        confidence = np.where(shared > 0, confidence_sum / shared, 0.0)
-        cosine = dot / (norms[:, None] * known_norms[None, :]) * confidence
-    return np.clip(cosine, 0.0, 1.0)
-
-
-def _numpy_numeric_matrix(
-    np: Any,
-    values: Any,
-    known_values: Any,
-    confidences: Any,
-    known_confidences: Any,
-    scales: Any,
-) -> tuple[Any, Any]:
-    """Vectorized numeric-block closeness and shared-key counts.
-
-    Mirrors the pure-Python _numeric: each shared key contributes
-    exp(-abs difference / scale) * min confidence; the block value is the mean over
-    the shared keys.
-    """
-    value = np.zeros((values.shape[0], known_values.shape[0]), dtype=np.float64)
-    count = np.zeros_like(value)
-    for column in range(values.shape[1]):
-        both = np.outer(values[:, column] != 0, known_values[:, column] != 0)
-        if not both.any():
-            continue
-        closeness = np.exp(
-            -np.abs(np.subtract.outer(values[:, column], known_values[:, column])) / scales[column]
-        )
-        value += (
-            closeness
-            * np.minimum.outer(confidences[:, column], known_confidences[:, column])
-            * both
-        )
-        count += both
-    return value, count
-
-
 class PreferenceModelBuilder:
     def __init__(
         self,
@@ -1718,7 +1655,7 @@ class PreferenceModelBuilder:
     ) -> _NeighborEvidence:
         """Derive evidence fields from the selected neighbor tuples.
 
-        Shared by the numpy and compiled-core paths so the post-selection math
+        Shared by the compiled-core and oracle paths so the post-selection math
         stays identical by construction.
         """
         denominator = sum(item[2] for item in selected)
@@ -1764,7 +1701,7 @@ class PreferenceModelBuilder:
         label_mean: float,
         progress_total: int,
     ) -> dict[str, _NeighborEvidence]:
-        """Content-neighbor evidence via the compiled core (numpy's role).
+        """Content-neighbor evidence via the compiled core.
 
         The binary reads the content feature rows from the feature artifact and
         derives the preference vectors itself, so this path takes the same
@@ -1849,7 +1786,7 @@ class PreferenceModelBuilder:
         scene_features: dict[str, tuple[StoredFeature, ...]],
         affinities: dict[str, _Affinity],
     ) -> dict[str, dict[str, object]]:
-        """Performer-similarity scores via the compiled core (numpy's role).
+        """Performer-similarity scores via the compiled core.
 
         The binary reads the performer profiles from the feature artifact; the
         result dict is already the production format.
