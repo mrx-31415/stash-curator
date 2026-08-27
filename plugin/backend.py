@@ -522,6 +522,9 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         "expandHorizonDays": ("expand_horizon_days", int),
         "expandGender": ("expand_gender", str),
         "expandWildcard": ("expand_wildcard", bool),
+        "expandCandidateLimit": ("expand_candidate_limit", int),
+        "expandSimilarSeedTopK": ("expand_similar_seed_top_k", int),
+        "expandSimilarSeedPerFavorite": ("expand_similar_seed_per_favorite", int),
         "ignoredTags": ("ignored_tags", str),
     }
     overrides = {
@@ -1070,6 +1073,7 @@ DIAGNOSTIC_JOB_TYPES = {
     "compact",
     "vacuum",
     "expand-refresh",
+    "expand-rebuild",
 }
 
 # Task mode → yml display name, mirroring the Go side's taskDisplayNames so
@@ -1085,6 +1089,7 @@ TASK_DISPLAY_NAMES = {
     "compact": "Compact legacy Curator data",
     "vacuum": "Vacuum compacted Curator data",
     "expand-refresh": "Refresh Expand cache",
+    "expand-rebuild": "Force rebuild Expand cache",
 }
 
 
@@ -1772,6 +1777,36 @@ def _run_task_body(
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),
                     wildcard=bool(config["expand_wildcard"]),
+                    candidate_limit=int(config["expand_candidate_limit"]),
+                    similar_top_k=int(config["expand_similar_seed_top_k"]),
+                    similar_per_favorite=int(config["expand_similar_seed_per_favorite"]),
+                    progress=_mapped_progress(0.08, 0.98),
+                )
+            _progress(0.98)
+        elif mode == "expand-rebuild":
+            # Developer escape hatch: a full, non-incremental refresh that ignores the
+            # watermark so scenes a recent incremental pass missed are re-pulled across the
+            # whole horizon window. Bounded by the same candidate_limit and seeds.
+            _progress(0.05)
+            config = CuratorAPI(connection).config()["config"]
+            assert isinstance(config, dict)
+            _log("i", "Force rebuilding full Expand candidate window")
+            with span("python", "task.expand_rebuild"):
+                summary = ExpandService(connection).refresh(
+                    _stashdb(payload),
+                    _external_links(
+                        payload,
+                        connection,
+                        refresh=True,
+                        progress=_mapped_progress(0.05, 0.08),
+                    ),
+                    horizon_days=int(config["expand_horizon_days"]),
+                    gender=str(config["expand_gender"]),
+                    wildcard=bool(config["expand_wildcard"]),
+                    candidate_limit=int(config["expand_candidate_limit"]),
+                    similar_top_k=int(config["expand_similar_seed_top_k"]),
+                    similar_per_favorite=int(config["expand_similar_seed_per_favorite"]),
+                    force_full=True,
                     progress=_mapped_progress(0.08, 0.98),
                 )
             _progress(0.98)

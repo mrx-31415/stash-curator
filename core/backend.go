@@ -115,7 +115,7 @@ func writeOutput(output jVal) {
 // unknown modes error like Python's "unknown Curator task" (runTaskMode).
 func taskModeNative(mode string) bool {
 	switch mode {
-	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh",
+	case "backup", "compact", "vacuum", "prepare", "sync-plays", "expand-refresh", "expand-rebuild",
 		"build", "force-build", "update-model", "sync-build", "full-sync-build":
 		return true
 	}
