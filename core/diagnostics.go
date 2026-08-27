@@ -13,7 +13,7 @@ import (
 var diagnosticJobTypes = map[string]bool{
 	"sync-build": true, "full-sync-build": true, "sync-plays": true,
 	"build": true, "force-build": true, "update-model": true, "prepare": true,
-	"backup": true, "compact": true, "vacuum": true, "expand-refresh": true,
+	"backup": true, "compact": true, "vacuum": true, "expand-refresh": true, "expand-rebuild": true,
 }
 
 func opGetDiagnostics(pluginDir string, payload jVal) (jVal, error) {
