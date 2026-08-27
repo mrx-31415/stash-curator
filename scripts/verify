@@ -17,9 +17,10 @@ pytest_not_integration() (
 )
 
 # ── compiled core (Go) ─────────────────────────────────────────────────
-# Go is a dev/build dependency only; the shipped plugin never needs it (the
-# binary is optional acceleration, the pure-Python fallback stays intact).
-# A missing Go toolchain skips the core checks; a failing build fails the run.
+# Go is a dev/build dependency only; the compiled core is the single runtime
+# implementation, so the shipped plugin requires it (a missing binary fails
+# build stages loudly). A missing Go toolchain skips the core checks; a
+# failing build fails the run.
 core_build_and_check() {
   if ! command -v go >/dev/null 2>&1; then
     echo "[verify] go toolchain not found; skipping compiled-core checks (the full gate and plugin packaging require Go)" >&2
