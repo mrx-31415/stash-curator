@@ -1,12 +1,12 @@
 // Command curator-core is the optional compiled accelerator for Stash Curator.
 //
-// It has two modes. The kernel mode replaces numpy's role in the model build:
-// the content-neighbor and performer-similarity kernels mirror the production
-// Python implementations in curator/model/builder.py with identical semantics,
-// reading feature rows directly from the SQLite feature artifact (see
-// content.go, performer.go, multi_hop.go). The backend mode (the full Go
-// backend port) implements the raw-plugin interface on stdin/stdout — the
-// same contract plugin/backend.py serves — for every operation, task mode,
+// It has two modes. The kernel mode mirrors the model build's similarity and
+// multi-hop PageRank semantics: the content-neighbor and performer-similarity
+// kernels match the reference implementations in curator/model/builder.py with
+// equivalent results, reading feature rows directly from the SQLite feature
+// artifact (see content.go, performer.go, multi_hop.go). The backend mode (the
+// full Go backend port) implements the raw-plugin interface on stdin/stdout —
+// the same contract plugin/backend.py serves — for every operation, task mode,
 // and the entity-sync hook mode the frontend or Stash can invoke
 // (backend.go, ops.go, tasks.go, entity_hook.go, frontend.go). Unknown
 // operations and task modes error with the Python backend's exact messages.
