@@ -126,7 +126,7 @@ and reusable. What exists:
 - `docs/decisions/002-runtime-swap-planning.md` — the full planning record:
   language comparison, Go-vs-numpy POC evidence, equality-coverage plan, release/
   dev workflow, and the Phase 0 measurements.
-- `poc/golang-similarity-benchmark/` — the banked Go kernel benchmark (tracked).
+- The `poc/golang-similarity-benchmark/` Go kernel benchmark (banked; since removed).
 - `scripts/benchmark.py` — the automated Phase 0 harness: starts Docker Stash with
   the plugin installed, enables profiling via `configurePlugin`, runs the ops
   battery + tasks, pulls traces from a copied sidecar, writes a scrubbed report to
