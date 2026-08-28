@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.0](https://github.com/mrx-31415/stash-curator/compare/v0.21.0...v0.22.0) (2026-08-28)
+
+
+### Features
+
+* **expand:** widen StashDB seed discovery and add configurable candidate limit ([#282](https://github.com/mrx-31415/stash-curator/issues/282)) ([f8bbd6e](https://github.com/mrx-31415/stash-curator/commit/f8bbd6e5390e8877e99a1f673076776289d6005e))
+
+
+### Bug Fixes
+
+* ignore the accidental core/core build artifact ([#286](https://github.com/mrx-31415/stash-curator/issues/286)) ([fc867e8](https://github.com/mrx-31415/stash-curator/commit/fc867e82b87f0cc59a85697e9cc4ea25e9f735fc))
+
 ## [0.21.0](https://github.com/mrx-31415/stash-curator/compare/v0.20.0...v0.21.0) (2026-08-26)
 
 
