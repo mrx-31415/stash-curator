@@ -71,8 +71,8 @@ class PagedStashDB(FakeStashDB):
         input_data = variables["input"]
         assert isinstance(input_data, dict)
         page = int(input_data["page"])
-        scene = result["queryScenes"]["scenes"][1]
-        scene = {**scene, "id": f"external-scene-{page}"}
+        sort = str(input_data.get("sort", "DATE"))
+        scene = {**result["queryScenes"]["scenes"][1], "id": f"external-scene-{sort}-{page}"}
         return {"queryScenes": {"count": 2, "scenes": [scene]}}
 
 
@@ -297,7 +297,7 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
         "taxonomy_refreshed": False,
         "incremental": False,
     }
-    assert 1 <= len(client.inputs) <= 3
+    assert len(client.inputs) == 4  # performers + studios x 2 probes each (DATE + POPULARITY)
     assert [processed for processed, _ in progress] == sorted(
         processed for processed, _ in progress
     )
@@ -583,7 +583,7 @@ class SeedExpansionStashDB(FakeStashDB):
 
     def execute(self, document: str, variables: dict[str, object]):
         input_data = variables["input"]
-        if input_data.get("sort") == "POPULARITY":
+        if "queryPerformers" in document:
             self.inputs.append(input_data)
             lookalike = {
                 "id": "lookalike-performer",
@@ -621,6 +621,55 @@ def test_seed_expansion_chases_similar_performers_into_scenes(tmp_path: Path) ->
         "lookalike-performer" in (item.get("performers", {}).get("value") or [])
         for item in scene_queries
     )
+
+
+def test_refresh_samples_each_seed_source_by_recency_and_popularity(tmp_path: Path) -> None:
+    """A full refresh probes every active seed source by BOTH recency (DATE) and
+    popularity, so interesting-but-not-new scenes are not truncated out of the
+    cache. Before this, a date-only pool only kept the newest matches."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {"studio-1": "external-studio"},
+    }
+    client = FakeStashDB()
+    ExpandService(connection).refresh(
+        client, links, now_ms=REFERENCE_MS, candidate_limit=100, similar_top_k=0
+    )
+    dates = [item for item in client.inputs if item.get("sort") == "DATE"]
+    popular = [item for item in client.inputs if item.get("sort") == "POPULARITY"]
+    assert len(dates) == 2  # performers + studios
+    assert len(popular) == 2
+    assert all(("performers" in item or "studios" in item) for item in client.inputs)
+
+
+def test_incremental_refresh_keeps_single_probe_per_seed_source(tmp_path: Path) -> None:
+    """An incremental refresh walks the updated_at watermark, where the DATE and
+    POPULARITY sorts are equivalent, so it issues one UPDATED_AT probe per source
+    rather than duplicating the fetch."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {"studio-1": "external-studio"},
+    }
+    client = FakeStashDB()
+    service = ExpandService(connection)
+    service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=100, similar_top_k=0)
+    client.inputs.clear()
+    service.refresh(
+        client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=100, similar_top_k=0
+    )
+    incremental = [
+        item
+        for item in client.inputs
+        if item.get("sort") == "UPDATED_AT" and ("performers" in item or "studios" in item)
+    ]
+    assert len(incremental) == 2  # performers + studios, one probe each
+    assert all("updated_at" in item for item in incremental)
 
 
 def test_refresh_ages_out_explore_rows_but_preserves_shortlisted(tmp_path: Path) -> None:
@@ -778,16 +827,16 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
 
     service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=2, similar_top_k=0)
     assert [item["id"] for item in service.results("scene")["items"]] == [
-        "external-scene-1",
-        "external-scene-2",
+        "external-scene-DATE-1",
+        "external-scene-POPULARITY-1",
     ]
     first = service.results("scene", count=1)
     second = service.results("scene", page=2, count=1)
     assert first["has_more"] is True
     assert first["total"] == 2
     assert [first["items"][0]["id"], second["items"][0]["id"]] == [
-        "external-scene-1",
-        "external-scene-2",
+        "external-scene-DATE-1",
+        "external-scene-POPULARITY-1",
     ]
     assert second["has_more"] is False
     assert len(client.inputs) == 2
@@ -799,8 +848,8 @@ def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:
     else:
         raise AssertionError("offline refresh should fail")
     assert [item["id"] for item in service.results("scene")["items"]] == [
-        "external-scene-1",
-        "external-scene-2",
+        "external-scene-DATE-1",
+        "external-scene-POPULARITY-1",
     ]
 
 

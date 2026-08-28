@@ -328,11 +328,24 @@ class ExpandService:
         )
         active = sum(bool(values) for _, values in filters) + int(wildcard)
         per_source = max(1, math.ceil(candidate_limit / max(1, active)))
-        queries = [(source, values, per_source) for source, values in filters if values]
+        queries = []
+        for source, values in filters:
+            if not values:
+                continue
+            # A full refresh samples each seed source by recency AND by popularity so
+            # interesting scenes older than the newest N are not truncated out (a date-only
+            # pool is recency-biased). An incremental refresh walks the watermark, where the
+            # UPDATED_AT sort makes both probes identical, so it keeps one probe per source.
+            if since is not None:
+                queries.append((source, values, per_source, "DATE"))
+            else:
+                half = max(1, per_source // 2)
+                queries.append((source, values, half, "DATE"))
+                queries.append((source, values, half, "POPULARITY"))
         if wildcard:
-            queries.append(("wildcard", [], min(100, per_source)))
-        for position, (source, values, limit) in enumerate(queries, 1):
-            self._fetch(client, rows, sources, source, values, limit, since=since)
+            queries.append(("wildcard", [], min(100, per_source), "TRENDING"))
+        for position, (source, values, limit, sort) in enumerate(queries, 1):
+            self._fetch(client, rows, sources, source, values, limit, sort=sort, since=since)
             if progress:
                 progress(200 + round(450 * position / max(1, len(queries))), 1_000)
         if progress and not queries:
@@ -1804,7 +1817,7 @@ class ExpandService:
         local_tags = list(dict.fromkeys((*direct_tags, *local_tags)))
         resolved = self._external_tag_ids(set(local_tags))
         tags = list(dict.fromkeys(resolved[value] for value in local_tags if value in resolved))[
-            :20
+            :50
         ]
         return {
             "performers": performers,
