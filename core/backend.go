@@ -137,6 +137,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 	switch operation {
 	case "health":
 		return opHealth(pluginDir, payload)
+	case "restart_worker":
+		return opRestartWorker(pluginDir, payload)
 	case "round_trip":
 		return opRoundTrip(pluginDir, payload)
 	case "get_config":

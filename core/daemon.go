@@ -468,6 +468,49 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 	return spawnWorkerFn(pluginDir)
 }
 
+// restartWorker force-restarts the resident Curator worker. Unlike the
+// stale-generation rotation (rotateStaleWorker), it stops a live worker
+// unconditionally, so a wedged current-generation worker — a stuck 'running'
+// curator_job row with a live heartbeat, e.g. a backup that never advances —
+// can be cleared on demand instead of requiring a plugin/container reload.
+// It recovers orphaned job rows, then respawns a fresh worker when schedules
+// or auto tasks need one. Best-effort: on any failure the next Curator
+// invocation spawns the worker as before.
+func restartWorker(pluginDir string, payload, settings jVal, db dbx) (jVal, error) {
+	pid, hasPid := readWorkerPid(pluginDir)
+	restarted := false
+	if hasPid && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
+		if err := stopWorkerFn(pid); err != nil {
+			return jvNull(), fmt.Errorf("could not stop Curator worker %d: %w", pid, err)
+		}
+		restarted = true
+	}
+	if hasPid {
+		// Always clear the pid marker (a live worker we stopped, or a stale
+		// pid pointing at a dead/unrelated process) so a fresh worker can
+		// spawn without the successor's stale-owner guard refusing it.
+		_ = os.Remove(workerPidPath(pluginDir))
+	}
+	recoverOrphanJobs(db, nowMs())
+	// Spawn a fresh worker when schedules/auto tasks need one. ensureAutoWorker
+	// reuses a live pid only when its generation matches; after the stop above
+	// the pid is gone, so it spawns the current binary.
+	ensureAutoWorker(pluginDir, payload, settings, db)
+	newPid, _ := readWorkerPid(pluginDir)
+	result := jvObj(
+		jvKey("restarted", jvBool(restarted)),
+		jvKey("stopped_pid", jvNull()),
+		jvKey("worker_pid", jvNull()),
+	)
+	if hasPid {
+		result.set("stopped_pid", jvInt(int64(pid)))
+	}
+	if newPid > 0 {
+		result.set("worker_pid", jvInt(int64(newPid)))
+	}
+	return result, nil
+}
+
 // runDaemon is the worker main loop, served by `curator-core <pluginDir>
 // daemon`. It claims queued jobs one at a time, executes them with the same
 // mode bodies the inline path uses, heartbeats and reports progress through

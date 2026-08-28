@@ -586,6 +586,21 @@ WHERE state='running' AND started_at_ms>? AND job_type IN (
 	), nil
 }
 
+// opRestartWorker force-restarts the resident Curator worker: it stops a live
+// worker unconditionally, recovers orphaned curator_job rows, and spawns a
+// fresh worker when schedules/auto tasks need one. A wedged worker (a stuck
+// 'running' job with a live heartbeat) is the target case — the existing
+// stale-generation rotation never restarts a current-generation worker.
+func opRestartWorker(pluginDir string, payload jVal) (jVal, error) {
+	settings := pluginSettings(payload)
+	db, err := openSidecar(pluginDir, payload, settings, true)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	return restartWorker(pluginDir, payload, settings, db)
+}
+
 // requireKey mimics Python's dict subscript on health's GraphQL fields: a
 // missing key raises KeyError whose str() is the quoted key name.
 func requireKey(v jVal, key string) (jVal, error) {
