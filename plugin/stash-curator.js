@@ -3958,7 +3958,7 @@
     }
     React.useEffect(() => {
       refresh();
-      const timer = setInterval(refresh, 5000);
+      const timer = setInterval(refresh, 4000);
       return () => clearInterval(timer);
     }, []);
     const active = jobs.filter((job) => job.state === "queued" || job.state === "running");
@@ -4032,6 +4032,23 @@
         setStarting("");
       }
     }
+    async function restartWorker() {
+      setStarting("Restart worker");
+      setMessage("");
+      try {
+        const result = await operation({ operation: "restart_worker" });
+        setMessage(
+          result.restarted
+            ? `Worker restarted${result.stopped_pid ? ` (stopped pid ${result.stopped_pid})` : ""}.`
+            : "Worker was not running; ensured one is available."
+        );
+        setTimeout(refresh, 1000);
+      } catch (failure) {
+        setMessage(failure.message);
+      } finally {
+        setStarting("");
+      }
+    }
     return React.createElement(
       "div",
       { className: "curator-tasks-panel" },
@@ -4057,6 +4074,7 @@
             ? `Last task: ${TASK_MODE_LABELS[last.job_type] || last.job_type} · ${formatTimeAgo(last.finished_at_ms || last.started_at_ms)}`
             : "No tasks yet"
       ),
+      React.createElement(Button, { size: "sm", variant: "outline-secondary", disabled: Boolean(starting), onClick: restartWorker }, starting === "Restart worker" ? "Restarting…" : "Restart worker"),
       jobs.length === 0 && !error && React.createElement("p", { role: "status" }, "No tasks yet."),
       active.length > 0 && React.createElement(
         "section",
@@ -4096,19 +4114,31 @@
         setMessage(error.message);
       }
     }
+    // Poll continuously so the indicator and health pill update without a
+    // manual refresh. The old effect armed a one-shot setTimeout when idle,
+    // whose trigger (the active-job boolean) never changed after it fired —
+    // so once one idle poll ran the chain never re-armed and the UI froze
+    // until the user refreshed the page (a task started while idle never
+    // appeared). A ref keeps the latest refreshStatus so a model change
+    // still clears the slate cache / refreshes recommendations.
+    const refreshRef = React.useRef(refreshStatus);
+    refreshRef.current = refreshStatus;
     React.useEffect(() => {
-      refreshStatus();
+      let cancelled = false;
+      let timer;
+      const poll = async () => {
+        try {
+          await refreshRef.current();
+        } finally {
+          if (!cancelled) timer = setTimeout(poll, 4000);
+        }
+      };
+      poll();
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
     }, []);
-    React.useEffect(() => {
-      // One extra poll shortly after the last active job leaves Stash's queue
-      // so the completed curator_job row (and its summary) is picked up.
-      if (!health?.active_jobs?.length && !health?.active_job) {
-        const timer = setTimeout(refreshStatus, 5000);
-        return () => clearTimeout(timer);
-      }
-      const timer = setInterval(refreshStatus, 5000);
-      return () => clearInterval(timer);
-    }, [Boolean(health?.active_jobs?.length || health?.active_job)]);
 
     async function start(taskName) {
       try {
@@ -4197,7 +4227,9 @@
           : health?.model_pending ? "pending"
             : hasSynced ? "ready" : "idle";
     const pillLabel = {
-      running: "Running",
+      running: activeJob
+        ? `${TASK_MODE_LABELS[activeJob.job_type] || "Curator task"}${activeJob.progress != null ? ` · ${Math.round(activeJob.progress * 100)}%` : ""}`
+        : "Running",
       failed: "Failed",
       rebuilding: "Rebuilding",
       pending: `${health?.model_pending_events || 0} pending`,
