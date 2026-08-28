@@ -521,7 +521,7 @@ ORDER BY a.affinity * a.confidence DESC LIMIT 50`, modelID, featureVersion)
 	for _, id := range merged {
 		if externalID, ok := resolved[id]; ok {
 			tagsArr.arr = append(tagsArr.arr, jvStr(externalID))
-			if len(tagsArr.arr) >= 20 {
+			if len(tagsArr.arr) >= 50 {
 				break
 			}
 		}
@@ -691,6 +691,7 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 		source string
 		values []string
 		limit  int64
+		sort   string
 	}
 	var queries []querySpec
 	for _, filter := range filters {
@@ -699,11 +700,24 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 			for _, v := range filter.values.arr {
 				values = append(values, v.asString())
 			}
-			queries = append(queries, querySpec{filter.source, values, int64(perSource)})
+			// A full refresh samples each seed source by recency AND by popularity so
+			// interesting scenes older than the newest N are not truncated out (a date-only
+			// pool is recency-biased). An incremental refresh walks the watermark, where the
+			// UPDATED_AT sort makes both probes identical, so it keeps one probe per source.
+			if since != "" {
+				queries = append(queries, querySpec{filter.source, values, int64(perSource), "DATE"})
+			} else {
+				half := int64(perSource) / 2
+				if half < 1 {
+					half = 1
+				}
+				queries = append(queries, querySpec{filter.source, values, half, "DATE"})
+				queries = append(queries, querySpec{filter.source, values, half, "POPULARITY"})
+			}
 		}
 	}
 	if wildcard {
-		queries = append(queries, querySpec{"wildcard", nil, minInt64(100, int64(perSource))})
+		queries = append(queries, querySpec{"wildcard", nil, minInt64(100, int64(perSource)), "TRENDING"})
 	}
 	specs := make([]fetchPageSpec, 0, len(queries))
 	for _, query := range queries {
@@ -712,7 +726,7 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 			values:   query.values,
 			limit:    query.limit,
 			modifier: "INCLUDES",
-			sort:     "DATE",
+			sort:     query.sort,
 			since:    since,
 		})
 	}
