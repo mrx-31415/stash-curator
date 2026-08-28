@@ -60,10 +60,12 @@ the bigger question than the language.
 
 ### 2.3 Benchmark evidence (banked POC)
 
-Location: `poc/golang-similarity-benchmark/` (tracked; README has full numbers and
-how to run). Kernels mirror production `_content_neighbors_numpy` exactly and were
-cross-verified against a Python replica on shared data: **0 mismatched rows**,
-max weight error 1.4e-17.
+Location: the banked `poc/golang-similarity-benchmark/` (now removed; its numbers
+and how-to lived in the POC README). Kernels mirror production
+`_content_neighbors_numpy` exactly and were cross-verified against a Python replica
+on shared data: **0 mismatched rows**, max weight error 1.4e-17. The shipped
+differential gate (`tests/oracle.py` + `tests/core/` vs the `curator-core` binary)
+is the live successor to this banked evidence.
 
 | Scenario | numpy (prod algo) | Go dense 4t | Go sparse fused 4t |
 | --- | --- | --- | --- |
@@ -329,9 +331,10 @@ Phase 0 answered the first two:
 
 ## 8. Proposed sequencing
 
-- **Phase 0 (done):** POC banked (`poc/golang-similarity-benchmark/`); automated
-  benchmark harness (`scripts/benchmark.py`); interactive latency, cold-build
-  stage breakdown, install-deps cost, and real d/sparsity measured (2.4).
+- **Phase 0 (done):** POC banked (the `poc/golang-similarity-benchmark/` module,
+  since removed); automated benchmark harness (`scripts/benchmark.py`);
+  interactive latency, cold-build stage breakdown, install-deps cost, and real
+  d/sparsity measured (2.4).
 - **Phase 1:** **decided (2026-08-09): compiled core (Go)**. The RPC conversion
   is off the table (disproven — no residency in the `rpc` interface; RPC offers
   no benefit over `raw` for a binary). The compiled core is the lever for **both**

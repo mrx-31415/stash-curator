@@ -1,6 +1,0 @@
-# Local build artifacts for the POC benchmark; sources are tracked.
-bench
-go/
-*.log
-*.json
-__pycache__/
