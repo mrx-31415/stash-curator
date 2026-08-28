@@ -391,6 +391,130 @@ func TestHandoverWorkerSpawnsSuccessor(t *testing.T) {
 	}
 }
 
+func TestRestartWorkerForceRestartsWedgedWorker(t *testing.T) {
+	db, path := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	const now = int64(1_787_900_000_000)
+	pinTime(t, now, func() {
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`,
+			`{"auto_tasks_enabled": true}`, now); err != nil {
+			t.Fatal(err)
+		}
+	})
+	pluginDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A live worker pid (the daemon we are force-restarting).
+	pid := os.Getpid()
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A stalled running backup job (the wedge) the restart must recover.
+	if _, err := db.Exec(`INSERT INTO curator_job(job_id, job_type, state, started_at_ms, heartbeat_at_ms)
+VALUES ('stuck', 'backup', 'running', ?, ?)`, now-3_600_000, now-3_600_000); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
+	previousStop := stopWorkerFn
+	previousSpawn := spawnWorkerFn
+	stopCalls := 0
+	spawnCalls := 0
+	workerPidAliveFn = func(int) bool { return true }
+	workerPidIsWorkerFn = func(int, string) bool { return true }
+	stopWorkerFn = func(int) error { stopCalls++; return nil }
+	spawnWorkerFn = func(string) error { spawnCalls++; return nil }
+	defer func() {
+		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
+		stopWorkerFn = previousStop
+		spawnWorkerFn = previousSpawn
+	}()
+
+	pinTime(t, now, func() {
+		result, err := restartWorker(pluginDir, taskPayload(path, "restart_worker"), jvObj(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stopCalls != 1 {
+			t.Fatalf("stop calls = %d, want 1 (force restart a live worker)", stopCalls)
+		}
+		if !result.get("restarted").b {
+			t.Fatalf("restarted = %v, want true", result.get("restarted").b)
+		}
+		if result.get("stopped_pid").num != strconv.Itoa(pid) {
+			t.Fatalf("stopped_pid = %q, want %d", result.get("stopped_pid").num, pid)
+		}
+		if jobState(t, db, "stuck") != "failed" {
+			t.Fatalf("stuck row recovered to %q, want failed", jobState(t, db, "stuck"))
+		}
+		if spawnCalls != 1 {
+			t.Fatalf("spawn calls = %d, want 1 (auto tasks enabled)", spawnCalls)
+		}
+	})
+}
+
+func TestRestartWorkerNoLiveWorkerIgnoresStalePid(t *testing.T) {
+	db, path := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	const now = int64(1_787_900_000_000)
+	pinTime(t, now, func() {
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`,
+			`{"auto_tasks_enabled": false}`, now); err != nil {
+			t.Fatal(err)
+		}
+	})
+	pluginDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pid file pointing at a dead process (stale metadata).
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte("999999"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
+	previousStop := stopWorkerFn
+	previousSpawn := spawnWorkerFn
+	stopCalls := 0
+	spawnCalls := 0
+	workerPidAliveFn = func(int) bool { return false }
+	workerPidIsWorkerFn = func(int, string) bool { return true }
+	stopWorkerFn = func(int) error { stopCalls++; return nil }
+	spawnWorkerFn = func(string) error { spawnCalls++; return nil }
+	defer func() {
+		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
+		stopWorkerFn = previousStop
+		spawnWorkerFn = previousSpawn
+	}()
+
+	pinTime(t, now, func() {
+		result, err := restartWorker(pluginDir, taskPayload(path, "restart_worker"), jvObj(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stopCalls != 0 {
+			t.Fatalf("stop calls = %d, want 0 (no live worker)", stopCalls)
+		}
+		if result.get("restarted").b {
+			t.Fatalf("restarted = %v, want false", result.get("restarted").b)
+		}
+		// A stale pid marker is cleared so a later ensure worker can spawn.
+		if _, err := os.Stat(workerPidPath(pluginDir)); !os.IsNotExist(err) {
+			t.Fatalf("stale pid file not removed: %v", err)
+		}
+		if spawnCalls != 0 {
+			t.Fatalf("spawn calls = %d, want 0 (auto tasks disabled)", spawnCalls)
+		}
+	})
+}
+
 func TestWorkerUpdateWatcherDetectsReplacement(t *testing.T) {
 	pluginDir := t.TempDir()
 	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH
