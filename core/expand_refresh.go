@@ -545,12 +545,6 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 	if topK <= 0 || perFavorite <= 0 || len(base) == 0 {
 		return base
 	}
-	t0 := time.Now()
-	profiles, err := performerProfilesAll(s.db, featureVersion)
-	if err != nil || len(profiles) == 0 {
-		return base
-	}
-	timings["seeds_profiles"] = time.Since(t0).Milliseconds()
 	weights := performerBlockWeightsMap()
 	recorded := time.Now().Format("2006-01-02")
 	ids := make([]string, 0, len(evidence))
@@ -564,16 +558,30 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 		}
 		return ids[i] < ids[j]
 	})
+	// Only the top_k favourites are used as chase targets, so load just their
+	// profiles (performerProfilesForIDs) instead of every performer profile in
+	// the model — the all-profiles load is the serial bottleneck of the seeds
+	// phase on large libraries.
+	limit := topK
+	if limit > len(ids) {
+		limit = len(ids)
+	}
+	favouriteIDs := make(map[string]bool, limit)
+	for i := range limit {
+		favouriteIDs[evidence[ids[i]].localID] = true
+	}
+	t0 := time.Now()
+	profiles, err := performerProfilesForIDs(s.db, featureVersion, favouriteIDs)
+	if err != nil || len(profiles) == 0 {
+		return base
+	}
+	timings["seeds_profiles"] = time.Since(t0).Milliseconds()
 	type scoredPerformer struct {
 		sim float64
 		id  string
 	}
 	type chaseResult struct {
 		scored []scoredPerformer
-	}
-	limit := topK
-	if limit > len(ids) {
-		limit = len(ids)
 	}
 	results := make([]chaseResult, limit)
 	var networkMs, matchMs, calls int64
