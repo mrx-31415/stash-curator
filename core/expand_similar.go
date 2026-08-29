@@ -676,7 +676,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		if v := links.get("performers").get(entityID); v.truthy() {
 			performedWith = v.asString()
 		}
-		candidates, err := fetchPerformerPool(clientURL, apiKey, target, selectedGender, ethnicity, performedWith)
+		candidates, err := fetchPerformerPool(clientURL, apiKey, target, selectedGender, ethnicity, performedWith, nil)
 		if err != nil {
 			return jvNull(), err
 		}

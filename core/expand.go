@@ -1458,16 +1458,43 @@ func fetchProbes(clientURL, apiKey string, probes []fetchPageSpec) (*sceneRows, 
 	return rows, sources, nil
 }
 
-// fetchPerformerPool mirrors ExpandService._fetch_performer_pool: union of
-// popularity-ranked StashDB performer queries, run concurrently, merged by
-// first-seen performer id.
-func fetchPerformerPool(clientURL, apiKey string, target *performerProfile, gender, ethnicity, performedWith string) ([]jVal, error) {
+// fetchBasePerformerPool returns the shared popularity recall floor used by the
+// look-alike chase: the same gender/ethnicity popularity query every favorite
+// would otherwise issue. Best-effort — nil on failure degrades the chase to a
+// per-target base fetch (previous behavior).
+func fetchBasePerformerPool(clientURL, apiKey, gender, ethnicity string) []jVal {
+	query := jvObj(
+		jvKey("page", jvInt(1)),
+		jvKey("per_page", jvInt(500)),
+		jvKey("sort", jvStr("POPULARITY")),
+		jvKey("direction", jvStr("DESC")),
+	)
+	if gender != "" {
+		query.set("gender", jvStr(gender))
+	}
+	if ethnicity != "" {
+		query.set("ethnicity", jvStr(ethnicity))
+	}
+	data, err := stashdbQuery(clientURL, apiKey, stashdbPerformersQuery, jvObj(jvKey("input", query)))
+	if err != nil {
+		return nil
+	}
+	return append([]jVal{}, data.get("queryPerformers").get("performers").arr...)
+}
+
+// fetchPerformerPool returns the popularity/co-star/age union for one target,
+// optionally reusing a shared base pool so a common recall floor is fetched
+// once and not once per favorite.
+func fetchPerformerPool(clientURL, apiKey string, target *performerProfile, gender, ethnicity, performedWith string, prefetchedBase []jVal) ([]jVal, error) {
 	type querySpec struct {
 		performedWith string
 		ageLower      int64
 		hasAge        bool
 	}
-	specs := []querySpec{{}}
+	specs := []querySpec{}
+	if prefetchedBase == nil {
+		specs = append(specs, querySpec{}) // base popularity recall floor
+	}
 	if performedWith != "" {
 		specs = append(specs, querySpec{performedWith: performedWith})
 	}
@@ -1522,6 +1549,15 @@ func fetchPerformerPool(clientURL, apiKey string, target *performerProfile, gend
 	wg.Wait()
 	pooled := map[string]jVal{}
 	var order []string
+	if prefetchedBase != nil {
+		for _, performer := range prefetchedBase {
+			id := performer.get("id").asString()
+			if _, ok := pooled[id]; !ok {
+				pooled[id] = performer
+				order = append(order, id)
+			}
+		}
+	}
 	for _, res := range results {
 		if res.err != nil {
 			return nil, res.err
