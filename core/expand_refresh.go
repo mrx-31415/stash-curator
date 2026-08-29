@@ -15,6 +15,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -351,7 +353,7 @@ func recentScene(scene jVal, cutoff string) bool {
 
 // refreshSeeds mirrors ExpandService._seeds.
 func refreshSeeds(s *expandService, clientURL, apiKey, modelID, featureVersion string, links jVal,
-	similarTopK, similarPerFavorite int, gender, ethnicity string) (jVal, error) {
+	similarTopK, similarPerFavorite int, gender, ethnicity string, timings map[string]int64) (jVal, error) {
 	topRows, err := s.db.Query(`
 SELECT scene_id FROM model_scene_score WHERE model_id=?
 ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
@@ -393,7 +395,7 @@ ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
 		}
 	}
 	expandedPerformers := expandSimilarPerformers(s, clientURL, apiKey, basePerformers, evidence,
-		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity)
+		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity, timings)
 	performers := jvArr()
 	for _, externalID := range expandedPerformers {
 		performers.arr = append(performers.arr, jvStr(externalID))
@@ -539,14 +541,16 @@ ORDER BY a.affinity * a.confidence DESC LIMIT 50`, modelID, featureVersion)
 // Best-effort: any failure degrades to the base seed set.
 func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []string,
 	evidence map[string]*performerEvidence, featureVersion string, topK, perFavorite int,
-	gender, ethnicity string) []string {
+	gender, ethnicity string, timings map[string]int64) []string {
 	if topK <= 0 || perFavorite <= 0 || len(base) == 0 {
 		return base
 	}
+	t0 := time.Now()
 	profiles, err := performerProfilesAll(s.db, featureVersion)
 	if err != nil || len(profiles) == 0 {
 		return base
 	}
+	timings["seeds_profiles"] = time.Since(t0).Milliseconds()
 	weights := performerBlockWeightsMap()
 	recorded := time.Now().Format("2006-01-02")
 	ids := make([]string, 0, len(evidence))
@@ -564,32 +568,73 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 		sim float64
 		id  string
 	}
-	added := map[string]bool{}
-	var additions []string
+	type chaseResult struct {
+		scored []scoredPerformer
+	}
 	limit := topK
 	if limit > len(ids) {
 		limit = len(ids)
 	}
-	for _, externalID := range ids[:limit] {
-		target, ok := profiles[evidence[externalID].localID]
-		if !ok {
-			continue
-		}
-		pool, err := fetchPerformerPool(clientURL, apiKey, target, gender, ethnicity, externalID)
-		if err != nil {
-			continue
-		}
-		var scored []scoredPerformer
-		for _, performer := range pool {
-			profile := expandProfile(performer, jvStr(recorded))
-			if len(profileConflicts(profile, target)) > 0 {
-				continue
+	results := make([]chaseResult, limit)
+	var networkMs, matchMs, calls int64
+	// Fetch each favorite's StashDB pool and score it in parallel (bounded by
+	// the same worker count the scene probes use), then merge in the same seed
+	// order as the sequential path so the additions (and thus scene_count /
+	// performer_count) stay byte-identical to the Python oracle. Only the
+	// independent per-favorite work runs concurrently — the dedup merge below
+	// is sequential, so cross-favorite ordering is deterministic.
+	workers := min(8, limit)
+	if workers < 1 {
+		workers = 1
+	}
+	workCh := make(chan int)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range workCh {
+				externalID := ids[idx]
+				target := profiles[evidence[externalID].localID]
+				if target == nil {
+					continue
+				}
+				tNet := time.Now()
+				pool, err := fetchPerformerPool(clientURL, apiKey, target, gender, ethnicity, externalID)
+				atomic.AddInt64(&networkMs, time.Since(tNet).Milliseconds())
+				atomic.AddInt64(&calls, 1)
+				if err != nil {
+					continue
+				}
+				var scored []scoredPerformer
+				tMatch := time.Now()
+				for _, performer := range pool {
+					profile := expandProfile(performer, jvStr(recorded))
+					if len(profileConflicts(profile, target)) > 0 {
+						continue
+					}
+					sim, _ := profileMatch(profile, target, weights)
+					scored = append(scored, scoredPerformer{sim: sim, id: performer.get("id").asString()})
+				}
+				atomic.AddInt64(&matchMs, time.Since(tMatch).Milliseconds())
+				results[idx].scored = scored
 			}
-			sim, _ := profileMatch(profile, target, weights)
-			scored = append(scored, scoredPerformer{sim: sim, id: performer.get("id").asString()})
+		}()
+	}
+	for idx := range limit {
+		workCh <- idx
+	}
+	close(workCh)
+	wg.Wait()
+	added := map[string]bool{}
+	var additions []string
+	for idx := range limit {
+		scored := results[idx].scored
+		if len(scored) == 0 {
+			continue
 		}
 		sort.SliceStable(scored, func(i, j int) bool { return scored[i].sim > scored[j].sim })
-		for i := 0; i < perFavorite && i < len(scored); i++ {
+		for i := range min(perFavorite, len(scored)) {
 			eid := scored[i].id
 			if _, known := evidence[eid]; known || added[eid] {
 				continue
@@ -598,6 +643,9 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 			additions = append(additions, eid)
 		}
 	}
+	timings["seeds_chase_network"] = networkMs
+	timings["seeds_chase_match"] = matchMs
+	timings["seeds_chase_calls"] = int64(calls)
 	if len(additions) == 0 {
 		return base
 	}
@@ -643,7 +691,7 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	}
 	t0 = time.Now()
 	seeds, err := refreshSeeds(s, clientURL, apiKey, modelID, featureVersion, links,
-		similarTopK, similarPerFavorite, gender, ethnicity)
+		similarTopK, similarPerFavorite, gender, ethnicity, timings)
 	if err != nil {
 		return jvNull(), err
 	}

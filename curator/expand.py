@@ -302,6 +302,7 @@ class ExpandService:
             similar_per_favorite=similar_per_favorite,
             gender=gender,
             ethnicity=ethnicity,
+            timings=timings,
         )
         timings["seeds"] = round((time.monotonic() - phase) * 1_000)
         if progress:
@@ -1749,7 +1750,9 @@ class ExpandService:
         similar_per_favorite: int = 5,
         gender: str = "",
         ethnicity: str = "",
+        timings: dict[str, int] | None = None,
     ) -> dict[str, list[str]]:
+        timings = timings if timings is not None else {}
         top = [
             str(row[0])
             for row in self.connection.execute(
@@ -1784,6 +1787,7 @@ class ExpandService:
                 similar_per_favorite,
                 gender,
                 ethnicity,
+                timings,
             )
         played = [
             str(row[0])
@@ -1851,19 +1855,25 @@ class ExpandService:
         per_favorite: int,
         gender: str,
         ethnicity: str,
+        timings: dict[str, int],
     ) -> list[str]:
         # Best-effort enrichment: it must never fail an Expand refresh. A lookup-alike pass
         # is only worth the seed breadth it adds, so any failure (a StashDB instance that
         # predates a query, a missing profile, or a broken response) degrades to base seeds.
+        t0 = time.monotonic()
         try:
             profiles = FeatureStore(self.connection).performer_profiles(feature_version)
         except Exception:
             return base
+        timings["seeds_profiles"] = round((time.monotonic() - t0) * 1_000)
         if not profiles:
             return base
         weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
         recorded = date.today().isoformat()
         additions: list[str] = []
+        network_ms = 0
+        match_ms = 0
+        calls = 0
         ranked = sorted(
             evidence.items(), key=lambda value: (-float(value[1]["strength"]), value[0])
         )
@@ -1871,23 +1881,31 @@ class ExpandService:
             target = profiles.get(info["local_id"])
             if target is None:
                 continue
+            t_net = time.monotonic()
             try:
                 pool = self._fetch_performer_pool(
                     client, target, gender, ethnicity, performed_with=external_id
                 )
             except (GraphQLError, KeyError, TypeError):
                 continue
+            network_ms += round((time.monotonic() - t_net) * 1_000)
+            calls += 1
             scored: list[tuple[float, str]] = []
+            t_match = time.monotonic()
             for performer in pool:
                 profile = self._profile(performer, recorded)
                 if self._profile_conflicts(profile, target):
                     continue
                 similarity, _match, _coverage = self._profile_match(profile, target, weights)
                 scored.append((similarity, str(performer["id"])))
+            match_ms += round((time.monotonic() - t_match) * 1_000)
             scored.sort(key=lambda value: value[0], reverse=True)
             for _similarity, external in scored[:per_favorite]:
                 if external not in evidence and external not in additions:
                     additions.append(external)
+        timings["seeds_chase_network"] = network_ms
+        timings["seeds_chase_match"] = match_ms
+        timings["seeds_chase_calls"] = calls
         return list(dict.fromkeys((*base, *additions)))
 
     @staticmethod

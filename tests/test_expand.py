@@ -295,14 +295,11 @@ def test_expand_refresh_is_bounded_owned_filtered_and_cached(tmp_path: Path) -> 
     assert refreshed["performer_count"] == 1
     assert refreshed["taxonomy_refreshed"] is False
     assert refreshed["incremental"] is False
-    assert set(refreshed["stage_timings_ms"]) == {
-        "taxonomy",
-        "seeds",
-        "fetch",
-        "score",
-        "database_writing",
-        "total",
-    }
+    # The seeds chase sub-phases (seeds_profiles / seeds_chase_*) appear only when
+    # the similar-performer chase runs (similar_top_k>0); this refresh disables it.
+    assert {"taxonomy", "seeds", "fetch", "score", "database_writing", "total"} <= set(
+        refreshed["stage_timings_ms"]
+    )
     assert len(client.inputs) == 4  # performers + studios x 2 probes each (DATE + POPULARITY)
     assert [processed for processed, _ in progress] == sorted(
         processed for processed, _ in progress
