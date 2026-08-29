@@ -577,6 +577,14 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 	}
 	results := make([]chaseResult, limit)
 	var networkMs, matchMs, calls int64
+	// Fetch the shared popularity recall floor once (it is identical across all
+	// favorites), then union each favorite's co-star/age pools against it. This
+	// removes the redundant per-favorite base fetch, the largest query of the
+	// chase. The base pool is the same list every favorite would have fetched,
+	// so the per-target union (and thus the seed set) is unchanged.
+	tBase := time.Now()
+	sharedBase := fetchBasePerformerPool(clientURL, apiKey, gender, ethnicity)
+	timings["seeds_chase_base"] = time.Since(tBase).Milliseconds()
 	// Fetch each favorite's StashDB pool and score it in parallel (bounded by
 	// the same worker count the scene probes use), then merge in the same seed
 	// order as the sequential path so the additions (and thus scene_count /
@@ -600,7 +608,7 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 					continue
 				}
 				tNet := time.Now()
-				pool, err := fetchPerformerPool(clientURL, apiKey, target, gender, ethnicity, externalID)
+				pool, err := fetchPerformerPool(clientURL, apiKey, target, gender, ethnicity, externalID, sharedBase)
 				atomic.AddInt64(&networkMs, time.Since(tNet).Milliseconds())
 				atomic.AddInt64(&calls, 1)
 				if err != nil {
