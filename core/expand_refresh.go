@@ -609,16 +609,20 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	gender, ethnicity string, wildcard bool, candidateLimit int, similarTopK, similarPerFavorite int,
 	forceFull bool, nowMs int64, progress func(processed, total int)) (jVal, error) {
 	fetchedAtMs := nowMs
+	started := time.Now()
+	timings := map[string]int64{}
 	// The taxonomy check and seed load used to be markerless: on a large
 	// library the bar sat at 5% for the whole stretch. The 50/150 ticks
 	// bracket both phases (issue #110).
 	if progress != nil {
 		progress(50, 1000)
 	}
+	t0 := time.Now()
 	taxonomyRefreshed, err := refreshTaxonomy(db, clientURL, apiKey, fetchedAtMs)
 	if err != nil {
 		return jvNull(), err
 	}
+	timings["taxonomy"] = time.Since(t0).Milliseconds()
 	if progress != nil {
 		progress(100, 1000)
 	}
@@ -637,11 +641,13 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if progress != nil {
 		progress(150, 1000)
 	}
+	t0 = time.Now()
 	seeds, err := refreshSeeds(s, clientURL, apiKey, modelID, featureVersion, links,
 		similarTopK, similarPerFavorite, gender, ethnicity)
 	if err != nil {
 		return jvNull(), err
 	}
+	timings["seeds"] = time.Since(t0).Milliseconds()
 	if progress != nil {
 		progress(200, 1000)
 	}
@@ -735,10 +741,12 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	// loop, so the fetched rows are identical while the fetch phase takes
 	// max(probe) instead of the sum. The per-probe progress ticks keep their
 	// sequential values and fire once all probes have returned.
+	t0 = time.Now()
 	fetched, fetchedSources, err := fetchProbes(clientURL, apiKey, specs)
 	if err != nil {
 		return jvNull(), err
 	}
+	timings["fetch"] = time.Since(t0).Milliseconds()
 	rows = fetched
 	sources = fetchedSources
 	if progress != nil {
@@ -765,13 +773,16 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if progress != nil {
 		progress(750, 1000)
 	}
+	t0 = time.Now()
 	scenes, performers, err := s.score(candidates, sources, modelID, featureVersion, links, jvNull())
 	if err != nil {
 		return jvNull(), err
 	}
+	timings["score"] = time.Since(t0).Milliseconds()
 	if progress != nil {
 		progress(900, 1000)
 	}
+	t0 = time.Now()
 	writeErr := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
 		upsert := func(entityType string, items []scoredScene) error {
@@ -846,6 +857,7 @@ ON CONFLICT(singleton) DO UPDATE SET model_id=excluded.model_id,
 			modelID, fetchedAtMs, fetchedAtMs+12*3_600_000, poolCounts["scene"], poolCounts["performer"])
 		return err
 	})
+	timings["database_writing"] = time.Since(t0).Milliseconds()
 	if writeErr != nil {
 		return jvNull(), writeErr
 	}
@@ -854,6 +866,7 @@ ON CONFLICT(singleton) DO UPDATE SET model_id=excluded.model_id,
 			return jvNull(), err
 		}
 	}
+	timings["total"] = time.Since(started).Milliseconds()
 	if progress != nil {
 		progress(1000, 1000)
 	}
@@ -862,6 +875,7 @@ ON CONFLICT(singleton) DO UPDATE SET model_id=excluded.model_id,
 		jvKey("performer_count", jvInt(int64(len(performers)))),
 		jvKey("taxonomy_refreshed", jvBool(taxonomyRefreshed)),
 		jvKey("incremental", jvBool(since != "")),
+		jvKey("stage_timings_ms", stageTimingsJValForExpand(timings)),
 	), nil
 }
 

@@ -270,12 +270,16 @@ class ExpandService:
         progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, object]:
         fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
+        started = time.monotonic()
+        timings: dict[str, int] = {}
         # The taxonomy check and seed load used to be markerless: on a large
         # library the bar sat at 5% for the whole stretch. The 50/150 ticks
         # bracket both phases (issue #110).
         if progress:
             progress(50, 1_000)
+        phase = time.monotonic()
         taxonomy_refreshed = self._refresh_taxonomy(client, fetched_at_ms)
+        timings["taxonomy"] = round((time.monotonic() - phase) * 1_000)
         if progress:
             progress(100, 1_000)
         model_store = RecommendationModelStore(self.connection)
@@ -288,6 +292,7 @@ class ExpandService:
         feature_version = str(model[0])
         if progress:
             progress(150, 1_000)
+        phase = time.monotonic()
         seeds = self._seeds(
             client,
             model_id,
@@ -298,6 +303,7 @@ class ExpandService:
             gender=gender,
             ethnicity=ethnicity,
         )
+        timings["seeds"] = round((time.monotonic() - phase) * 1_000)
         if progress:
             progress(200, 1_000)
         cache = self.connection.execute(
@@ -344,10 +350,12 @@ class ExpandService:
                 queries.append((source, values, half, "POPULARITY"))
         if wildcard:
             queries.append(("wildcard", [], min(100, per_source), "TRENDING"))
+        fetch_phase = time.monotonic()
         for position, (source, values, limit, sort) in enumerate(queries, 1):
             self._fetch(client, rows, sources, source, values, limit, sort=sort, since=since)
             if progress:
                 progress(200 + round(450 * position / max(1, len(queries))), 1_000)
+        timings["fetch"] = round((time.monotonic() - fetch_phase) * 1_000)
         if progress and not queries:
             progress(650, 1_000)
         cutoff = date.today() - timedelta(days=horizon_days)
@@ -363,9 +371,12 @@ class ExpandService:
                 candidates.append(candidate)
         if progress:
             progress(750, 1_000)
+        phase = time.monotonic()
         scenes, performers = self._score(candidates, sources, model_id, feature_version, links)
+        timings["score"] = round((time.monotonic() - phase) * 1_000)
         if progress:
             progress(900, 1_000)
+        phase = time.monotonic()
         with transaction(self.connection):
             # Merge the newly fetched candidates instead of wiping the pool, so unchanged
             # entries and the explore rows from hunts and similar probes survive a refresh.
@@ -441,6 +452,8 @@ class ExpandService:
             # The affinities and seeds changed with the model, so every surviving candidate's
             # score is stale; rescore the whole candidate pool in place.
             self._rescore_candidates(model_id, feature_version, links)
+        timings["database_writing"] = round((time.monotonic() - phase) * 1_000)
+        timings["total"] = round((time.monotonic() - started) * 1_000)
         if progress:
             progress(1_000, 1_000)
         return {
@@ -448,6 +461,7 @@ class ExpandService:
             "performer_count": len(performers),
             "taxonomy_refreshed": taxonomy_refreshed,
             "incremental": since is not None,
+            "stage_timings_ms": timings,
         }
 
     def _rescore_candidates(
