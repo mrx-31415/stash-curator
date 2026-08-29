@@ -245,7 +245,9 @@ def assert_refresh_identical(
     sidecar: Path,
     stash_url: str,
     *,
-    normalize: tuple[str, ...] = ("job_id",),
+    # stage_timings_ms is a wall-clock breakdown that legitimately differs
+    # between the Go and Python runs; strip it from the parity comparison.
+    normalize: tuple[str, ...] = ("job_id", "stage_timings_ms"),
 ) -> None:
     run_dir = sidecar.parent / f"{sidecar.stem}-refresh-run"
     worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))

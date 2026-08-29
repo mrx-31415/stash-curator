@@ -554,6 +554,15 @@ func taskBuild(db dbx, pluginDir string, payload jVal, mode string) (jVal, error
 	), nil
 }
 
+// stageTimingOrder mirrors the model build's timings insertion order.
+var stageTimingOrder = []string{
+	"feature_lookup", "feature_build", "feature_database_writing", "feature_indexing",
+	"feature_validation", "feature_publication", "feature_total", "labels", "affinities",
+	"similarity", "scoring", "database_writing", "lane_classification",
+	"score_first_ordering", "varied_ordering", "reason_generation",
+	"sqlite_index_creation", "indexing", "validation", "publication", "cleanup", "total",
+}
+
 // stageTimingsJVal serializes the stage timings dict in insertion order.
 func stageTimingsJVal(timings map[string]int64) jVal {
 	out := jvObj()
@@ -565,13 +574,22 @@ func stageTimingsJVal(timings map[string]int64) jVal {
 	return out
 }
 
-// stageTimingOrder mirrors the model build's timings insertion order.
-var stageTimingOrder = []string{
-	"feature_lookup", "feature_build", "feature_database_writing", "feature_indexing",
-	"feature_validation", "feature_publication", "feature_total", "labels", "affinities",
-	"similarity", "scoring", "database_writing", "lane_classification",
-	"score_first_ordering", "varied_ordering", "reason_generation",
-	"sqlite_index_creation", "indexing", "validation", "publication", "cleanup", "total",
+// stageTimingsJValForExpand serializes the expand refresh phase timings in a
+// stable insertion order (the refresh summary's stage_timings_ms).
+func stageTimingsJValForExpand(timings map[string]int64) jVal {
+	out := jvObj()
+	for _, key := range expandStageTimingOrder {
+		if value, ok := timings[key]; ok {
+			out.set(key, jvInt(value))
+		}
+	}
+	return out
+}
+
+// expandStageTimingOrder mirrors ExpandService.refresh's timing insertion
+// order (Go and Python must agree so a future comparison stays stable).
+var expandStageTimingOrder = []string{
+	"taxonomy", "seeds", "fetch", "score", "database_writing", "total",
 }
 
 // taskSyncBuild mirrors backend.py's sync-build / full-sync-build mode.
