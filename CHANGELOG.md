@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/mrx-31415/stash-curator/compare/v0.21.0...v0.22.0) (2026-08-29)
+
+
+### Features
+
+* **expand:** sample seed sources by recency and popularity and widen content tag seeds ([d6d22e3](https://github.com/mrx-31415/stash-curator/commit/d6d22e3ed412743e1acb6df28038cd7234218515))
+* **expand:** widen StashDB seed discovery and add configurable candidate limit ([#282](https://github.com/mrx-31415/stash-curator/issues/282)) ([f8bbd6e](https://github.com/mrx-31415/stash-curator/commit/f8bbd6e5390e8877e99a1f673076776289d6005e))
+* **worker:** add restart_worker button and live task status ([c906b93](https://github.com/mrx-31415/stash-curator/commit/c906b939324cb5bc21ebd95ed52ba14358650fcf))
+* **worker:** add restart_worker op to force-restart a wedged Curator worker ([7e16924](https://github.com/mrx-31415/stash-curator/commit/7e169249df4d59dbecad0b609df9421027d488a0))
+
+
+### Bug Fixes
+
+* ignore the accidental core/core build artifact ([#286](https://github.com/mrx-31415/stash-curator/issues/286)) ([fc867e8](https://github.com/mrx-31415/stash-curator/commit/fc867e82b87f0cc59a85697e9cc4ea25e9f735fc))
+
 ## [0.21.0](https://github.com/mrx-31415/stash-curator/compare/v0.20.0...v0.21.0) (2026-08-26)
 
 
