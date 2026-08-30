@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.23.0](https://github.com/mrx-31415/stash-curator/compare/v0.22.0...v0.23.0) (2026-08-30)
+
+
+### Features
+
+* **expand:** report per-phase timings in the refresh summary ([39a5260](https://github.com/mrx-31415/stash-curator/commit/39a5260652f08fdc3928c2cbe4b752a7fe86d18f))
+
+
+### Performance Improvements
+
+* **expand:** load only the look-alike favourite profiles instead of all performer profiles ([17ccf8f](https://github.com/mrx-31415/stash-curator/commit/17ccf8f9e5482e8e86c7286faa91c8d33d08d03c))
+* **expand:** parallelize the look-alike seed chase and decompose seed timing ([5dde5bd](https://github.com/mrx-31415/stash-curator/commit/5dde5bde6181039d45fd8395d58cafd7dd9a80c9))
+* **expand:** reuse the cached external-links map instead of re-walking the library ([#291](https://github.com/mrx-31415/stash-curator/issues/291)) ([4dedcb1](https://github.com/mrx-31415/stash-curator/commit/4dedcb1915d46588d3aec579f5c228bea18f5b79))
+* **expand:** share the look-alike base pool to cut redundant StashDB queries ([4b93632](https://github.com/mrx-31415/stash-curator/commit/4b93632af3e9e76bd7ced1e509344ef057a374fb))
+
+
+### Documentation
+
+* remove orphaned delivery records and the documentation archive ([#292](https://github.com/mrx-31415/stash-curator/issues/292)) ([54cdb4c](https://github.com/mrx-31415/stash-curator/commit/54cdb4cd3a75f5ddd9dd228a17ac9bdd1e5d2260))
+
 ## [0.22.0](https://github.com/mrx-31415/stash-curator/compare/v0.21.0...v0.22.0) (2026-08-29)
 
 
