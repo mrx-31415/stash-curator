@@ -321,7 +321,11 @@ func taskExpandRefresh(db dbx, pluginDir string, payload jVal, settings jVal) (j
 	if err != nil {
 		return jvNull(), err
 	}
-	links, err := externalLinksRefresh(payload, db, mappedProgress(0.05, 0.08))
+	// Reuse the cached external-links map (refreshed by sync-build and the
+	// entity hooks) instead of re-walking the whole library through Stash on
+	// every expand refresh — the walk dominates the refresh cost on large
+	// libraries. The Python oracle does the same (_external_links refresh=False).
+	links, err := externalLinks(payload, db)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -361,7 +365,11 @@ func taskExpandRebuild(db dbx, pluginDir string, payload jVal, settings jVal) (j
 	if err != nil {
 		return jvNull(), err
 	}
-	links, err := externalLinksRefresh(payload, db, mappedProgress(0.05, 0.08))
+	// Reuse the cached external-links map (refreshed by sync-build and the
+	// entity hooks) instead of re-walking the whole library through Stash on
+	// every expand refresh — the walk dominates the refresh cost on large
+	// libraries. The Python oracle does the same (_external_links refresh=False).
+	links, err := externalLinks(payload, db)
 	if err != nil {
 		return jvNull(), err
 	}
