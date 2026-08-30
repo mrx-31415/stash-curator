@@ -448,7 +448,10 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 		}
 		return nil
 	}
-	db, err := openSidecar(pluginDir, payload, settings, true)
+	// The worker coordination here only migrates the sidecar and checks the
+	// queue; the published-model artifact is attached per-job (when a task
+	// actually needs it) inside the worker, not while deciding to spawn one.
+	db, err := openSidecar(pluginDir, payload, settings, false)
 	if err != nil {
 		return fmt.Errorf("could not open sidecar to recover worker: %w", err)
 	}
