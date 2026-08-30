@@ -294,7 +294,8 @@ def build(output: Path = OUTPUT) -> Path:
                 f"  path: {output.name}",
                 f"  sha256: {digest}",
                 "  metadata:",
-                "    description: Navigate your library, guided by your taste.",
+                "    description: Local recommendations and StashDB discovery "
+                "— curated to your taste.",
                 "",
             )
         ),
