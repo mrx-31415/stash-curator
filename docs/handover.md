@@ -28,8 +28,6 @@ resident RPC conversion is off the table (disproven — no residency in Stash's
 
 Curator is a working preview for Stash v0.31 with Python 3.12+. Public product,
 architecture, privacy, and contributor guidance now lives in the main `docs/` pages.
-Historical design and research records are retained in `docs/archive/` but are not
-current guidance or part of the published site.
 
 Stage 4 is complete. A native backup validated, restartable legacy compaction removed
 1,189,457 rebuildable rows, explicit vacuum reduced the core from 775,700,480 to

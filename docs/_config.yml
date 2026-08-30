@@ -6,7 +6,6 @@ repository: mrx-31415/stash-curator
 markdown: kramdown
 permalink: pretty
 exclude:
-  - archive
   - decisions
   - handover.md
   - README.md
