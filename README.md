@@ -2,12 +2,14 @@
   <img src="docs/assets/stash-curator.svg" alt="Stash Curator compass" width="112">
 </p>
 <h1 align="center">Stash Curator</h1>
-<p align="center"><strong>Navigate your library, guided by your taste.</strong></p>
+<p align="center"><strong>Local recommendations and StashDB discovery — curated to your taste.</strong></p>
 
-Stash Curator is a local-first recommendation and curation plugin for
-[Stash](https://github.com/stashapp/stash). It uses library metadata, viewing history,
-and direct feedback to recommend scenes from your library, explains why an item
-appears, and keeps the preference model in a separate SQLite database you control.
+Stash Curator learns your taste from your library metadata, viewing history, and
+feedback — then uses that taste to recommend from two places: the scenes already in
+your library, and the wider catalog on [StashDB](https://stashdb.org). Inside your
+library, lanes like For You and Best Bets mix favorites, revisits, and discovery.
+Beyond it, Expand and Performer Hunt rank StashDB candidates by the same taste;
+external results are leads.
 
 <p align="center">
   <img src="docs/assets/showcase-navigation.gif" alt="Curator tour with pointer-driven clicks through recommendation lanes, Pair picks, and Tag sentiment" width="960">
@@ -43,14 +45,15 @@ for first-build expectations, configuration, updates, and backups.
 
 ## What it does
 
-- **Recommendations:** For You balances dependable matches, revisits, and discovery;
-  Best Bets, Revisit, Stretch, Blind Spots, and Dormant let you choose the slate.
-  “Why this?” makes the evidence inspectable.
-- **Find:** Similar connects related local scenes and performers; Expand and Performer
-  Hunt optionally explore StashDB metadata against your local model.
-- **Curate:** Pair picks teach shared preferences, Tag sentiment corrects a belief
-  directly, and Impact shows what a later model build changed. Manage keeps review,
-  backups, tasks, and settings together; Prune is always reversible and never deletes media.
+- **Recommendations from your library, curated to your taste.** For You, Best Bets,
+  Revisit, Stretch, Blind Spots, and Dormant mix favorites, revisits, and discovery.
+  Variety is presentation, not taste.
+- **The same taste, beyond your library.** Similar finds related local scenes and
+  performers; Expand and Performer Hunt rank StashDB candidates against the same
+  model. External results are leads.
+- **Inspect and correct.** “Why this?” shows the evidence and score tree (Appeal vs
+  Current Fit vs confidence); pair picks, tag sentiment, and thumbs correct a belief
+  directly.
 
 Curator separates long-term **Appeal** from **Current Fit**, then builds varied lanes
 instead of sorting everything by one opaque score. Read [how recommendations work](docs/recommendations.md)
@@ -58,10 +61,10 @@ or browse the complete [documentation site](https://mrx-31415.github.io/stash-cu
 
 ## Safety and privacy
 
-Preference history, learned weights, and explanations stay local. StashDB discovery
-is opt-in and sends bounded read-only metadata queries, never your preference model.
-The only intentional Stash mutation is an explicit Prune action that adds or removes
-the configured tag. Whisparr receives only an item you explicitly send. See [Privacy](docs/privacy.md).
+Runs locally. Your history, feedback, and model stay in a SQLite sidecar you control;
+StashDB is optional, read-only, and never sees your model. The only Stash mutation is
+an explicit Prune action that adds or removes the configured tag; Curator never deletes
+media. Whisparr receives only an item you explicitly send. See [Privacy](docs/privacy.md).
 
 ## Status
 
