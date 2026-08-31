@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "stash-curator"
 version = "0.23.0"
-description = "Navigate your Stash library, guided by your taste."
+description = "Local recommendations and StashDB discovery — curated to your taste."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-only"

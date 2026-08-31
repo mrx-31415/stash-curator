@@ -1,14 +1,14 @@
 ---
-title: Local-first recommendations for Stash
-description: A local Stash plugin for personalized recommendations, discovery, and reversible library review.
+title: Stash Curator — local recommendations and StashDB discovery
+description: Local recommendations and StashDB discovery — curated to your taste.
 wide: true
 ---
 
 <section class="hero">
   <div>
-    <p class="eyebrow">Preview · Stash plugin · local-first</p>
-    <h1>Personalized recommendations for your Stash library.</h1>
-    <p class="lede">Curator uses your library metadata, viewing history, and feedback to recommend scenes from your library. Inspect the reason, find related content, then teach the model with quick comparisons and direct sentiment.</p>
+    <p class="eyebrow">Preview · Stash plugin</p>
+    <h1>Recommendations from your library, and discovery beyond it.</h1>
+    <p class="lede">Stash Curator learns your taste from your library metadata, viewing history, and feedback — then uses that taste to recommend from two places: the scenes already in your library, and the wider catalog on StashDB. Every recommendation is inspectable, and you can correct a belief directly.</p>
     <div class="actions"><a class="button" href="#install">Install the preview</a><a class="button secondary" href="{{ '/recommendations/' | relative_url }}">How it recommends</a></div>
   </div>
   <img class="hero-mark" src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="Blue-violet Stash Curator compass">
@@ -39,19 +39,11 @@ wide: true
   <div class="capture"><img src="{{ '/assets/showcase-curate.png' | relative_url }}" alt="Synthetic Curate demo with a fictional pair pick, tag sentiment, and compact impact summary" width="1200" height="675" loading="lazy" decoding="async"></div>
 </section>
 
-## Local by design
+## Privacy and safety
 
-<div class="grid">
-  <article class="card"><h3>Private by default</h3><p>Your history, feedback, and preference model stay in a separate plugin-owned SQLite database.</p></article>
-  <article class="card"><h3>Remote discovery is optional</h3><p>StashDB receives only bounded, read-only metadata queries. Your learned preferences are scored locally.</p></article>
-  <article class="card"><h3>No delete action</h3><p>Prune changes only the configured tag, and you can remove that tag from Curator or Stash.</p></article>
-</div>
-
-## What Curator does not do
-
-- It does not delete scenes or other media.
-- It does not upload your viewing history, feedback, or preference model to StashDB.
-- It does not require StashDB for local recommendations.
+Runs locally. Your history, feedback, and model stay in a SQLite sidecar you control;
+StashDB is optional, read-only, and never sees your model. The only Stash mutation is
+an explicit, reversible Prune tag — Curator never deletes media. See [Privacy]({{ '/privacy/' | relative_url }}).
 
 ## Preview status
 
