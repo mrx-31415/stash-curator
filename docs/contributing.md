@@ -58,8 +58,7 @@ per-platform Go binaries, manifest, and license—not the full Python `curator` 
 or `plugin/backend.py`. Documentation is
 built independently from `docs/` with GitHub Pages' native Jekyll action, then the
 archive and index are copied into the same deployment so docs and install source go
-live atomically. Historical design and research live in `docs/archive/` and are
-excluded from the public build.
+live atomically.
 
 See the retained [backend runtime decision](https://github.com/mrx-31415/stash-curator/blob/main/docs/decisions/001-backend-runtime.md)
 for the deployment rationale.

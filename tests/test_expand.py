@@ -1947,3 +1947,55 @@ def test_blocked_term_excludes_remote_pool_scenes(tmp_path: Path) -> None:
     )
     connection.commit()
     assert ExpandService(connection).results("scene")["items"] == []
+
+
+class PerformerSearchStashDB:
+    """A StashDB client that records the performer-search input. The live
+    PerformerQueryInput.names is a bare String (not a StringCriterionInput), so
+    the Performer Hunt picker search must send the name directly; a
+    {value, modifier} object fails GraphQL validation with 'cannot use map as
+    String'."""
+
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, object]] = []
+
+    def execute(self, _document: str, variables: dict[str, object]) -> dict[str, object]:
+        input_data = variables["input"]
+        assert isinstance(input_data, dict)
+        self.inputs.append(input_data)
+        return {
+            "queryPerformers": {
+                "performers": [
+                    {
+                        "id": "performer-1",
+                        "name": "Koda Monroe",
+                        "aliases": [],
+                        "disambiguation": None,
+                        "scene_count": 3,
+                        "images": [],
+                    }
+                ]
+            }
+        }
+
+
+def test_stashdb_performer_search_sends_names_as_plain_string(tmp_path: Path) -> None:
+    """Issue #218: StashDB's PerformerQueryInput.names is a bare String, so the
+    Performer Hunt picker search must send the query string directly instead of
+    a {value, modifier} criterion object (which fails validation against the
+    live schema)."""
+    client = PerformerSearchStashDB()
+    items = ExpandService(_database(tmp_path / "curator.sqlite3")).stashdb_performer_search(
+        client, "koda monro", limit=8
+    )
+    assert items["items"] == [
+        {
+            "id": "performer-1",
+            "name": "Koda Monroe",
+            "aliases": [],
+            "disambiguation": None,
+            "scene_count": 3,
+            "images": [],
+        }
+    ]
+    assert client.inputs == [{"page": 1, "per_page": 8, "names": "koda monro"}]

@@ -2511,15 +2511,34 @@
 }
 
 .curator-token-options button {
+  align-items: center;
   background: transparent;
   border: 0;
   color: var(--curator-text);
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
   padding: 0.35rem 0.5rem;
   text-align: left;
+  width: 100%;
 }
 
 .curator-token-options button:hover {
   background: var(--curator-surface-raised);
+}
+
+.curator-token-source-badge {
+  background: var(--curator-wash-recessed);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text);
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.1;
+  padding: 0.1rem 0.45rem;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .curator-match-filter input {

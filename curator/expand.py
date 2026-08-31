@@ -515,7 +515,7 @@ class ExpandService:
                 "input": {
                     "page": 1,
                     "per_page": limit,
-                    "names": {"value": query, "modifier": "INCLUDES"},
+                    "names": query,
                 }
             },
         )["queryPerformers"]["performers"]
