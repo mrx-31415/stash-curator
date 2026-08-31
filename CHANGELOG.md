@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.1](https://github.com/mrx-31415/stash-curator/compare/v0.23.0...v0.23.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **hunt:** search local and StashDB performers together ([#294](https://github.com/mrx-31415/stash-curator/issues/294)) ([e839407](https://github.com/mrx-31415/stash-curator/commit/e839407f0915ea348120895133f7f1158e27b699))
+
+
+### Documentation
+
+* refresh the homepage copy around taste-driven curation ([#293](https://github.com/mrx-31415/stash-curator/issues/293)) ([74a197f](https://github.com/mrx-31415/stash-curator/commit/74a197f55aa8741f9609d7dcdbb6c4f49d717083))
+
 ## [0.23.0](https://github.com/mrx-31415/stash-curator/compare/v0.22.0...v0.23.0) (2026-08-30)
 
 
