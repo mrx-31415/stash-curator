@@ -326,8 +326,8 @@ class _StubExpand(BaseHTTPRequestHandler):
             return {"data": {"queryPerformers": {"performers": pool}}}
         if operation == "CuratorPerformerSearch":
             input_data = json.loads(body)["variables"]["input"]
-            names = input_data.get("names", {})
-            needle = str(names.get("value", "")).casefold()
+            names = input_data.get("names", "")
+            needle = str(names).casefold()
             pool = [
                 {
                     "id": performer["id"],

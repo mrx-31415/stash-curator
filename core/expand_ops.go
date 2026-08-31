@@ -370,7 +370,7 @@ func getStashdbPerformerSearchBody(pluginDir string, payload, settings jVal) (jV
 	search := jvObj(
 		jvKey("page", jvInt(1)),
 		jvKey("per_page", jvInt(limit)),
-		jvKey("names", jvObj(jvKey("value", jvStr(query)), jvKey("modifier", jvStr("INCLUDES")))),
+		jvKey("names", jvStr(query)),
 	)
 	data, err := stashdbQuery(clientURL, apiKey, stashdbPerformerSearchQuery, jvObj(jvKey("input", search)))
 	if err != nil {
