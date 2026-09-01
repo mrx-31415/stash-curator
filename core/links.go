@@ -178,18 +178,19 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 	state := ""
 	var err error
 	if db != nil {
+		state, err = externalLinksState(payload)
+		if err != nil {
+			return jvNull(), err
+		}
 		if !refresh {
-			// ponytail: cache until explicit refresh; add TTL or entity-hook invalidation if
-			// newly linked entities must appear without a manual refresh.
-			if cached, ok, err := cachedExternalLinks(db, ""); err != nil {
+			// Reuse the last scan while the linked library is unchanged: the
+			// saved state is compared against the current one, and a mismatch
+			// falls through to the walk so newly-linked entities appear.
+			if cached, ok, err := cachedExternalLinks(db, state); err != nil {
 				return jvNull(), err
 			} else if ok {
 				return cached, nil
 			}
-		}
-		state, err = externalLinksState(payload)
-		if err != nil {
-			return jvNull(), err
 		}
 	}
 	base, headers := stashConnection(payload)
