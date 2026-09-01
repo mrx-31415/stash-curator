@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.2](https://github.com/mrx-31415/stash-curator/compare/v0.23.1...v0.23.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* refresh external-links cache when the linked library changes ([#296](https://github.com/mrx-31415/stash-curator/issues/296)) ([ed8e6d0](https://github.com/mrx-31415/stash-curator/commit/ed8e6d072d8fcbc99d7cff4bc5ce35855f132b9f))
+
 ## [0.23.1](https://github.com/mrx-31415/stash-curator/compare/v0.23.0...v0.23.1) (2026-08-31)
 
 
