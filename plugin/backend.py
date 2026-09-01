@@ -271,13 +271,14 @@ def _external_links(
     walk (issue #110: the expand-refresh bar used to sit at 5% for the whole
     library walk).
     """
+    state = _external_links_state(payload) if connection is not None else ""
     if connection is not None and not refresh:
-        # ponytail: cache until explicit refresh; add TTL or entity-hook invalidation if
-        # newly linked entities must appear without a manual refresh.
-        cached = _cached_external_links(connection, None)
+        # Reuse the last scan while the linked library is unchanged: the saved
+        # state is compared against the current one, and a mismatch falls
+        # through to the walk so newly-linked entities appear.
+        cached = _cached_external_links(connection, state)
         if cached is not None:
             return cached
-    state = _external_links_state(payload) if connection is not None else ""
     result: dict[str, dict[str, str]] = {
         "scenes": {},
         "scene_ids": {},

@@ -1656,14 +1656,14 @@ def test_external_links_reuse_the_last_scan_until_explicit_refresh(
 
     state["updated_at"] = "2026-02-02T00:00:00Z"
     module._external_links({}, connection)
-    assert scanned == 2, "normal reads should not revalidate a cached library"
+    assert scanned == 3, "a changed library state must trigger a re-walk"
 
     state["count"] = 2
     module._external_links({}, connection)
-    assert scanned == 2, "normal reads should not revalidate a cached library"
+    assert scanned == 4, "a changed library count must trigger a re-walk"
 
     module._external_links({}, connection, refresh=True)
-    assert scanned == 3, "the refresh task must force a rescan after library changes"
+    assert scanned == 5, "the refresh task must force a rescan after library changes"
 
 
 def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
