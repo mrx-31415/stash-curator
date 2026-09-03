@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.24.0](https://github.com/mrx-31415/stash-curator/compare/v0.23.2...v0.24.0) (2026-09-03)
+
+
+### Features
+
+* **curate:** explain impact moves — feedback tie-back and source breakdown ([346b448](https://github.com/mrx-31415/stash-curator/commit/346b44822f1cb041df5628498252feb59d9b54fa))
+* **curate:** pick judgeable pairs, cap scenes per round, and correct wrong impact moves ([2631859](https://github.com/mrx-31415/stash-curator/commit/2631859b1b755f58bb565a08feccf1ae8c258679))
+
+
+### Bug Fixes
+
+* **curate:** lower pair-pick weight so comparisons move the model less ([d1d56ef](https://github.com/mrx-31415/stash-curator/commit/d1d56ef600a708cd7a97af67497b0dfce6256046))
+* reclaim worker daemons still running a replaced binary ([#298](https://github.com/mrx-31415/stash-curator/issues/298)) ([d793c6d](https://github.com/mrx-31415/stash-curator/commit/d793c6de9e2c5616147800f9f4fbad7c54547c41))
+
 ## [0.23.2](https://github.com/mrx-31415/stash-curator/compare/v0.23.1...v0.23.2) (2026-09-01)
 
 
