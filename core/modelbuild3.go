@@ -626,6 +626,7 @@ func modelSubConfig() jVal {
 		jvKey("curation_pair_ips_cap", jvFloat(curationPairIPSCap)),
 		jvKey("curation_pair_surprise_bonus", jvFloat(curationPairSurpriseBonus)),
 		jvKey("curation_rating_confidence", jvFloat(0.80)),
+		jvKey("impact_correction_confidence", jvFloat(impactCorrectionConfidence)),
 		jvKey("direct_confidence_scale", jvFloat(0.8)),
 		jvKey("dormancy_center_days", jvFloat(120.0)),
 		jvKey("dormancy_width_days", jvFloat(45.0)),
