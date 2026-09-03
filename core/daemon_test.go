@@ -904,12 +904,132 @@ VALUES ('job-c', 'build', 'running', 1, 1)`); err != nil {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	close(done)
 	if state != "cancelled" {
 		t.Fatalf("cancel flag not honored: %s", state)
 	}
 	row := jobRow(t, db, "job-c")
 	if asDBString(row["error"]) != "cancelled" {
 		t.Fatalf("error field: %v", row["error"])
+	}
+}
+
+// workerTestBinary creates the installed platform binary so the worker
+// identity helpers resolve to a known file rather than the test executable.
+func workerTestBinary(t *testing.T, pluginDir string) string {
+	t.Helper()
+	name := "curator-core-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(pluginDir, name)
+	if err := os.WriteFile(binary, []byte("current-generation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return binary
+}
+
+func TestBinaryIdentityDetectsReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bin")
+	if err := os.WriteFile(path, []byte("original"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	first, err := binaryIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replaced-with-different-content"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	second, err := binaryIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("binaryIdentity must change after a replacement: %q", first)
+	}
+}
+
+func TestRotateStaleWorkersByExecutable(t *testing.T) {
+	pluginDir := t.TempDir()
+	workerTestBinary(t, pluginDir)
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopped []int
+	prevList := listWorkerDaemonsFn
+	prevProc := workerProcessFingerprintFn
+	prevStop := stopWorkerFn
+	listWorkerDaemonsFn = func(string) []int { return []int{1001, 1002, 1003} }
+	workerProcessFingerprintFn = func(pid int) (string, error) {
+		switch pid {
+		case 1001:
+			return installed, nil // current generation: must survive
+		case 1002:
+			return "replaced|inode|gen", nil // stale `.nfs` generation: must be reclaimed
+		case 1003:
+			return "", errors.New("no /proc entry") // unfingerprintable: skipped, not signalled
+		}
+		return "", errors.New("unexpected pid")
+	}
+	stopWorkerFn = func(pid int) error { stopped = append(stopped, pid); return nil }
+	defer func() {
+		listWorkerDaemonsFn = prevList
+		workerProcessFingerprintFn = prevProc
+		stopWorkerFn = prevStop
+	}()
+
+	if err := rotateStaleWorkersByExecutable(pluginDir); err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 1 || stopped[0] != 1002 {
+		t.Fatalf("stopped = %v, want [1002] (stale generation only)", stopped)
+	}
+}
+
+func TestCurrentWorkerDaemon(t *testing.T) {
+	pluginDir := t.TempDir()
+	workerTestBinary(t, pluginDir)
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevList := listWorkerDaemonsFn
+	prevProc := workerProcessFingerprintFn
+	listWorkerDaemonsFn = func(string) []int { return []int{2001, 2002} }
+	workerProcessFingerprintFn = func(pid int) (string, error) {
+		if pid == 2002 {
+			return installed, nil
+		}
+		return "replaced|inode|gen", nil
+	}
+	defer func() {
+		listWorkerDaemonsFn = prevList
+		workerProcessFingerprintFn = prevProc
+	}()
+
+	if got := currentWorkerDaemon(pluginDir); got != 2002 {
+		t.Fatalf("currentWorkerDaemon = %d, want 2002", got)
+	}
+}
+
+func TestDaemonRunningStale(t *testing.T) {
+	pluginDir := t.TempDir()
+	workerTestBinary(t, pluginDir)
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevSelf := selfExeIdentityFn
+	defer func() { selfExeIdentityFn = prevSelf }()
+
+	selfExeIdentityFn = func() (string, error) { return installed, nil }
+	if daemonRunningStale(pluginDir) {
+		t.Fatal("same executable identity must not be stale")
+	}
+	selfExeIdentityFn = func() (string, error) { return "replaced|inode|gen", nil }
+	if !daemonRunningStale(pluginDir) {
+		t.Fatal("a replaced executable must be stale")
 	}
 }

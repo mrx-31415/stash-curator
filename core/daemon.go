@@ -204,13 +204,100 @@ func workerBinaryFingerprint(pluginDir string) (string, error) {
 		info.Size(), info.ModTime().UnixNano(), info.Mode().Perm()), nil
 }
 
-// workerPidAliveFn and workerPidIsWorkerFn are injectable for rotation tests.
+// binaryIdentity is the device/inode + size + mtime of a file. This, not the
+// path, is what distinguishes one executable generation from another: a worker
+// that survives a plugin update keeps executing the replaced inode (NFS
+// silly-rename leaves it on a `.nfs…` file), so its path may not be the
+// installed path even though the code it runs is not current. Comparing
+// identities — not the installed-path fingerprint — is what catches that.
+func binaryIdentity(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s|%d|%d", workerFileIdentity(info), info.Size(), info.ModTime().UnixNano()), nil
+}
+
+// workerBinaryIdentity is the identity of the installed executable the worker
+// should be running.
+func workerBinaryIdentity(pluginDir string) (string, error) {
+	path := workerBinaryPath(pluginDir)
+	if path == "" {
+		return "", fmt.Errorf("could not resolve curator-core executable")
+	}
+	return binaryIdentity(path)
+}
+
+// workerProcessFingerprint is the execution identity of a live process: what
+// it is actually running. On Windows `/proc` does not exist, so this errors
+// and the caller degrades to the pid-file path.
+func workerProcessFingerprint(pid int) (string, error) {
+	return binaryIdentity(fmt.Sprintf("/proc/%d/exe", pid))
+}
+
+// selfExeIdentity is the running executable's identity for this process, read
+// through `/proc/self/exe` so it reflects the inode actually executing (the
+// path `os.Executable()` returns would resolve to whatever the path now holds,
+// not the inode this process was started with).
+func selfExeIdentity() (string, error) {
+	return binaryIdentity("/proc/self/exe")
+}
+
+// listWorkerDaemons enumerates live worker daemons by argv, so reconciliation
+// can find every co-resident daemon even when the pid file points at a dead or
+// unrelated pid. Returns nil on Windows (no `/proc`).
+func listWorkerDaemons(pluginDir string) []int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		if workerPidIsWorker(pid, pluginDir) && pidAlive(pid) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// workerPidAliveFn, workerPidIsWorkerFn, stopWorkerFn, and the discovery
+// functions are injectable so worker-lifecycle tests never touch real
+// processes or `/proc`.
 var workerPidAliveFn = pidAlive
 
 var workerPidIsWorkerFn = workerPidIsWorker
 
 // stopWorkerFn is injectable so rotation tests never signal a real process.
 var stopWorkerFn = stopWorker
+
+// listWorkerDaemonsFn and workerProcessFingerprintFn are injectable so
+// reconciliation can be tested against a synthetic worker set.
+var listWorkerDaemonsFn = listWorkerDaemons
+
+var workerProcessFingerprintFn = workerProcessFingerprint
+
+var selfExeIdentityFn = selfExeIdentity
+
+// daemonRunningStale reports whether this process is executing a binary other
+// than the installed one, read through the running inode (`/proc/self/exe`) so
+// a worker that kept a replaced inode open (NFS silly-rename) is detected even
+// though the installed path still reads clean. A daemon running anything but
+// the installed executable must not do work.
+func daemonRunningStale(pluginDir string) bool {
+	own, err := selfExeIdentityFn()
+	if err != nil {
+		return false
+	}
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		return false
+	}
+	return own != installed
+}
 
 // isSchemaSkewError reports whether a sidecar error means the installed
 // binary's migration set is older than the sidecar schema. The daemon cannot
@@ -277,10 +364,15 @@ func stopWorker(pid int) error {
 	return forceKillWorker(pid)
 }
 
-// rotateStaleWorker stops a live daemon whose generation predates the
-// installed executable. A live PID that is not actually a Curator daemon is
-// treated as stale metadata and is never signalled.
+// rotateStaleWorker stops live daemons whose generation predates the installed
+// executable. It reconciles by executable identity (so a daemon still running
+// a replaced inode — an NFS `.nfs…` orphan the pid file does not record — is
+// reclaimed) and then falls back to the pid file so a non-worker pid marker is
+// cleared on platforms without `/proc`.
 func rotateStaleWorker(pluginDir, fingerprint string) error {
+	if err := rotateStaleWorkersByExecutable(pluginDir); err != nil {
+		return err
+	}
 	pid, ok := readWorkerPid(pluginDir)
 	if !ok || !workerPidAliveFn(pid) {
 		return nil
@@ -297,6 +389,48 @@ func rotateStaleWorker(pluginDir, fingerprint string) error {
 		return fmt.Errorf("could not stop stale Curator daemon %d: %w", pid, err)
 	}
 	return nil
+}
+
+// rotateStaleWorkersByExecutable stops every live worker daemon that is not
+// running the installed binary. Unlike the pid-file path it discovers all
+// co-resident daemons by argv, so a worker that survived a plugin update on a
+// replaced inode (an NFS `.nfs…` orphan) is reclaimed even though it was never
+// the pid-file owner. Best-effort: a daemon that cannot be fingerprinted is
+// skipped rather than signalled.
+func rotateStaleWorkersByExecutable(pluginDir string) error {
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		return err
+	}
+	for _, pid := range listWorkerDaemonsFn(pluginDir) {
+		running, err := workerProcessFingerprintFn(pid)
+		if err != nil || running == installed {
+			continue
+		}
+		if err := stopWorkerFn(pid); err != nil {
+			return fmt.Errorf("could not stop stale Curator daemon %d: %w", pid, err)
+		}
+	}
+	return nil
+}
+
+// currentWorkerDaemon returns the live daemon running the installed
+// executable, discovered by argv, or 0 when none. It is used to adopt an
+// existing current-generation worker that the pid file does not record (a
+// stale pid marker, or a worker that pre-dated it) instead of spawning a
+// duplicate.
+func currentWorkerDaemon(pluginDir string) int {
+	installed, err := workerBinaryIdentity(pluginDir)
+	if err != nil {
+		return 0
+	}
+	for _, pid := range listWorkerDaemonsFn(pluginDir) {
+		running, err := workerProcessFingerprintFn(pid)
+		if err == nil && running == installed {
+			return pid
+		}
+	}
+	return 0
 }
 
 func workerUpdateWatcher(pluginDir, initialFingerprint string, changed chan<- struct{}, done <-chan struct{}) {
@@ -387,7 +521,19 @@ func ensureAutoWorker(pluginDir string, payload jVal, settings jVal, db dbx) {
 		ServerConnection:  serverConn,
 		BinaryFingerprint: fingerprint,
 	}
+	// Reuse a live pid-file owner directly; on platforms without `/proc`
+	// (Windows) this is the only ownership signal.
 	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
+		if err := writeWorkerState(pluginDir, state); err != nil {
+			return
+		}
+		return
+	}
+	// The pid file may be stale (it points at a dead or unrelated pid) while a
+	// current-generation worker is still alive. Adopt it instead of spawning a
+	// duplicate daemon, and record its pid so later cleanup sees it.
+	if pid := currentWorkerDaemon(pluginDir); pid > 0 {
+		_ = os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(pid)), 0o644)
 		if err := writeWorkerState(pluginDir, state); err != nil {
 			return
 		}
@@ -442,7 +588,19 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 		ServerConnection:  serverConn,
 		BinaryFingerprint: fingerprint,
 	}
+	// Reuse a live pid-file owner directly; on platforms without `/proc`
+	// (Windows) this is the only ownership signal.
 	if pid, ok := readWorkerPid(pluginDir); ok && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
+		if err := writeWorkerState(pluginDir, state); err != nil {
+			return fmt.Errorf("could not write worker state: %w", err)
+		}
+		return nil
+	}
+	// The pid file may be stale (it points at a dead or unrelated pid) while a
+	// current-generation worker is still alive. Adopt it instead of spawning a
+	// duplicate daemon, and record its pid so later cleanup sees it.
+	if pid := currentWorkerDaemon(pluginDir); pid > 0 {
+		_ = os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(pid)), 0o644)
 		if err := writeWorkerState(pluginDir, state); err != nil {
 			return fmt.Errorf("could not write worker state: %w", err)
 		}
@@ -537,6 +695,14 @@ func runDaemon(pluginDir string) {
 	}
 	if state.BinaryFingerprint != "" && state.BinaryFingerprint != daemonFingerprint {
 		infoLog("daemon generation is stale; exiting")
+		return
+	}
+	// The installed-path fingerprint above cannot see a daemon that survived a
+	// plugin update by keeping the replaced inode open (NFS silly-rename): it
+	// still reads the current path, not the inode that is actually executing.
+	// A daemon running anything but the installed binary is untrustworthy.
+	if daemonRunningStale(pluginDir) {
+		infoLog("daemon running a replaced executable; exiting")
 		return
 	}
 	if pid, ok := readWorkerPid(pluginDir); ok && pid != os.Getpid() && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
