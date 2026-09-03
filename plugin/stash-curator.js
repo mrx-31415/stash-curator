@@ -1356,18 +1356,42 @@
     return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
   }
 
-  function ImpactSceneCard({ entry }) {
+  function ImpactSceneCard({ entry, onCorrect }) {
     const why = (entry.contributors || []).map((contributor) => `${contributor.name} ${fmtDelta(contributor.delta)}`).join(" · ");
+    // Reversing the move: a wrongly promoted scene is corrected downward, a
+    // wrongly demoted one upward.
+    const direction = entry.delta >= 0 ? "down" : "up";
+    const [marked, setMarked] = React.useState(false);
+    const correct = async (event) => {
+      event.preventDefault();
+      try {
+        await operation({ operation: "submit_impact_correction", scene_id: entry.scene_id, direction });
+        setMarked(true);
+        if (onCorrect) onCorrect();
+      } catch (_) {
+        // Keep the button enabled on failure so the user can retry.
+      }
+    };
     return React.createElement(
-      "a",
-      { className: "curator-impact-scene", href: `/scenes/${entry.scene_id}`, target: "_blank", rel: "noopener noreferrer" },
-      React.createElement("img", { className: "curator-impact-thumb", src: `/scene/${entry.scene_id}/screenshot`, alt: "", loading: "lazy" }),
-      React.createElement("div", { className: "curator-impact-scene-body" },
-        React.createElement("div", { className: "curator-impact-scene-title" }, entry.title || `Scene ${entry.scene_id}`),
-        React.createElement("div", { className: "curator-impact-scene-meta" }, [entry.studio, entry.date].filter(Boolean).join(" · ")),
-        why && React.createElement("div", { className: "curator-impact-scene-why" }, "Because: ", why)
+      "div",
+      { className: "curator-impact-scene-row" },
+      React.createElement(
+        "a",
+        { className: "curator-impact-scene", href: `/scenes/${entry.scene_id}`, target: "_blank", rel: "noopener noreferrer" },
+        React.createElement("img", { className: "curator-impact-thumb", src: `/scene/${entry.scene_id}/screenshot`, alt: "", loading: "lazy" }),
+        React.createElement("div", { className: "curator-impact-scene-body" },
+          React.createElement("div", { className: "curator-impact-scene-title" }, entry.title || `Scene ${entry.scene_id}`),
+          React.createElement("div", { className: "curator-impact-scene-meta" }, [entry.studio, entry.date].filter(Boolean).join(" · ")),
+          why && React.createElement("div", { className: "curator-impact-scene-why" }, "Because: ", why)
+        ),
+        React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
       ),
-      React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
+      React.createElement("button", {
+        className: "curator-impact-correct",
+        onClick: correct,
+        disabled: marked,
+        title: `Mark this ${entry.delta >= 0 ? "promotion" : "demotion"} as wrong`,
+      }, marked ? "Marked" : "Wrong")
     );
   }
 
@@ -1400,7 +1424,7 @@
     );
   }
 
-  function ImpactReport({ impact }) {
+  function ImpactReport({ impact, onCorrect }) {
     const maxMove = (group) => Math.max(
       0,
       ...(group.promoted || []).map((entry) => Math.abs(entry.delta)),
@@ -1421,8 +1445,8 @@
           React.createElement("div", { className: "curator-impact-group-label" }, "Scenes"),
             impact.scenes.promoted.length === 0 && impact.scenes.demoted.length === 0 && React.createElement("p", { className: "curator-impact-weak" }, "No scene moves came from your feedback this build — new picks since the previous build will show up here."),
           React.createElement("div", { className: "curator-impact-columns" },
-            React.createElement(ImpactList, { title: "Promoted", entries: impact.scenes.promoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry }), tone: "up" }),
-            React.createElement(ImpactList, { title: "Demoted", entries: impact.scenes.demoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry }), tone: "down" })
+            React.createElement(ImpactList, { title: "Promoted", entries: impact.scenes.promoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry, onCorrect }), tone: "up" }),
+            React.createElement(ImpactList, { title: "Demoted", entries: impact.scenes.demoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry, onCorrect }), tone: "down" })
           )
         ),
         React.createElement(
@@ -1877,7 +1901,7 @@
           applying ? "Applying…" : "Apply my answers to the model now"
         )
       ),
-      impact && impact.available && React.createElement(ImpactReport, { impact }),
+      impact && impact.available && React.createElement(ImpactReport, { impact, onCorrect: refresh }),
       impact && !impact.available && React.createElement("p", { className: "curator-impact-weak" },
         "The impact report compares two model builds — it appears once Curator has built the model at least twice."
       )

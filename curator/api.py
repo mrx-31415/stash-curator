@@ -879,6 +879,9 @@ class CuratorAPI:
     def curation_impact(self) -> dict[str, object]:
         return curation.curation_impact(self.connection)
 
+    def submit_impact_correction(self, scene_id: str, direction: str) -> dict[str, object]:
+        return curation.submit_impact_correction(self.connection, scene_id, direction)
+
     def submit_events(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         store = InteractionStore(self.connection)
         impressions = [

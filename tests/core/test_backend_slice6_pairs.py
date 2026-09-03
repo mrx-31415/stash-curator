@@ -311,17 +311,24 @@ def test_submit_curation_picks_error_paths(
         assert_slice6_identical(binary, raw, slice6_sidecar)
 
 
-def test_submit_curation_picks_not_a_list(
+def test_submit_impact_correction_byte_identical(
     binary: Path, stub_stash: str, slice6_sidecar: Path
 ) -> None:
-    raw = payload(
-        "submit_curation_picks",
-        slice6_sidecar,
-        stub_stash,
-        round_id=ROUND_TAG,
-        picks={"pair_id": "po1", "winner": "a"},
-    )
-    assert_slice6_identical(binary, raw, slice6_sidecar)
+    """The correction op writes a direct scene signal (and supersedes an
+    earlier correction) identically in both backends, and validates its inputs
+    with matching error messages."""
+    for scene_id, direction in (("s5", "up"), ("s5", "down"), ("", "up"), ("s5", "sideways")):
+        raw = payload(
+            "submit_impact_correction",
+            slice6_sidecar,
+            stub_stash,
+            scene_id=scene_id,
+            direction=direction,
+        )
+        assert_slice6_identical(binary, raw, slice6_sidecar)
+
+
+# ── get_curation_pair_verdict ────────────────────────────────────────────────
 
 
 # ── get_curation_pair_verdict ────────────────────────────────────────────────
