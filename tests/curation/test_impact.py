@@ -266,16 +266,16 @@ def test_impact_reports_movers(tmp_path: Path) -> None:
     s1 = next(s for s in promoted if s["scene_id"] == "s1")
     assert s1["contributors"] == [
         {"kind": "direct", "id": "s1", "name": "Your direct feedback", "delta": 0.3125},
-        {"kind": "tag", "id": "t1", "name": "knitting", "delta": 0.1875},
-        {"kind": "performer", "id": "p1", "name": "Alice", "delta": 0.125},
+        {"kind": "tag", "id": "t1", "name": "knitting", "delta": 0.1875, "via_feedback": 0},
+        {"kind": "performer", "id": "p1", "name": "Alice", "delta": 0.125, "via_feedback": 0},
     ]
     s5 = next(s for s in promoted if s["scene_id"] == "s5")
     assert s5["contributors"] == [
-        {"kind": "performer", "id": "p2", "name": "Bob", "delta": -0.125},
+        {"kind": "performer", "id": "p2", "name": "Bob", "delta": -0.125, "via_feedback": 0},
     ]
     s10 = next(s for s in promoted if s["scene_id"] == "s10")
     assert s10["contributors"] == [
-        {"kind": "performer", "id": "p3", "name": "Carol", "delta": 0.0078125},
+        {"kind": "performer", "id": "p3", "name": "Carol", "delta": 0.0078125, "via_feedback": 0},
     ]
     # s3 moved but is excluded entirely (no feedback contribution).
     assert all(s["scene_id"] != "s3" for s in promoted + demoted)
