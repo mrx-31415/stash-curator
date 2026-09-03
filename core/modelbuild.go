@@ -27,13 +27,15 @@ const (
 	modelBuildVersion                 = 4
 	affinityPrior                     = 1.0
 	affinitySiblingPrior              = 1.0
-	// Mirrors ModelConfig.curation_pair_* in curator/config.py. The product of
-	// the base confidence and the IPS cap bounds a pick's weight: keeping it
-	// under 1.0 is what stops every comparison clamping to the ceiling, which
-	// would make the surprise term inert and let picks outweigh watch history.
-	curationPairConfidence    = 0.15
+	// the base confidence and the IPS cap bounds a pick's weight. It is kept
+	// well under a rating (0.8): a comparison signals across the symmetric
+	// difference of two scenes' features — roughly twice a single scene — so a
+	// strong pick would move feature affinities about as much as an entire
+	// observed watch history and dominate the model. The 1.0 clamp stays as an
+	// outlier bound; only a maximally surprising pick approaches it.
+	curationPairConfidence    = 0.10
 	curationPairSurpriseBonus = 2.0
-	curationPairIPSCap        = 2.0
+	curationPairIPSCap        = 1.0
 	// Mirrors ModelConfig.impact_correction_confidence: a deliberate "this
 	// impact move is wrong" correction is direct evidence about the scene's own
 	// appeal, so it sits below a fresh rating but above an implicit signal.
