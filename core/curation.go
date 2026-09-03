@@ -1660,7 +1660,23 @@ const (
 	IMPACT_MIN_DELTA        = 0.01
 	IMPACT_MIN_CONTRIBUTION = 0.0005
 	IMPACT_SCENE_POOL       = 20
+	// IMPACT_MAX_CONTRIBUTORS mirrors curation.IMPACT_MAX_CONTRIBUTORS: the
+	// per-scene "Because" entities shown (plus direct).
+	IMPACT_MAX_CONTRIBUTORS = 6
 )
+
+// impactFeedbackTypes mirrors curation.IMPACT_FEEDBACK_TYPES: the feedback
+// types that teach the model's scene labels, used to tie a scene's move back
+// to the user's own feedback on scenes carrying the same entities.
+var impactFeedbackTypes = []string{
+	"thumb_up",
+	"thumb_down",
+	"curation_rating",
+	"curation_pair_winner",
+	"curation_pair_loser",
+	"curation_pair_tie",
+	"impact_correction",
+}
 
 // curationImpact mirrors curation.curation_impact: diff the two most recent
 // model artifacts and report the scenes, performers, and tags whose effective
@@ -1974,12 +1990,14 @@ func curationImpact(db dbx) (jVal, error) {
 		}
 	}
 	type contributor struct {
-		kind  string
-		id    string
-		name  string
-		delta float64
+		kind        string
+		id          string
+		name        string
+		delta       float64
+		viaFeedback int
 	}
 	sceneContributors := map[string][]contributor{}
+	sceneBreakdowns := map[string]map[string]float64{}
 	{
 		fdb, err := sql.Open("sqlite3", readonlyArtifactURI(featurePath, true))
 		if err != nil {
@@ -2030,6 +2048,33 @@ func curationImpact(db dbx) (jVal, error) {
 				return jvNull(), err
 			}
 		}
+		// viaFeedback counts the user's own model-teaching feedback on scenes
+		// that carry the same entity, so the "why" shows whether a move is
+		// tied to what was rated/picked (0 means it came only from a pair's
+		// differing feature or a tag preference, not a rated scene).
+		viaFeedback := func(entityKind, entityID string) int {
+			table, column := "scene_tag", "tag_id"
+			if entityKind == "performer" {
+				table, column = "scene_performer", "performer_id"
+			}
+			marks := strings.TrimSuffix(strings.Repeat("?,", len(impactFeedbackTypes)), ",")
+			args := make([]any, 0, len(impactFeedbackTypes)+1)
+			args = append(args, entityID)
+			for _, t := range impactFeedbackTypes {
+				args = append(args, t)
+			}
+			var n int
+			err := db.QueryRow(fmt.Sprintf(`
+				SELECT COUNT(DISTINCT f.scene_id)
+				FROM %s t
+				JOIN feedback f ON f.scene_id = t.scene_id
+				WHERE t.%s = ? AND f.reversed_by_id IS NULL AND f.feedback_type IN (%s)`,
+				table, column, marks), args...).Scan(&n)
+			if err != nil {
+				return 0
+			}
+			return n
+		}
 		for _, sceneID := range sceneIDs {
 			var cands []contributor
 			directDelta := newDirect[sceneID] - oldDirect[sceneID]
@@ -2057,6 +2102,7 @@ func curationImpact(db dbx) (jVal, error) {
 						c.name = c.id
 					}
 				}
+				c.viaFeedback = viaFeedback(c.kind, c.id)
 				cands = append(cands, c)
 			}
 			sort.Slice(cands, func(i, j int) bool {
@@ -2066,8 +2112,8 @@ func curationImpact(db dbx) (jVal, error) {
 				}
 				return cands[i].name < cands[j].name
 			})
-			if len(cands) > 3 {
-				cands = cands[:3]
+			if len(cands) > IMPACT_MAX_CONTRIBUTORS {
+				cands = cands[:IMPACT_MAX_CONTRIBUTORS]
 			}
 			// Keep the direct-feedback entry first: it is the most specific.
 			for i := 1; i < len(cands); i++ {
@@ -2077,6 +2123,40 @@ func curationImpact(db dbx) (jVal, error) {
 				}
 			}
 			sceneContributors[sceneID] = cands
+		}
+		// Approximate how much of each scene's move came from each source: the
+		// user's own feedback, the generalization through tags, through
+		// performers, and the residual (content similarity / studio /
+		// structure). The model attributes a scene's feedback to every entity
+		// it carries, so a single rating may nudge many tags at once.
+		deltaByScene := map[string]float64{}
+		for _, e := range promotedPool {
+			deltaByScene[e.id] = e.delta
+		}
+		for _, e := range demotedPool {
+			deltaByScene[e.id] = e.delta
+		}
+		for _, sceneID := range sceneIDs {
+			var tagSum, performerSum float64
+			directDelta := newDirect[sceneID] - oldDirect[sceneID]
+			for _, name := range namesByScene[sceneID] {
+				delta, ok := contributionDeltas[name]
+				if !ok {
+					continue
+				}
+				if strings.HasPrefix(name, "tag:") {
+					tagSum += delta
+				} else if strings.HasPrefix(name, "performer:") {
+					performerSum += delta
+				}
+			}
+			sceneDelta := deltaByScene[sceneID]
+			sceneBreakdowns[sceneID] = map[string]float64{
+				"your_feedback":        directDelta,
+				"tag_preference":       tagSum,
+				"performer_preference": performerSum,
+				"content_similarity":   sceneDelta - directDelta - tagSum - performerSum,
+			}
 		}
 		fdb.Close()
 	}
@@ -2091,13 +2171,18 @@ func curationImpact(db dbx) (jVal, error) {
 		}
 		contribs := make([]jVal, 0, len(sceneContributors[e.id]))
 		for _, c := range sceneContributors[e.id] {
-			contribs = append(contribs, jvObj(
+			pairs := []jPair{
 				jvKey("kind", jvStr(c.kind)),
 				jvKey("id", jvStr(c.id)),
 				jvKey("name", jvStr(c.name)),
 				jvKey("delta", jvFloat(c.delta)),
-			))
+			}
+			if c.kind != "direct" {
+				pairs = append(pairs, jvKey("via_feedback", jvInt(int64(c.viaFeedback))))
+			}
+			contribs = append(contribs, jvObj(pairs...))
 		}
+		bd := sceneBreakdowns[e.id]
 		return jvObj(
 			jvKey("scene_id", jvStr(e.id)),
 			jvKey("title", title),
@@ -2105,6 +2190,12 @@ func curationImpact(db dbx) (jVal, error) {
 			jvKey("date", date),
 			jvKey("delta", jvFloat(e.delta)),
 			jvKey("contributors", jVal{kind: jArr, arr: contribs}),
+			jvKey("breakdown", jvObj(
+				jvKey("your_feedback", jvFloat(bd["your_feedback"])),
+				jvKey("tag_preference", jvFloat(bd["tag_preference"])),
+				jvKey("performer_preference", jvFloat(bd["performer_preference"])),
+				jvKey("content_similarity", jvFloat(bd["content_similarity"])),
+			)),
 		)
 	}
 	performerEntryVal := func(e impactEntry) jVal {

@@ -1036,6 +1036,18 @@ IMPACT_TOP_ENTITIES = 4
 IMPACT_MIN_DELTA = 0.01
 IMPACT_MIN_CONTRIBUTION = 0.0005
 IMPACT_SCENE_POOL = 20
+IMPACT_MAX_CONTRIBUTORS = 6  # per-scene "Because" entities shown (plus direct)
+# Feedback types that teach the model's scene labels; used to tie a scene's
+# move back to the user's own feedback on scenes carrying the same entities.
+IMPACT_FEEDBACK_TYPES = (
+    "thumb_up",
+    "thumb_down",
+    "curation_rating",
+    "curation_pair_winner",
+    "curation_pair_loser",
+    "curation_pair_tie",
+    "impact_correction",
+)
 
 
 def _impact_models(connection: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -1284,7 +1296,27 @@ def curation_impact(connection: sqlite3.Connection) -> dict[str, object]:
             if name in contribution_deltas
         ]
         candidates.sort(key=lambda pair: (-abs(pair[1]), pair[0]))
-        for name, delta in candidates[: 3 - len(out)]:
+        # via_feedback counts the user's own model-teaching feedback on scenes
+        # that carry the same entity, so the "why" shows whether a move is
+        # tied to what was rated/picked (an entity with 0 came only from a
+        # pair's differing feature or a tag preference, not a rated scene).
+        feedback_placeholders = ", ".join("?" * len(IMPACT_FEEDBACK_TYPES))
+
+        def via_feedback(kind: str, entity_id: str) -> int:
+            table = "scene_tag" if kind == "tag" else "scene_performer"
+            column = "tag_id" if kind == "tag" else "performer_id"
+            row = connection.execute(
+                f"""SELECT COUNT(DISTINCT f.scene_id)
+                    FROM {table} t
+                    JOIN feedback f ON f.scene_id = t.scene_id
+                    WHERE t.{column} = ?
+                      AND f.reversed_by_id IS NULL
+                      AND f.feedback_type IN ({feedback_placeholders})""",
+                (entity_id, *IMPACT_FEEDBACK_TYPES),
+            ).fetchone()
+            return int(row[0])
+
+        for name, delta in candidates[: IMPACT_MAX_CONTRIBUTORS - len(out)]:
             if name.startswith("performer:"):
                 kind, entity_id = "performer", name[len("performer:") :]
                 label = performer_names.get(entity_id)
@@ -1297,9 +1329,39 @@ def curation_impact(connection: sqlite3.Connection) -> dict[str, object]:
                     "id": entity_id,
                     "name": label or entity_id,
                     "delta": delta,
+                    "via_feedback": via_feedback(kind, entity_id),
                 }
             )
         return out
+
+    def scene_breakdown(scene_id: str, delta: float) -> dict[str, float]:
+        """Approximate how much of a scene's move came from each source.
+
+        The model attributes a scene's feedback to every entity it carries, so a
+        single rating may nudge many tags. This splits the move into the user's
+        own feedback on the scene, the generalization through its tags, through
+        its performers, and everything else (content similarity, studio,
+        structure — i.e. the scene's theme/neighborhood). The residual absorbs
+        the soft-bound nonlinearity, so 'content_similarity' is the catch-all.
+        """
+        direct_delta = new_direct.get(scene_id, 0.0) - old_direct.get(scene_id, 0.0)
+        feature_names = scene_feature_names.get(scene_id, [])
+        tag_sum = sum(
+            contribution_deltas[name]
+            for name in feature_names
+            if name.startswith("tag:") and name in contribution_deltas
+        )
+        performer_sum = sum(
+            contribution_deltas[name]
+            for name in feature_names
+            if name.startswith("performer:") and name in contribution_deltas
+        )
+        return {
+            "your_feedback": direct_delta,
+            "tag_preference": tag_sum,
+            "performer_preference": performer_sum,
+            "content_similarity": delta - direct_delta - tag_sum - performer_sum,
+        }
 
     def scene_entries(pairs: list[tuple[str, float]]) -> list[dict[str, object]]:
         # Only feedback-driven movers are reported: a scene that moved purely
@@ -1318,6 +1380,7 @@ def curation_impact(connection: sqlite3.Connection) -> dict[str, object]:
                     "date": scene_meta.get(scene_id, {}).get("date"),
                     "delta": delta,
                     "contributors": contributors,
+                    "breakdown": scene_breakdown(scene_id, delta),
                 }
             )
         return entries
