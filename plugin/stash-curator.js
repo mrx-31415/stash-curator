@@ -1357,7 +1357,31 @@
   }
 
   function ImpactSceneCard({ entry, onCorrect }) {
-    const why = (entry.contributors || []).map((contributor) => `${contributor.name} ${fmtDelta(contributor.delta)}`).join(" · ");
+    // Explain each mover in plain terms: what kind of thing changed, which way
+    // the model's preference for it moved, and whether it connects to the
+    // user's own feedback (via_feedback = rated/compared scenes carrying it).
+    const why = (entry.contributors || []).map((contributor) => {
+      if (contributor.kind === "direct") {
+        return `your own feedback on this scene (${fmtDelta(contributor.delta)})`;
+      }
+      const directionWord = contributor.delta >= 0 ? "more preferred" : "less preferred";
+      const via = typeof contributor.via_feedback === "number" ? contributor.via_feedback : 0;
+      const viaText = via > 0
+        ? ` · from ${via} of your ${via === 1 ? "scene" : "scenes"}`
+        : " · no rated scene — from a pick or tag preference";
+      return `${contributor.kind} "${contributor.name}" ${directionWord} (${fmtDelta(contributor.delta)})${viaText}`;
+    }).join(" · ");
+    // The scene's delta is the net of its whole feature set; the breakdown
+    // splits it by source so the user can see whether a move came mainly from
+    // a tag, a performer, the content/theme it belongs to, or their own
+    // feedback on this scene.
+    const bd = entry.breakdown || {};
+    const breakdownParts = [];
+    if (typeof bd.your_feedback === "number") breakdownParts.push(`your feedback ${fmtDelta(bd.your_feedback)}`);
+    if (typeof bd.tag_preference === "number") breakdownParts.push(`tags ${fmtDelta(bd.tag_preference)}`);
+    if (typeof bd.performer_preference === "number") breakdownParts.push(`performers ${fmtDelta(bd.performer_preference)}`);
+    if (typeof bd.content_similarity === "number") breakdownParts.push(`content/theme ${fmtDelta(bd.content_similarity)}`);
+    const breakdownText = breakdownParts.join(" · ");
     // Reversing the move: a wrongly promoted scene is corrected downward, a
     // wrongly demoted one upward.
     const direction = entry.delta >= 0 ? "down" : "up";
@@ -1381,8 +1405,8 @@
         React.createElement("img", { className: "curator-impact-thumb", src: `/scene/${entry.scene_id}/screenshot`, alt: "", loading: "lazy" }),
         React.createElement("div", { className: "curator-impact-scene-body" },
           React.createElement("div", { className: "curator-impact-scene-title" }, entry.title || `Scene ${entry.scene_id}`),
-          React.createElement("div", { className: "curator-impact-scene-meta" }, [entry.studio, entry.date].filter(Boolean).join(" · ")),
-          why && React.createElement("div", { className: "curator-impact-scene-why" }, "Because: ", why)
+          breakdownText && React.createElement("div", { className: "curator-impact-scene-why" }, "Move came from: ", breakdownText),
+          why && React.createElement("div", { className: "curator-impact-scene-why", title: whyTitle }, "Details: ", why)
         ),
         React.createElement("span", { className: `curator-impact-delta ${entry.delta >= 0 ? "up" : "down"}` }, fmtDelta(entry.delta))
       ),
@@ -1436,6 +1460,9 @@
       { className: "curator-impact" },
       React.createElement("h4", { className: "curator-impact-heading" }, "What your picks moved"),
       React.createElement("p", { className: "curator-impact-ago" }, `Newest model built ${new Date(impact.published_at_ms).toLocaleString()} — the feedback since the previous build is what moved these.`),
+      React.createElement("p", { className: "curator-impact-legend" },
+        "A scene's delta is how much its appeal moved (−1 to 1). “Because” lists the tags/performers whose learned preference changed, tied back to how many of your rated/compared scenes carry each one."
+      ),
       React.createElement(
         "div",
         { className: "curator-impact-groups" },
