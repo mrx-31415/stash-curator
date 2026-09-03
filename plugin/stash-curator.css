@@ -3845,12 +3845,36 @@
   text-overflow: ellipsis;
 }
 
-.curator-impact-scene-meta {
-  font-size: 0.68rem;
+.curator-impact-scene-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.curator-impact-scene-row .curator-impact-scene {
+  flex: 1;
+  min-width: 0;
+}
+
+.curator-impact-correct {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-sm);
+  background: var(--curator-wash-raised);
   color: var(--curator-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.curator-impact-correct:hover:not(:disabled) {
+  border-color: var(--curator-border-strong);
+  color: var(--curator-text);
+}
+
+.curator-impact-correct:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .curator-impact-person {

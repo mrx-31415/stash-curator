@@ -741,6 +741,26 @@ class PreferenceModelBuilder:
             signals[str(row["scene_id"])].append(
                 (value, self.config.model.scene_rating_confidence, "scene_rating")
             )
+        for row in self.connection.execute(
+            """SELECT scene_id, value FROM feedback
+               WHERE reversed_by_id IS NULL AND feedback_type='impact_correction'
+               ORDER BY scene_id, occurred_at_ms"""
+        ):
+            value = str(row["value"])
+            try:
+                outcome = float(value)
+            except (TypeError, ValueError):
+                continue
+            if outcome not in (1.0, -1.0):
+                continue
+            # A deliberate "this impact move is wrong" correction is direct
+            # evidence about the scene's own appeal, so it feeds the absolute
+            # channel (unlike a pairwise comparison). Direction: +1 moves the
+            # scene up (a demotion was wrong), -1 moves it down (a promotion
+            # was wrong).
+            signals[str(row["scene_id"])].append(
+                (outcome, self.config.model.impact_correction_confidence, "impact_correction")
+            )
         labels: dict[str, _SceneLabel] = {}
         for scene_id, scene_signals in signals.items():
             evidence = sum(confidence for _, confidence, _ in scene_signals)

@@ -398,8 +398,11 @@ const (
 	pairMaxBudget         = 20
 	pairDefaultBudget     = 10
 	pairMaxCandidates     = 20_000
-	pairSceneCap          = 2
+	pairSceneCap          = 1
 	pairDimensionFitShare = 0.5
+	// pairConflictOptimalGap mirrors curation.PAIR_CONFLICT_OPTIMAL_GAP: the
+	// predicted-appeal gap the selection finds most worth adjudicating.
+	pairConflictOptimalGap = 0.25
 	// orthogonalCandidateMultiplier mirrors curation.ORTHOGONAL_CANDIDATE_MULTIPLIER.
 	orthogonalCandidateMultiplier = 10
 	// pairVerdictPrior mirrors curation.PAIR_VERDICT_PRIOR.
@@ -473,7 +476,11 @@ func sceneCoverage(ctx *curationContext, sceneID string) float64 {
 func pairScore(ctx *curationContext, a, b, dimension string) (score, predA, predB float64) {
 	predA = ctx.appeal[a]
 	predB = ctx.appeal[b]
-	conflict := 1.0 / (1.0 + mathAbs(predA-predB))
+	gap := mathAbs(predA - predB)
+	// Peak at a moderate, discriminable gap; exact ties (gap 0) are
+	// uninformative coin flips and large gaps are foregone conclusions, so
+	// both are down-weighted. Pure arithmetic to stay bit-identical to Python.
+	conflict := (2.0 * pairConflictOptimalGap * gap) / (gap*gap + pairConflictOptimalGap*pairConflictOptimalGap)
 	tagsA := map[string]bool{}
 	tagsB := map[string]bool{}
 	for tagID := range ctx.sceneTags[a] {
@@ -803,12 +810,14 @@ func createPairRound(db dbx, dimension string, budget int, baseTagID, contextTag
 	if err != nil {
 		return jvNull(), err
 	}
-	// Only answered pairs retire their scenes. Offering a pair used to burn
+	// Only answered or skipped pairs retire their scenes. Offering a pair used to burn
 	// both scenes forever, so an abandoned round — or a stream that prefetches
-	// ahead of the user — permanently consumed scenes nobody ever judged.
+	// ahead of the user — permanently consumed scenes nobody ever judged;
+	// skipped scenes are retired too so a scene the user already saw and
+	// declined is not re-offered round after round.
 	seen := map[string]bool{}
-	rows, err := db.Query(`SELECT scene_a FROM curation_pair WHERE status='answered'
-UNION SELECT scene_b FROM curation_pair WHERE status='answered'`)
+	rows, err := db.Query(`SELECT scene_a FROM curation_pair WHERE status IN ('answered','skipped')
+UNION SELECT scene_b FROM curation_pair WHERE status IN ('answered','skipped')`)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -1222,6 +1231,62 @@ INSERT INTO feedback(
 	), nil
 }
 
+// submitImpactCorrection mirrors curation.submit_impact_correction: a
+// deliberate "this impact move is wrong" correction that pulls a wrongly
+// promoted/demoted scene back toward its true appeal on the next build.
+// 'up' (a demotion was wrong) writes an outcome +1 signal, 'down' writes -1.
+// Only the latest active correction per scene counts — a new correction
+// supersedes the previous one, so correcting twice is not additive.
+func submitImpactCorrection(db dbx, sceneID, direction string) (jVal, error) {
+	if sceneID == "" {
+		return jvNull(), fmt.Errorf("scene_id is required")
+	}
+	if direction != "up" && direction != "down" {
+		return jvNull(), fmt.Errorf("direction must be 'up' or 'down'")
+	}
+	var probe int
+	err := db.QueryRow(`SELECT 1 FROM source_scene WHERE scene_id=?`, sceneID).Scan(&probe)
+	if err == sql.ErrNoRows {
+		return jvNull(), fmt.Errorf("unknown scene: %s", sceneID)
+	}
+	if err != nil {
+		return jvNull(), err
+	}
+	now := nowMs()
+	outcome := "-1"
+	if direction == "up" {
+		outcome = "1"
+	}
+	newID := nowStrID(now)
+	err = withTxn(db, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(context.Background(), `
+INSERT INTO feedback(
+    feedback_id, scene_id, feedback_type, value, occurred_at_ms,
+    reversed_by_id, impression_id, payload_json
+) VALUES (?, ?, 'impact_correction', ?, ?, NULL, NULL, '{}')`,
+			newID, sceneID, outcome, now); err != nil {
+			return err
+		}
+		// Supersede the earlier active correction: the new row is the reversal
+		// target, so only the latest correction per scene is live (idempotent).
+		if _, err := conn.ExecContext(context.Background(), `
+UPDATE feedback SET reversed_by_id=? WHERE scene_id=? AND
+  feedback_type='impact_correction' AND feedback_id != ? AND reversed_by_id IS NULL`,
+			newID, sceneID, newID); err != nil {
+			return err
+		}
+		return coordinatorRequest(conn, "impact_correction", now)
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(2)),
+		jvKey("scene_id", jvStr(sceneID)),
+		jvKey("direction", jvStr(direction)),
+	), nil
+}
+
 func pythonFloatOrZero(v jVal) jVal {
 	if v.kind == jNum {
 		return v
@@ -1538,6 +1603,22 @@ func submitCurationPicksBody(pluginDir string, payload, settings jVal) (jVal, er
 	}
 	defer db.Close()
 	return submitPicks(db, roundID, picks)
+}
+
+// opSubmitImpactCorrection mirrors backend.py's submit_impact_correction branch.
+func opSubmitImpactCorrection(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "submit_impact_correction",
+		func(settings jVal) (jVal, error) { return submitImpactCorrectionBody(pluginDir, payload, settings) })
+}
+
+func submitImpactCorrectionBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	args := payload.get("args")
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	return submitImpactCorrection(db, pythonStrOrEmpty(args.get("scene_id")), pythonStrOrEmpty(args.get("direction")))
 }
 
 // opGetCurationPairVerdict mirrors backend.py's get_curation_pair_verdict branch.

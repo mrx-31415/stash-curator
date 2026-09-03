@@ -157,6 +157,55 @@ def test_curation_rating_feeds_scene_labels(tmp_path: Path) -> None:
     assert "unusual" not in labels
 
 
+def test_impact_correction_feeds_scene_absolute_sentiment(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('ic-1', 'corrected-up', 'impact_correction', '1', 1, '{}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    label = labels["corrected-up"]
+    # A deliberate "this impact move is wrong" correction is direct evidence
+    # about the scene's own appeal, so (unlike a pairwise comparison) it feeds
+    # the absolute channel and stands in for a scene-level sentiment.
+    assert label.signal_types == ("impact_correction",)
+    assert label.outcome == pytest.approx(1.0)
+    assert label.absolute_outcome == pytest.approx(1.0)
+    assert label.confidence == pytest.approx(
+        1 - math.exp(-DEFAULT_CONFIG.model.impact_correction_confidence)
+    )
+    # The opposite direction reads as the negative.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('ic-2', 'corrected-down', 'impact_correction', '-1', 1, '{}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    assert labels["corrected-down"].outcome == pytest.approx(-1.0)
+    assert labels["corrected-down"].absolute_outcome == pytest.approx(-1.0)
+    # A malformed value is defensively skipped.
+    connection.execute(
+        """
+        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
+            occurred_at_ms, payload_json)
+        VALUES ('ic-3', 'corrected-bad', 'impact_correction', '0.5', 2, '{}')
+        """
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    assert "corrected-bad" not in labels
+
+
 def test_soft_bound_keeps_saturated_components_comparable() -> None:
     """Two scenes whose raw signal exceeds the bound must not end up equal.
 

@@ -34,6 +34,10 @@ const (
 	curationPairConfidence    = 0.15
 	curationPairSurpriseBonus = 2.0
 	curationPairIPSCap        = 2.0
+	// Mirrors ModelConfig.impact_correction_confidence: a deliberate "this
+	// impact move is wrong" correction is direct evidence about the scene's own
+	// appeal, so it sits below a fresh rating but above an implicit signal.
+	impactCorrectionConfidence = 0.60
 	// Mirrors ModelConfig.implicit_skip_* in curator/config.py (#146 Channel A).
 	// The base is half the deliberate-pick base (curationPairConfidence) so
 	// implicit signal never outranks explicit feedback; the issue author
@@ -268,6 +272,38 @@ ORDER BY scene_id, occurred_at_ms`)
 		}
 		signals[sceneID] = append(signals[sceneID], signal{
 			clamp((float64(rating100) - 50) / 50), 0.90, "scene_rating",
+		})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = db.Query(`
+SELECT scene_id, value FROM feedback
+WHERE reversed_by_id IS NULL AND feedback_type='impact_correction'
+ORDER BY scene_id, occurred_at_ms`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID string
+		var value sql.NullString
+		if err := rows.Scan(&sceneID, &value); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !value.Valid {
+			continue
+		}
+		outcome, parseErr := strconv.ParseFloat(value.String, 64)
+		if parseErr != nil || (outcome != 1.0 && outcome != -1.0) {
+			continue
+		}
+		// A deliberate "this impact move is wrong" correction is direct
+		// evidence about the scene's own appeal: +1 pulls a wrongly demoted
+		// scene back up, -1 pulls a wrongly promoted one back down.
+		signals[sceneID] = append(signals[sceneID], signal{
+			outcome, impactCorrectionConfidence, "impact_correction",
 		})
 	}
 	rows.Close()

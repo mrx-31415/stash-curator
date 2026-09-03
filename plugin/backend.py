@@ -889,6 +889,10 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.curation_pair_verdict(str(args.get("round_id") or ""))
         if operation == "get_curation_impact":
             return api.curation_impact()
+        if operation == "submit_impact_correction":
+            return api.submit_impact_correction(
+                str(args.get("scene_id") or ""), str(args.get("direction") or "")
+            )
         if operation == "get_external_tag_choices":
             tags = args.get("tags")
             if not isinstance(tags, list):

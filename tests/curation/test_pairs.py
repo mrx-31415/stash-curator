@@ -23,6 +23,7 @@ from curator.curation import (
     create_pair_round,
     curation_context,
     pair_verdict,
+    submit_impact_correction,
     submit_picks,
 )
 from tests.core.test_backend_slice6_pairs import (
@@ -64,10 +65,10 @@ def test_create_round_tag_pairs_across_contrast_cells(sidecar: Path, tmp_path: P
     conn = _fresh_selection(sidecar, tmp_path)
     round_a = create_pair_round(conn, "tag", 4, "t1", "t2")
     pairs_a = round_a["pairs"]  # type: ignore[union-attr]
-    # Unlabeled contrast cells: L&T = {s1, s7}, L&!T = {s2} -> two candidates.
-    # s21 (lesbian, 3 performers, no threesome tag) is excluded from L&!T by
-    # group-cell hygiene: a 3-performer scene is likely an untagged threesome.
-    assert len(pairs_a) == 2
+    # Unlabeled contrast cells: L&T = {s1, s7}, L&!T = {s2}. s21 is excluded
+    # from L&!T by group-cell hygiene. The per-round scene cap is 1, so the two
+    # candidates share s2 and only the higher-scoring pair is served.
+    assert len(pairs_a) == 1
     pair_scenes = set()
     for pair in pairs_a:
         pair_scenes.add(pair["scene_a"]["scene_id"])
@@ -107,8 +108,10 @@ def test_create_round_tag_pairs_across_contrast_cells(sidecar: Path, tmp_path: P
         # Scene metadata carries performers and a description slot.
         assert "performers" in pair["scene_a"]
         assert "details" in pair["scene_a"]
-    # Normalized probabilities sum to 1 over the selection.
-    assert sum(p["selection_probability"] for p in pairs_a) == pytest.approx(1.0, rel=1e-9)
+    # Normalized probabilities are each pair's share of the full candidate-pool
+    # score; the scene cap excluded the second candidate (it shares s2), so the
+    # selected set carries only the top pair's share, not all of it.
+    assert sum(p["selection_probability"] for p in pairs_a) <= 1.0
 
 
 def test_create_round_scene_cap_and_propensity(sidecar: Path, tmp_path: Path) -> None:
@@ -121,7 +124,7 @@ def test_create_round_scene_cap_and_propensity(sidecar: Path, tmp_path: Path) ->
         for side in ("scene_a", "scene_b"):
             scene_id = pair[side]["scene_id"]
             uses[scene_id] = uses.get(scene_id, 0) + 1
-    assert all(count <= 2 for count in uses.values())
+    assert all(count <= 1 for count in uses.values())
     assert all(0 < p["selection_probability"] <= 1 for p in pairs)
     # Every performer-dimension pair has p1 on exactly one side.
     for pair in pairs:
@@ -215,7 +218,7 @@ def test_pair_score_coverage_favors_few_rare_over_many_common() -> None:
         tag_cat={},
         tag_name={},
         counts={"t-rare": 4, "t1": 25, "t2": 25, "t3": 25, "t4": 25, "t5": 25},
-        appeal={},
+        appeal={"rare-a": 0.6, "rare-b": 0.35, "many-a": 0.6, "many-b": 0.35},
         blocked_scenes=frozenset(),
         metadata_wrong=frozenset(),
         interactive=frozenset({"t-rare", "t1", "t2", "t3", "t4", "t5"}),
@@ -225,6 +228,58 @@ def test_pair_score_coverage_favors_few_rare_over_many_common() -> None:
     assert rare_score == pytest.approx(0.5)
     assert many_score == pytest.approx(0.2)
     assert rare_score > many_score
+
+
+def test_pair_score_conflict_prefers_discriminable_moderate_gap() -> None:
+    """Conflict is a discriminability curve, not 1/(1+|predA-predB|).
+
+    The old term was maximal at a near-tie, where a human pick is a coin flip
+    and the learned +-1 label is noise. The curve peaks at a moderate gap the
+    user can reliably adjudicate and down-weights both exact ties (uninformative
+    coin flips) and very large gaps (foregone conclusions). Coverage and fit are
+    held identical here so the ordering isolates conflict."""
+    context = CurationContext(
+        labels=frozenset(),
+        scene_ids=frozenset({"tie-a", "tie-b", "mod-a", "mod-b", "big-a", "big-b"}),
+        scene_tags={
+            "tie-a": frozenset({"t-rar"}),
+            "tie-b": frozenset(),
+            "mod-a": frozenset({"t-rar"}),
+            "mod-b": frozenset(),
+            "big-a": frozenset({"t-rar"}),
+            "big-b": frozenset(),
+        },
+        scene_performers={},
+        performer_counts={},
+        performer_name={},
+        studio={},
+        scene_title={},
+        scene_date={},
+        scene_details={},
+        tag_cat={},
+        tag_name={},
+        counts={"t-rar": 4},
+        appeal={
+            "tie-a": 0.40,
+            "tie-b": 0.39,  # near-tie: gap 0.01
+            "mod-a": 0.50,
+            "mod-b": 0.25,  # moderate: gap 0.25 (the peak)
+            "big-a": 0.90,
+            "big-b": -0.60,  # foregone: gap 1.50
+        },
+        blocked_scenes=frozenset(),
+        metadata_wrong=frozenset(),
+        interactive=frozenset({"t-rar"}),
+    )
+    tie, _, _ = _pair_score(context, "tie-a", "tie-b", "orthogonal")
+    moderate, _, _ = _pair_score(context, "mod-a", "mod-b", "orthogonal")
+    big, _, _ = _pair_score(context, "big-a", "big-b", "orthogonal")
+    # Identical coverage (one rare tag differing) and fit (orthogonal), so the
+    # ordering is driven purely by conflict. The moderate gap outranks both the
+    # near-tie and the foregone conclusion.
+    assert moderate > tie
+    assert moderate > big
+    assert tie > 0  # exact ties score zero only at gap == 0; near-ties still score
 
 
 def test_submit_picks_writes_labels(sidecar: Path, tmp_path: Path) -> None:
@@ -380,6 +435,51 @@ def test_submit_picks_marks_the_model_dirty(sidecar: Path, tmp_path: Path) -> No
     before = generation()
     submit_picks(conn, "dirty-round", [{"pair_id": "dirty-1", "winner": "flag", "scene": "a"}])
     assert generation() == before + 1
+
+
+def test_submit_impact_correction_writes_supersedes_and_validates(
+    sidecar: Path, tmp_path: Path
+) -> None:
+    """An impact correction records a direct scene signal and marks the model
+    dirty; re-correcting the same scene supersedes the earlier row rather than
+    stacking a second signal, and the op validates its inputs."""
+    conn = _fresh_selection(sidecar, tmp_path)
+
+    def generation() -> int:
+        row = conn.execute(
+            "SELECT requested_generation FROM model_update_state WHERE singleton=1"
+        ).fetchone()
+        return int(row["requested_generation"])
+
+    before = generation()
+    result = submit_impact_correction(conn, "s1", "up")
+    assert result["schema_version"] == 2
+    assert result["scene_id"] == "s1"
+    assert result["direction"] == "up"
+    assert generation() == before + 1
+    rows = conn.execute(
+        "SELECT value, reversed_by_id FROM feedback WHERE feedback_type='impact_correction'"
+    ).fetchall()
+    assert [(r["value"], r["reversed_by_id"]) for r in rows] == [("1", None)]
+
+    # Re-correcting supersedes: the earlier row is reversed so the model sees
+    # only the latest direction, not the sum of both.
+    submit_impact_correction(conn, "s1", "down")
+    rows = conn.execute(
+        "SELECT value, reversed_by_id FROM feedback WHERE feedback_type='impact_correction'"
+        " ORDER BY occurred_at_ms, rowid"
+    ).fetchall()
+    assert [(r["value"], r["reversed_by_id"] is not None) for r in rows] == [
+        ("1", True),
+        ("-1", False),
+    ]
+
+    with pytest.raises(ValueError, match="scene_id is required"):
+        submit_impact_correction(conn, "", "up")
+    with pytest.raises(ValueError, match="direction must be 'up' or 'down'"):
+        submit_impact_correction(conn, "s1", "sideways")
+    with pytest.raises(ValueError, match="unknown scene"):
+        submit_impact_correction(conn, "no-such-scene", "up")
 
 
 def test_pair_verdict_accumulates_across_rounds_and_shrinks(sidecar: Path, tmp_path: Path) -> None:

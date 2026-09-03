@@ -111,6 +111,12 @@ class ModelConfig:
     curation_pair_confidence: float = 0.15
     curation_pair_surprise_bonus: float = 2.0
     curation_pair_ips_cap: float = 2.0
+    # Deliberate "this impact move is wrong" correction: a per-scene signal the
+    # user posts from the impact report to pull a wrongly promoted/demoted
+    # scene back toward its true appeal. Stronger than an implicit signal but
+    # below a fresh rating, since it is a verdict on the model's move, not a
+    # first-hand rating.
+    impact_correction_confidence: float = 0.60
     # Implicit negatives from impressions (#146 Channel A). When a recommended
     # scene is played or thumbed, the passed-over earlier-position cards in the
     # same impression are treated as weak pairwise losers. The base is half the
