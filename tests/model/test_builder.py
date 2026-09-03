@@ -261,12 +261,10 @@ def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
     assert loser.outcome == pytest.approx(-1.0)
     assert winner.signal_types == ("curation_pair_winner",)
     assert loser.signal_types == ("curation_pair_loser",)
-    # The label's confidence field is 1-exp(-evidence); the pair signal's
-    # confidence itself surfaces as effective_evidence:
-    # 0.15 * (1 + 2*0.2) * min(2, 1/1.0) = 0.21.
-    assert winner.effective_evidence == pytest.approx(0.21)
-    assert loser.effective_evidence == pytest.approx(0.21)
-    assert winner.confidence == pytest.approx(1 - math.exp(-0.21))
+    # 0.10 * (1 + 2*0.2) * min(1, 1/1.0) = 0.14.
+    assert winner.effective_evidence == pytest.approx(0.14)
+    assert loser.effective_evidence == pytest.approx(0.14)
+    assert winner.confidence == pytest.approx(1 - math.exp(-0.14))
 
 
 def test_pair_confidence_does_not_saturate_at_realistic_probabilities(
@@ -309,10 +307,8 @@ def test_pair_confidence_does_not_saturate_at_realistic_probabilities(
     }
     unsurprising = events["unseen-good"]
     surprising = events["old-good"]
-    # The cap binds for both, so each is base * cap * (1 + bonus*surprise).
-    # Neither may reach the ceiling, or the clamp erases the difference.
-    assert unsurprising == pytest.approx(0.30)
-    assert surprising == pytest.approx(0.78)
+    assert unsurprising == pytest.approx(0.10)
+    assert surprising == pytest.approx(0.26)
     assert surprising < 1.0
     # Surprise still moves the number: at the ceiling it could not.
     assert surprising > unsurprising
@@ -424,9 +420,10 @@ def test_curation_pair_confidence_clamps_only_at_extreme_surprise(
     """The 1.0 ceiling is a bound for outliers, not the value every pick takes.
 
     A confirming pick at a low selection probability sits well under it: the
-    IPS term is capped, so the result is base * cap. Only a maximally
+    IPS term is capped, so the result is base * cap. Even a maximally
     surprising pick — the model predicted the opposite outcome outright —
-    reaches the ceiling.
+    stays under the ceiling at the weak deliberate-pick base, so picks never
+    clamp and the surprise term always differentiates them.
     """
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(
@@ -446,11 +443,10 @@ def test_curation_pair_confidence_clamps_only_at_extreme_surprise(
     labels = PreferenceModelBuilder(
         connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
     )._scene_labels()
-    assert labels["unusual"].outcome == pytest.approx(1.0)
-    # surprise 0, IPS capped: 0.15 * 1 * min(2, 1/0.25) = 0.30 — no clamp.
-    assert labels["unusual"].effective_evidence == pytest.approx(0.30)
-    # surprise 2.0: 0.15 * (1 + 2*2.0) * 2 = 1.5, clamped to the 1.0 ceiling.
-    assert labels["unlabeled"].effective_evidence == pytest.approx(1.0)
+    # surprise 0, IPS capped: 0.10 * 1 * min(1, 1/0.25) = 0.10 — no clamp.
+    assert labels["unusual"].effective_evidence == pytest.approx(0.10)
+    # surprise 2.0: 0.10 * (1 + 2*2.0) * 1 = 0.50 — still well under the ceiling.
+    assert labels["unlabeled"].effective_evidence == pytest.approx(0.50)
 
 
 def test_satiation_content_dots_match_naive_recent_loop() -> None:
