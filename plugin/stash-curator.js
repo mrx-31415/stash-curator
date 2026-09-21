@@ -237,10 +237,6 @@
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
-  const CURATE_NUDGE_KEY = "stash-curator:curate-nudge:v1";
-  // The For You nudge retires after this many answered comparisons: by then
-  // the Curate flow is discovered and Progress is the better hook.
-  const MAX_NUDGE_ROUNDS = 3;
   const SLATE_CACHE_KEY = "stash-curator:slates:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
@@ -352,22 +348,6 @@
     }
   }
 
-  function readCurateNudge() {
-    try {
-      const value = JSON.parse(localStorage.getItem(CURATE_NUDGE_KEY) || "null");
-      return { rounds: Number(value && value.rounds) || 0, dismissed: !!(value && value.dismissed) };
-    } catch (_) {
-      return { rounds: 0, dismissed: false };
-    }
-  }
-  function bumpCurateRounds() {
-    const state = readCurateNudge();
-    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds + 1, dismissed: state.dismissed }));
-  }
-  function dismissCurateNudge() {
-    const state = readCurateNudge();
-    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds, dismissed: true }));
-  }
   function persistSlateCache() {
     try {
       sessionStorage.setItem(
@@ -1500,20 +1480,6 @@
     );
   }
 
-  function CurateNudge({ onOpen, onDismiss }) {
-    return React.createElement(
-      "div",
-      { className: "curator-curate-nudge" },
-      React.createElement(FontAwesomeIcon, { icon: faBullseye, className: "curator-curate-nudge-icon" }),
-      React.createElement("div", { className: "curator-curate-nudge-body" },
-        React.createElement("strong", null, "Teach the model what you like"),
-        React.createElement("p", null, "Compare scenes two at a time, for as long as you feel like. Each answer sharpens the model across every tag, performer, and studio those scenes carried.")
-      ),
-      React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpen }, "Open Curate"),
-      React.createElement("button", { type: "button", className: "curator-curate-nudge-dismiss", onClick: onDismiss, title: "Don't show this again", "aria-label": "Dismiss" }, React.createElement(FontAwesomeIcon, { icon: faXmark }))
-    );
-  }
-
   // ── Curate ────────────────────────────────────────────────────────────────
 
   const CURATE_STREAM_BUDGET = 10;
@@ -1667,7 +1633,6 @@
           picks: [entry.pick],
         });
         writeLastRound(entry.roundId, entry.dimension);
-        bumpCurateRounds();
         if (onCommitted) onCommitted(entry);
       } catch (failure) {
         setError(failure.message);
@@ -4814,7 +4779,6 @@
     const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
-    const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
     // "?view=<maintenance item>" (taste, feedback, backups, …) keeps working
     // as a soft alias into Manage forever — it resolves lane/currentSection
     // directly with no history.replace, so old bookmarks render identically
@@ -5195,7 +5159,6 @@
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
-      lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(

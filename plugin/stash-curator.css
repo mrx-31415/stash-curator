@@ -3712,36 +3712,6 @@
   font-size: 0.85rem;
 }
 
-/* ── Curate nudge (For You) ─────────────────────────────────────────────── */
-
-.curator-curate-nudge {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  border: 1px solid rgba(107, 142, 35, 0.5);
-  border-radius: var(--curator-radius);
-  background: linear-gradient(90deg, rgba(107, 142, 35, 0.12), rgba(107, 142, 35, 0.03));
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-
-.curator-curate-nudge-icon {
-  font-size: 1.4rem;
-  color: var(--sc, #6b8e23);
-  flex-shrink: 0;
-}
-
-.curator-curate-nudge-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.curator-curate-nudge-body p {
-  margin: 0.15rem 0 0;
-  font-size: 0.85rem;
-  color: var(--curator-text-muted);
-}
-
 /* ── Impact report (verdict) ────────────────────────────────────────────── */
 
 .curator-impact {
@@ -4039,22 +4009,6 @@
   font-size: 0.75rem;
 }
 
-.curator-curate-nudge-dismiss {
-  align-self: flex-start;
-  background: transparent;
-  border: none;
-  color: var(--curator-text-muted);
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.3rem;
-  line-height: 1;
-  border-radius: var(--curator-radius-sm);
-}
-
-.curator-curate-nudge-dismiss:hover {
-  color: var(--curator-text);
-  background: var(--curator-wash-raised);
-}
 .curator-score-headline { color: var(--curator-text); font-size: 0.82rem; font-weight: 600; }
 .curator-explanation-view,
 .curator-score-breakdown { display: grid; gap: 0.55rem; }
