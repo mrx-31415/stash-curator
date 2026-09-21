@@ -4101,10 +4101,24 @@
       }
     }
     async function restartWorker() {
+      // Restarting stops the resident worker with SIGTERM, which marks any
+      // in-flight job cancelled — the guard op refuses unless force is set,
+      // so confirm up front when a task is visibly running.
+      const runningJob = active.find((job) => job.state === "running");
+      if (runningJob && !window.confirm(
+        `Restart the Curator worker? The running task (${TASK_MODE_LABELS[runningJob.job_type] || runningJob.job_type}) is cancelled and must be run again.`
+      )) return;
       setStarting("Restart worker");
       setMessage("");
       try {
-        const result = await operation({ operation: "restart_worker" });
+        const result = await operation(
+          runningJob ? { operation: "restart_worker", force: true } : { operation: "restart_worker" }
+        );
+        if (result.refused) {
+          setMessage(result.reason || "Restart refused — a Curator task is running.");
+          setTimeout(refresh, 1000);
+          return;
+        }
         setMessage(
           result.restarted
             ? `Worker restarted${result.stopped_pid ? ` (stopped pid ${result.stopped_pid})` : ""}.`
