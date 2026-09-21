@@ -369,6 +369,14 @@ func stopWorker(pid int) error {
 // a replaced inode — an NFS `.nfs…` orphan the pid file does not record — is
 // reclaimed) and then falls back to the pid file so a non-worker pid marker is
 // cleared on platforms without `/proc`.
+//
+// The pid-file branch kills only on a CONFIRMED generation mismatch. The
+// state file is coordination metadata on the plugin volume (often NFS, where
+// every invocation renames it and concurrent readers hit stale file
+// handles): a read error — or a missing file — is not evidence of a stale
+// generation, and treating it as one SIGTERMs a live worker mid-job,
+// cancelling whatever task it is running. The executable-identity
+// reconciliation above is the authoritative generation check.
 func rotateStaleWorker(pluginDir, fingerprint string) error {
 	if err := rotateStaleWorkersByExecutable(pluginDir); err != nil {
 		return err
@@ -382,7 +390,10 @@ func rotateStaleWorker(pluginDir, fingerprint string) error {
 		return nil
 	}
 	state, err := readWorkerState(pluginDir)
-	if err == nil && state.BinaryFingerprint == fingerprint {
+	if err != nil {
+		return nil
+	}
+	if state.BinaryFingerprint == fingerprint {
 		return nil
 	}
 	if err := stopWorkerFn(pid); err != nil {
@@ -634,10 +645,32 @@ func ensureWorker(pluginDir string, payload jVal, settings jVal) error {
 // unconditionally, so a wedged current-generation worker — a stuck 'running'
 // curator_job row with a live heartbeat, e.g. a backup that never advances —
 // can be cleared on demand instead of requiring a plugin/container reload.
-// It recovers orphaned job rows, then respawns a fresh worker when schedules
-// or auto tasks need one. Best-effort: on any failure the next Curator
-// invocation spawns the worker as before.
+// Because the stop's SIGTERM handler marks the in-flight job cancelled, a
+// live running job refuses the restart unless args.force is set: stale
+// rows are recovered first (a dead worker's orphans never block), and only
+// a fresh-heartbeat row — a job a live daemon actually owns — asks for the
+// explicit override. The caller supplies force after user confirmation.
+// Best-effort: on any failure the next Curator invocation spawns the worker
+// as before.
 func restartWorker(pluginDir string, payload, settings jVal, db dbx) (jVal, error) {
+	force := payload.get("args").get("force").truthy()
+	recoverOrphanJobs(db, nowMs())
+	var runningJobType string
+	err := db.QueryRow(`SELECT job_type FROM curator_job WHERE state='running'
+ORDER BY started_at_ms DESC LIMIT 1`).Scan(&runningJobType)
+	if err != nil && err != sql.ErrNoRows {
+		return jvNull(), err
+	}
+	// Advisory single-flight check (no lock): a job claimed between this
+	// probe and the stop below is still cancelled — the frontend confirm is
+	// the primary guard, force is the escape hatch.
+	if err == nil && !force {
+		return jvObj(
+			jvKey("refused", jvBool(true)),
+			jvKey("running_job_type", jvStr(runningJobType)),
+			jvKey("reason", jvStr(fmt.Sprintf("a Curator task is running (%s); restarting the worker cancels it", runningJobType))),
+		), nil
+	}
 	pid, hasPid := readWorkerPid(pluginDir)
 	restarted := false
 	if hasPid && workerPidAliveFn(pid) && workerPidIsWorkerFn(pid, pluginDir) {
@@ -652,7 +685,6 @@ func restartWorker(pluginDir string, payload, settings jVal, db dbx) (jVal, erro
 		// spawn without the successor's stale-owner guard refusing it.
 		_ = os.Remove(workerPidPath(pluginDir))
 	}
-	recoverOrphanJobs(db, nowMs())
 	// Spawn a fresh worker when schedules/auto tasks need one. ensureAutoWorker
 	// reuses a live pid only when its generation matches; after the stop above
 	// the pid is gone, so it spawns the current binary.

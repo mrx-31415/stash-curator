@@ -344,6 +344,46 @@ func TestEnsureWorkerIgnoresReusedPID(t *testing.T) {
 		t.Fatalf("reused PID handling: stop=%d spawn=%d", stopCalls, spawnCalls)
 	}
 }
+func TestRotateStaleWorkerSparesLiveWorkerWithoutStateFile(t *testing.T) {
+	// The state file is NFS-resident coordination metadata that every
+	// invocation renames; a missing or stale-handle read must not be read as
+	// a generation mismatch — killing on it SIGTERMs a live worker mid-job
+	// and cancels its running task.
+	pluginDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
+	previousStop := stopWorkerFn
+	workerPidAliveFn = func(int) bool { return true }
+	workerPidIsWorkerFn = func(int, string) bool { return true }
+	stopCalls := 0
+	stopWorkerFn = func(int) error {
+		stopCalls++
+		return nil
+	}
+	defer func() {
+		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
+		stopWorkerFn = previousStop
+	}()
+
+	if err := rotateStaleWorker(pluginDir, "any-fingerprint"); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalls != 0 {
+		t.Fatalf("stop calls = %d, want 0 (unreadable state must not kill a live worker)", stopCalls)
+	}
+	// A live pid marker is preserved so later ensure calls keep adopting the
+	// running worker instead of spawning duplicates.
+	if _, err := os.Stat(workerPidPath(pluginDir)); err != nil {
+		t.Fatalf("live worker pid marker removed: %v", err)
+	}
+}
 func TestHandoverWorkerSpawnsSuccessor(t *testing.T) {
 	pluginDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
@@ -511,6 +551,99 @@ func TestRestartWorkerNoLiveWorkerIgnoresStalePid(t *testing.T) {
 		}
 		if spawnCalls != 0 {
 			t.Fatalf("spawn calls = %d, want 0 (auto tasks disabled)", spawnCalls)
+		}
+	})
+}
+
+func TestRestartWorkerRefusesWhileTaskRuns(t *testing.T) {
+	db, path := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	const now = int64(1_787_900_000_000)
+	pinTime(t, now, func() {
+		if _, err := db.Exec(`UPDATE curator_config SET config_json=?, updated_at_ms=? WHERE singleton=1`,
+			`{"auto_tasks_enabled": true}`, now); err != nil {
+			t.Fatal(err)
+		}
+	})
+	pluginDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pluginDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	if err := os.WriteFile(workerPidPath(pluginDir), []byte(strconv.Itoa(pid)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A live running job with a fresh heartbeat: the restart's SIGTERM would
+	// mark it cancelled, so the restart must refuse without an explicit force.
+	if _, err := db.Exec(`INSERT INTO curator_job(job_id, job_type, state, started_at_ms, heartbeat_at_ms)
+VALUES ('live-build', 'sync-build', 'running', ?, ?)`, now-30_000, now-10_000); err != nil {
+		t.Fatal(err)
+	}
+	previousAlive := workerPidAliveFn
+	previousOwner := workerPidIsWorkerFn
+	previousStop := stopWorkerFn
+	previousSpawn := spawnWorkerFn
+	stopCalls := 0
+	spawnCalls := 0
+	workerPidAliveFn = func(int) bool { return true }
+	workerPidIsWorkerFn = func(int, string) bool { return true }
+	stopWorkerFn = func(int) error { stopCalls++; return nil }
+	spawnWorkerFn = func(string) error { spawnCalls++; return nil }
+	defer func() {
+		workerPidAliveFn = previousAlive
+		workerPidIsWorkerFn = previousOwner
+		stopWorkerFn = previousStop
+		spawnWorkerFn = previousSpawn
+	}()
+
+	pinTime(t, now, func() {
+		result, err := restartWorker(pluginDir, taskPayload(path, "restart_worker"), jvObj(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.get("refused").truthy() {
+			t.Fatalf("refused = %v, want true while a task runs", result.get("refused"))
+		}
+		if result.get("running_job_type").asString() != "sync-build" {
+			t.Fatalf("running_job_type = %q, want sync-build", result.get("running_job_type").asString())
+		}
+		if stopCalls != 0 {
+			t.Fatalf("stop calls = %d, want 0 (refusal must not signal the worker)", stopCalls)
+		}
+		if spawnCalls != 0 {
+			t.Fatalf("spawn calls = %d, want 0 (refusal must not spawn a successor)", spawnCalls)
+		}
+		if jobState(t, db, "live-build") != "running" {
+			t.Fatalf("running row disturbed by refusal: %s", jobState(t, db, "live-build"))
+		}
+		if result.get("restarted").truthy() {
+			t.Fatalf("restarted = %v, want false on refusal", result.get("restarted"))
+		}
+
+		// force is the escape hatch: the wedge-style stop proceeds.
+		payload := taskPayload(path, "restart_worker")
+		payload.set("args", jvObj(
+			jvKey("operation", jvStr("restart_worker")),
+			jvKey("database_path", jvStr(path)),
+			jvKey("force", jvBool(true)),
+		))
+		result, err = restartWorker(pluginDir, payload, jvObj(), db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.get("refused").truthy() {
+			t.Fatalf("refused = %v, want false with force", result.get("refused"))
+		}
+		if stopCalls != 1 {
+			t.Fatalf("stop calls = %d, want 1 (force restarts a live worker)", stopCalls)
+		}
+		if !result.get("restarted").b {
+			t.Fatalf("restarted = %v, want true with force", result.get("restarted").b)
+		}
+		if spawnCalls != 1 {
+			t.Fatalf("spawn calls = %d, want 1 (auto tasks enabled)", spawnCalls)
 		}
 	})
 }
