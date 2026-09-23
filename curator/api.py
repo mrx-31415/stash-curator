@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import sqlite3
 import time
 from collections import defaultdict
@@ -21,7 +23,7 @@ from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
 from curator.profiling import record_duration, span
 from curator.ranking import SlateBuilder
-from curator.ranking.slate import Slate
+from curator.ranking.slate import RecommendationItem, Slate
 from curator.similarity import SimilarityService
 from curator.storage import transaction
 
@@ -29,6 +31,7 @@ API_SCHEMA_VERSION = 2
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
     "diversity_enabled": True,
+    "rotation_cooldown_days": 7,
     "sync_page_size": 250,
     "debounce_ms": 2_000,
     "model_update_event_threshold": 5,
@@ -55,6 +58,66 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
 }
 
 
+def _draw_slate(
+    connection: sqlite3.Connection,
+    lane: str,
+    items: tuple[RecommendationItem, ...],
+    seed: str,
+    at_ms: int,
+    page_size: int,
+    cooldown_days: int,
+) -> tuple[RecommendationItem, ...]:
+    """Weighted, repeatable draw from the best few pages; lane slots stay intact."""
+    pool_size = min(len(items), max(100, min(500, 5 * page_size)))
+    pool = items[:pool_size]
+    ids = [item.scene_id for item in pool]
+    if not ids:
+        return items
+    placeholders = ",".join("?" for _ in ids)
+    cooldown_ms = cooldown_days * 86_400_000
+    picked = {
+        (row["impression_id"], row["scene_id"])
+        for table, condition in (
+            ("play_session", "impression_id IS NOT NULL"),
+            ("feedback", "feedback_type='thumb_up' AND reversed_by_id IS NULL"),
+        )
+        for row in connection.execute(
+            f"SELECT impression_id, scene_id FROM {table} "
+            f"WHERE scene_id IN ({placeholders}) AND {condition}",
+            ids,
+        )
+    }
+    exposures: dict[str, list[int]] = {}
+    for row in connection.execute(
+        f"""SELECT scene_id, impression_id, shown_at_ms FROM recommendation_history
+            WHERE scene_id IN ({placeholders}) AND lane=? AND shown_at_ms BETWEEN ? AND ?""",
+        (*ids, lane, at_ms - cooldown_ms, at_ms),
+    ):
+        if (row["impression_id"], row["scene_id"]) not in picked:
+            exposures.setdefault(str(row["scene_id"]), []).append(int(row["shown_at_ms"]))
+    groups: dict[str, list[tuple[float, str, RecommendationItem]]] = {}
+    for index, item in enumerate(pool):
+        recent = exposures.get(item.scene_id, [])
+        weight = 1 + 4 * (pool_size - index) / pool_size
+        if recent:
+            age = max(0, at_ms - max(recent)) / cooldown_ms
+            weight *= (0.15 + 0.85 * min(age, 1)) / (1 + min(len(recent), 5))
+        digest = hashlib.sha256(f"{seed}\0{item.scene_id}".encode()).digest()
+        uniform = ((int.from_bytes(digest[:8], "big") >> 11) + 0.5) / (1 << 53)
+        groups.setdefault(item.source_lane, []).append(
+            (math.log(uniform) / weight, item.scene_id, item)
+        )
+    for group in groups.values():
+        group.sort(key=lambda row: (-row[0], row[1]))
+    positions = {source_lane: 0 for source_lane in groups}
+    drawn = []
+    for item in pool:
+        source_lane = item.source_lane
+        drawn.append(groups[source_lane][positions[source_lane]][2])
+        positions[source_lane] += 1
+    return tuple(drawn) + items[pool_size:]
+
+
 class CuratorAPI:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -70,6 +133,8 @@ class CuratorAPI:
         now_ms: int | None = None,
         exclude_scene_ids: set[str] | None = None,
         exploration: float = 0,
+        draw_seed: str = "",
+        draw_at_ms: int | None = None,
         include_tags: tuple[str, ...] = (),
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
@@ -78,6 +143,8 @@ class CuratorAPI:
     ) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
             raise ValueError("invalid recommendation page")
+        if len(draw_seed) > 128 or (draw_at_ms is not None and draw_at_ms < 0):
+            raise ValueError("invalid recommendation draw")
         started = time.perf_counter()
         timings: dict[str, int] = {}
         config = self.config()["config"]
@@ -125,6 +192,8 @@ class CuratorAPI:
             request_count = max(end + len(excluded), candidate_count + len(excluded))
         else:
             request_count = end + len(excluded)
+        if draw_seed:
+            request_count = max(request_count, max(100, min(500, 5 * count)) + len(excluded))
         built = builder.recommend(
             lane,
             request_count,
@@ -138,6 +207,16 @@ class CuratorAPI:
         available = tuple(item for item in built.items if item.scene_id not in excluded)
         if total is None:
             total = len(available)
+        if draw_seed:
+            available = _draw_slate(
+                self.connection,
+                lane,
+                available,
+                draw_seed,
+                draw_at_ms if draw_at_ms is not None else time.time_ns() // 1_000_000,
+                count,
+                int(config["rotation_cooldown_days"]),
+            )
         selected = available[start:end]
         slate = Slate(
             built.model_id,
@@ -1255,6 +1334,7 @@ class CuratorAPI:
         allowed = {
             "page_size",
             "diversity_enabled",
+            "rotation_cooldown_days",
             "sync_page_size",
             "debounce_ms",
             "model_update_event_threshold",
@@ -1313,6 +1393,11 @@ class CuratorAPI:
             value = values.get(key)
             if value is not None and (not isinstance(value, int) or not 1 <= value <= 500):
                 raise ValueError(f"{key} must be an integer from 1 to 500")
+        cooldown = values.get("rotation_cooldown_days")
+        if cooldown is not None and (
+            isinstance(cooldown, bool) or not isinstance(cooldown, int) or not 1 <= cooldown <= 30
+        ):
+            raise ValueError("rotation_cooldown_days must be an integer from 1 to 30")
         debounce = values.get("debounce_ms")
         if debounce is not None and (not isinstance(debounce, int) or not 0 <= debounce <= 60_000):
             raise ValueError("debounce_ms must be an integer from 0 to 60000")

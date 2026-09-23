@@ -575,14 +575,20 @@ def test_similar_scene_does_not_wait_for_impression_write_lock(tmp_path: Path) -
 def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     api = CuratorAPI(connection)
+    assert api.config()["config"]["rotation_cooldown_days"] == 7
 
-    config = api.update_config({"page_size": 30, "diversity_enabled": False}, now_ms=10)["config"]
+    config = api.update_config(
+        {"page_size": 30, "diversity_enabled": False, "rotation_cooldown_days": 3}, now_ms=10
+    )["config"]
     assert config["page_size"] == 30
     assert config["diversity_enabled"] is False
+    assert config["rotation_cooldown_days"] == 3
     with pytest.raises(ValueError, match="page_size"):
         api.update_config({"page_size": 0})
     with pytest.raises(ValueError, match="diversity_enabled"):
         api.update_config({"diversity_enabled": 0})
+    with pytest.raises(ValueError, match="rotation_cooldown_days"):
+        api.update_config({"rotation_cooldown_days": 0})
     with pytest.raises(ValueError, match="unknown"):
         api.update_config({"mystery": True})
 

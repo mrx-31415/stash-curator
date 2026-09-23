@@ -505,6 +505,7 @@ def _backup_control(
 def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
     mapping = {
         "pageSize": ("page_size", int),
+        "rotationCooldownDays": ("rotation_cooldown_days", int),
         "syncPageSize": ("sync_page_size", int),
         "modelUpdateEventThreshold": ("model_update_event_threshold", int),
         "autoTasksEnabled": ("auto_tasks_enabled", bool),
@@ -702,6 +703,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 context=args.get("context") if isinstance(args.get("context"), dict) else None,
                 exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
+                draw_seed=str(args.get("draw_seed") or ""),
+                draw_at_ms=int(args["draw_at_ms"]) if args.get("draw_at_ms") is not None else None,
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_ids=_string_list(args.get("performer_ids")),

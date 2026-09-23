@@ -16,6 +16,7 @@ import (
 var defaultPluginConfig = jvObj(
 	jvKey("page_size", jvInt(20)),
 	jvKey("diversity_enabled", jvBool(true)),
+	jvKey("rotation_cooldown_days", jvInt(7)),
 	jvKey("sync_page_size", jvInt(250)),
 	jvKey("debounce_ms", jvInt(2000)),
 	jvKey("model_update_event_threshold", jvInt(5)),
@@ -58,6 +59,7 @@ var settingMapping = []struct {
 	conv   settingConv
 }{
 	{"pageSize", "page_size", convInt},
+	{"rotationCooldownDays", "rotation_cooldown_days", convInt},
 	{"syncPageSize", "sync_page_size", convInt},
 	{"modelUpdateEventThreshold", "model_update_event_threshold", convInt},
 	{"modelUpdateMaxWaitMinutes", "model_update_max_wait_minutes", convFloat},
@@ -249,6 +251,11 @@ func validateConfig(values jVal) error {
 		n := pythonInt(v)
 		if n < 1 || n > 500 {
 			return fmt.Errorf("%s must be an integer from 1 to 500", key)
+		}
+	}
+	if v := values.get("rotation_cooldown_days"); v.kind != jNull {
+		if !isJSONInt(v) || pythonInt(v) < 1 || pythonInt(v) > 30 {
+			return fmt.Errorf("rotation_cooldown_days must be an integer from 1 to 30")
 		}
 	}
 	if v := values.get("debounce_ms"); v.kind != jNull {

@@ -24,6 +24,15 @@ description to switch between varied and score-first order. This also updates
 **Disable recommendation variety** in Curator's plugin settings. Both orders are
 published with the model, so later pages do not rerank the library.
 
+Use **Show me something else** for a fresh draw from the lane's strongest
+recommendations. Higher-ranked scenes have better odds, while scenes you saw
+on screen recently have lower odds for a while. Scenes are never permanently
+removed by rotation: their odds recover over the configured rotation cooldown
+(7 days by default). A play or thumbs-up does not count as an ignored view.
+Returning to the page keeps the current draw; a new local day or a new model
+refreshes it. Refreshing the same lane twice in one tab also draws again; a
+single refresh keeps the current cards in place.
+
 ## Inspect and teach
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
