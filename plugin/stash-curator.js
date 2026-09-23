@@ -241,7 +241,9 @@
   // The For You nudge retires after this many answered comparisons: by then
   // the Curate flow is discovered and Progress is the better hook.
   const MAX_NUDGE_ROUNDS = 3;
-  const SLATE_CACHE_KEY = "stash-curator:slates:v1";
+  const SLATE_CACHE_KEY = "stash-curator:slates:v2";
+  const ROTATION_KEY = "stash-curator:rotation:v2";
+  const RELOAD_ROTATION_KEY = "stash-curator:recommendation-reloads:v1";
   const FILTER_PRESETS_KEY = "stash-curator:filter-presets:v1";
   const WHISPARR_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAAyAAAAMgFOp+RzAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAxZJREFUOI1tk0tMXHUYxX///713HjDMXB4zpdBBgVKSVobWQY10WGCsSVsTJxqbNF1pNy5cSWJ07cYmbeLapUl9JCbqommiLvoAKZA2pdQSmcnQQQp1nlCY6czc/73XRYXQxLM+38n3fecckUwm2YsHd5YTVsO6aFluTBOGBgLbbdiGIeallBNDrx78Yy9f7AikUilPtcgNlDfe1zqmD4ZO49WCAFTtEumNq6TLk0p6G7fa9vveiEaj1q5AKpXyVApkw97B8PHOCU0Ijf+D41pMrV+y8/WlfO/hSNQ0TSUBqkVuhL2D4cT+TzUhNBwUj6ozpDaucL/w/a6AFAZjXZ9pHd5D4Wy68DuA5lS9CadmfH6i5wtdCMHy1jUqao3uptfwG+3k64t0Nh19bpOeltfl6tbtrkwmm5HKUhf62hK6cqsslL6ju2mEaPMYQmgsln/msPkua5UZpta+wsV59jg0cByPYfCRtCyOvRBIsFD8kSOtZ/BoLQAsb/1GtOUVstvXmX18mWORcwgkAKuVafpD4yjLjUuJ0BZLvxBrP4sUOgCl+hK2bbNZ/xvbUYx2nadJDwNQUTkeby/QF3wT15YeiXSc7sBRNGmQq91jW62T3ZxESJdoYBQERPzDACjnKfO5b4mFz/13Cq4UQlil2gq56n1Mo5f5/A+EfAfoD54kvfkrh8y3AbDdOnfzl4nv+wCPbKaqyqA7DSkk92wsIv4h5v75mg5/L33Bt6jZRVp9vUh0LGeLu4VveCn8Hl4tBED6yVV0XdzR0fjkYXlmSrpSN309DJrvAPDEWiWgR1itTFO3N3i540N2Aua4ikx5Ugk/E3J4ZGBW91uT5UbGPtL2/q7XEV8MhGCff4j+4En2pnNq/ZItjPqtWHxgTgJEBzpOlOorheuPvrRdV+3UhJDxIoYM7A66KG6uXbBztb8KmfU/xwF0ANM01Ur+2gHZKW/+lP54pL/tuH4wdIpmvf1ZmVSRpc0rPNyYVsJozKzkH4wnk0n1XBt3sDCbHrUd96KtGBauMAAX4SrN4LbQmYjFB+b28v8FOo1CLH194s4AAAAASUVORK5CYII=";
   const similarityCache = new Map();
@@ -250,6 +252,7 @@
   // with the backend code hash so any plugin update busts it immediately.
   const SIMILARITY_CACHE_TTL_MS = 5 * 60 * 1000;
   const restoredCache = readSlateCache();
+  const rotation = readRotation();
   const laneExclusions = new Map(restoredCache.exclusions.map(([lane, ids]) => [lane, new Set(ids)]));
   const slateCache = new Map(restoredCache.entries);
   const slateRequests = new Map();
@@ -334,6 +337,67 @@
 
   function slateKey(lane, page = 1) {
     return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`;
+  }
+
+  function localDay() {
+    const now = new Date();
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+  }
+
+  function readRotation() {
+    try {
+      const value = JSON.parse(localStorage.getItem(ROTATION_KEY) || "null");
+      if (value && typeof value.day === "string" && value.lanes && typeof value.lanes === "object") return value;
+    } catch (_) { /* Browser storage may be unavailable. */ }
+    return { day: localDay(), modelId: null, lanes: {} };
+  }
+
+  function saveRotation() {
+    try { localStorage.setItem(ROTATION_KEY, JSON.stringify(rotation)); }
+    catch (_) { /* In-memory rotation still works for this tab. */ }
+  }
+
+  function rotationLane(lane) {
+    if (!rotation.lanes[lane]) {
+      rotation.lanes[lane] = { seed: uuid(), atMs: Date.now() };
+      saveRotation();
+    }
+    return rotation.lanes[lane];
+  }
+
+  function rotateDay() {
+    const day = localDay();
+    if (rotation.day === day) return false;
+    Object.values(rotation.lanes).forEach((state) => {
+      state.seed = uuid();
+      state.atMs = Date.now();
+    });
+    rotation.day = day;
+    saveRotation();
+    clearSlateCache();
+    return true;
+  }
+
+  function advanceRotation(lane) {
+    const state = rotationLane(lane);
+    state.seed = uuid();
+    state.atMs = Date.now();
+    saveRotation();
+    clearSlateCache();
+  }
+
+  function rotateOnRepeatedReload(lane, page) {
+    const navigation = window.performance?.getEntriesByType?.("navigation")?.[0];
+    const identity = `${localDay()}:${lane}:${page}`;
+    let count = 0;
+    try {
+      const previous = JSON.parse(sessionStorage.getItem(RELOAD_ROTATION_KEY) || "null");
+      if (navigation?.type === "reload") {
+        count = previous?.identity === identity && Number.isInteger(previous.count) ? previous.count + 1 : 1;
+      }
+      sessionStorage.setItem(RELOAD_ROTATION_KEY, JSON.stringify({ identity, count }));
+    } catch (_) { return false; }
+    return page === 1 && count > 0 && count % 2 === 0;
   }
 
   function readSlateCache() {
@@ -607,6 +671,7 @@
   // by lane+page, and filter combinations change too often relative to how
   // long they stay open to be worth a filter-aware cache key.
   function loadSlate(lane, page = 1, prefetched = false, filters = null) {
+    rotateDay();
     const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.gender));
     const key = slateKey(lane, page);
     if (!hasFilters) {
@@ -614,11 +679,13 @@
       if (slateRequests.has(key)) return slateRequests.get(key);
     }
     const generation = cacheGeneration;
-    const request = operation({
+    const args = {
       operation: "get_slate",
       lane,
       page,
       exclude_scene_ids: [...(laneExclusions.get(lane) || [])],
+      draw_seed: rotationLane(lane).seed,
+      draw_at_ms: rotationLane(lane).atMs,
       exploration: 0,
       context: { route: location.pathname, prefetched },
       ...(hasFilters ? {
@@ -628,15 +695,24 @@
         studio_ids: (filters.studios || []).map((item) => String(item.id)),
         gender: filters.gender || "",
       } : {}),
-    })
-      .then((data) => {
+    };
+    const request = operation(args)
+      .then(async (initial) => {
+        let data = initial;
         if (generation !== cacheGeneration) return data;
         const modelChanged = cachedModelId && cachedModelId !== data.model_id;
+        const rotationModelChanged = rotation.modelId && rotation.modelId !== data.model_id;
         const configChanged = cachedConfigUpdatedAtMs !== null && cachedConfigUpdatedAtMs !== data.config_updated_at_ms;
-        if (modelChanged || configChanged) {
+        if (modelChanged || rotationModelChanged || configChanged) {
           clearSlateCache();
-          if (modelChanged) laneExclusions.clear();
+          if (modelChanged || rotationModelChanged) laneExclusions.clear();
+          rotation.lanes = {};
+          saveRotation();
+          const draw = rotationLane(lane);
+          data = await operation({ ...args, exclude_scene_ids: [...(laneExclusions.get(lane) || [])], draw_seed: draw.seed, draw_at_ms: draw.atMs });
         }
+        rotation.modelId = data.model_id;
+        saveRotation();
         cachedModelId = data.model_id;
         cachedConfigUpdatedAtMs = data.config_updated_at_ms;
         if (!hasFilters) {
@@ -4511,6 +4587,7 @@
       title: "Sync & model timing",
       fields: [
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20." },
+        { key: "rotationCooldownDays", configKey: "rotation_cooldown_days", type: "NUMBER", label: "Rotation cooldown (days)", description: "Days until a viewed but unpicked recommendation regains its full draw chance. Default 7; range 1-30." },
         { key: "syncPageSize", configKey: "sync_page_size", type: "NUMBER", label: "Sync page size", description: "Number of Stash records fetched per synchronization request. Default 250." },
         { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
         { key: "modelUpdateMaxWaitMinutes", configKey: "model_update_max_wait_minutes", type: "NUMBER", label: "Maximum model update delay (minutes)", description: "Rebuild pending preference changes after this delay. Default 30." },
@@ -4844,6 +4921,8 @@
     }, []);
     const [error, setError] = React.useState("");
     const [loading, setLoading] = React.useState(true);
+    const [rotatingLane, setRotatingLane] = React.useState(null);
+    const [rotationMessage, setRotationMessage] = React.useState("");
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
@@ -4912,7 +4991,17 @@
       }
     }
 
-    React.useEffect(() => setFollowUps([]), [lane]);
+    React.useEffect(() => {
+      setFollowUps([]);
+      setRotatingLane(null);
+      setRotationMessage("");
+    }, [lane]);
+
+    React.useEffect(() => {
+      if (!laneByValue.has(lane) || !rotateOnRepeatedReload(lane, page)) return;
+      advanceRotation(lane);
+      setRotatingLane(lane);
+    }, []);
 
     React.useEffect(() => {
       let active = true;
@@ -4939,22 +5028,49 @@
         setError("");
         return () => { active = false; };
       }
+      rotateDay();
       const cached = activeSlateFilterCount === 0 ? slateCache.get(slateKey(lane, page)) : null;
-      setSlate(cached || null);
+      if (rotatingLane !== lane) setSlate(cached || null);
       setLoading(!cached);
       setError("");
       loadSlate(lane, page, false, slateFilters).then(
         (data) => {
           if (!active) return;
           setSlate(data);
+          if (rotatingLane === lane) {
+            setRotationMessage(data.items.length ? "Fresh set ready" : "No more scenes in this lane");
+            setRotatingLane(null);
+          }
           setLoading(false);
         },
-        (failure) => active && (setError(failure.message), setLoading(false))
+        (failure) => {
+          if (!active) return;
+          setError(failure.message);
+          if (rotatingLane === lane) setSlate(null);
+          setRotatingLane(null);
+          setLoading(false);
+        }
       );
       return () => {
         active = false;
       };
     }, [lane, page, refreshKey, configReady, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
+    React.useEffect(() => {
+      if (!laneByValue.has(lane)) return;
+      let timer;
+      function schedule() {
+        const now = new Date();
+        timer = setTimeout(() => {
+          if (rotateDay()) {
+            setPage(1);
+            setRefreshKey((value) => value + 1);
+          }
+          schedule();
+        }, new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now + 100);
+      }
+      schedule();
+      return () => clearTimeout(timer);
+    }, [lane, page]);
     React.useEffect(() => {
       if (slate?.page === page) {
         const last = Math.max(1, Math.ceil(slate.total / slate.page_size));
@@ -4997,6 +5113,14 @@
     function refresh() {
       clearSlateCache();
       laneExclusions.clear();
+      setPage(1);
+      setRefreshKey((value) => value + 1);
+    }
+    function showSomethingElse() {
+      advanceRotation(lane);
+      try { sessionStorage.removeItem(RELOAD_ROTATION_KEY); } catch (_) { /* Storage may be unavailable. */ }
+      setRotatingLane(lane);
+      setRotationMessage("");
       setPage(1);
       setRefreshKey((value) => value + 1);
     }
@@ -5146,9 +5270,10 @@
           ),
           laneByValue.has(lane) && slate && React.createElement(
             "p",
-            { className: "curator-view-stats" },
+            { className: "curator-view-stats", role: "status" },
             `${slate.total} in rotation`,
-            lastSyncAtMs && ` · Model refreshed ${formatTimeAgo(lastSyncAtMs)}`
+            lastSyncAtMs && ` · Model refreshed ${formatTimeAgo(lastSyncAtMs)}`,
+            rotationMessage && ` · ${rotationMessage}`
           )
         ),
         React.createElement(
@@ -5169,6 +5294,7 @@
             React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
             diversityEnabled ? " Balanced" : " Score-first"
           ),
+          laneByValue.has(lane) && slate && React.createElement(Button, { className: "curator-rotate-button", size: "sm", variant: "secondary", disabled: loading || !slate.items.length, onClick: showSomethingElse, "aria-busy": rotatingLane === lane }, React.createElement(FontAwesomeIcon, { icon: faSync, className: rotatingLane === lane ? "curator-rotate-icon-spinning" : "curator-rotate-icon" }), " ", rotatingLane === lane ? "Finding new picks…" : "Show me something else"),
           laneByValue.has(lane) && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
           laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
           laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
@@ -5196,7 +5322,7 @@
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
-      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading recommendations…")),
+      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,
@@ -5206,7 +5332,7 @@
             ? React.createElement(RecommendationWall, { visibleItems, scenes, lane })
             : React.createElement(
               "section",
-              { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
+              { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },
               visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
             ),
           React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })

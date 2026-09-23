@@ -246,6 +246,52 @@ def test_get_slate_byte_identical(model_sidecar: Path, binary: Path, stub_stash:
     )
 
 
+def test_get_slate_draw_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    path = tmp_path / model_sidecar.name
+    shutil.copy2(model_sidecar, path)
+    shutil.copytree(
+        model_sidecar.parent / f"{model_sidecar.stem}-derived",
+        tmp_path / f"{path.stem}-derived",
+    )
+    with sqlite3.connect(path) as connection:
+        config_json = json.loads(
+            connection.execute(
+                "SELECT config_json FROM curator_config WHERE singleton=1"
+            ).fetchone()[0]
+        )
+        config_json["rotation_cooldown_days"] = 3
+        connection.execute(
+            "UPDATE curator_config SET config_json=? WHERE singleton=1",
+            (json.dumps(config_json),),
+        )
+        connection.execute(
+            """INSERT INTO recommendation_history
+               (history_id, scene_id, impression_id, lane, shown_at_ms)
+               VALUES (?, ?, ?, 'for_you', ?)""",
+            ("draw-exposure", "recent-good", "imp-hist-1", REFERENCE_MS - DAY_MS),
+        )
+    raw = payload(
+        "get_slate",
+        path,
+        stub_stash,
+        lane="for_you",
+        count=5,
+        page=1,
+        impression_id="fixed-impression-draw",
+        draw_seed="fixed-draw-seed",
+        draw_at_ms=REFERENCE_MS,
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=path,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+
+
 def test_get_slate_page_exclusions_byte_identical(
     model_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
