@@ -780,7 +780,12 @@ def test_update_config_byte_identical(writes_sidecar: Path, binary: Path, stub_s
         "update_config",
         writes_sidecar,
         stub_stash,
-        values={"page_size": 40, "expand_gender": "MALE", "diversity_enabled": False},
+        values={
+            "page_size": 40,
+            "expand_gender": "MALE",
+            "diversity_enabled": False,
+            "rotation_cooldown_days": 3,
+        },
     )
     assert_slice3_identical(binary, raw, writes_sidecar, normalize=("updated_at_ms",))
 

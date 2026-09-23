@@ -46,10 +46,12 @@ checked before lane scoring.
 
 ## Variety is presentation, not taste
 
-After candidates qualify, Curator builds the page one card at a time. It avoids
-adjacent performer repeats and softly varies studios and very similar content. These
-choices alter the slate, not Appeal. A page can therefore be varied without changing
-your learned preferences.
+After candidates qualify, Curator builds the ranked slate one card at a time. It
+avoids adjacent performer repeats and softly varies studios and very similar content.
+The page then draws from the strongest candidates: higher rank improves a scene's
+odds, while recent qualified views that did not lead to a play or thumbs-up lower
+them temporarily. These presentation choices do not change Appeal or the evidence
+shown in **Why this?**.
 
 ## Why the explanation is trustworthy
 

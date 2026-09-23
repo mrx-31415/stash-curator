@@ -1239,6 +1239,7 @@ func optStrValue(value string, has bool) jVal {
 var allowedConfigKeys = map[string]bool{
 	"page_size":                              true,
 	"diversity_enabled":                      true,
+	"rotation_cooldown_days":                 true,
 	"sync_page_size":                         true,
 	"debounce_ms":                            true,
 	"model_update_event_threshold":           true,
