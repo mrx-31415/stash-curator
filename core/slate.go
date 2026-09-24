@@ -9,11 +9,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // slateLanes mirrors SlateBuilder's lane vocabulary.
@@ -86,6 +88,8 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		context = c
 	}
 	exploration := argsFloat(args, "exploration", 0)
+	drawSeed := argsString(args, "draw_seed", "")
+	drawAtMs := argsInt(args, "draw_at_ms", nowMs())
 	includeTags, err := stringList(args.get("include_tags"))
 	if err != nil {
 		return jvNull(), err
@@ -103,7 +107,7 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	gender := argsString(args, "gender", "")
-	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration,
+	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration, drawSeed, drawAtMs,
 		includeTags, excludeTags, performerIDs, studioIDs, gender)
 }
 
@@ -132,7 +136,7 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	lane := argsString(args, "lane", "for_you")
 	exploration := argsFloat(args, "exploration", 0)
 	return getSlateCore(db, config, lane, 1, 1, jvNull(),
-		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, nil, nil, nil, nil, "")
+		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, "", 0, nil, nil, nil, nil, "")
 }
 
 // getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter
@@ -141,9 +145,12 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 // candidates; they don't change ranking. A filtered materialized request
 // scans candidate IDs for its exact total but hydrates only the requested
 // page; exploratory requests still recompute the full slate.
-func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (jVal, error) {
+func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, drawSeed string, drawAtMs int64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid recommendation page")
+	}
+	if len(drawSeed) > 128 || drawAtMs < 0 {
+		return jvNull(), fmt.Errorf("invalid recommendation draw")
 	}
 	cfg := config.get("config")
 	modelUpdate, err := modelUpdateStatus(db)
@@ -181,6 +188,9 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 		}
 		requestCount = maxInt64(end+int64(len(excluded)), candidateCount+int64(len(excluded)))
 	}
+	if drawSeed != "" {
+		requestCount = maxInt64(requestCount, maxInt64(100, minInt64(500, 5*count))+int64(len(excluded)))
+	}
 	built, err := recommend(db, modelID, lane, requestCount, diversityEnabled, exploration, sceneFilter)
 	if err != nil {
 		return jvNull(), err
@@ -193,6 +203,12 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 	}
 	if total < 0 {
 		total = int64(len(available))
+	}
+	if drawSeed != "" {
+		available, err = drawSlate(db, lane, available, drawSeed, drawAtMs, count, pythonInt(cfg.get("rotation_cooldown_days")))
+		if err != nil {
+			return jvNull(), err
+		}
 	}
 	var selected []*recommendationItem
 	if start < int64(len(available)) {
@@ -409,6 +425,112 @@ func recommend(db dbx, modelID, lane string, count int64, diversityEnabled bool,
 }
 
 func isFinite(f float64) bool { return !math.IsInf(f, 0) && !math.IsNaN(f) }
+
+// drawSlate reorders a bounded top pool using only qualified impressions.
+// Each source lane keeps its existing slots, so For You's lane mix survives.
+func drawSlate(db dbx, lane string, items []*recommendationItem, seed string, atMs, pageSize, cooldownDays int64) ([]*recommendationItem, error) {
+	poolSize := minInt64(int64(len(items)), maxInt64(100, minInt64(500, 5*pageSize)))
+	if poolSize == 0 {
+		return items, nil
+	}
+	args := make([]any, poolSize)
+	for i := int64(0); i < poolSize; i++ {
+		args[i] = items[i].sceneID
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", int(poolSize)), ",")
+	cooldownMs := cooldownDays * 86_400_000
+	picked := map[string]bool{}
+	for _, query := range []string{
+		"SELECT impression_id, scene_id FROM play_session WHERE scene_id IN (" + marks + ") AND impression_id IS NOT NULL",
+		"SELECT impression_id, scene_id FROM feedback WHERE scene_id IN (" + marks + ") AND feedback_type='thumb_up' AND reversed_by_id IS NULL",
+	} {
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var impressionID sql.NullString
+			var sceneID string
+			if err := rows.Scan(&impressionID, &sceneID); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if impressionID.Valid {
+				picked[impressionID.String+"\x00"+sceneID] = true
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	historyArgs := append(append([]any{}, args...), lane, atMs-cooldownMs, atMs)
+	rows, err := db.Query("SELECT scene_id, impression_id, shown_at_ms FROM recommendation_history WHERE scene_id IN ("+marks+") AND lane=? AND shown_at_ms BETWEEN ? AND ?", historyArgs...)
+	if err != nil {
+		return nil, err
+	}
+	type exposure struct {
+		count int
+		last  int64
+	}
+	exposures := map[string]exposure{}
+	for rows.Next() {
+		var sceneID string
+		var impressionID sql.NullString
+		var shownAt int64
+		if err := rows.Scan(&sceneID, &impressionID, &shownAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if impressionID.Valid && picked[impressionID.String+"\x00"+sceneID] {
+			continue
+		}
+		exposure := exposures[sceneID]
+		exposure.count++
+		exposure.last = maxInt64(exposure.last, shownAt)
+		exposures[sceneID] = exposure
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	type drawItem struct {
+		key     float64
+		sceneID string
+		item    *recommendationItem
+	}
+	groups := map[string][]drawItem{}
+	for i := int64(0); i < poolSize; i++ {
+		item := items[i]
+		weight := 1 + 4*float64(poolSize-i)/float64(poolSize)
+		if exposure := exposures[item.sceneID]; exposure.count > 0 {
+			age := float64(maxInt64(0, atMs-exposure.last)) / float64(cooldownMs)
+			weight *= (0.15 + 0.85*math.Min(age, 1)) / float64(1+minInt64(int64(exposure.count), 5))
+		}
+		digest := sha256.Sum256([]byte(seed + "\x00" + item.sceneID))
+		uniform := (float64(binary.BigEndian.Uint64(digest[:8])>>11) + 0.5) / float64(uint64(1)<<53)
+		groups[item.sourceLane] = append(groups[item.sourceLane], drawItem{math.Log(uniform) / weight, item.sceneID, item})
+	}
+	for sourceLane := range groups {
+		sort.Slice(groups[sourceLane], func(i, j int) bool {
+			a, b := groups[sourceLane][i], groups[sourceLane][j]
+			if a.key == b.key {
+				return a.sceneID < b.sceneID
+			}
+			return a.key > b.key
+		})
+	}
+	positions := map[string]int{}
+	drawn := make([]*recommendationItem, 0, len(items))
+	for i := int64(0); i < poolSize; i++ {
+		sourceLane := items[i].sourceLane
+		drawn = append(drawn, groups[sourceLane][positions[sourceLane]].item)
+		positions[sourceLane]++
+	}
+	return append(drawn, items[poolSize:]...), nil
+}
 
 // laneValueMaxes returns the per-lane max lane_value from model_scene_lane,
 // used to make the displayed "Rank in <lane>" relative to the lane's best

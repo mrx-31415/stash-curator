@@ -360,7 +360,8 @@
 .curator-view-actions {
   align-items: center;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -382,6 +383,34 @@
 .curator-diversity-toggle {
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+.curator-page .curator-rotate-button {
+  background: color-mix(in srgb, var(--curator-accent) 12%, var(--curator-surface));
+  border-color: color-mix(in srgb, var(--curator-accent) 55%, var(--curator-border));
+  box-shadow: var(--curator-shadow-sm);
+  color: var(--curator-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.curator-page .curator-rotate-button:hover:not(:disabled),
+.curator-page .curator-rotate-button:focus-visible {
+  background: color-mix(in srgb, var(--curator-accent) 20%, var(--curator-surface));
+  border-color: var(--curator-accent);
+  color: var(--curator-text);
+}
+
+.curator-rotate-icon {
+  transition: transform 0.2s ease;
+}
+
+.curator-rotate-button:hover:not(:disabled) .curator-rotate-icon {
+  transform: rotate(35deg);
+}
+
+.curator-rotate-icon-spinning {
+  animation: curator-spin 0.7s linear infinite;
 }
 
 /* Question-mark disclosure for the Appeal/Rank explanation in the
@@ -1970,6 +1999,21 @@
   display: grid;
   gap: 0.8rem;
   grid-template-columns: repeat(auto-fill, minmax(var(--curator-card-min-width, 22rem), 1fr));
+}
+
+.curator-grid-enter {
+  animation: curator-grid-enter 0.22s ease-out both;
+}
+
+@keyframes curator-grid-enter {
+  from { opacity: 0; transform: translateY(0.35rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-rotate-icon-spinning,
+  .curator-grid-enter { animation: none; }
+  .curator-rotate-icon { transition: none; }
 }
 
 .curator-card {

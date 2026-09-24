@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0](https://github.com/mrx-31415/stash-curator/compare/v0.25.0...v0.26.0) (2026-09-24)
+
+
+### Features
+
+* **find:** open Find on Expand ([#305](https://github.com/mrx-31415/stash-curator/issues/305)) ([28cc7a4](https://github.com/mrx-31415/stash-curator/commit/28cc7a4379fff0f42c2f6205964c6d62353380b4))
+
+## [0.25.0](https://github.com/mrx-31415/stash-curator/compare/v0.24.0...v0.25.0) (2026-09-23)
+
+
+### Features
+
+* rotate recommendations with weighted draws ([38289ce](https://github.com/mrx-31415/stash-curator/commit/38289ce2e54bdc9d79c18cc8cc7bd7efa976aa23))
+
 ## [0.24.0](https://github.com/mrx-31415/stash-curator/compare/v0.23.2...v0.24.0) (2026-09-21)
 
 

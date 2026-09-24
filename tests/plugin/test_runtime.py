@@ -810,6 +810,7 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     # Whisparr-only ones left to read back via getPluginSettings().
     expected_fields = {
         "pageSize": "page_size",
+        "rotationCooldownDays": "rotation_cooldown_days",
         "syncPageSize": "sync_page_size",
         "modelUpdateEventThreshold": "model_update_event_threshold",
         "modelUpdateMaxWaitMinutes": "model_update_max_wait_minutes",
@@ -1509,6 +1510,7 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         {
             "databasePath": str(tmp_path / "curator.sqlite3"),
             "pageSize": 12,
+            "rotationCooldownDays": 3,
             "diversityDisabled": True,
             "modelUpdateEventThreshold": 7,
         },
@@ -1520,6 +1522,7 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
             ).fetchone()[0]
         )
         assert config["page_size"] == 12
+        assert config["rotation_cooldown_days"] == 3
         assert config["diversity_enabled"] is False
         assert config["model_update_event_threshold"] == 7
     finally:
