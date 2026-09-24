@@ -590,11 +590,12 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     assert "loadSuggestions" not in source
     assert "Ideas Curator is unsure about" not in source
 
-    assert "CurateNudge" in source
-    assert "CURATE_NUDGE_KEY" in source
-    assert "MAX_NUDGE_ROUNDS" in source
-    assert "curator-curate-nudge-dismiss" in source
-
+    # The Curate nudge banner on For You is removed; the lane nav already
+    # surfaces Curate, and the banner retired only via buried signals.
+    assert "CurateNudge" not in source
+    assert "CURATE_NUDGE_KEY" not in source
+    assert "MAX_NUDGE_ROUNDS" not in source
+    assert "curator-curate-nudge" not in source
     # The scene-batch rating flow stays retired, and the round-scoped picks
     # cache is gone with the submit gate.
     assert "get_curation_batch" not in source
