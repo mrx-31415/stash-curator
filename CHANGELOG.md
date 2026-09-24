@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/mrx-31415/stash-curator/compare/v0.26.0...v0.26.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **plugin:** remove the For You Curate nudge banner ([ca7131d](https://github.com/mrx-31415/stash-curator/commit/ca7131d039b197a0d40bd936fc44d3d3bd481190))
+
 ## [0.26.0](https://github.com/mrx-31415/stash-curator/compare/v0.25.0...v0.26.0) (2026-09-24)
 
 
