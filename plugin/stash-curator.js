@@ -63,16 +63,16 @@
       description: "Teach the model: scene comparisons, direct tag sentiment, and what it all moved.",
     },
     {
-      value: "similar",
-      label: "Similar",
-      icon: faClone,
-      description: "Preference-aware matches from your library or StashDB.",
-    },
-    {
       value: "expand",
       label: "Expand",
       icon: faGlobe,
       description: "External metadata candidates, scored locally.",
+    },
+    {
+      value: "similar",
+      label: "Similar",
+      icon: faClone,
+      description: "Preference-aware matches from your library or StashDB.",
     },
     {
       value: "hunt",
