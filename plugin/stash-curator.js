@@ -237,10 +237,6 @@
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
-  const CURATE_NUDGE_KEY = "stash-curator:curate-nudge:v1";
-  // The For You nudge retires after this many answered comparisons: by then
-  // the Curate flow is discovered and Progress is the better hook.
-  const MAX_NUDGE_ROUNDS = 3;
   const SLATE_CACHE_KEY = "stash-curator:slates:v2";
   const ROTATION_KEY = "stash-curator:rotation:v2";
   const RELOAD_ROTATION_KEY = "stash-curator:recommendation-reloads:v1";
@@ -416,22 +412,6 @@
     }
   }
 
-  function readCurateNudge() {
-    try {
-      const value = JSON.parse(localStorage.getItem(CURATE_NUDGE_KEY) || "null");
-      return { rounds: Number(value && value.rounds) || 0, dismissed: !!(value && value.dismissed) };
-    } catch (_) {
-      return { rounds: 0, dismissed: false };
-    }
-  }
-  function bumpCurateRounds() {
-    const state = readCurateNudge();
-    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds + 1, dismissed: state.dismissed }));
-  }
-  function dismissCurateNudge() {
-    const state = readCurateNudge();
-    localStorage.setItem(CURATE_NUDGE_KEY, JSON.stringify({ rounds: state.rounds, dismissed: true }));
-  }
   function persistSlateCache() {
     try {
       sessionStorage.setItem(
@@ -1576,20 +1556,6 @@
     );
   }
 
-  function CurateNudge({ onOpen, onDismiss }) {
-    return React.createElement(
-      "div",
-      { className: "curator-curate-nudge" },
-      React.createElement(FontAwesomeIcon, { icon: faBullseye, className: "curator-curate-nudge-icon" }),
-      React.createElement("div", { className: "curator-curate-nudge-body" },
-        React.createElement("strong", null, "Teach the model what you like"),
-        React.createElement("p", null, "Compare scenes two at a time, for as long as you feel like. Each answer sharpens the model across every tag, performer, and studio those scenes carried.")
-      ),
-      React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpen }, "Open Curate"),
-      React.createElement("button", { type: "button", className: "curator-curate-nudge-dismiss", onClick: onDismiss, title: "Don't show this again", "aria-label": "Dismiss" }, React.createElement(FontAwesomeIcon, { icon: faXmark }))
-    );
-  }
-
   // ── Curate ────────────────────────────────────────────────────────────────
 
   const CURATE_STREAM_BUDGET = 10;
@@ -1743,7 +1709,6 @@
           picks: [entry.pick],
         });
         writeLastRound(entry.roundId, entry.dimension);
-        bumpCurateRounds();
         if (onCommitted) onCommitted(entry);
       } catch (failure) {
         setError(failure.message);
@@ -4891,7 +4856,6 @@
     const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
-    const [nudgeDismissed, setNudgeDismissed] = React.useState(false);
     // "?view=<maintenance item>" (taste, feedback, backups, …) keeps working
     // as a soft alias into Manage forever — it resolves lane/currentSection
     // directly with no history.replace, so old bookmarks render identically
@@ -5321,7 +5285,6 @@
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
-      lane === "for_you" && !nudgeDismissed && !readCurateNudge().dismissed && readCurateNudge().rounds < MAX_NUDGE_ROUNDS && React.createElement(CurateNudge, { onOpen: () => openView("curate"), onDismiss: () => { dismissCurateNudge(); setNudgeDismissed(true); } }),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
