@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.2](https://github.com/mrx-31415/stash-curator/compare/v0.26.1...v0.26.2) (2026-09-26)
+
+
+### Documentation
+
+* autoplay the landing tour with WebM fallback ([d4b450e](https://github.com/mrx-31415/stash-curator/commit/d4b450ea8fa258c3090c7d68405ef760aa1fd6ad))
+* make tour playable and update guide visuals ([#310](https://github.com/mrx-31415/stash-curator/issues/310)) ([2e12d68](https://github.com/mrx-31415/stash-curator/commit/2e12d68744252513edaafb938e231d5ba995d91f))
+* refresh README and landing tour ([#308](https://github.com/mrx-31415/stash-curator/issues/308)) ([10abf79](https://github.com/mrx-31415/stash-curator/commit/10abf794bec480d0a8127dd0f3666af62b597d73))
+* show animated tour in README ([e700c2d](https://github.com/mrx-31415/stash-curator/commit/e700c2d8e57f8f2f1cdd5c08151c1a9772ae9322))
+
 ## [0.26.1](https://github.com/mrx-31415/stash-curator/compare/v0.26.0...v0.26.1) (2026-09-24)
 
 
