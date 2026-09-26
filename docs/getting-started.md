@@ -38,6 +38,8 @@ use significant CPU, memory, and disk space. Leave the Stash task running until
 Curator reports that the model is ready. Progress and the full task log are available
 from the Curator status indicator and **Manage → Tasks**.
 
+When the model is ready, [choose a recommendation lane]({{ '/using-curator/' | relative_url }}#choose-a-lane).
+
 ## Choose the right refresh
 
 | Action | Use it when | Contacts Stash? |

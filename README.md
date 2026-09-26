@@ -9,10 +9,10 @@ It recommends scenes you already have and helps you discover candidates on
 [StashDB](https://stashdb.org). You can see why a scene was suggested and correct
 the model when it gets something wrong.
 
-[Install](#install) · [Watch the eleven-second tour](https://mrx-31415.github.io/stash-curator/#tour)
+[Install](#install) · [Watch the video tour](https://mrx-31415.github.io/stash-curator/#tour)
 
 <p align="center">
-  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-tour-poster.jpg" alt="For You recommendations showing six Blender film scenes" width="760"></a>
+  <img src="docs/assets/showcase-tour-poster.jpg" alt="For You recommendations showing six Blender film scenes" width="760">
 </p>
 
 <p align="center">The tour shows moving previews in Recommendations, Find, and Curate. It uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/#tour">credited Blender film clips</a>; no personal library appears.</p>
@@ -37,6 +37,7 @@ The first build can take several minutes on a large library. See
 
 Browse six lanes of scenes from your library: For You, Best Bets, Revisit, Stretch,
 Blind Spots, and Dormant. Each offers a different way to find something to watch.
+[Learn how to choose a lane](docs/using-curator.md#choose-a-lane).
 
 ### Find
 
@@ -45,8 +46,10 @@ finds related scenes or performers in your library or on StashDB; Performer Hunt
 follows one performer's catalog. An external result does not mean you have the scene.
 
 <p align="center">
-  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-find-poster.jpg" alt="Find showing Expand, Similar, and Performer Hunt above six related scene previews" width="760"></a>
+  <img src="docs/assets/showcase-find-poster.jpg" alt="Find showing Expand, Similar, and Performer Hunt above six related scene previews" width="760">
 </p>
+
+[Learn how to use Find](docs/using-curator.md#find).
 
 ### Curate
 
@@ -55,8 +58,10 @@ help Curator learn. Open **Why this?** on a result to inspect its reasons. After
 model build, Impact shows what your feedback changed.
 
 <p align="center">
-  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-curate-poster.jpg" alt="Curate Pair picks comparing two Blender film scenes" width="760"></a>
+  <img src="docs/assets/showcase-curate-poster.jpg" alt="Curate Pair picks comparing two Blender film scenes" width="760">
 </p>
+
+[Learn how to use Curate](docs/using-curator.md#curate).
 
 Each recommendation distinguishes **Appeal** (your longer-term interest) from
 **Current Fit** (whether it suits you now). Read [how recommendations work](docs/recommendations.md)
