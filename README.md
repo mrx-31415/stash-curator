@@ -2,76 +2,80 @@
   <img src="docs/assets/stash-curator.svg" alt="Stash Curator compass" width="112">
 </p>
 <h1 align="center">Stash Curator</h1>
-<p align="center"><strong>Local recommendations and StashDB discovery — curated to your taste.</strong></p>
+<p align="center"><strong>Find scenes in your library, discover more on StashDB, and improve the results with feedback.</strong></p>
 
-Stash Curator learns your taste from your library metadata, viewing history, and
-feedback — then uses that taste to recommend from two places: the scenes already in
-your library, and the wider catalog on [StashDB](https://stashdb.org). Inside your
-library, lanes like For You and Best Bets mix favorites, revisits, and discovery.
-Beyond it, Expand and Performer Hunt rank StashDB candidates by the same taste;
-external results are leads.
+Stash Curator learns your taste from library metadata, viewing history, and feedback.
+It recommends scenes you already have and helps you discover candidates on
+[StashDB](https://stashdb.org). You can see why a scene was suggested and correct
+the model when it gets something wrong.
 
-<p align="center">
-  <img src="docs/assets/showcase-navigation.gif" alt="Curator tour with pointer-driven clicks through recommendation lanes, Pair picks, and Tag sentiment" width="960">
-</p>
+[Install](#install) · [Watch the eleven-second tour](https://mrx-31415.github.io/stash-curator/#tour)
 
 <p align="center">
-  <img src="docs/assets/showcase-recommendations.png" alt="Curator Recommendations with fictional cinematic scene cards and inspectable scores" width="680">
+  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-tour-poster.jpg" alt="For You recommendations showing six Blender film scenes" width="760"></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/showcase-find.png" alt="Curator Find view showing related fictional cinematic scene cards" width="680">
-</p>
-
-<p align="center">
-  <img src="docs/assets/showcase-curate.png" alt="Curator Pair picks with fictional cinematic scene cards" width="680">
-</p>
+<p align="center">The tour shows moving previews in Recommendations, Find, and Curate. It uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/#tour">credited Blender film clips</a>; no personal library appears.</p>
 
 ## Install
 
-Preview requirements: **Stash v0.31** and **Python 3.12+** available to Stash's
-plugin runtime. Local recommendations do not require StashDB. The required platform
-binary ships with the plugin; no runtime package installation is needed.
-Add this source under
-**Settings → Plugins → Available Plugins**:
+Requires **Stash v0.31** with **Python 3.12+** available to its plugin runtime.
+StashDB is optional for recommendations from your own library.
 
-```text
-https://mrx-31415.github.io/stash-curator/index.yml
-```
+1. In Stash, open **Settings → Plugins → Available Plugins** and add
+   `https://mrx-31415.github.io/stash-curator/index.yml` as a plugin source.
+2. Install **Stash Curator** and reload plugins.
+3. Open the compass in Stash's navigation and select **Sync library** to build
+   your first recommendation model.
 
-Install **Stash Curator**, reload plugins, open the compass in Stash's navigation,
-then run **Sync library** once to build the first model. See [Getting started](docs/getting-started.md)
-for first-build expectations, configuration, updates, and backups.
+The first build can take several minutes on a large library. See
+[Getting started](docs/getting-started.md) for setup, updates, and backups.
 
-## What it does
+## Explore Curator
 
-- **Recommendations from your library, curated to your taste.** For You, Best Bets,
-  Revisit, Stretch, Blind Spots, and Dormant mix favorites, revisits, and discovery.
-  Variety is presentation, not taste.
-- **The same taste, beyond your library.** Similar finds related local scenes and
-  performers; Expand and Performer Hunt rank StashDB candidates against the same
-  model. External results are leads.
-- **Inspect and correct.** “Why this?” shows the evidence and score tree (Appeal vs
-  Current Fit vs confidence); pair picks, tag sentiment, and thumbs correct a belief
-  directly.
+### Recommendations
 
-Curator separates long-term **Appeal** from **Current Fit**, then builds varied lanes
-instead of sorting everything by one opaque score. Read [how recommendations work](docs/recommendations.md)
-or browse the complete [documentation site](https://mrx-31415.github.io/stash-curator/).
+Browse six lanes of scenes from your library: For You, Best Bets, Revisit, Stretch,
+Blind Spots, and Dormant. Each offers a different way to find something to watch.
+
+### Find
+
+Find opens on Expand, which ranks StashDB candidates against your taste. Similar
+finds related scenes or performers in your library or on StashDB; Performer Hunt
+follows one performer's catalog. An external result does not mean you have the scene.
+
+<p align="center">
+  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-find-poster.jpg" alt="Find showing Expand, Similar, and Performer Hunt above six related scene previews" width="760"></a>
+</p>
+
+### Curate
+
+Choose between two scenes in Pair picks, give direct feedback, or rate a tag to
+help Curator learn. Open **Why this?** on a result to inspect its reasons. After a
+model build, Impact shows what your feedback changed.
+
+<p align="center">
+  <a href="https://mrx-31415.github.io/stash-curator/#tour"><img src="docs/assets/showcase-curate-poster.jpg" alt="Curate Pair picks comparing two Blender film scenes" width="760"></a>
+</p>
+
+Each recommendation distinguishes **Appeal** (your longer-term interest) from
+**Current Fit** (whether it suits you now). Read [how recommendations work](docs/recommendations.md)
+for the scoring details.
 
 ## Safety and privacy
 
-Runs locally. Your history, feedback, and model stay in a SQLite sidecar you control;
-StashDB is optional, read-only, and never sees your model. The only Stash mutation is
-an explicit Prune action that adds or removes the configured tag; Curator never deletes
-media. Whisparr receives only an item you explicitly send. See [Privacy](docs/privacy.md).
+- Your history, feedback, and model stay in a local SQLite database you control.
+- StashDB discovery is optional and read-only. StashDB never receives your model.
+- Curator never deletes media. An explicit Prune action only adds or removes a tag.
+- Whisparr receives an item only when you choose **Send to Whisparr**.
+
+See [Privacy](docs/privacy.md) for details.
 
 ## Status
 
-Stash Curator is **Preview / pre-1.0**. The first sync/model build can take several
-minutes on a large library. A persistent background worker can apply model and recent-play
-updates without an open tab; scheduled Expand refresh, sync/build, and backups are optional.
-Development uses [uv](https://docs.astral.sh/uv/); see [Contributing](docs/contributing.md).
+Stash Curator is **preview software (pre-1.0)**. Automatic background updates and
+scheduled tasks are optional; see [Using Curator](docs/using-curator.md).
+Developers can start with [Contributing](docs/contributing.md).
 
 ## Project provenance
 

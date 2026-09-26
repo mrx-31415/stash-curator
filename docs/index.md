@@ -11,7 +11,7 @@ wide: true
     <p class="lede">Stash Curator learns your taste from your library metadata, viewing history, and feedback — then uses that taste to recommend from two places: the scenes already in your library, and the wider catalog on StashDB. Every recommendation is inspectable, and you can correct a belief directly.</p>
     <div class="actions"><a class="button" href="#install">Install the preview</a><a class="button secondary" href="{{ '/recommendations/' | relative_url }}">How it recommends</a></div>
   </div>
-  <img class="hero-mark" src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="Blue-violet Stash Curator compass">
+  <img class="hero-mark" src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="">
 </section>
 
 <section class="install" id="install">
@@ -22,22 +22,21 @@ wide: true
   <p>Install <strong>Stash Curator</strong>, reload plugins, open the compass, and run <strong>Sync library</strong> once to build the first model. <a href="{{ '/getting-started/' | relative_url }}">Read the setup guide →</a></p>
 </section>
 
-## Recommendations
+## Curator in action
 
-<section class="showcase">
-  <div class="showcase-copy"><span class="pill">Tour</span><h3>Recommendations, Find, and Curate</h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore. Switch to Find for related scenes, then Curate to teach the model with quick comparisons.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-navigation.gif' | relative_url }}" alt="Curator navigation moving between Recommendations, Find, and Curate with fictional cinematic scene cards" width="1280" height="820" loading="lazy" decoding="async"></div>
+<section class="showcase" id="tour">
+  <div class="showcase-copy"><span class="pill">Tour</span><h3>See scenes move before you choose</h3><p>Recommendations offers six lanes of library scenes. Find plays related previews in a wall. Curate's Pair picks puts two previews side by side, so a quick choice can teach the model.</p></div>
+  <div class="capture"><img id="tour-image" src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" data-animated-src="{{ '/assets/showcase-navigation.gif' | relative_url }}" alt="Curator's For You recommendations with six Blender film scenes" aria-describedby="tour-description" width="960" height="675" loading="lazy" decoding="async"></div>
+  <div><button class="button secondary demo-toggle" type="button" data-demo-toggle aria-controls="tour-image" aria-pressed="false" hidden>Play tour</button></div>
+  <p class="demo-note" id="tour-description">The eleven-second silent tour shows moving previews in For You, then Find's Similar results, then a Pair pick that advances to another comparison.</p>
+  <p class="demo-credit">Demo excerpts from <a href="https://video.blender.org/videos/watch/6402b77c-b61f-4a06-96ca-c8420a2becf4">Big Buck Bunny</a> and <a href="https://video.blender.org/videos/watch/64222c8a-c4c7-4b3b-9850-7fb2078edcf6">Glass Half</a> (<a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>), and <a href="https://video.blender.org/videos/watch/23f3ef79-15dc-44c5-aa45-cf92e78a4509">Caminandes: Llamigos</a> and <a href="https://video.blender.org/videos/watch/7b2eff2a-35f2-4403-9d88-d0dd6e4b5ba1">The Daily Dweebs</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>). © Blender Foundation. Excerpts shortened, muted, and cropped.</p>
 </section>
 
-<section class="showcase">
-  <div class="showcase-copy"><span class="pill">Find</span><h3>Follow a useful lead</h3><p>Similar finds related library scenes and performers. Expand optionally searches StashDB metadata against your local model, while Performer Hunt follows one performer’s external catalog. External results are leads, not proof that a scene is available locally.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-find.png' | relative_url }}" alt="Synthetic Find demo showing Similar, Expand, and Performer Hunt sections" width="1200" height="675" loading="lazy" decoding="async"></div>
-</section>
-
-<section class="showcase">
-  <div class="showcase-copy"><span class="pill">Curate</span><h3>Teach, correct, inspect the change</h3><p>Pair picks teach shared preferences. Tag sentiment lets you correct a tag belief directly. Impact reports what the next model build changed, while Manage holds review and operational surfaces.</p></div>
-  <div class="capture"><img src="{{ '/assets/showcase-curate.png' | relative_url }}" alt="Synthetic Curate demo with a fictional pair pick, tag sentiment, and compact impact summary" width="1200" height="675" loading="lazy" decoding="async"></div>
-</section>
+<div class="grid">
+  <section class="card"><h3>Recommendations</h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore your library.</p></section>
+  <section class="card"><h3>Find</h3><p>Similar finds related library scenes and performers. Expand can search StashDB metadata against your local model, while Performer Hunt follows one performer’s external catalog. External results are leads, not proof that a scene is available locally.</p></section>
+  <section class="card"><h3>Curate</h3><p>Pair picks teach shared preferences. Tag sentiment lets you correct a tag belief directly. Impact reports what the next model build changed, while Manage holds review and operational surfaces.</p></section>
+</div>
 
 ## Privacy and safety
 
