@@ -41,6 +41,9 @@
         button.setAttribute('aria-expanded', String(!open));
         document.querySelector('#site-links').classList.toggle('open', !open);
       });
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.querySelector('#tour video')?.pause();
+      }
     </script>
   </body>
 </html>
