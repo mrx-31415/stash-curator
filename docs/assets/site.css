@@ -49,8 +49,6 @@ p, li { max-width: 72ch; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
 .button { background: linear-gradient(120deg, #238be8, #7155e7); border-radius: 10px; color: white; display: inline-block; font-weight: 750; padding: .7rem 1rem; text-decoration: none; }
 .button.secondary { background: transparent; border: 1px solid var(--line); color: var(--text); }
-.demo-toggle { cursor: pointer; font: inherit; }
-.demo-toggle[hidden] { display: none; }
 .demo-note, .demo-credit { color: var(--muted); margin: 0; }
 .demo-credit { font-size: .9rem; }
 .install { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin: 2.5rem 0; padding: clamp(1.2rem, 4vw, 2rem); }
@@ -65,10 +63,10 @@ pre code { border: 0; padding: 0; }
 .showcase { display: grid; gap: 1.25rem; margin-block: 4rem; }
 .showcase-copy p { color: var(--muted); }
 .capture { background: #050a13; border: 1px solid #344561; border-radius: 14px; box-shadow: 0 24px 60px #0008; overflow: hidden; }
-.capture img { width: 100%; }
-.capture-pair { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
-.recommendation-captures { display: grid; gap: 1rem; }
-.capture-detail { justify-self: center; max-width: 28rem; width: 72%; }
+.capture img, .capture video { width: 100%; }
+.capture video { height: auto; }
+.guide-capture { margin: 1.5rem auto 2rem; max-width: 60rem; }
+.guide-capture figcaption { color: var(--muted); font-size: .9rem; padding: .5rem .8rem; }
 .pill { border: 1px solid #5a4cc0; border-radius: 999px; color: #bfb5ff; display: inline-block; font-size: .8rem; padding: .2rem .55rem; }
 .notice { border-left: 3px solid var(--green); color: var(--muted); padding-left: 1rem; }
 table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
@@ -89,8 +87,6 @@ blockquote { border-left: 3px solid var(--violet); color: var(--muted); margin-l
 @media (max-width: 480px) {
   body { font-size: 16px; }
   main { padding-block: 2.5rem; }
-  .capture-pair { grid-template-columns: 1fr; }
-  .capture-detail { width: 88%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
