@@ -11,11 +11,14 @@ the model when it gets something wrong.
 
 [Install](#install) · [Watch the video tour](https://mrx-31415.github.io/stash-curator/#tour)
 
-<p align="center">
-  <img src="docs/assets/showcase-tour-poster.jpg" alt="For You recommendations showing six Blender film scenes" width="760">
-</p>
+<details open>
+  <summary>Animated tour (show or hide)</summary>
+  <p align="center">
+    <img src="docs/assets/showcase-tour.gif" alt="Stash Curator tour showing moving scene previews in Recommendations and Find, then a Pair picks choice advancing to a new pair" width="760">
+  </p>
+</details>
 
-<p align="center">The tour shows moving previews in Recommendations, Find, and Curate. It uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/#tour">credited Blender film clips</a>; no personal library appears.</p>
+<p align="center">The animated tour uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/#tour">credited Blender film clips</a>; no personal library appears. <a href="https://mrx-31415.github.io/stash-curator/#tour">Watch with playback controls</a>.</p>
 
 ## Install
 
