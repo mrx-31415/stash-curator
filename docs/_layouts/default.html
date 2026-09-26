@@ -41,18 +41,6 @@
         button.setAttribute('aria-expanded', String(!open));
         document.querySelector('#site-links').classList.toggle('open', !open);
       });
-      const tourButton = document.querySelector('[data-demo-toggle]');
-      if (tourButton) {
-        const tourImage = document.getElementById(tourButton.getAttribute('aria-controls'));
-        const poster = tourImage.src;
-        tourButton.hidden = false;
-        tourButton.addEventListener('click', () => {
-          const playing = tourButton.getAttribute('aria-pressed') === 'true';
-          tourImage.src = playing ? poster : tourImage.dataset.animatedSrc;
-          tourButton.setAttribute('aria-pressed', String(!playing));
-          tourButton.textContent = playing ? 'Play tour' : 'Stop tour';
-        });
-      }
     </script>
   </body>
 </html>

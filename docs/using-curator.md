@@ -5,7 +5,15 @@ permalink: /using-curator/
 
 # Using Curator
 
+The screenshots show an isolated demo with fictional metadata and Blender film
+excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
+
 ## Choose a lane
+
+<figure class="capture guide-capture">
+  <img src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" alt="For You recommendations with six scene previews and the six lane choices above them" width="960" height="675" loading="lazy">
+  <figcaption>For You is one of six recommendation lanes.</figcaption>
+</figure>
 
 | Lane | Best used for |
 | --- | --- |
@@ -61,6 +69,11 @@ remains independent.
 
 ## Curate
 
+<figure class="capture guide-capture">
+  <img src="{{ '/assets/showcase-curate-poster.jpg' | relative_url }}" alt="Pair picks showing two scenes and the Left, Right, Equal, and Skip choices" width="960" height="524" loading="lazy">
+  <figcaption>Pair picks puts two scenes side by side for a quick choice.</figcaption>
+</figure>
+
 **Pair picks** presents two scenes at a time. Choosing one teaches shared preferences
 across their tags, performers, and studios. **Tag sentiment** is the direct correction
 path described above. **Impact** compares model builds so you can see what subsequent
@@ -68,6 +81,11 @@ curation moved. Use **Manage** for operational and review surfaces such as tasks
 backups, feedback history, diagnostics, and settings.
 
 ## Find
+
+<figure class="capture guide-capture">
+  <img src="{{ '/assets/showcase-find-poster.jpg' | relative_url }}" alt="Find with Expand, Similar, and Performer Hunt tabs above six related scene previews" width="960" height="675" loading="lazy">
+  <figcaption>Find opens on Expand; this example shows Similar results from the library.</figcaption>
+</figure>
 
 Open Similar from Curator or the compass action on a Stash scene or performer.
 Library results use content overlap and preference-aware performer profiles. Switch
