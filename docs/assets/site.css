@@ -49,6 +49,10 @@ p, li { max-width: 72ch; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
 .button { background: linear-gradient(120deg, #238be8, #7155e7); border-radius: 10px; color: white; display: inline-block; font-weight: 750; padding: .7rem 1rem; text-decoration: none; }
 .button.secondary { background: transparent; border: 1px solid var(--line); color: var(--text); }
+.demo-toggle { cursor: pointer; font: inherit; }
+.demo-toggle[hidden] { display: none; }
+.demo-note, .demo-credit { color: var(--muted); margin: 0; }
+.demo-credit { font-size: .9rem; }
 .install { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin: 2.5rem 0; padding: clamp(1.2rem, 4vw, 2rem); }
 .install h2 { margin-top: 0; }
 code { background: #050b14; border: 1px solid #24344d; border-radius: 6px; color: #c7ddf6; padding: .12rem .35rem; }
