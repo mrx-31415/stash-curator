@@ -13,7 +13,7 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 5.5rem; }
 body {
   background: radial-gradient(circle at 75% -10%, #192550 0, transparent 34rem), var(--bg);
   color: var(--text);
@@ -76,9 +76,12 @@ blockquote { border-left: 3px solid var(--violet); color: var(--muted); margin-l
 .site-footer { border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; padding-block: 2rem; }
 
 @media (max-width: 800px) {
-  .nav-toggle { display: block; }
-  .nav-links { align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: none; flex-direction: column; gap: .2rem; padding: .6rem; position: absolute; right: 1rem; top: 3.8rem; width: min(18rem, calc(100vw - 2rem)); }
-  .nav-links.open { display: flex; }
+  .nav { flex-wrap: wrap; }
+  .nav-links { align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; flex-direction: column; gap: .2rem; padding: .6rem; width: 100%; }
+  .js .nav-toggle { display: block; }
+  .js .nav-links { display: none; position: absolute; right: 1rem; top: 3.8rem; width: min(18rem, calc(100vw - 2rem)); }
+  .js .nav-links.open { display: flex; }
+  html:not(.js) .site-header { position: static; }
   .nav-links a { padding: .6rem; }
   .hero { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr; }

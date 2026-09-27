@@ -53,14 +53,7 @@ queued durably in the browser during transient failures and applied in a batched
 model update. A later explicit action can reverse earlier feedback; one action may
 not change the next recommendation immediately.
 
-Under **Curate → Tag sentiment**, review tag beliefs and answer with a fixed sentiment
-from strong dislike to strong like. A direct answer is strong evidence rather than a
-hard exclusion; **Neutral** is an explicit near-zero preference, while **Clear
-answer** returns the tag to behavior-derived inference. Answers are queued locally
-during transient failures. Direct answers affect tag fit but do not count as separate
-behavioral corroboration. Search includes classified local tags, including performer
-attributes and tags that currently appear on zero scenes, so preferences can be declared
-before that content enters the library.
+To correct a tag belief directly, use [Curate → Tag sentiment](#tag-sentiment).
 
 After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
 with up to three relevant content tags. Answer only the tags that contributed to the
@@ -69,22 +62,58 @@ remains independent.
 
 ## Curate
 
+Curate brings together Pair picks, Tag sentiment, and Impact.
+
+### Pair picks
+
 <figure class="capture guide-capture">
   <img src="{{ '/assets/showcase-curate-poster.jpg' | relative_url }}" alt="Pair picks showing two scenes and the Left, Right, Equal, and Skip choices" width="960" height="524" loading="lazy">
   <figcaption>Pair picks puts two scenes side by side for a quick choice.</figcaption>
 </figure>
 
-**Pair picks** presents two scenes at a time. Choosing one teaches shared preferences
-across their tags, performers, and studios. **Tag sentiment** is the direct correction
-path described above. **Impact** compares model builds so you can see what subsequent
-curation moved. Use **Manage** for operational and review surfaces such as tasks,
-backups, feedback history, diagnostics, and settings.
+Choosing between two scenes teaches shared preferences across their tags, performers,
+and studios.
+
+### Tag sentiment
+
+Review tag beliefs and answer with a fixed sentiment from strong dislike to strong like.
+A direct answer is strong evidence rather than a hard exclusion; **Neutral** is an
+explicit near-zero preference, while **Clear answer** returns the tag to behavior-derived
+inference. Answers are queued locally during transient failures. Direct answers affect
+tag fit but do not count as separate behavioral corroboration. Search includes classified
+local tags, including performer attributes and tags that currently appear on zero scenes,
+so preferences can be declared before that content enters the library.
+
+### Impact
+
+Impact compares model builds so you can see what subsequent curation moved. Use
+**Manage** for operational and review surfaces such as tasks, backups, feedback history,
+diagnostics, and settings.
 
 ## Find
 
+Find opens on Expand. Connect StashDB and refresh its candidate cache to see external
+leads; Similar also works with scenes already in your library.
+
+### Expand
+
+Expand ranks a refreshed pool of StashDB scene candidates and related performers
+against your local model. Refresh its cache from Curator or with the **Refresh Expand
+cache** task, then browse candidates, save filters, or shortlist leads. The refresh
+retains eligible leads found through Similar and Performer Hunt, updates their scores
+after model changes, and drops scenes outside the recent-release horizon.
+
+External results are metadata leads, not proof that a scene is available locally.
+Filters and ordering apply before paging. If Whisparr is configured, **Send to
+Whisparr** appears on external scene cards; it sends only the scene you select. Use
+the tag action on an external scene to rate tags that map exactly to local tags; this
+does not create scene-level feedback for media outside the library.
+
+### Similar
+
 <figure class="capture guide-capture">
   <img src="{{ '/assets/showcase-find-poster.jpg' | relative_url }}" alt="Find with Expand, Similar, and Performer Hunt tabs above six related scene previews" width="960" height="675" loading="lazy">
-  <figcaption>Find opens on Expand; this example shows Similar results from the library.</figcaption>
+  <figcaption>Similar results from the library for a selected scene.</figcaption>
 </figure>
 
 Open Similar from Curator or the compass action on a Stash scene or performer.
@@ -99,21 +128,6 @@ separate and the reference entity stays visible.
 
 Local matches use the configured page size. StashDB Similar keeps up to 100 matches
 from one remote search and pages that stable result locally.
-
-### Expand
-
-Expand is optional StashDB discovery. Refresh its cache from Curator or with the
-**Refresh Expand cache** task, then browse scenes and performers, save filters, or
-shortlist candidates. Refresh is incremental where the StashDB instance supports the
-`updated_at` watermark (fetching only changed entries) and falls back to a full fetch
-otherwise; either way it keeps the existing candidates and rows discovered by hunts or
-StashDB Similar, re-scores the pool when the model has changed, and drops candidates
-older than the recent-release horizon. External results are metadata leads, not proof
-that a scene is available locally. Filters and ordering are applied before paging. If Whisparr is
-configured, **Send to Whisparr** appears on external scene cards; it sends only the
-scene you explicitly select.
-Use the tag action on an external scene to rate its tags that map exactly to local
-tags; this does not create scene-level feedback for media outside the library.
 
 ### Performer Hunt
 

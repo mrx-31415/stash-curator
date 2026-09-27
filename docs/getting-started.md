@@ -6,7 +6,8 @@ permalink: /getting-started/
 # Getting started
 
 Stash Curator is preview software for **Stash v0.31**. Stash must be able to run
-**Python 3.12 or newer** for external raw plugins.
+`python` for Curator's small launcher; the plugin ships the compiled core for
+supported platforms.
 
 Curator can build local recommendations from your library metadata. StashDB is not
 required; viewing history and feedback make the model more personal over time.

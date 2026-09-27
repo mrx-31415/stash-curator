@@ -2,12 +2,12 @@
   <img src="docs/assets/stash-curator.svg" alt="Stash Curator compass" width="112">
 </p>
 <h1 align="center">Stash Curator</h1>
-<p align="center"><strong>Find scenes in your library, discover more on StashDB, and improve the results with feedback.</strong></p>
+<p align="center"><strong>Rediscover scenes in your Stash library with recommendations that learn from feedback.</strong></p>
 
-Stash Curator learns your taste from library metadata, viewing history, and feedback.
-It recommends scenes you already have and helps you discover candidates on
-[StashDB](https://stashdb.org). You can see why a scene was suggested and correct
-the model when it gets something wrong.
+Stash Curator uses library metadata, viewing history, and feedback to recommend
+scenes you already have. Open **Why this?** to see why a scene appeared and correct
+the model when it gets something wrong. Connect [StashDB](https://stashdb.org)
+for optional external metadata leads scored against your local taste model.
 
 [Install](#install) · [Watch the video tour](https://mrx-31415.github.io/stash-curator/#tour)
 
@@ -22,8 +22,8 @@ the model when it gets something wrong.
 
 ## Install
 
-Requires **Stash v0.31** with **Python 3.12+** available to its plugin runtime.
-StashDB is optional for recommendations from your own library.
+Requires **Stash v0.31** and a `python` executable for the plugin launcher.
+Curator ships compiled core binaries for supported platforms. StashDB is optional.
 
 1. In Stash, open **Settings → Plugins → Available Plugins** and add
    `https://mrx-31415.github.io/stash-curator/index.yml` as a plugin source.
@@ -44,9 +44,10 @@ Blind Spots, and Dormant. Each offers a different way to find something to watch
 
 ### Find
 
-Find opens on Expand, which ranks StashDB candidates against your taste. Similar
-finds related scenes or performers in your library or on StashDB; Performer Hunt
-follows one performer's catalog. An external result does not mean you have the scene.
+Find opens on Expand. After you connect StashDB and refresh its candidate cache,
+Expand ranks recent external leads against your taste. Similar finds related scenes
+or performers in your library or on StashDB; Performer Hunt follows one performer's
+catalog. An external result does not mean you have the scene.
 
 <p align="center">
   <img src="docs/assets/showcase-find-poster.jpg" alt="Find showing Expand, Similar, and Performer Hunt above six related scene previews" width="760">

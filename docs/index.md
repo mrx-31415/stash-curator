@@ -1,14 +1,14 @@
 ---
-title: Stash Curator — local recommendations and StashDB discovery
-description: Local recommendations and StashDB discovery — curated to your taste.
+title: Rediscover your Stash library
+description: Local recommendations shaped by viewing and feedback, with optional StashDB discovery.
 wide: true
 ---
 
 <section class="hero">
   <div>
     <p class="eyebrow">Preview · Stash plugin</p>
-    <h1>Recommendations from your library, and discovery beyond it.</h1>
-    <p class="lede">Stash Curator learns your taste from your library metadata, viewing history, and feedback — then uses that taste to recommend from two places: the scenes already in your library, and the wider catalog on StashDB. Every recommendation is inspectable, and you can correct a belief directly.</p>
+    <h1>Rediscover scenes in your Stash library.</h1>
+    <p class="lede">Curator uses your library metadata, viewing history, and feedback to recommend scenes you already have. Open <strong>Why this?</strong> to see why a scene appeared and correct the model when it gets something wrong. Connect StashDB for optional external metadata leads scored against your local taste model.</p>
     <div class="actions"><a class="button" href="#install">Install the preview</a><a class="button secondary" href="{{ '/recommendations/' | relative_url }}">How it recommends</a></div>
   </div>
   <img class="hero-mark" src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="">
@@ -17,7 +17,7 @@ wide: true
 <section class="install" id="install">
   <p class="eyebrow">Install</p>
   <h2>One plugin source</h2>
-  <p>Requires Stash v0.31 and Python 3.12+ in Stash's plugin runtime. Local recommendations do not require StashDB. Add this URL under <strong>Settings → Plugins → Available Plugins</strong>:</p>
+  <p>Requires Stash v0.31 and a <code>python</code> executable for the plugin launcher. Curator ships compiled core binaries for supported platforms; StashDB is optional. Add this URL under <strong>Settings → Plugins → Available Plugins</strong>:</p>
   <pre><code>https://mrx-31415.github.io/stash-curator/index.yml</code></pre>
   <p>Install <strong>Stash Curator</strong>, reload plugins, open the compass, and run <strong>Sync library</strong> once to build the first model. <a href="{{ '/getting-started/' | relative_url }}">Read the setup guide →</a></p>
 </section>
@@ -33,7 +33,7 @@ wide: true
 
 <div class="grid">
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore your library.</p></section>
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#find">Find →</a></h3><p>Similar finds related library scenes and performers. Expand can search StashDB metadata against your local model, while Performer Hunt follows one performer’s external catalog. External results are leads, not proof that a scene is available locally.</p></section>
+  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#find">Find →</a></h3><p>Find opens on Expand, which ranks a refreshed pool of StashDB leads when connected. Similar finds related scenes in your library or on StashDB; Performer Hunt follows a performer’s catalog. External results are leads, not proof that a scene is available locally.</p></section>
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Pair picks teach shared preferences. Tag sentiment lets you correct a tag belief directly. Impact reports what the next model build changed, while Manage holds review and operational surfaces.</p></section>
 </div>
 
@@ -45,7 +45,7 @@ an explicit, reversible Prune tag — Curator never deletes media. See [Privacy]
 
 ## Preview status
 
-Curator targets **Stash v0.31** and **Python 3.12+**. It remains preview software and
+Curator targets **Stash v0.31**. It remains preview software and
 pre-1.0. The first sync/model build can take several minutes on a large library. Its
 persistent worker can apply automatic model and recent-play updates; scheduled Expand
 refresh, sync/build, and backups are configurable. External discovery needs a configured
