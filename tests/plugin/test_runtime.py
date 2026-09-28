@@ -1062,7 +1062,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert 'operation({ operation: "get_explanation", scene_id: item.scene_id }, 60000)' in source
     assert '"Explaining…"' in source
     assert "function ScoreBreakdown({ explanation, item })" in source
-    assert "function ExplanationView({ explanation, item })" in source
+    assert "function ExplanationView({ explanation, item, scene, evidenceScenes })" in source
     # Issue #216: the Technical details disclosure is never rendered empty —
     # it requires explanation components or an item fallback.
     assert "curator-technical-details" in source

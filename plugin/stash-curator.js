@@ -835,13 +835,6 @@
     }, 8000);
   }
 
-  function idFilter(ids) {
-    return ids.reduce(
-      (filter, id) => ({ id: { value: Number(id), modifier: "EQUALS" }, ...(filter && { OR: filter }) }),
-      null
-    );
-  }
-
   function performerNameFilter(items) {
     return items.reduce(
       (filter, item) => ({ name: { value: item.label, modifier: "EQUALS" }, ...(filter && { OR: filter }) }),
@@ -920,15 +913,133 @@
     return React.createElement("div", { className: "curator-score-breakdown" }, rows.map((component) => React.createElement("div", { key: component.name, className: `curator-score-row${component.available === false ? " curator-score-row-missing" : ""}` }, React.createElement("div", { className: "curator-score-row-head" }, React.createElement("span", null, component.label), React.createElement("span", { className: `curator-score-value curator-score-${component.direction || "neutral"}` }, component.scale === "0..1" ? `${Math.round(clamp01(component.value) * 100)}%` : formatSigned(component.value))), component.available === false ? React.createElement("small", null, "No evidence in the current model") : scoreBar(component.value, component.scale !== "0..1"))));
   }
 
-  function ExplanationView({ explanation, item }) {
+  function negativeNeighbors(item) {
+    const component = item?.components?.content_neighbor;
+    if (!(component?.value < 0) || !Number.isFinite(component.training_outcome_mean)) return [];
+    return [...(item.neighbors || [])].filter((neighbor) => neighbor.weight > 0 && neighbor.outcome < component.training_outcome_mean)
+      .sort((a, b) => b.weight * (component.training_outcome_mean - b.outcome) - a.weight * (component.training_outcome_mean - a.outcome)).slice(0, 2);
+  }
+
+  function cardReason(item, scene, evidenceScenes) {
+    const qualification = item?.qualification || {};
+    const unavailable = { summary: "The specific reason for this selection is unavailable.", details: [] };
+    const name = (value) => typeof value === "string" ? value.trim() : "";
+    if (item?.source_lane === "best_bets") {
+      if (!qualification.unseen || !(qualification.corroborated || qualification.direct_reliable)) return unavailable;
+      const components = item.components || {};
+      const matches = [
+        ...(components.content?.value > 0 ? components.content.top || [] : []).map((feature) => ({ ...feature, name: feature.metadata?.tag_name || feature.name })),
+        ...(components.performer_identity?.value > 0 ? components.performer_identity.performers || [] : []).map((performer) => ({ ...performer, name: scene?.performers?.find((entry) => String(entry.id) === String(performer.performer_id))?.name })),
+        ...(components.studio?.value > 0 ? components.studio.studios || [] : []).map((studio) => ({ ...studio, name: String(scene?.studio?.id) === String(studio.studio_id) ? scene?.studio?.name : "" })),
+      ].filter((feature) => feature.value > 0 && name(feature.name)).sort((a, b) => b.value - a.value);
+      const names = [...new Set(matches.map((feature) => name(feature.name)))].slice(0, 2).map((value) => `“${value}”`).join(" and ");
+      return {
+        teaser: names ? `Matches your preference for ${names}.` : "Strong current fit backed by positive evidence.",
+        summary: names ? `Best bet because this unplayed scene matches positive preferences for ${names}.` : `Best bet because this unplayed scene has ${qualification.direct_reliable ? "reliable positive feedback" : "corroborating preference evidence"} and strong current fit.`,
+        details: [qualification.direct_reliable ? "Reliable positive feedback on this scene supports the selection." : "Similar-scene evidence is corroborated by content or performer evidence.", "The scene also meets the lane's current-fit, confidence, and metadata requirements."],
+      };
+    }
+    if (item?.source_lane === "revisit") {
+      if (!(qualification.direct_appeal > 0 && qualification.recovery > 0)) return unavailable;
+      return {
+        teaser: "Positive history, with time to enjoy it again.",
+        summary: "Revisit because you played this scene before, its recorded outcomes are positive overall, and its cooldown has eased.",
+        details: [`Recorded preference: ${qualification.direct_appeal.toFixed(2)} (−1 to +1).`, "The selection uses positive scene history and cooldown recovery, rather than just similarity to other scenes."],
+      };
+    }
+    if (item?.source_lane === "dormant") {
+      const entity = qualification.dormant_entity;
+      if (!name(entity?.name) || !Number.isFinite(qualification.days_since_played)) return unavailable;
+      return {
+        teaser: `Past preference for “${name(entity.name)}”; ${qualification.days_since_played} days since a play.`,
+        summary: `Dormant because you had positive history with ${entity.type || ""} “${name(entity.name)}”, but no recorded play involving it for ${qualification.days_since_played} days.`,
+        details: ["This is an unplayed scene connected to that past preference.", "The time away refers to the named performer, studio, or tag, not this scene."],
+      };
+    }
+    if (item?.source_lane === "stretch") {
+      const anchor = [...(qualification.anchor_features || [])].filter((feature) => name(feature.name)).sort((a, b) => b.value - a.value)[0];
+      const challenge = name(qualification.challenged_feature?.name);
+      const kind = qualification.challenge_kind || item.subtype;
+      if (!anchor || !challenge || !["untested", "tested_negative"].includes(kind)) return unavailable;
+      const boundary = kind === "untested"
+        ? `the model has too little evidence about “${challenge}”`
+        : `the model estimates a negative preference for “${challenge}”`;
+      return {
+        teaser: `Familiar “${name(anchor.name)}”, with ${kind === "untested" ? "less-tested" : "lower estimated preference for"} “${challenge}”.`,
+        summary: `Stretch because “${name(anchor.name)}” is a familiar positive, while ${boundary}.`,
+        details: [`Familiar anchor: ${name(anchor.name)}.`, `Selected challenge: ${challenge}. ${kind === "untested" ? "Insufficient evidence does not mean dislike." : "This is a model estimate, not necessarily an explicit dislike."}`],
+      };
+    }
+    if (item?.source_lane === "blind_spots") {
+      const facets = [...(qualification.dark_facets || [])].filter((facet) => name(facet.name)).sort((a, b) => b.darkness - a.darkness);
+      const selected = [facets.find((facet) => facet.facet_type === "studio"), facets.find((facet) => facet.facet_type === "tag")];
+      if (selected.some((facet) => !facet)) return unavailable;
+      return {
+        teaser: `Underexplored studio “${name(selected[0].name)}” and tag “${name(selected[1].name)}”.`,
+        summary: `Blind spot because studio “${name(selected[0].name)}” and tag “${name(selected[1].name)}” are underexplored relative to the rest of your library.`,
+        details: ["This scene had no recorded play when selected.", ...selected.map((facet) => `${facet.facet_type === "studio" ? "Studio" : "Tag"} “${name(facet.name)}”: ${Number.isInteger(facet.played_count) && Number.isInteger(facet.library_count) ? `${facet.played_count} of ${facet.library_count} scenes played` : "play counts unavailable"}.`), "Counts reflect the model's recorded viewing history; underexplored does not mean disliked."],
+      };
+    }
+    if (item?.source_lane !== "score_review" || !(item.appeal < 0)) return null;
+    const components = item.components || {};
+    const directConfidence = Number(components.direct?.confidence || 0);
+    const phrases = [];
+    const subjects = [];
+    const details = [];
+    const quotedNames = (rows, resolve) => [...new Set([...rows].filter((row) => row.value < 0).sort((a, b) => a.value - b.value).map(resolve).map(name).filter(Boolean))].slice(0, 2).map((value) => `“${value}”`).join(" and ");
+    for (const key of ["direct", "content", "structure", "performer_identity", "performer_similarity", "studio", "content_neighbor", "baseline"]) {
+      if (!(components[key]?.value < 0) || (key === "direct" ? directConfidence <= 0 : directConfidence >= 1)) continue;
+      const component = components[key];
+      if (key === "content" || key === "structure") {
+        const names = quotedNames(component.top || [], (feature) => feature.metadata?.tag_name || feature.name);
+        if (names) subjects.push(names);
+        phrases.push(names ? `the model associates ${names} with lower appeal` : `the ${key} estimate is negative, but its specific features are unavailable`);
+      } else if (key === "performer_identity" || key === "performer_similarity") {
+        const names = quotedNames(component.performers || [], (performer) => scene?.performers?.find((entry) => String(entry.id) === String(performer.performer_id))?.name);
+        if (names) subjects.push(`${key === "performer_similarity" ? "profiles similar to" : "performer"} ${names}`);
+        phrases.push(names
+          ? key === "performer_identity" ? `its learned preference for performer ${names} is negative` : `evidence from profiles similar to performer ${names} lowers the estimate`
+          : "the performer estimate is negative, but the contributing names are unavailable");
+      } else if (key === "studio") {
+        const names = quotedNames(component.studios || [], (studio) => String(scene?.studio?.id) === String(studio.studio_id) ? scene?.studio?.name : "");
+        if (names) subjects.push(`studio ${names}`);
+        phrases.push(names ? `its learned preference for studio ${names} is negative` : "the studio estimate is negative, but the studio name is unavailable");
+      } else if (key === "content_neighbor") {
+        const neighbors = negativeNeighbors(item);
+        const titles = neighbors.map((neighbor) => name(evidenceScenes?.get(String(neighbor.scene_id))?.title)).filter(Boolean).map((title) => `“${title}”`).join(" and ");
+        if (titles) subjects.push(`similar scenes ${titles}`);
+        phrases.push(titles ? `similar scenes such as ${titles} had outcomes below your library average` : "similar scenes had outcomes below your library average (titles unavailable)");
+        for (const neighbor of neighbors) {
+          const title = name(evidenceScenes?.get(String(neighbor.scene_id))?.title);
+          if (title) details.push(`“${title}”: recorded outcome ${Number(neighbor.outcome).toFixed(2)}, compared with library average ${component.training_outcome_mean.toFixed(2)} (−1 to +1).`);
+        }
+      } else if (key === "direct") {
+        subjects.push("this scene's recorded outcomes");
+        phrases.push("this scene's recorded ratings and viewing feedback combine to a negative outcome");
+      } else {
+        subjects.push("the learned library baseline");
+        phrases.push("your recorded library outcomes give the model a negative starting estimate");
+      }
+    }
+    if (!phrases.length) return { summary: "Negative estimate; the specific supporting evidence is unavailable.", details: [] };
+    return {
+      teaser: subjects.length ? `Lower estimated appeal from ${subjects.slice(0, 2).join(" and ")}.` : "Negative estimate; contributing names unavailable.",
+      summary: `Negative because ${phrases.slice(0, 2).join("; ")}.${phrases.length > 2 ? " More evidence under “Why this?”." : ""}`,
+      details: [...phrases.slice(2).map((phrase) => `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}.`), ...details, "These are model estimates, not necessarily explicit dislikes. Positive evidence can offset these signals; cooldown and Not now do not affect Appeal."],
+    };
+  }
+
+  function ExplanationView({ explanation, item, scene, evidenceScenes }) {
     if (!explanation) return null;
     const rows = explanation.evidence_rows?.length
       ? explanation.evidence_rows
       : (explanation.supporting_reasons || []).map((reason) => ({ ...reason, label: reasonLabel(reason.code) }));
     const lane = explanation.lane_context;
+    const selection = cardReason(item, scene, evidenceScenes);
     return React.createElement(
       "div",
       { className: "curator-explanation-view" },
+      selection && React.createElement("div", { className: "curator-lane-callout card-section" }, React.createElement("strong", null, selection.summary), selection.details.length > 0 && React.createElement("ul", null, selection.details.map((detail) => React.createElement("li", { key: detail }, detail)))),
       explanation.summary && React.createElement("p", { className: "curator-explanation" }, explanation.summary),
       React.createElement(EvidenceFingerprint, { fingerprint: explanation.evidence_fingerprint }),
       rows.length > 0 && React.createElement(
@@ -937,7 +1048,7 @@
         React.createElement("strong", null, "Evidence"),
         React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement("div", { key: `${row.code}-${index}`, className: `curator-evidence-row curator-evidence-${row.direction || "context"}` }, React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"), React.createElement("strong", null, row.label || reasonLabel(row.code)), row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`))))
       ),
-      lane?.available && lane.source_lane && React.createElement("p", { className: "curator-lane-callout" }, `Selected for ${lane.source_lane.replaceAll("_", " ")} as ${lane.subtype || "a qualified match"}.`),
+      !selection && lane?.available && lane.source_lane && React.createElement("p", { className: "curator-lane-callout" }, `Selected for ${lane.source_lane.replaceAll("_", " ")} as ${lane.subtype || "a qualified match"}.`),
       // Issue #216: never render the Technical details disclosure empty —
       // ScoreBreakdown has rows only when the explanation carries components
       // or an item fallback exists.
@@ -2404,7 +2515,7 @@
     }, [data, page]);
     const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
     const scenesQuery = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
       skip: ids.length === 0,
     });
     const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
@@ -2490,7 +2601,7 @@
     }));
     return React.createElement(PreviewWall, { entries });
   }
-  function RecommendationCard({ item, scene, slate, onRemove, onThumbDown }) {
+  function RecommendationCard({ item, scene, slate, onRemove, onThumbDown, evidenceScenes }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
     const [explanation, setExplanation] = React.useState(
@@ -2563,6 +2674,7 @@
     // not a real recommendation source) — it was never given a label,
     const laneLabel = item.source_lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.source_lane)?.label || item.source_lane);
     const hasLaneRank = item.source_lane !== "score_review";
+    const selection = cardReason(item, scene, evidenceScenes);
     return React.createElement(
       "article",
       { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
@@ -2579,6 +2691,7 @@
       React.createElement(
         "div",
         { className: "curator-card-body" },
+        selection && React.createElement("p", { className: "curator-selection-reason card-section" }, selection.teaser || selection.summary),
         scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }),
         React.createElement(
           "div",
@@ -2590,7 +2703,7 @@
               null,
               explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
               explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
-              explanation && React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: explanation.lane_context || { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype } }, item })
+              explanation && React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
             ),
             scoreHeadline: "Appeal",
             scoreHeadlineValue: formatAppealValue(item.appeal),
@@ -2677,7 +2790,7 @@
     }, [data, page]);
     const ids = [...new Set(data?.items.map((item) => item.scene_id) || [])];
     const scenesQuery = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
       skip: ids.length === 0,
     });
     const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
@@ -2958,7 +3071,7 @@
       : externalItems;
     const ids = source === "library" ? items.map((item) => item.entity_id) : [];
     const similarScenes = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
       skip: entityType !== "scene" || ids.length === 0,
     });
     const similarPerformers = GQL.useFindPerformersQuery({
@@ -3241,7 +3354,7 @@
     }, [data, page]);
     const ids = data?.items.map((item) => item.scene_id) || [];
     const scenesQuery = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
       skip: ids.length === 0,
     });
     const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
@@ -4493,9 +4606,9 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, page]);
-    const ids = data?.items.map((item) => item.scene_id) || [];
+    const ids = [...new Set((data?.items || []).flatMap((item) => [String(item.scene_id), ...negativeNeighbors(item).map((neighbor) => String(neighbor.scene_id))]))];
     const scenesQuery = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_filter: idFilter(ids) },
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
       skip: ids.length === 0,
     });
     const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
@@ -4527,7 +4640,7 @@
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes below the current appeal threshold."),
       data && !loading && (wall
         ? React.createElement(RecommendationWall, { visibleItems, scenes, lane: "score_review" })
-        : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp })))
+        : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), evidenceScenes: scenes, slate, onRemove: remove, onThumbDown: showFollowUp })))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Sentiment review pages" })
     );
@@ -5048,7 +5161,7 @@
     const scenesQuery = GQL.useFindScenesQuery({
       variables: {
         filter: { per_page: Math.max(1, ids.length) },
-        scene_filter: idFilter(ids),
+        scene_ids: ids.map(Number),
       },
       skip: ids.length === 0,
     });
