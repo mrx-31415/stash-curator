@@ -5,9 +5,9 @@ permalink: /architecture/
 
 # Architecture
 
-Curator is a self-contained external raw plugin with no runtime dependencies
-beyond the compiled Go core (`curator-core`) that ships in the plugin zip;
-there is no runtime install task, virtual environment, or Python backend.
+Curator is an external raw plugin requiring a `python` executable to run its launcher.
+The compiled Go core (`curator-core`) ships in the plugin zip;
+there is no dependency install task, virtual environment, or Python backend.
 Stash loads `plugin/launcher.py`, which execs the per-arch `curator-core`
 binary; the browser UI is one JavaScript file and one CSS file. `backend.py`
 and the `curator` Python package remain in the repository only as the
@@ -46,7 +46,9 @@ source cache ──► normalized events                  StashDB
 - `curator/` and `backend.py` remain development/test oracles; they are not shipped as
   a production backend. The explanation realization catalog is the sole runtime resource
   retained from `curator/`.
-- `curator/storage/sql/` contains ordered, checksummed, transactional migrations.
+- `core/migrations/` contains the ordered, checksummed, transactional migrations
+  embedded in the production binary; `curator/storage/sql/` mirrors them for the
+  Python oracle.
 
 ## Data flow and failure boundaries
 
@@ -64,7 +66,7 @@ lightweight play-only sync keeps cooldown and recovery context current between f
 Stash entity hooks (scene, performer, studio, and tag create/update/destroy) record each
 changed entity in a pending queue, and the preference-rebuild task drains that queue
 (fetching the entity by id or removing it on destroy) before rebuilding, so the model
-always sees fresh source data while bulk edits pay no inline fetch cost. The persistent
+always sees fresh source data while bulk edits pay no inline fetch cost. When enabled, the persistent
 worker applies automatic model updates and recent-play syncs without an open browser tab.
 It also maintains scheduled-task records for optional Expand refresh, sync/build, and backups.
 

@@ -28,11 +28,18 @@ Curator ships compiled core binaries for supported platforms. StashDB is optiona
 1. In Stash, open **Settings → Plugins → Available Plugins** and add
    `https://mrx-31415.github.io/stash-curator/index.yml` as a plugin source.
 2. Install **Stash Curator** and reload plugins.
-3. Open the compass in Stash's navigation and select **Sync library** to build
-   your first recommendation model.
+3. Open the compass in Stash's navigation and select **Sync and build recommendations**
+   in the setup checklist to build your first model. You can also start it from
+   **Manage → Tasks**.
 
-The first build can take several minutes on a large library. See
-[Getting started](docs/getting-started.md) for setup, updates, and backups.
+The first build can take several minutes on a large library. If you use Docker,
+Python and Curator's data paths must be available inside the Stash container. See
+[Getting started](docs/getting-started.md) for supported platforms, storage setup,
+and troubleshooting.
+
+Once the model is ready, start with **Recommendations → For You**. Open **Why this?**
+to inspect a suggestion, and use thumbs up/down or **Curate → Pair picks** to teach
+Curator your preferences. Feedback affects rankings after a model update.
 
 ## Explore Curator
 

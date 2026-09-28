@@ -5,6 +5,10 @@ permalink: /using-curator/
 
 # Using Curator
 
+Start in **Recommendations** after the first sync and model build. Use **Find** for
+related or external scenes, **Curate** to teach your preferences, and **Manage** for
+history, Prune, tasks, backups, and settings.
+
 The screenshots show an isolated demo with fictional metadata and Blender film
 excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
 
@@ -18,7 +22,7 @@ excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
 | Lane | Best used for |
 | --- | --- |
 | **For You** | A varied everyday mix of dependable matches, revisits, and a little discovery |
-| **Best Bets** | Strong unseen matches with enough independent supporting evidence |
+| **Best Bets** | Strong unseen matches supported by corroborating signals or reliable direct feedback |
 | **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
 | **Stretch** | Mostly familiar recommendations, with one confirmed tag or studio named as the challenge |
 | **Blind Spots** | Studios or tags you've barely watched, corroborated by more than one signal |
@@ -29,8 +33,10 @@ softly varies studios and content, so the page is not merely the top 20 scores.
 Previous and Next continue through that same ranked sequence, preserving earlier
 variety decisions. Use the **Balanced** button beside a recommendation lane's
 description to switch between varied and score-first order. This also updates
-**Disable recommendation variety** in Curator's plugin settings. Both orders are
-published with the model, so later pages do not rerank the library.
+**Disable recommendation variety** in Curator's plugin settings. Paging uses the
+current model; new feedback, plays, filters, or a model update can change the results.
+Use the lane filters to narrow the selection. **Wall** switches to a compact grid of
+muted scene previews; switch back to the card grid for feedback and explanations.
 
 Use **Show me something else** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw
@@ -45,15 +51,21 @@ single refresh keeps the current cards in place.
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
 Appeal from Current Fit, shows confidence, and names positive or negative evidence.
-The structured evidence—not generated prose—is authoritative.
+The score tree shows the evidence behind the summary.
 
 Use thumbs up or down for direct feedback. The detail menu also supports **Not now**,
-**Never show**, **Review for pruning**, and **Metadata is wrong**. New feedback is
-queued durably in the browser during transient failures and applied in a batched
-model update. A later explicit action can reverse earlier feedback; one action may
-not change the next recommendation immediately.
+**Never show**, **Mark for pruning**, and **Metadata is wrong**. Check the card's
+confirmation or error after submitting feedback. Accepted feedback contributes to a
+batched model update, so one action may not change the next recommendation immediately.
+Use **Manage → Feedback history** to undo or replace a mistaken answer. **Not now**
+temporarily hides a scene without recording dislike; **Metadata is wrong** excludes
+its current metadata from training.
 
 To correct a tag belief directly, use [Curate → Tag sentiment](#tag-sentiment).
+
+The **Rate tags & terms** action on recommendation and Library Similar cards also
+lets you rate the scene's tags and description terms used by the model. The same
+sentiment controls, including **Never** and **Clear**, apply to both.
 
 After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
 with up to three relevant content tags. Answer only the tags that contributed to the
@@ -72,22 +84,24 @@ Curate brings together Pair picks, Tag sentiment, and Impact.
 </figure>
 
 Choosing between two scenes teaches shared preferences across their tags, performers,
-and studios.
+and studios. Pick **Left** or **Right**, choose **Equal**, or **Skip** if you have no
+opinion. The arrow keys do the same; **Back** or Backspace undoes the previous answer.
 
 ### Tag sentiment
 
 Review tag beliefs and answer with a fixed sentiment from strong dislike to strong like.
-A direct answer is strong evidence rather than a hard exclusion; **Neutral** is an
-explicit near-zero preference, while **Clear answer** returns the tag to behavior-derived
-inference. Answers are queued locally during transient failures. Direct answers affect
+A direct answer is strong evidence rather than a hard exclusion. The separate
+**Never** setting blocks matching content. **Neutral** is an explicit near-zero
+preference, while **Clear answer** removes your direct answer or block and returns
+the tag to behavior-derived inference. Answers are queued locally during transient failures. Direct answers affect
 tag fit but do not count as separate behavioral corroboration. Search includes classified
 local tags, including performer attributes and tags that currently appear on zero scenes,
 so preferences can be declared before that content enters the library.
 
 ### Impact
 
-Impact compares model builds so you can see what subsequent curation moved. Use
-**Manage** for operational and review surfaces such as tasks, backups, feedback history,
+Impact compares model builds so you can see how your feedback changed preferences
+and recommendations. Use **Manage** for tasks, backups, feedback history,
 diagnostics, and settings.
 
 ## Find
@@ -103,11 +117,16 @@ cache** task, then browse candidates, save filters, or shortlist leads. The refr
 retains eligible leads found through Similar and Performer Hunt, updates their scores
 after model changes, and drops scenes outside the recent-release horizon.
 
+Results come from a cached selection, not a search of the entire catalog. By default,
+each refresh fetches up to 1,000 candidates within a 90-day release window; you can
+adjust both in settings.
+
 External results are metadata leads, not proof that a scene is available locally.
 Filters and ordering apply before paging. If Whisparr is configured, **Send to
 Whisparr** appears on external scene cards; it sends only the scene you select. Use
-the tag action on an external scene to rate tags that map exactly to local tags; this
-does not create scene-level feedback for media outside the library.
+**Rate tags & terms** to rate tags that map exactly to local tags and description
+terms known to the model. This does not create scene-level feedback for media
+outside the library. Saved candidates appear in **Expand → Shortlist**.
 
 ### Similar
 
@@ -131,8 +150,9 @@ from one remote search and pages that stable result locally.
 
 ### Performer Hunt
 
-Performer Hunt queries StashDB directly for scenes listed for a selected local
-performer with a StashDB identity. It compares exact StashDB scene links and separates
+Performer Hunt searches both local performers with a StashDB identity and performers
+on StashDB. Select one to fetch their scene catalog directly from StashDB.
+It compares exact StashDB scene links and separates
 All, In library, and Not linked locally results; unlinked does not mean definitively
 missing because local scenes without StashDB identities cannot be matched. Queries
 follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
@@ -147,10 +167,10 @@ identity.
 
 ## Prune
 
-Prune groups explicit dislikes, suspected poor fits, and candidates surfaced during
-exploration. **Broad & unwatched** adds a fourth source: studios you own well over the
-Blind Spots breadth ceiling of and have almost never played — too broad to be a Blind
-Spots exploration card, but real and worth a look. Review each item before applying the
+Open **Manage → Prune** to review explicit dislikes, suspected poor fits, and
+candidates marked for pruning. **Broad & unwatched** surfaces scenes from studios
+that occupy a large part of your library but have barely been played. Use the
+aggressiveness slider to include less certain model suspects. Review each item before applying the
 configured tag. Applying or removing the tag changes Stash metadata only; it does not
 delete a file or rewrite your feedback. Curator never deletes media, and the tag can be
 removed from the same view or in Stash.
@@ -164,8 +184,8 @@ removed from the same view or in Stash.
 - Run the first sync/build before expecting recommendation lanes to contain results.
 - Plays recorded by Stash are imported automatically after Curator playback so cooldown and
   recovery stay current; the **Sync recent plays** task can also be run manually.
-- Scenes, performers, studios, and tags you create, edit, or delete in Stash are imported
-  immediately through entity hooks, so recommendations pick them up without a manual sync.
+- Changes to scenes, performers, studios, and tags in Stash are queued through entity
+  hooks and imported before the next model update. They do not appear immediately.
 - Back up before plugin updates and before uninstalling.
 - Treat Blind Spots and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.

@@ -16,10 +16,11 @@ wide: true
 
 <section class="install" id="install">
   <p class="eyebrow">Install</p>
-  <h2>One plugin source</h2>
+  <h2>Install and build your first recommendations</h2>
   <p>Requires Stash v0.31 and a <code>python</code> executable for the plugin launcher. Curator ships compiled core binaries for supported platforms; StashDB is optional. Add this URL under <strong>Settings → Plugins → Available Plugins</strong>:</p>
   <pre><code>https://mrx-31415.github.io/stash-curator/index.yml</code></pre>
-  <p>Install <strong>Stash Curator</strong>, reload plugins, open the compass, and run <strong>Sync library</strong> once to build the first model. <a href="{{ '/getting-started/' | relative_url }}">Read the setup guide →</a></p>
+  <p>Install <strong>Stash Curator</strong>, reload plugins, open the compass, and select <strong>Sync and build recommendations</strong> in the setup checklist or under <strong>Manage → Tasks</strong>. The first build can take several minutes. <a href="{{ '/getting-started/' | relative_url }}">Check prerequisites and follow the setup guide →</a></p>
+  <p>When it is ready, open <strong>Recommendations → For You</strong>. Try <strong>Why this?</strong> on a suggestion, then give a thumbs up/down or compare scenes in <strong>Curate → Pair picks</strong>. Feedback affects rankings after a model update.</p>
 </section>
 
 ## Curator in action
@@ -32,9 +33,9 @@ wide: true
 </section>
 
 <div class="grid">
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>For You, Best Bets, Revisit, Stretch, Blind Spots, and Dormant offer distinct ways to explore your library.</p></section>
+  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>Start with For You, find strong unwatched matches in Best Bets, or return to familiar scenes in Revisit. Stretch, Blind Spots, and Dormant help you explore more of your library.</p></section>
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#find">Find →</a></h3><p>Find opens on Expand, which ranks a refreshed pool of StashDB leads when connected. Similar finds related scenes in your library or on StashDB; Performer Hunt follows a performer’s catalog. External results are leads, not proof that a scene is available locally.</p></section>
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Pair picks teach shared preferences. Tag sentiment lets you correct a tag belief directly. Impact reports what the next model build changed, while Manage holds review and operational surfaces.</p></section>
+  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Choose between two scenes in Pair picks or rate tags in Tag sentiment to teach Curator what you like. After a model update, Impact shows which preferences and recommendations changed.</p></section>
 </div>
 
 ## Privacy and safety
@@ -47,8 +48,8 @@ an explicit, reversible Prune tag — Curator never deletes media. See [Privacy]
 
 Curator targets **Stash v0.31**. It remains preview software and
 pre-1.0. The first sync/model build can take several minutes on a large library. Its
-persistent worker can apply automatic model and recent-play updates; scheduled Expand
-refresh, sync/build, and backups are configurable. External discovery needs a configured
+persistent background tasks can keep recommendations up to date, and you can schedule
+library syncs and backups. External discovery needs a configured
 StashDB connection. Start with [Getting
 started]({{ '/getting-started/' | relative_url }}), then read [Using Curator]({{ '/using-curator/' | relative_url }}).
 

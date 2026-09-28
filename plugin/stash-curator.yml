@@ -28,7 +28,7 @@ settings:
     type: BOOLEAN
   databasePath:
     displayName: Sidecar database path
-    description: Leave empty to store data in the plugin's data directory.
+    description: Absolute database filename on writable, persistent local storage. Leave empty to use the plugin's data directory. Changing this path does not move existing data.
     type: STRING
   backupPath:
     displayName: Backup directory
@@ -164,7 +164,7 @@ tasks:
     execArgs:
       - full-sync-build
   - name: Rebuild recommendation model
-    description: Force a recommendation refresh from already-synced data without contacting Stash.
+    description: Rebuild from synced data without a library sync. Queued entity changes may still be fetched from Stash.
     execArgs:
       - build
   - name: Force rebuild recommendation model
@@ -184,7 +184,7 @@ tasks:
     execArgs:
       - prepare
   - name: Backup Curator data
-    description: Create a timestamped sidecar backup in the plugin data directory.
+    description: Create a timestamped sidecar backup in the configured Backup directory, or beside the sidecar database when unset.
     execArgs:
       - backup
   - name: Compact legacy Curator data

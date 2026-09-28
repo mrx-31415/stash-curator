@@ -60,13 +60,13 @@
       value: "curate",
       label: "Curate",
       icon: faBullseye,
-      description: "Teach the model: scene comparisons, direct tag sentiment, and what it all moved.",
+      description: "Compare scenes, rate tags, and see how your feedback changes recommendations.",
     },
     {
       value: "expand",
       label: "Expand",
       icon: faGlobe,
-      description: "External metadata candidates, scored locally.",
+      description: "Discover scenes and performers on StashDB, ranked using your preferences.",
     },
     {
       value: "similar",
@@ -92,7 +92,7 @@
       label: "Recently recommended",
       icon: faHistory,
       maintenance: true,
-      description: "Revisit qualified recommendations with the reasons recorded when each card appeared.",
+      description: "Revisit recommendations you viewed, with the reasons recorded at the time.",
     },
     {
       value: "sentiment",
@@ -151,7 +151,7 @@
     value: "recommendations",
     label: "Recommendations",
     icon: faStar,
-    description: "A balanced shelf of strong matches, timely revisits, and a little discovery, split into five lanes.",
+    description: "Strong matches, timely revisits, and discovery across six recommendation lanes.",
   };
   const MANAGE_NAV_ITEM = {
     value: "manage",
@@ -167,7 +167,7 @@
     value: "find",
     label: "Find",
     icon: faSearch,
-    description: "Find new content: similar scenes, external metadata candidates, and performer hunts.",
+    description: "Find similar scenes in your library, discover StashDB releases, and browse performer catalogs.",
   };
   const FIND_SECTIONS = NAV_ITEMS.filter(
     (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
@@ -1837,7 +1837,7 @@
         { className: "alert alert-info" },
         React.createElement("p", null, answered > 0
           ? `That is every comparison your library can offer right now — ${answered} answered this session.`
-          : "No candidate pairs above zero information yet. Rate a few scenes first, then come back."),
+          : "No useful comparisons are available yet. Rate a few scenes in Stash, sync your library, then try again."),
         React.createElement("p", null, "New scenes, and the next model build, open up more.")
       ),
       entry && React.createElement(PickStage, {
@@ -4360,8 +4360,8 @@
       idle: "Not synced",
     }[pillState];
     const healthTrigger = React.createElement(
-      "button",
-      { type: "button", className: "curator-health-pill", "aria-label": "Curator sync and task status" },
+      NavLink,
+      { className: "curator-health-pill", to: `${routeLocation.pathname}?view=manage&section=tasks`, title: "Open Tasks", "aria-label": `${pillLabel}. Open Tasks` },
       React.createElement("span", { className: `curator-health-pulse curator-health-pulse-${pillState}` }),
       React.createElement("span", { className: "curator-health-pill-label" }, pillLabel)
     );
@@ -4386,42 +4386,29 @@
           healthTrigger
         )
       : healthTrigger;
-    // Card size used to be a click-to-cycle icon button (3 fixed steps,
-    // faExpand icon) — feedback: the icon read as "fullscreen" rather than
-    // "resize cards", and cycling blind made it hard to tell how many
-    // distinct sizes even existed. A hover-revealed slider makes every
-    // size directly selectable and reachable in one drag instead of up to
-    // 2 extra clicks, and CARD_SIZE_MIN..MAX is a continuous range rather
-    // than 3 fixed stops.
-    const cardSizeTrigger = React.createElement(Button, { className: "curator-icon-button", size: "sm", title: `Card size (${cardSize}rem) — hover to adjust`, "aria-label": `Card size: ${cardSize}rem` }, React.createElement(FontAwesomeIcon, { icon: faThLarge }));
-    const cardSizeControl = !onChangeCardSize ? null : HoverPopover
-      ? React.createElement(
-          HoverPopover,
-          {
-            className: "curator-card-size-trigger",
-            enterDelay: 150,
-            leaveDelay: 250,
-            placement: "bottom",
-            content: React.createElement(
-              "div",
-              { className: "curator-card-size-panel" },
-              React.createElement("div", { className: "curator-card-size-head" }, React.createElement("label", { htmlFor: "curator-card-size-input" }, "Card size"), React.createElement("span", null, `${cardSize}rem`)),
-              React.createElement("input", {
-                id: "curator-card-size-input",
-                type: "range",
-                className: "curator-range",
-                min: CARD_SIZE_MIN,
-                max: CARD_SIZE_MAX,
-                step: 1,
-                value: cardSize,
-                "aria-label": "Card size",
-                onChange: (event) => onChangeCardSize(Number(event.target.value)),
-              })
-            ),
-          },
-          cardSizeTrigger
-        )
-      : cardSizeTrigger;
+    // Native disclosure works with keyboard/touch and on cold loads before
+    // Stash registers HoverPopover.
+    const cardSizeControl = onChangeCardSize && React.createElement(
+      "details",
+      { className: "curator-card-size-trigger" },
+      React.createElement("summary", { className: "curator-icon-button btn btn-sm", title: `Card size (${cardSize}rem)`, "aria-label": `Adjust card size: ${cardSize}rem` }, React.createElement(FontAwesomeIcon, { icon: faThLarge })),
+      React.createElement(
+        "div",
+        { className: "curator-card-size-panel" },
+        React.createElement("div", { className: "curator-card-size-head" }, React.createElement("label", { htmlFor: "curator-card-size-input" }, "Card size"), React.createElement("span", null, `${cardSize}rem`)),
+        React.createElement("input", {
+          id: "curator-card-size-input",
+          type: "range",
+          className: "curator-range",
+          min: CARD_SIZE_MIN,
+          max: CARD_SIZE_MAX,
+          step: 1,
+          value: cardSize,
+          "aria-label": "Card size",
+          onChange: (event) => onChangeCardSize(Number(event.target.value)),
+        })
+      )
+    );
     return React.createElement(
       React.Fragment,
       null,
@@ -4610,7 +4597,7 @@
     {
       title: "Storage",
       fields: [
-        { key: "databasePath", type: "STRING", label: "Sidecar database path", description: "Leave empty to store data in the plugin's data directory." },
+        { key: "databasePath", type: "STRING", label: "Sidecar database path", description: "Absolute database filename on writable, persistent local storage. Leave empty to use the plugin's data directory. Changing this path does not move existing data." },
         { key: "backupPath", type: "STRING", label: "Backup directory", description: "Leave empty to store Curator backups beside the sidecar database." },
       ],
     },
@@ -4648,7 +4635,7 @@
     if (field.type === "BOOLEAN") {
       control = React.createElement(
         "button",
-        { type: "button", role: "switch", "aria-checked": Boolean(value), className: `curator-switch${value ? " curator-switch-on" : ""}`, disabled: saving, onClick: () => onSave(!value), title: value ? "On" : "Off" },
+        { id: inputId, type: "button", role: "switch", "aria-checked": Boolean(value), className: `curator-switch${value ? " curator-switch-on" : ""}`, disabled: saving, onClick: () => onSave(!value), title: value ? "On" : "Off" },
         React.createElement("span", { className: "curator-switch-thumb", "aria-hidden": "true" }),
         React.createElement("span", { className: "curator-switch-text", "aria-hidden": "true" }, value ? "On" : "Off")
       );
