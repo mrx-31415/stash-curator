@@ -55,6 +55,24 @@ shown in **Why this?**.
 
 ## Why the explanation is trustworthy
 
+Recommendation cards show a short reason for their selection, including positive
+preference matches for Best Bets, prior outcomes and cooldown recovery for Revisit,
+and the named past preference and time away for Dormant. For You uses each card's
+source lane. The visible reason is capped at two lines; **Why this?** retains the
+full explanation.
+
+Stretch names a familiar anchor and its selected challenge, distinguishing too
+little evidence from a negative preference estimate. Blind Spots names the
+underexplored studio and tag, with play counts in the expanded explanation.
+These facts belong to the model that selected the card; missing evidence is
+reported as unavailable.
+
+Negative scenes in Sentiment review name contributing content features, performers,
+studios, and examples of similar scenes. Similar-scene outcomes are compared with
+the library average; below-average outcomes need not be negative. Cooldown and
+Not now affect Current Fit, so they are not reasons for negative sentiment.
+These explanations describe estimates, not necessarily explicit dislikes.
+
 Every explanation is planned from reason codes derived from published model evidence.
 Curator derives it when you expand **Why this?**, keeping the recommendation page
 fast. The plain-language summary names the strongest facts; the score tree exposes
