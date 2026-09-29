@@ -97,6 +97,11 @@ leads; Similar also works with scenes already in your library.
 
 ### Expand
 
+Scene cards in Find show a compact, two-line preview of the available match
+evidence, with full details under **Why this?**. Expand has pagination above and
+below its results; both controls preserve the current filters and sort order.
+On mobile, pagination uses compact first («), previous (‹), next (›), and last (») page buttons around the current page, all on one line.
+
 Expand ranks a refreshed pool of StashDB scene candidates and related performers
 against your local model. Refresh its cache from Curator or with the **Refresh Expand
 cache** task, then browse candidates, save filters, or shortlist leads. The refresh
