@@ -2328,6 +2328,27 @@
   padding: 0.35rem 0.15rem;
 }
 
+.curator-pager .curator-pager-mobile {
+  display: none;
+}
+
+@media (max-width: 575px) {
+  .curator-pager {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  .curator-pager .curator-pager-page,
+  .curator-pager .curator-pager-ellipsis,
+  .curator-pager .curator-pager-desktop {
+    display: none;
+  }
+
+  .curator-pager .curator-pager-mobile {
+    display: inline-block;
+  }
+}
+
 .curator-prune-toolbar {
   margin: 0.8rem 0;
 }

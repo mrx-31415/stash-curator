@@ -10,6 +10,45 @@ const context = {
 };
 vm.runInNewContext(source.slice(source.indexOf("  function negativeNeighbors("), source.indexOf("  function reasonLabel(")), context);
 const { cardReason, ExplanationView } = context;
+const { FindSceneReason } = context;
+assert.equal(FindSceneReason({ item: { payload: { why: ["Tag A", "Tag B"] } } }).children[0], "Matches your learned preferences for “Tag A” and “Tag B”.");
+assert.match(FindSceneReason({ item: { payload: { why: ["a performer you already enjoy"] } } }).children[0], /^Includes a performer with positive preference evidence/);
+assert.match(FindSceneReason({ item: { payload: { why: ["performer evidence reduced for the large compilation cast"] } } }).children[0], /^The large cast makes performer evidence less influential/);
+assert.equal(FindSceneReason({ item: { similarity: 0.8, payload: { why: ["Shares Tag A", "Same performer"] } } }).children[0], "Related to the source scene: Shares Tag A; Same performer.");
+assert.equal(FindSceneReason({ item: { explanation: { summary: "Same performer and shared content." } } }).children[0], "Same performer and shared content.");
+assert.equal(FindSceneReason({ item: { payload: { explanation: { summary: "Named shared tags." }, why: ["Fallback"] } } }).children[0], "Named shared tags.");
+assert.match(FindSceneReason({ item: { sources: ["wildcard"] } }).children[0], /Popularity wildcard/);
+assert.match(FindSceneReason({ item: {} }).children[0], /unavailable/);
+assert.match(FindSceneReason({ item: {} }).props.className, /card-section/);
+
+const expandSource = source.slice(source.indexOf("  function ExpandPanel("), source.indexOf("  function BackupPanel("));
+assert.equal(expandSource.match(/^      pager,?$/gm).length, 2);
+const pagerDefinition = expandSource.match(/^    const pager = (.*);$/m)[1];
+let nextState;
+Object.assign(context, { Pager() {}, page: 2, entityType: "scene", data: { ready: true, total: 60, page_size: 20, has_more: true }, loading: false, updateUrl: (change) => { nextState = change({ page: 2, sort: "newest" }); } });
+const pager = vm.runInNewContext(pagerDefinition, context);
+assert.equal(pager.props.page, 2);
+assert.equal(pager.props.total, 60);
+assert.equal(pager.props.label, "Expand pages");
+pager.props.onPage(3);
+assert.equal(nextState.page, 3);
+assert.equal(nextState.sort, "newest");
+context.Button = "button";
+vm.runInNewContext(source.slice(source.indexOf("  function pagerPages("), source.indexOf("  function readFilterPresets(")), context);
+for (const page of [1, 4, 10]) {
+  for (const loading of [false, true]) {
+    let destination;
+    const rendered = context.Pager({ page, total: 200, pageSize: 20, loading, onPage: (value) => { destination = value; } });
+    for (const [label, target, disabled] of [["First page", 1, page === 1], ["Last page", 10, page === 10]]) {
+      const button = rendered.children.find((child) => child?.props?.["aria-label"] === label);
+      assert.equal(button.props.disabled, loading || disabled);
+      button.props.onClick();
+      assert.equal(destination, target);
+    }
+  }
+}
+assert.equal(context.Pager({ page: 1, total: 0, pageSize: 20 }), null);
+assert.ok(!context.Pager({ page: 2, hasMore: true }).children.some((child) => child?.props?.["aria-label"] === "Last page"));
 const stretch = {
   lane: "for_you", source_lane: "stretch", subtype: "untested",
   qualification: {

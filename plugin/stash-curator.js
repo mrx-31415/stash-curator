@@ -613,12 +613,14 @@
     return React.createElement(
       "nav",
       { className: "curator-pager", "aria-label": label },
-      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page" }, "Previous"),
+      React.createElement(Button, { className: "curator-pager-mobile", size: "sm", variant: "secondary", disabled: loading || page === 1, onClick: () => onPage(1), "aria-label": "First page", title: "First page" }, "«"),
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page === 1, onClick: () => onPage(page - 1), "aria-label": "Previous page", title: "Previous page" }, React.createElement("span", { className: "curator-pager-desktop" }, "Previous"), React.createElement("span", { className: "curator-pager-mobile", "aria-hidden": "true" }, "‹")),
       pagerPages(page, totalPages).map((value, index) => value === null
         ? React.createElement("span", { key: `ellipsis-${index}`, className: "curator-pager-ellipsis", "aria-hidden": "true" }, "…")
-        : React.createElement(Button, { key: value, size: "sm", variant: value === page ? "primary" : "secondary", disabled: loading || value === page, onClick: () => onPage(value), "aria-label": `Page ${value}`, "aria-current": value === page ? "page" : undefined }, value)),
+        : React.createElement(Button, { key: value, className: "curator-pager-page", size: "sm", variant: value === page ? "primary" : "secondary", disabled: loading || value === page, onClick: () => onPage(value), "aria-label": `Page ${value}`, "aria-current": value === page ? "page" : undefined }, value)),
       React.createElement("span", { className: "curator-pager-summary" }, `Page ${page} of ${totalPages}`),
-      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page" }, "Next")
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || page >= totalPages, onClick: () => onPage(page + 1), "aria-label": "Next page", title: "Next page" }, React.createElement("span", { className: "curator-pager-desktop" }, "Next"), React.createElement("span", { className: "curator-pager-mobile", "aria-hidden": "true" }, "›")),
+      total !== undefined && React.createElement(Button, { className: "curator-pager-mobile", size: "sm", variant: "secondary", disabled: loading || page >= totalPages, onClick: () => onPage(totalPages), "aria-label": "Last page", title: "Last page" }, "»")
     );
   }
 
@@ -1027,6 +1029,27 @@
       summary: `Negative because ${phrases.slice(0, 2).join("; ")}.${phrases.length > 2 ? " More evidence under “Why this?”." : ""}`,
       details: [...phrases.slice(2).map((phrase) => `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}.`), ...details, "These are model estimates, not necessarily explicit dislikes. Positive evidence can offset these signals; cooldown and Not now do not affect Appeal."],
     };
+  }
+
+  function findSceneSummary(item) {
+    const payload = item.payload || {};
+    const summary = payload.explanation?.summary || item.explanation?.summary;
+    if (summary) return summary;
+    const reasons = (payload.why || []).filter((value) => typeof value === "string" && value.trim());
+    if (reasons.length && item.similarity !== undefined) return `Related to the source scene: ${reasons.join("; ")}.`;
+    const signals = {
+      "a performer you already enjoy": "Includes a performer with positive preference evidence.",
+      "a performer close to your preferences": "Includes a performer whose profile matches your learned preferences.",
+      "performer evidence reduced for the large compilation cast": "The large cast makes performer evidence less influential.",
+    };
+    const features = reasons.filter((reason) => !Object.hasOwn(signals, reason)).map((value) => `“${value}”`);
+    const names = features.length > 1 ? `${features.slice(0, -1).join(", ")} and ${features.at(-1)}` : features[0];
+    return [names && `Matches your learned preferences for ${names}.`, ...reasons.filter((reason) => Object.hasOwn(signals, reason)).map((reason) => signals[reason])].filter(Boolean).join(" ")
+      || (item.sources?.includes("wildcard") ? "Popularity wildcard outside your usual preference matches." : "Specific match evidence is unavailable.");
+  }
+
+  function FindSceneReason({ item }) {
+    return React.createElement("p", { className: "curator-selection-reason card-section" }, findSceneSummary(item));
   }
 
   function ExplanationView({ explanation, item, scene, evidenceScenes }) {
@@ -2341,7 +2364,7 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : null, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : null, scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : null, evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : null, scoreBarContent: utilityBar(score), scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
+      React.createElement("div", { className: "curator-card-body" }, kind === "scene" && React.createElement(FindSceneReason, { item }), (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : null, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : null, scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : null, evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : null, scoreBarContent: utilityBar(score), scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
@@ -3288,7 +3311,7 @@
         items.map((item) => {
           const entity = entities.get(String(item.entity_id));
           if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
+          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(FindSceneReason, { item }), entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
           if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
           const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
           function rememberOrigin(event) {
@@ -3607,6 +3630,7 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
+    const pager = data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
@@ -3662,6 +3686,7 @@
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
       data && !data.ready && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
+      pager,
       data?.ready && React.createElement(
         "div",
         { className: "curator-grid curator-external-grid" },
@@ -3670,7 +3695,7 @@
           return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
         })
       ),
-      data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" })
+      pager
     );
   }
 
