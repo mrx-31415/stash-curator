@@ -73,7 +73,7 @@ TABS: list[tuple[str, list[str]]] = [
     # main route shows the ready recommendation UI, not the fresh-install state.
     ("", ["For You", "Best Bets", "Ready"]),
     ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
-    ("?view=expand", ["External metadata candidates", "Loading Expand cache"]),
+    ("?view=expand", ["Discover scenes and performers on StashDB", "Loading Expand cache"]),
     (
         "?view=curate&section=sentiment",
         [
