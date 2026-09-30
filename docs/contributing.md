@@ -11,8 +11,9 @@ understood, reviewed, and verified by a person responsible for the change.
 
 ## Set up and verify
 
-Requirements are Python 3.12+, [uv](https://docs.astral.sh/uv/), and Go for full
-verification or packaging.
+Requirements are Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js for browser
+code checks, and Go 1.26.5+ for full verification or packaging. Packaging also uses
+Zig; the build script downloads its pinned version if it is not already installed.
 
 ```bash
 uv sync --locked
@@ -35,7 +36,7 @@ use synthetic data and need no live Stash or StashDB access.
 | Area | Purpose |
 | --- | --- |
 | `core/` | Production Go core: Stash integration, SQLite, model, discovery, and tasks |
-| `curator/`, `backend.py` | Development and differential-test oracle; not production runtime |
+| `curator/`, `plugin/backend.py` | Development and differential-test oracle; not production runtime |
 | `curator/explanations/realizations.json` | Explanation catalog included with the plugin |
 | `plugin/` | Launcher, manifest, and browser UI |
 | `tests/` | Synthetic unit and integration coverage |

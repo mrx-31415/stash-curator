@@ -10,6 +10,21 @@ the scoring to use it, but every score and explanation can be inspected. Missing
 metadata is treated as unknown rather than negative, and an unplayed scene is never
 assumed to be disliked.
 
+## What teaches Curator
+
+Curator uses Stash ratings and viewing history, playback captured in the browser,
+scene feedback, pair picks, and direct tag or description-term preferences.
+Performer ratings and favorites, and studio favorites, provide additional hints.
+Tags, description terms, performers, and studios connect those signals to other
+scenes. Better metadata and a few deliberate answers give it more useful evidence;
+you do not need to rate the whole library.
+
+Pair picks express a relative preference between two scenes. Tag and term ratings
+express a preference for that feature. **Strong dislike** lowers preference;
+**Never** is a hard exclusion for matching content. **Clear answer** removes the
+direct preference or block. These are separate from **Never show**, which suppresses
+one scene.
+
 ## Understand the scores
 
 **Appeal** is the long-term estimate of how satisfying an item is likely to be. It
@@ -26,8 +41,8 @@ different lane than a high estimate backed by varied outcomes.
 
 ## Lane policy
 
-- **Best Bets** requires strong fit and enough independent supporting evidence, and excludes
-  anything with recorded viewing history.
+- **Best Bets** requires strong fit supported by corroborating signals or reliable
+  direct positive evidence, and excludes anything with recorded viewing history.
 - **Revisit** requires a prior strong positive and enough cooldown recovery.
 - **Stretch** keeps a familiar anchor while naming one confirmed tag or studio the
   model challenges — either a dimension it has learned to dislike, or one it has too
@@ -35,9 +50,9 @@ different lane than a high estimate backed by varied outcomes.
 - **Blind Spots** surfaces studios or confirmed tags you have barely played, gated
   on at least two independently corroborating facets so a single noisy field can't
   qualify a scene alone.
-- **Dormant** returns to a performer, studio, or confirmed tag you had a real
-  positive history with but haven't touched in a while, evaluated against the
-  current time rather than frozen at the last model build.
+- **Dormant** offers unseen scenes with a performer, studio, or confirmed tag you had
+  a real positive history with but haven't touched in a while. The model build checks
+  how long that preference has been dormant.
 - **For You** mixes those policies with conservative items early and only a small
   Blind Spots and Dormant share.
 
@@ -53,7 +68,10 @@ odds, while recent qualified views that did not lead to a play or thumbs-up lowe
 them temporarily. These presentation choices do not change Appeal or the evidence
 shown in **Why this?**.
 
-## Why the explanation is trustworthy
+**Balanced** uses the varied order; **Score-first** removes the variety adjustments.
+Filters narrow the qualifying candidates without teaching a preference.
+
+## How explanations work
 
 Recommendation cards show a short reason for their selection, including positive
 preference matches for Best Bets, prior outcomes and cooldown recovery for Revisit,
@@ -77,4 +95,5 @@ Every explanation is planned from reason codes derived from published model evid
 Curator derives it when you expand **Why this?**, keeping the recommendation page
 fast. The plain-language summary names the strongest facts; the score tree exposes
 the contributions, confidence, timing changes, exploration reason, and final lane.
-The wording may vary, but it cannot invent evidence that is not in the model.
+The summary describes evidence stored in the model. It explains an estimate of your
+preferences; use feedback to correct that estimate when a suggestion misses.

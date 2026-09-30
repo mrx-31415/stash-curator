@@ -851,6 +851,64 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
         assert f'key: "{key}", type: "{field_type}", label: "{label}"' in source
 
 
+def test_header_controls_work_without_hover_and_settings_switches_have_labels() -> None:
+    source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
+    controls = source.split("  function CuratorControls(", 1)[1].split(
+        "  function ScoreReviewPanel(", 1
+    )[0]
+    health = controls.split("const healthTrigger =", 1)[1].split("const healthControl =", 1)[0]
+    assert "NavLink" in health
+    assert "?view=manage&section=tasks" in health
+    size = controls.split("const cardSizeControl =", 1)[1].split("return React.createElement", 1)[0]
+    assert '"details"' in size and '"summary"' in size
+    assert 'type: "range"' in size
+    assert "HoverPopover" not in size
+    assert "onChangeCardSize(Number(event.target.value))" in size
+
+    # Render the actual shared settings control with a minimal React stub:
+    # each visible label must target its input, including boolean switches.
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the settings render check")
+    field_source = (
+        "function SettingsField("
+        + source.split("  function SettingsField(", 1)[1].split("  function SettingsPanel(", 1)[0]
+    )
+    subprocess.run(
+        [
+            node,
+            "-e",
+            """
+const assert = require("node:assert/strict");
+const React = {
+  createElement: (type, props, ...children) => ({ type, props, children }),
+  useState: (value) => [value, () => {}],
+  useEffect: () => {},
+};
+"""
+            + field_source
+            + """
+for (const type of ["BOOLEAN", "SELECT", "NUMBER", "STRING", "PASSWORD"]) {
+  let saved;
+  const field = { key: "example", label: "Example setting", type, options: [] };
+  const tree = SettingsField({ field, value: false, onSave: (v) => { saved = v; } });
+  const label = tree.children[0].children[0];
+  const input = tree.children[1];
+  assert.equal(input.props.id, label.props.htmlFor);
+  if (type === "BOOLEAN") {
+    assert.equal(input.props["aria-checked"], false);
+    input.props.onClick();
+    assert.equal(saved, true);
+  }
+}
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_settings_panel_mirrors_plugin_settings_schema() -> None:
     """The Manage → Settings panel and the plugin settings view cannot drift:
     every settings key in stash-curator.yml has a SETTINGS_FIELD_GROUPS entry
@@ -1092,7 +1150,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar scenes"' in source
-    assert "External metadata candidates, scored locally." in source
+    assert "Discover scenes and performers on StashDB, ranked using your preferences." in source
 
 
 def test_external_card_actions_are_a_named_shared_component() -> None:
