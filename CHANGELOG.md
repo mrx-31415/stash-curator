@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.27.0](https://github.com/mrx-31415/stash-curator/compare/v0.26.1...v0.27.0) (2026-09-30)
+
+
+### Features
+
+* explain Find scene matches and improve pagination ([#313](https://github.com/mrx-31415/stash-curator/issues/313)) ([c4b16f9](https://github.com/mrx-31415/stash-curator/commit/c4b16f96f1078a006d829c5875746396e967ed06))
+* explain recommendation and sentiment cards ([#312](https://github.com/mrx-31415/stash-curator/issues/312)) ([feb47a0](https://github.com/mrx-31415/stash-curator/commit/feb47a01e5ab05a39b2136740d68a5da48475b9a))
+
+
+### Bug Fixes
+
+* clarify setup guidance and improve accessible controls ([#311](https://github.com/mrx-31415/stash-curator/issues/311)) ([2f36bfb](https://github.com/mrx-31415/stash-curator/commit/2f36bfbf4ecbecfeefa8c58d16c2f6b4a927bab4))
+
+
+### Documentation
+
+* autoplay the landing tour with WebM fallback ([baa8f44](https://github.com/mrx-31415/stash-curator/commit/baa8f44167e27a1c66d5ca5783fdefeda0b5fe94))
+* lead with local recommendations ([85e38d6](https://github.com/mrx-31415/stash-curator/commit/85e38d63359eff54d7f34eeb4543f18563dade83))
+* make tour playable and update guide visuals ([#310](https://github.com/mrx-31415/stash-curator/issues/310)) ([ae6a184](https://github.com/mrx-31415/stash-curator/commit/ae6a1848356c1d0bb0718133dba0f4144d3cac6b))
+* refresh README and landing tour ([#308](https://github.com/mrx-31415/stash-curator/issues/308)) ([a1a313a](https://github.com/mrx-31415/stash-curator/commit/a1a313a6f2468ebb7074e5759b3536e0d4a08d0e))
+* show animated tour in README ([df814ba](https://github.com/mrx-31415/stash-curator/commit/df814ba52910393a1a5c0f508dcb838439771c4f))
+
 ## [0.26.1](https://github.com/mrx-31415/stash-curator/compare/v0.26.0...v0.26.1) (2026-09-24)
 
 
