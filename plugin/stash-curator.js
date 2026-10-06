@@ -624,9 +624,41 @@
     );
   }
 
-  function readFilterPresets() {
-    try { return JSON.parse(localStorage.getItem(FILTER_PRESETS_KEY) || "{}") || {}; }
-    catch (_) { return {}; }
+  let filterPresets = {};
+
+  function readFilterPresets() { return filterPresets; }
+
+  async function loadFilterPresets(stored) {
+    let legacy;
+    try { legacy = JSON.parse(localStorage.getItem(FILTER_PRESETS_KEY) || "null"); }
+    catch (_) { legacy = null; }
+    const merged = { ...stored };
+    if (legacy && typeof legacy === "object") {
+      for (const scope of ["recommendations", "similar", "expand", "hunt"]) {
+        if (!legacy[scope]?.presets) continue;
+        merged[scope] = {
+          ...legacy[scope], ...stored[scope],
+          presets: { ...legacy[scope].presets, ...stored[scope]?.presets },
+        };
+      }
+      const result = await operation({ operation: "update_config", values: { saved_filters: merged } });
+      filterPresets = result.config.saved_filters;
+      // Keep the browser copy until the database confirms the import.
+      try { localStorage.removeItem(FILTER_PRESETS_KEY); } catch (_) {}
+    } else {
+      filterPresets = merged;
+    }
+  }
+
+  async function saveFilterPreset(scope, name, current, makeDefault) {
+    // ponytail: simultaneous saves use the last write; use atomic preset updates if shared editing is needed.
+    const data = await operation({ operation: "get_config" });
+    const all = data.config.saved_filters || {};
+    const previous = all[scope] || {};
+    const next = { presets: { ...previous.presets, [name]: current }, default: makeDefault ? name : previous.default };
+    const result = await operation({ operation: "update_config", values: { saved_filters: { ...all, [scope]: next } } });
+    filterPresets = result.config.saved_filters;
+    return filterPresets[scope];
   }
 
   function defaultFilters(scope) {
@@ -2929,29 +2961,40 @@
     const [saved, setSaved] = React.useState(() => readFilterPresets()[scope] || {});
     const [name, setName] = React.useState("");
     const [makeDefault, setMakeDefault] = React.useState(false);
+    const [saving, setSaving] = React.useState(false);
+    const [error, setError] = React.useState("");
     const [switchId] = React.useState(() => `curator-default-switch-${uuid()}`);
-    function save() {
+    const fields = [...Object.keys(current).sort(), "id", "name"];
+    const selected = Object.keys(saved.presets || {}).find((key) => JSON.stringify(saved.presets[key], fields) === JSON.stringify(current, fields)) || "";
+    async function save() {
       const clean = name.trim();
-      if (!clean) return;
-      const all = readFilterPresets();
-      const next = { presets: { ...(all[scope]?.presets || {}), [clean]: current }, default: makeDefault ? clean : all[scope]?.default };
-      all[scope] = next;
-      localStorage.setItem(FILTER_PRESETS_KEY, JSON.stringify(all));
-      setSaved(next);
-      setName("");
+      if (!clean || saving) return;
+      setSaving(true);
+      setError("");
+      try {
+        setSaved(await saveFilterPreset(scope, clean, current, makeDefault));
+        setName("");
+      } catch (failure) { setError(failure.message); }
+      finally { setSaving(false); }
     }
     return React.createElement(
       "div",
       { className: "curator-saved-filters" },
-      React.createElement("select", { value: "", onChange: (event) => { const value = saved.presets?.[event.target.value]; if (value) onApply(value); }, "aria-label": "Load saved filter" }, React.createElement("option", { value: "" }, "Saved filters…"), Object.keys(saved.presets || {}).sort().map((value) => React.createElement("option", { key: value, value }, `${value}${saved.default === value ? " · default" : ""}`))),
-      React.createElement("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
-      React.createElement(
-        "div",
-        { className: "custom-control custom-switch curator-default-switch" },
-        React.createElement("input", { type: "checkbox", className: "custom-control-input", id: switchId, checked: makeDefault, onChange: (event) => setMakeDefault(event.target.checked) }),
-        React.createElement("label", { className: "custom-control-label", htmlFor: switchId }, "Default")
+      React.createElement("select", { value: selected, disabled: saving, onChange: (event) => { const value = saved.presets?.[event.target.value]; if (value) onApply(value); }, "aria-label": "Load saved filter" }, React.createElement("option", { value: "" }, "Current filters (unsaved)"), Object.keys(saved.presets || {}).sort().map((value) => React.createElement("option", { key: value, value }, `${value}${saved.default === value ? " · default" : ""}`))),
+      React.createElement("details", null,
+        React.createElement("summary", null, "Save current filters"),
+        React.createElement("div", { className: "curator-saved-filter-create" },
+          React.createElement("input", { value: name, disabled: saving, onChange: (event) => setName(event.target.value), placeholder: "Filter name", "aria-label": "Filter name" }),
+          React.createElement(
+            "div",
+            { className: "custom-control custom-switch curator-default-switch" },
+            React.createElement("input", { type: "checkbox", className: "custom-control-input", id: switchId, checked: makeDefault, disabled: saving, onChange: (event) => setMakeDefault(event.target.checked) }),
+            React.createElement("label", { className: "custom-control-label", htmlFor: switchId }, "Use by default")
+          ),
+          React.createElement(Button, { size: "sm", variant: "secondary", disabled: saving || !name.trim(), onClick: save }, saving ? "Saving…" : "Save filter"),
+          error && React.createElement("span", { role: "alert" }, error)
+        )
       ),
-      React.createElement(Button, { size: "sm", variant: "secondary", disabled: !name.trim(), onClick: save }, "Save")
     );
   }
 
@@ -5024,13 +5067,13 @@
     const [filterGender, setFilterGender] = React.useState(initialSlateFilters.gender || "");
     const slateFilters = { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender };
     const activeSlateFilterCount = filterIncludeTags.length + filterExcludeTags.length + filterPerformers.length + filterStudios.length + (filterGender ? 1 : 0);
-    function applySavedSlateFilters(value) {
+    function applySavedSlateFilters(value, resetPage = true) {
       setFilterIncludeTags(value.includeTags || []);
       setFilterExcludeTags(value.excludeTags || []);
       setFilterPerformers(value.performers || []);
       setFilterStudios(value.studios || []);
       setFilterGender(value.gender || "");
-      setPage(1);
+      if (resetPage) setPage(1);
     }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
@@ -5095,15 +5138,19 @@
     React.useEffect(() => {
       let active = true;
       operation({ operation: "get_config" }).then(
-        (data) => {
+        async (data) => {
           if (!active) return;
           if (cachedConfigUpdatedAtMs !== data.updated_at_ms) clearSlateCache();
+          try { await loadFilterPresets(data.config.saved_filters || {}); }
+          catch (failure) { if (active) setError(`Could not load saved filters: ${failure.message}`); return; }
+          if (!active) return;
+          applySavedSlateFilters(defaultFilters("recommendations"), false);
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setDiversityEnabled(Boolean(data.config.diversity_enabled));
           persistSlateCache();
           setConfigReady(true);
         },
-        () => active && setConfigReady(true)
+        (failure) => active && setError(`Could not load saved filters: ${failure.message}`)
       );
       return () => { active = false; };
     }, []);
@@ -5386,7 +5433,7 @@
           laneByValue.has(lane) && slate && React.createElement(Button, { className: "curator-rotate-button", size: "sm", variant: "secondary", disabled: loading || !slate.items.length, onClick: showSomethingElse, "aria-busy": rotatingLane === lane }, React.createElement(FontAwesomeIcon, { icon: faSync, className: rotatingLane === lane ? "curator-rotate-icon-spinning" : "curator-rotate-icon" }), " ", rotatingLane === lane ? "Finding new picks…" : "Show me something else"),
           laneByValue.has(lane) && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
           laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
-          laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
+          configReady && laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
       ),
       laneByValue.has(lane) && filtersOpen && React.createElement(FilterBar, {
@@ -5400,10 +5447,10 @@
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
+      configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
-      lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
-      lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
+      configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
+      configReady && lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.

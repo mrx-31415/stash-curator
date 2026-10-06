@@ -228,6 +228,29 @@ func sidecarConfig(db dbx) (jVal, error) {
 // validateConfig mirrors CuratorAPI._validate_config, including the exact
 // error messages the Python side raises.
 func validateConfig(values jVal) error {
+	if values.has("saved_filters") {
+		filters := values.get("saved_filters")
+		if filters.kind != jObj {
+			return fmt.Errorf("saved_filters must be an object")
+		}
+		for _, scope := range filters.obj {
+			if scope.key != "recommendations" && scope.key != "similar" && scope.key != "expand" && scope.key != "hunt" {
+				return fmt.Errorf("unknown saved filter scope")
+			}
+			presets, def := scope.val.get("presets"), scope.val.get("default")
+			if scope.val.kind != jObj || presets.kind != jObj {
+				return fmt.Errorf("saved filter scope needs a presets object")
+			}
+			for _, preset := range presets.obj {
+				if strings.TrimSpace(preset.key) == "" || preset.val.kind != jObj {
+					return fmt.Errorf("saved filters need a nonempty name and an object value")
+				}
+			}
+			if def.kind != jNull && (def.kind != jStr || !presets.has(def.s)) {
+				return fmt.Errorf("saved filter default must name an existing preset")
+			}
+		}
+	}
 	if v := values.get("diversity_enabled"); v.kind != jNull && v.kind != jBool {
 		return fmt.Errorf("diversity_enabled must be true or false")
 	}

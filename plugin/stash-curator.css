@@ -2561,12 +2561,21 @@
   padding: 0 0.25rem;
 }
 
-.curator-saved-filters {
+.curator-saved-filters,
+.curator-saved-filter-create {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   grid-column: 1 / -1;
+}
+
+.curator-saved-filter-create {
+  margin-top: 0.4rem;
+}
+
+.curator-saved-filters summary {
+  cursor: pointer;
 }
 
 .curator-saved-filters input:not([type="checkbox"]),

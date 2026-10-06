@@ -1332,6 +1332,7 @@ class CuratorAPI:
         self, values: dict[str, object], now_ms: int | None = None
     ) -> dict[str, object]:
         allowed = {
+            "saved_filters",
             "page_size",
             "diversity_enabled",
             "rotation_cooldown_days",
@@ -1378,6 +1379,24 @@ class CuratorAPI:
 
     @staticmethod
     def _validate_config(values: dict[str, object]) -> None:
+        if "saved_filters" in values:
+            filters = values["saved_filters"]
+            if not isinstance(filters, dict):
+                raise ValueError("saved_filters must be an object")
+            for scope, saved in filters.items():
+                if scope not in {"recommendations", "similar", "expand", "hunt"}:
+                    raise ValueError("unknown saved filter scope")
+                presets = saved.get("presets") if isinstance(saved, dict) else None
+                if not isinstance(presets, dict):
+                    raise ValueError("saved filter scope needs a presets object")
+                if any(
+                    not name.strip() or not isinstance(value, dict)
+                    for name, value in presets.items()
+                ):
+                    raise ValueError("saved filters need a nonempty name and an object value")
+                default = saved.get("default")
+                if default is not None and (not isinstance(default, str) or default not in presets):
+                    raise ValueError("saved filter default must name an existing preset")
         diversity = values.get("diversity_enabled")
         if diversity is not None and not isinstance(diversity, bool):
             raise ValueError("diversity_enabled must be true or false")
