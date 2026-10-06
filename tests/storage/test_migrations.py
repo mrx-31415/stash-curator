@@ -49,10 +49,11 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             35,
             36,
             37,
+            38,
         )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 37
+        assert after.current_version == 38
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -344,7 +345,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 37
+        assert MigrationRunner(reader).status().current_version == 38
     finally:
         writer.rollback()
         reader.close()
@@ -370,7 +371,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 37
+        assert second_runner.migrate(applied_at_ms=2).current_version == 38
     finally:
         second.close()
         first.close()

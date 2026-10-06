@@ -227,6 +227,118 @@ def _strip_key(value: object, key: str) -> None:
 # ── byte-identical Slice-1 ops on a builder-seeded sidecar ──────────────────
 
 
+@pytest.mark.parametrize(
+    "lane", ["for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant"]
+)
+def test_together_mode_all_lanes(
+    model_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path, lane: str
+) -> None:
+    path = tmp_path / model_sidecar.name
+    shutil.copy2(model_sidecar, path)
+    shutil.copytree(
+        model_sidecar.parent / f"{model_sidecar.stem}-derived",
+        path.parent / f"{path.stem}-derived",
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO source_tag(tag_id,name,source_hash) "
+            "VALUES ('together-parent','Parent','h')"
+        )
+        connection.execute("INSERT INTO tag_parent VALUES ('good','together-parent')")
+        config = json.loads(
+            connection.execute("SELECT config_json FROM curator_config").fetchone()[0]
+        )
+        config["moods"] = [
+            {
+                "id": "together",
+                "name": "Together",
+                "excluded_tags": [{"id": "together-parent", "name": "Parent"}],
+            }
+        ]
+        connection.execute("UPDATE curator_config SET config_json=?", (json.dumps(config),))
+    args = dict(lane=lane, count=500, impression_id="together-test")
+    off = json.loads(
+        run_backend(binary, PLUGIN_DIR, payload("get_slate", path, stub_stash, **args)).stdout
+    )["output"]
+    raw = payload("get_slate", path, stub_stash, together_mode=True, **args)
+    on = json.loads(run_backend(binary, PLUGIN_DIR, raw).stdout)["output"]
+    hidden = {"old-good", "recent-good", "unseen-good", "unlabeled"}
+    assert [item["scene_id"] for item in on["items"]] == [
+        item["scene_id"] for item in off["items"] if item["scene_id"] not in hidden
+    ]
+    assert on["total"] == len(on["items"])
+    paged = payload(
+        "get_slate",
+        path,
+        stub_stash,
+        lane=lane,
+        together_mode=True,
+        count=1,
+        page=2,
+        impression_id="together-page",
+    )
+    page = json.loads(run_backend(binary, PLUGIN_DIR, paged).stdout)["output"]
+    assert page["total"] == on["total"]
+    assert [item["scene_id"] for item in page["items"]] == [
+        item["scene_id"] for item in on["items"][1:2]
+    ]
+    assert_slice1_identical(
+        binary, PLUGIN_DIR, raw, same_path=path, timing_fields=("timings_ms", "ranking_timings_ms")
+    )
+    moods = [
+        {
+            "id": "together",
+            "name": "Together",
+            "excluded_tags": [{"id": "together-parent", "name": "Parent"}],
+        },
+        {
+            "id": "light",
+            "name": "Lighthearted",
+            "excluded_tags": [{"id": "unusual", "name": "Unusual"}],
+        },
+    ]
+
+    def save_moods() -> None:
+        update = payload("update_config", path, stub_stash, values={"moods": moods})
+        result = run_backend(binary, PLUGIN_DIR, update)
+        assert result.returncode == 0, result.stdout
+
+    save_moods()
+    named = payload("get_slate", path, stub_stash, mood_id="light", **args)
+    light = json.loads(run_backend(binary, PLUGIN_DIR, named).stdout)["output"]
+    assert light["mood_id"] == "light"
+    assert [item["scene_id"] for item in light["items"]] == [
+        item["scene_id"] for item in off["items"] if item["scene_id"] != "unusual"
+    ]
+    assert light["total"] == len(light["items"])
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        named,
+        same_path=path,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+    moods[1]["name"] = "Relaxed"
+    save_moods()
+    renamed = json.loads(run_backend(binary, PLUGIN_DIR, named).stdout)["output"]
+    assert renamed["mood_id"] == "light"
+    assert renamed["moods"][1]["name"] == "Relaxed"
+    moods.pop()
+    save_moods()
+    deleted = json.loads(run_backend(binary, PLUGIN_DIR, named).stdout)["output"]
+    assert deleted["mood_id"] == ""
+    assert [item["scene_id"] for item in deleted["items"]] == [
+        item["scene_id"] for item in off["items"]
+    ]
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        named,
+        same_path=path,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+
+
 def test_get_slate_byte_identical(model_sidecar: Path, binary: Path, stub_stash: str) -> None:
     raw = payload(
         "get_slate",

@@ -1238,6 +1238,8 @@ func optStrValue(value string, has bool) jVal {
 // allowedConfigKeys mirrors api.py's update_config allowed set.
 var allowedConfigKeys = map[string]bool{
 	"saved_filters":                          true,
+	"moods":                                  true,
+	"together_excluded_tags":                 true,
 	"page_size":                              true,
 	"diversity_enabled":                      true,
 	"rotation_cooldown_days":                 true,

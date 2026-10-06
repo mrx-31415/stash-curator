@@ -2493,6 +2493,82 @@
   position: relative;
 }
 
+.curator-settings-together {
+  margin-top: 0.8rem;
+}
+
+.curator-mood-menu { position: relative; }
+.curator-mood-menu summary { align-items: center; display: inline-flex; gap: 0.4rem; list-style: none; max-width: 14rem; white-space: nowrap; }
+.curator-mood-menu summary > span { overflow: hidden; text-overflow: ellipsis; }
+.curator-mood-menu summary::-webkit-details-marker { display: none; }
+.curator-mood-menu summary::after {
+  border-left: 0.25rem solid transparent;
+  border-right: 0.25rem solid transparent;
+  border-top: 0.3rem solid currentColor;
+  content: "";
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.curator-mood-menu summary[aria-disabled="true"] { cursor: default; opacity: 0.65; }
+.curator-mood-options {
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius-sm);
+  box-shadow: var(--curator-shadow-sm);
+  margin-top: 0.35rem;
+  max-height: 20rem;
+  max-width: calc(100vw - 2rem);
+  overflow-y: auto;
+  padding: 0.3rem;
+  position: absolute;
+  right: 0;
+  width: 16rem;
+  z-index: 30;
+}
+.curator-mood-options button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--curator-radius-sm);
+  color: var(--curator-text);
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  width: 100%;
+}
+.curator-mood-options button:hover,
+.curator-mood-options button:focus-visible,
+.curator-mood-option[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--curator-accent) 15%, var(--curator-surface-raised));
+}
+.curator-mood-check { color: var(--curator-accent); flex: 0 0 1rem; }
+.curator-mood-option > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.curator-mood-options .curator-mood-manage {
+  border-top: 1px solid var(--curator-border);
+  border-radius: 0;
+  margin-top: 0.3rem;
+}
+
+.curator-mood-create {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+
+.curator-mood-create input { min-width: 0; }
+.curator-mood-create button { flex-shrink: 0; }
+
+.curator-together-picker {
+  border: 0;
+  margin: 0.4rem 0;
+  max-width: 28rem;
+  min-width: 0;
+  padding: 0;
+}
+
 .curator-token-filter > span,
 .curator-match-filter > span {
   display: block;
@@ -3154,6 +3230,11 @@
 }
 
 @media (max-width: 36rem) {
+  .curator-mood-options {
+    left: 0;
+    right: auto;
+  }
+
   .curator-view-guidance {
     align-items: flex-start;
     flex-direction: column;

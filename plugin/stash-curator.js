@@ -624,6 +624,20 @@
     );
   }
 
+  function readMoodID() {
+    const cookie = document.cookie.split(";").map((value) => value.trim()).find((value) => value.startsWith("curator_mood="));
+    if (cookie !== undefined) {
+      try { return decodeURIComponent(cookie.slice("curator_mood=".length)); } catch (_) { return ""; }
+    }
+    return document.cookie.split(";").some((cookie) => cookie.trim() === "curator_together=1") ? "together" : "";
+  }
+
+  function readTogetherMode() { return Boolean(readMoodID()); }
+
+  function writeMoodID(id) {
+    document.cookie = `curator_mood=${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
+  }
+
   let filterPresets = {};
 
   function readFilterPresets() { return filterPresets; }
@@ -686,15 +700,18 @@
   // long they stay open to be worth a filter-aware cache key.
   function loadSlate(lane, page = 1, prefetched = false, filters = null) {
     rotateDay();
+    const togetherMode = readTogetherMode();
     const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.gender));
     const key = slateKey(lane, page);
-    if (!hasFilters) {
+    if (!hasFilters && !togetherMode) {
       if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
       if (slateRequests.has(key)) return slateRequests.get(key);
     }
     const generation = cacheGeneration;
     const args = {
       operation: "get_slate",
+      together_mode: togetherMode,
+      mood_id: readMoodID(),
       lane,
       page,
       exclude_scene_ids: [...(laneExclusions.get(lane) || [])],
@@ -729,14 +746,14 @@
         saveRotation();
         cachedModelId = data.model_id;
         cachedConfigUpdatedAtMs = data.config_updated_at_ms;
-        if (!hasFilters) {
+        if (!hasFilters && !togetherMode) {
           slateCache.set(slateKey(lane, page), data);
           persistSlateCache();
         }
         return data;
       })
       .finally(() => slateRequests.delete(key));
-    if (!hasFilters) slateRequests.set(key, request);
+    if (!hasFilters && !togetherMode) slateRequests.set(key, request);
     return request;
   }
 
@@ -2595,6 +2612,25 @@
     const map = { score_review: faBalanceScale, similar: faClone, prune: faBroom, curate: faBullseye, expand: faGlobe, hunt: faCrosshairs };
     return map[lane] || faCompass;
   }
+  function MoodMenu({ moods, moodID, disabled, onSelect, onManage }) {
+    const menu = React.useRef(null);
+    const active = moods.find((mood) => mood.id === moodID);
+    function close() {
+      if (menu.current) {
+        menu.current.open = false;
+        menu.current.querySelector("summary")?.focus();
+      }
+    }
+    function choose(id) { close(); onSelect(id); }
+    return React.createElement("details", { className: "curator-mood-menu", ref: menu, onBlur: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }, onKeyDown: (event) => { if (event.key === "Escape") { event.preventDefault(); close(); } } },
+      React.createElement("summary", { className: `btn btn-sm btn-${active ? "primary" : "secondary"}`, "aria-label": active ? `Active mood: ${active.name}` : "Choose a mood", "aria-disabled": disabled, title: active ? `Active mood: ${active.name}` : "Choose a mood", onClick: (event) => { if (disabled) event.preventDefault(); } }, React.createElement(FontAwesomeIcon, { icon: faHeart, "aria-hidden": "true" }), React.createElement("span", null, active ? active.name : "Moods")),
+      React.createElement("div", { className: "curator-mood-options" },
+        [{ id: "", name: "Off" }, ...moods].map((mood) => React.createElement("button", { key: mood.id, type: "button", disabled, className: "curator-mood-option", "aria-pressed": moodID === mood.id, title: mood.name, onClick: () => choose(mood.id) }, React.createElement("span", { className: "curator-mood-check", "aria-hidden": "true" }, moodID === mood.id ? "✓" : ""), React.createElement("span", null, mood.name))),
+        React.createElement("button", { type: "button", disabled, className: "curator-mood-manage", onClick: () => { close(); onManage(); } }, React.createElement(FontAwesomeIcon, { icon: faCog, "aria-hidden": "true" }), " Manage moods…")
+      )
+    );
+  }
+
   function PreviewWallToggle({ wall, onToggle }) {
     return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Wall");
   }
@@ -4867,13 +4903,17 @@
     );
   }
 
-  function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity }) {
+  function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved }) {
     const [config, setConfig] = React.useState(null);
     const [raw, setRaw] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState("");
     const [savingKeys, setSavingKeys] = React.useState(() => new Set());
     const [fieldErrors, setFieldErrors] = React.useState({});
+    const [editingMoodID, setEditingMoodID] = React.useState("");
+    const [newMoodName, setNewMoodName] = React.useState("");
+    const [togetherSaving, setTogetherSaving] = React.useState(false);
+    const togetherSaveInFlight = React.useRef(false);
     useCuratorActivity("settings", loading, "Loading settings…");
     React.useEffect(() => {
       let cancelled = false;
@@ -4887,6 +4927,25 @@
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }, []);
+    async function saveMoods(next) {
+      if (togetherSaveInFlight.current) return false;
+      togetherSaveInFlight.current = true;
+      setTogetherSaving(true);
+      setError("");
+      try {
+        const data = await operation({ operation: "update_config", values: { moods: next } });
+        clearSlateCache();
+        setConfig(data.config);
+        onMoodsSaved?.(data.config.moods);
+        return true;
+      } catch (failure) {
+        setError(failure.message);
+        return false;
+      } finally {
+        togetherSaveInFlight.current = false;
+        setTogetherSaving(false);
+      }
+    }
     async function saveField(field, value) {
       setSavingKeys((current) => new Set(current).add(field.key));
       setFieldErrors((current) => ({ ...current, [field.key]: "" }));
@@ -4910,15 +4969,21 @@
     }
     if (loading) return React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading settings…"));
     if (!config || !raw) return React.createElement("div", { className: "alert alert-danger" }, error || "Unable to load settings.");
+    const moods = config.moods || [];
+    const editingMood = moods.find((mood) => mood.id === editingMoodID) || moods[0];
+    async function addMood() {
+      const mood = { id: uuid(), name: newMoodName.trim(), excluded_tags: [] };
+      if (await saveMoods([...moods, mood])) { setEditingMoodID(mood.id); setNewMoodName(""); }
+    }
     return React.createElement(
       "section",
       { className: "curator-settings-panel" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      onToggleDiversity && diversityEnabled !== null && React.createElement(
+      React.createElement(
         "div",
         { className: "curator-settings-group" },
         React.createElement("h3", null, "Recommendations"),
-        React.createElement(
+        onToggleDiversity && diversityEnabled !== null && React.createElement(
           "div",
           { className: "curator-record-row curator-settings-field" },
           React.createElement(
@@ -4939,6 +5004,25 @@
             React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
             diversityEnabled ? " Balanced" : " Score-first"
           )
+        ),
+        React.createElement("div", { className: "curator-settings-together" },
+          React.createElement("span", { className: "curator-record-title" }, "Moods"),
+          React.createElement("p", { className: "curator-record-meta" }, "Each mood hides its excluded tags and their children. Changes save automatically."),
+          React.createElement("fieldset", { className: "curator-together-picker", disabled: togetherSaving, "aria-busy": togetherSaving },
+            React.createElement("div", { className: "curator-mood-create" },
+              React.createElement("input", { className: "form-control form-control-sm", "aria-label": "New mood name", placeholder: "New mood name…", maxLength: 80, value: newMoodName, onChange: (event) => setNewMoodName(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && newMoodName.trim()) { event.preventDefault(); addMood(); } } }),
+              React.createElement(Button, { size: "sm", disabled: !newMoodName.trim() || moods.length >= 50, onClick: addMood }, "Add mood")
+            ),
+            editingMood && React.createElement(React.Fragment, null,
+              React.createElement("select", { className: "form-control form-control-sm", "aria-label": "Mood to edit", value: editingMood.id, onChange: (event) => setEditingMoodID(event.target.value) }, moods.map((mood) => React.createElement("option", { key: mood.id, value: mood.id }, mood.name))),
+              React.createElement("div", { className: "curator-mood-create" },
+                React.createElement("input", { key: editingMood.id + editingMood.name, className: "form-control form-control-sm", "aria-label": "Mood name", maxLength: 80, defaultValue: editingMood.name, onBlur: async (event) => { const input = event.target; const name = input.value.trim(); if (name === editingMood.name) return; if (!name || !await saveMoods(moods.map((mood) => mood.id === editingMood.id ? { ...mood, name } : mood))) input.value = editingMood.name; }, onKeyDown: (event) => { if (event.key === "Enter") event.target.blur(); } }),
+                React.createElement(Button, { size: "sm", variant: "outline-danger", onClick: () => saveMoods(moods.filter((mood) => mood.id !== editingMood.id)) }, "Delete mood")
+              ),
+              React.createElement(FilterTokens, { kind: "tag", label: "Excluded tags", values: editingMood.excluded_tags, onChange: (tags) => saveMoods(moods.map((mood) => mood.id === editingMood.id ? { ...mood, excluded_tags: tags.map(({ id, name }) => ({ id: String(id), name })) } : mood)) })
+            )
+          ),
+          togetherSaving && React.createElement("span", { className: "curator-settings-saving", role: "status" }, "Saving…")
         )
       ),
       SETTINGS_FIELD_GROUPS.map((group) => React.createElement(
@@ -5021,14 +5105,14 @@
     );
   }
 
-  function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity }) {
+  function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved }) {
     const items = MAINTENANCE_ITEMS;
     const active = items.find((item) => item.value === section) || items[0];
     const body = MANAGE_BODIES[active.value];
     return React.createElement(
       SectionShell,
       { items, active, onSelect: onSelectSection, navLabel: "Manage sections" },
-      body && body({ diversityEnabled, diversitySaving, onToggleDiversity })
+      body && body({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved })
     );
   }
 
@@ -5072,6 +5156,25 @@
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
+    const [moods, setMoods] = React.useState([]);
+    const [moodID, setMoodID] = React.useState(readMoodID);
+    const togetherMode = Boolean(moodID);
+    function selectMood(next) {
+      writeMoodID(next);
+      clearSlateCache();
+      setMoodID(next);
+      setSlate(null);
+      setFollowUps([]);
+      setRotatingLane(null);
+      setLoading(true);
+      setPage(1);
+      setRefreshKey((value) => value + 1);
+    }
+    function applyMoods(next) {
+      setMoods(next);
+      const selected = readMoodID();
+      selectMood(next.some((mood) => mood.id === selected) ? selected : "");
+    }
     const initialSlateFilters = React.useMemo(() => defaultFilters("recommendations"), []);
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterIncludeTags, setFilterIncludeTags] = React.useState(initialSlateFilters.includeTags || []);
@@ -5161,6 +5264,7 @@
           applySavedSlateFilters(defaultFilters("recommendations"), false);
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setDiversityEnabled(Boolean(data.config.diversity_enabled));
+          applyMoods(data.config.moods || []);
           persistSlateCache();
           setConfigReady(true);
         },
@@ -5179,13 +5283,15 @@
         return () => { active = false; };
       }
       rotateDay();
-      const cached = activeSlateFilterCount === 0 ? slateCache.get(slateKey(lane, page)) : null;
+      const cached = activeSlateFilterCount === 0 && !togetherMode ? slateCache.get(slateKey(lane, page)) : null;
       if (rotatingLane !== lane) setSlate(cached || null);
       setLoading(!cached);
       setError("");
       loadSlate(lane, page, false, slateFilters).then(
         (data) => {
           if (!active) return;
+          if (data.mood_id !== undefined && data.mood_id !== moodID) { selectMood(data.mood_id); return; }
+          if (data.moods) setMoods(data.moods);
           setSlate(data);
           if (rotatingLane === lane) {
             setRotationMessage(data.items.length ? "Fresh set ready" : "No more scenes in this lane");
@@ -5204,7 +5310,7 @@
       return () => {
         active = false;
       };
-    }, [lane, page, refreshKey, configReady, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
+    }, [lane, page, refreshKey, configReady, moodID, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
     React.useEffect(() => {
       if (!laneByValue.has(lane)) return;
       let timer;
@@ -5429,6 +5535,7 @@
         React.createElement(
           "div",
           { className: "curator-view-actions" },
+          laneByValue.has(lane) && React.createElement(MoodMenu, { moods, moodID, disabled: !configReady, onSelect: selectMood, onManage: () => openManage("settings") }),
           laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
             Button,
             {
@@ -5468,7 +5575,7 @@
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
-      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity }),
+      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
@@ -5476,7 +5583,7 @@
         React.createElement(
           React.Fragment,
           null,
-          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Nothing qualifies for this lane right now."), React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
+          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
           wall
             ? React.createElement(RecommendationWall, { visibleItems, scenes, lane })
             : React.createElement(
