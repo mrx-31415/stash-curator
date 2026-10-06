@@ -792,6 +792,33 @@ class CuratorAPI:
             "items": items,
         }
 
+    def external_tag_search(self, query: str = "") -> dict[str, object]:
+        if not isinstance(query, str) or len(query.encode()) > 100:
+            raise ValueError("query must be a string up to 100 bytes")
+        ready = bool(
+            self.connection.execute(
+                """SELECT EXISTS(SELECT 1 FROM taxonomy_snapshot WHERE snapshot_id=
+            (SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'))"""
+            ).fetchone()[0]
+        )
+        text = query.strip()
+        rows = self.connection.execute(
+            """SELECT t.tag_id AS id, t.name FROM taxonomy_tag t
+            WHERE t.snapshot_id=(
+                SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id')
+              AND ?<>'' AND (instr(lower(t.name), lower(?))>0 OR EXISTS(
+                SELECT 1 FROM taxonomy_tag_alias a
+                WHERE a.snapshot_id=t.snapshot_id AND a.tag_id=t.tag_id
+                  AND instr(lower(a.alias), lower(?))>0))
+            ORDER BY lower(t.name)=lower(?) DESC, t.name COLLATE NOCASE, t.tag_id LIMIT 8""",
+            (text, text, text, text),
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "ready": ready,
+            "items": [dict(row) for row in rows],
+        }
+
     def external_tag_choices(self, tags: list[dict[str, Any]]) -> dict[str, object]:
         if len(tags) > 100:
             raise ValueError("at most 100 external tags are supported")

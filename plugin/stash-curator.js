@@ -2893,24 +2893,25 @@
   function FilterTokens({ kind, label, values, onChange, disabled = false, searchBoth = false }) {
     const [query, setQuery] = React.useState("");
     const [remoteResults, setRemoteResults] = React.useState([]);
+    const [remoteError, setRemoteError] = React.useState("");
     const variables = { filter: { q: query, per_page: 8 } };
     const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query || disabled });
     const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query || disabled });
     const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query || disabled });
-    // Issue #218: searchBoth also searches StashDB performers by name
-    // (debounced) so local completions render immediately and the remote
-    // results fill in as they arrive; the debounce keeps StashDB traffic off
-    // the per-keystroke path.
+    // Remote tag search reuses the cached StashDB catalog; performer search
+    // queries StashDB directly. Local completions render immediately.
     React.useEffect(() => {
-      if (kind !== "performer" || !searchBoth || !query || disabled) {
-        setRemoteResults([]);
+      setRemoteResults([]);
+      setRemoteError("");
+      if (!["performer", "tag"].includes(kind) || !searchBoth || !query || disabled) {
         return undefined;
       }
       let active = true;
       const timer = setTimeout(() => {
-        operation({ operation: "get_stashdb_performer_search", query, limit: 8 }).then(
-          (result) => { if (active) setRemoteResults(result.items || []); },
-          () => { if (active) setRemoteResults([]); }
+        const request = kind === "tag" ? { operation: "get_external_tag_search", query } : { operation: "get_stashdb_performer_search", query, limit: 8 };
+        operation(request).then(
+          (result) => { if (active) { setRemoteResults(result.items || []); setRemoteError(result.ready === false ? "Refresh Expand cache to load StashDB tags." : ""); } },
+          (failure) => { if (active && kind === "tag") setRemoteError(failure.message || "StashDB tag search unavailable."); }
         );
       }, 300);
       return () => { active = false; clearTimeout(timer); };
@@ -2937,7 +2938,16 @@
           })()
         : localPerformers
       : kind === "tag"
-        ? tags.data?.findTags?.tags || []
+        ? (() => {
+            const local = (tags.data?.findTags?.tags || []).map((item) => ({ ...item, source: "local" }));
+            const seen = new Set(local.map((item) => item.name.toLowerCase()));
+            return searchBoth ? [...local, ...remoteResults.filter((item) => {
+              const name = item.name.toLowerCase();
+              if (seen.has(name)) return false;
+              seen.add(name);
+              return true;
+            }).map((item) => ({ ...item, id: `stashdb:${item.id}`, source: "remote", external: true }))] : local;
+          })()
         : kind === "studio"
           ? studios.data?.findStudios?.studios || []
           : [];
@@ -2953,7 +2963,8 @@
       { className: "curator-token-filter" },
       React.createElement("span", null, label),
       React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && options.length > 0) { event.preventDefault(); add(options[0]); } }, placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
-      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, React.createElement("span", { className: "curator-token-option-name" }, optionText(item)), searchBoth && React.createElement("span", { className: "curator-token-source-badge" }, item.source === "remote" ? "StashDB" : "Library"))))
+      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, React.createElement("span", { className: "curator-token-option-name" }, optionText(item)), searchBoth && React.createElement("span", { className: "curator-token-source-badge" }, item.source === "remote" ? "StashDB" : "Library")))),
+      remoteError && React.createElement("span", { role: "status" }, remoteError)
     );
   }
 
@@ -3009,6 +3020,7 @@
   function FilterBar({
     variant,
     entityType,
+    source,
     includeTags, onIncludeTagsChange,
     excludeTags, onExcludeTagsChange,
     performers, onPerformersChange,
@@ -3021,6 +3033,7 @@
   }) {
     const sceneGated = variant !== "hunt";
     const showScene = !sceneGated || entityType === "scene";
+    const remoteTags = variant === "expand" || variant === "hunt" || (variant === "similar" && source === "stashdb");
     // Recommendations narrows a lane's already-classified local scenes: no
     // StashDB-only concept (hide-phash), similarity score (minimum match),
     // or the "boost favorited performers" ranking knob (favorite-only) — all
@@ -3036,8 +3049,8 @@
       React.createElement(
         "div",
         null,
-        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", values: includeTags, onChange: onIncludeTagsChange }),
-        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", values: excludeTags, onChange: onExcludeTagsChange }),
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", searchBoth: remoteTags, values: includeTags, onChange: onIncludeTagsChange }),
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", searchBoth: remoteTags, values: excludeTags, onChange: onExcludeTagsChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
         rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
@@ -3326,6 +3339,7 @@
       filtersOpen && React.createElement(FilterBar, {
         variant: "similar",
         entityType,
+        source,
         includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
         performers: filterPerformers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })),

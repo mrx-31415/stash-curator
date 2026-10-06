@@ -136,8 +136,12 @@ each refresh fetches up to 1,000 candidates within a 90-day release window; you 
 adjust both in settings.
 
 External results are metadata leads, not proof that a scene is available locally.
-Filters and ordering apply before paging. If Whisparr is configured, **Send to
-Whisparr** appears on external scene cards; it sends only the scene you select. Use
+Filters and ordering apply before paging. Include and exclude tag pickers search
+both local tags and the cached StashDB tag catalog in Expand, Performer Hunt, and
+StashDB Similar. StashDB-only tags do not need to exist in your library; names and
+aliases filter remote results. Refresh Expand's cache to update that catalog.
+If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
+it sends only the scene you select. Use
 **Rate tags & terms** to rate tags that map exactly to local tags and description
 terms known to the model. This does not create scene-level feedback for media
 outside the library. Saved candidates appear in **Expand → Shortlist**.

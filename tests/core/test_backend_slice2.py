@@ -757,6 +757,81 @@ def test_get_performer_hunt_unlinked_byte_identical(
     assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
 
 
+def test_remote_tag_search_and_exclusion(
+    expand_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    database = tmp_path / expand_sidecar.name
+    shutil.copy2(expand_sidecar, database)
+    shutil.copytree(
+        expand_sidecar.parent / f"{expand_sidecar.stem}-derived",
+        database.parent / f"{database.stem}-derived",
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO taxonomy_tag VALUES ('tax-slice2', 'remote-only', 'Remote Only', NULL)"
+        )
+        connection.executemany(
+            "INSERT INTO taxonomy_tag_alias VALUES ('tax-slice2', 'remote-only', ?)",
+            [("Absent Locally",), ("100% Remote",)],
+        )
+        connection.executemany(
+            "INSERT INTO taxonomy_tag VALUES ('tax-slice2', ?, ?, NULL)",
+            [(f"remote-{i}", f"Remote Only {i}") for i in range(10)],
+        )
+        row = connection.execute(
+            "SELECT payload_json FROM external_entity WHERE external_id='cand-1'"
+        ).fetchone()
+        scene = json.loads(row[0])
+        scene["tags"].append({"id": "remote-only", "name": "Remote Only"})
+        connection.execute(
+            "UPDATE external_entity SET payload_json=? WHERE external_id='cand-1'",
+            (json.dumps(scene),),
+        )
+        assert not connection.execute(
+            "SELECT 1 FROM source_tag WHERE name='Remote Only'"
+        ).fetchone()
+    for query, expected in [
+        ("  ABSENT LOCALLY  ", ["Remote Only"]),
+        ("%", ["Remote Only"]),
+        ("STRANGE", ["Unusual Scenario"]),
+        ("", []),
+        ("no such tag", []),
+    ]:
+        raw = payload("get_external_tag_search", database, stub_stash, query=query)
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, database, stub_stash)
+        result = run_backend_env(binary, PLUGIN_DIR, raw, stub_stash)
+        output = json.loads(result.stdout)["output"]
+        assert output["ready"] is True
+        assert [item["name"] for item in output["items"]] == expected
+    raw = payload("get_external_tag_search", database, stub_stash, query="Remote Only")
+    output = json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"]
+    assert len(output["items"]) == 8
+    assert output["items"][0] == {"id": "remote-only", "name": "Remote Only"}
+    for filters, expected in [
+        ({"exclude_tags": ["Absent Locally"]}, {"cand-2", "cand-3"}),
+        ({"include_tags": ["Remote Only"]}, {"cand-1"}),
+    ]:
+        raw = payload(
+            "get_expand", database, stub_stash, gender="", hide_phash_matches=False, **filters
+        )
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, database, stub_stash)
+        output = json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"]
+        assert {item["id"] for item in output["items"]} == expected
+    for query in [None, 7, "x" * 101]:
+        raw = payload("get_external_tag_search", database, stub_stash, query=query)
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, database, stub_stash)
+        assert run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).returncode != 0
+    with sqlite3.connect(database) as connection:
+        connection.execute("DELETE FROM application_meta WHERE key='taxonomy_snapshot_id'")
+    raw = payload("get_external_tag_search", database, stub_stash, query="Remote")
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, database, stub_stash)
+    assert json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"] == {
+        "schema_version": 2,
+        "ready": False,
+        "items": [],
+    }
+
+
 def test_get_stashdb_performer_search_byte_identical(
     expand_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
