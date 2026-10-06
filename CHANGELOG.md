@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.0](https://github.com/mrx-31415/stash-curator/compare/v0.27.0...v0.28.0) (2026-10-06)
+
+
+### Features
+
+* add named moods with recommendation tag exclusions ([#316](https://github.com/mrx-31415/stash-curator/issues/316)) ([c40a211](https://github.com/mrx-31415/stash-curator/commit/c40a211b65cc809672c2237fa747c5969e5ffc2c))
+* persist saved filters and search StashDB tags ([#314](https://github.com/mrx-31415/stash-curator/issues/314)) ([c2ba34a](https://github.com/mrx-31415/stash-curator/commit/c2ba34a6a3fd0d52f8e3543a261cbc8b03d7269a))
+
 ## [0.27.0](https://github.com/mrx-31415/stash-curator/compare/v0.26.1...v0.27.0) (2026-09-30)
 
 
