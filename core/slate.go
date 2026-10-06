@@ -108,7 +108,7 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	}
 	gender := argsString(args, "gender", "")
 	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration, drawSeed, drawAtMs,
-		includeTags, excludeTags, performerIDs, studioIDs, gender)
+		includeTags, excludeTags, performerIDs, studioIDs, gender, requestedMoodID(args))
 }
 
 // replaceItemBody mirrors backend.py's replace_item: get_slate(lane, 1,
@@ -136,7 +136,7 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	lane := argsString(args, "lane", "for_you")
 	exploration := argsFloat(args, "exploration", 0)
 	return getSlateCore(db, config, lane, 1, 1, jvNull(),
-		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, "", 0, nil, nil, nil, nil, "")
+		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, "", 0, nil, nil, nil, nil, "", requestedMoodID(args))
 }
 
 // getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter
@@ -145,7 +145,7 @@ func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
 // candidates; they don't change ranking. A filtered materialized request
 // scans candidate IDs for its exact total but hydrates only the requested
 // page; exploratory requests still recompute the full slate.
-func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, drawSeed string, drawAtMs int64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (jVal, error) {
+func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, drawSeed string, drawAtMs int64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string, moodID string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid recommendation page")
 	}
@@ -168,6 +168,15 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 	sceneFilter, err := buildSceneFilter(db, includeTags, excludeTags, performerIDs, studioIDs, gender)
 	if err != nil {
 		return jvNull(), err
+	}
+	tags, moodID := selectedMood(cfg, moodID)
+	if moodID != "" {
+		blocked, err := togetherBlockedScenes(db, tags)
+		if err != nil {
+			return jvNull(), err
+		}
+		previous := sceneFilter
+		sceneFilter = func(id string) bool { return !blocked[id] && (previous == nil || previous(id)) }
 	}
 	var total int64 = -1
 	if exploration == 0 {
@@ -256,6 +265,8 @@ WHERE state='running' AND job_type IN ('build', 'force-build', 'update-model', '
 	}
 	return jvObj(
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("mood_id", jvStr(moodID)),
+		jvKey("moods", cfg.get("moods")),
 		jvKey("model_id", jvStr(built.modelID)),
 		jvKey("config_updated_at_ms", jvInt(pythonInt(config.get("updated_at_ms")))),
 		jvKey("model_pending", jvBool(modelUpdate.pending())),

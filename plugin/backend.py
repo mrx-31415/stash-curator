@@ -704,6 +704,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
                 draw_seed=str(args.get("draw_seed") or ""),
+                together_mode=bool(args.get("together_mode")),
+                mood_id=str(args["mood_id"] or "") if "mood_id" in args else None,
                 draw_at_ms=int(args["draw_at_ms"]) if args.get("draw_at_ms") is not None else None,
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
@@ -731,6 +733,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("lane") or "for_you"),
                 1,
                 context={"replacement": True},
+                mood_id=str(args["mood_id"] or "") if "mood_id" in args else None,
+                together_mode=bool(args.get("together_mode")),
                 exclude_scene_ids={str(value) for value in excluded},
                 exploration=float(args.get("exploration") or 0),
             )

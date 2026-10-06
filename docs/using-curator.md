@@ -89,6 +89,18 @@ opinion. The arrow keys do the same; **Back** or Backspace undoes the previous a
 
 ### Tag sentiment
 
+**Moods** hide selected tags and their descendants from every recommendation
+lane without changing your learned taste. Create, rename, delete, and edit moods under
+**Manage → Settings → Recommendations → Moods**. Search and select excluded tags as
+in Performer Hunt; changes save automatically. Choose one mood or **Off** in the
+recommendation dropdown; **Manage moods…** opens these settings.
+The active mood defaults to Off and is remembered in a cookie in the current browser.
+Mood definitions are shared, and edits apply on each browser's next recommendation refresh.
+Deleting the active mood returns the browser to Off. Existing Mood mode exclusions
+become a mood called **Together**, preserving the browser's previous On/Off choice.
+Empty lanes keep the exclusions enforced. This filter applies to recommendations;
+Similar, discovery, and ordinary Stash browsing keep their existing behavior.
+
 Review tag beliefs and answer with a fixed sentiment from strong dislike to strong like.
 A direct answer is strong evidence rather than a hard exclusion. The separate
 **Never** setting blocks matching content. **Neutral** is an explicit near-zero

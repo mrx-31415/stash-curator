@@ -771,9 +771,7 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     assert 'value: "settings"' in source
     assert "icon: faCog,\n      maintenance: true" in source
     assert "settings: (extra) => React.createElement(SettingsPanel, extra)," in source
-    assert (
-        "function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
-    )
+    assert re.search(r"function SettingsPanel\(\{[^}]*onMoodsSaved", source)
     assert (
         'configKey: "auto_tasks_enabled", type: "BOOLEAN", label: "Automatic background tasks"'
         in source
@@ -785,11 +783,14 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     )
     assert "curator-switch" in source and 'role: "switch"' in source
     assert "schedule_expand_refresh_at_hour" in source
-    assert "body && body({ diversityEnabled, diversitySaving, onToggleDiversity })" in source
+    assert (
+        "body && body({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved })"
+        in source
+    )
     assert (
         "React.createElement(ManagePanel, { section: currentSection, "
         "onSelectSection: openManage, diversityEnabled, diversitySaving, "
-        "onToggleDiversity: toggleDiversity })" in source
+        "onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods })" in source
     )
 
     # Raw plugin settings (Whisparr fields) aren't in curator_config, so the
@@ -986,7 +987,7 @@ def test_recommendations_filter_bar_wired() -> None:
     # Filtered slates bypass the persistent lane+page cache rather than
     # polluting it with a filter-blind key.
     assert "const hasFilters = Boolean(filters &&" in source
-    assert "if (!hasFilters) slateRequests.set(key, request);" in source
+    assert "if (!hasFilters && !togetherMode) slateRequests.set(key, request);" in source
     assert 'scope: "recommendations"' in source
 
 

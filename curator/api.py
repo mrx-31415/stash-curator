@@ -39,6 +39,8 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "model_update_min_interval_minutes": 60,
     "prune_tag_name": "[Prune]",
     "ignored_tags": "",
+    "together_excluded_tags": [],
+    "moods": [{"id": "together", "name": "Together", "excluded_tags": []}],
     "expand_horizon_days": 90,
     "expand_gender": "FEMALE",
     "expand_wildcard": False,
@@ -135,6 +137,8 @@ class CuratorAPI:
         exploration: float = 0,
         draw_seed: str = "",
         draw_at_ms: int | None = None,
+        together_mode: bool = False,
+        mood_id: str | None = None,
         include_tags: tuple[str, ...] = (),
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
@@ -158,11 +162,36 @@ class CuratorAPI:
         timings["model_update"] = round((time.perf_counter() - started) * 1000)
         record_duration("python", "slate.model_update", timings["model_update"])
         stage_started = time.perf_counter()
-        excluded = exclude_scene_ids or set()
+        excluded = set(exclude_scene_ids or ())
+        requested_mood = mood_id if mood_id is not None else "together" if together_mode else ""
+        moods = config["moods"]
+        assert isinstance(moods, list)
+        selected_mood = next((mood for mood in moods if mood["id"] == requested_mood), None)
+        active_mood_id = selected_mood["id"] if selected_mood else ""
+        together_mode = bool(active_mood_id)
+        together_tags = selected_mood["excluded_tags"] if selected_mood else []
+        if together_tags:
+            assert isinstance(together_tags, list)
+            ids = [tag["id"] for tag in together_tags]
+            excluded.update(
+                row[0]
+                for row in self.connection.execute(
+                    "WITH RECURSIVE excluded(tag_id) AS ("
+                    "SELECT tag_id FROM source_tag WHERE tag_id IN ("
+                    + ",".join("?" for _ in ids)
+                    + ") UNION SELECT tp.tag_id FROM tag_parent tp "
+                    "JOIN excluded e ON tp.parent_tag_id=e.tag_id) "
+                    "SELECT DISTINCT st.scene_id FROM scene_tag st "
+                    "JOIN excluded e ON st.tag_id=e.tag_id",
+                    ids,
+                )
+            )
         start = (page - 1) * count
         end = page * count
         builder = SlateBuilder(self.connection, diversity_enabled=bool(config["diversity_enabled"]))
-        has_filters = bool(include_tags or exclude_tags or performer_ids or studio_ids or gender)
+        has_filters = bool(
+            together_mode or include_tags or exclude_tags or performer_ids or studio_ids or gender
+        )
         # A filtered request always recomputes total from a full candidate
         # fetch, the same way an exploration request does, since the cached
         # eligibility count doesn't know about filters.
@@ -242,6 +271,8 @@ class CuratorAPI:
             "schema_version": API_SCHEMA_VERSION,
             "model_id": slate.model_id,
             "config_updated_at_ms": self.config()["updated_at_ms"],
+            "mood_id": active_mood_id,
+            "moods": moods,
             "model_pending": coordinator.status().pending,
             "rebuilding": self.connection.execute(
                 """
@@ -1360,6 +1391,8 @@ class CuratorAPI:
     ) -> dict[str, object]:
         allowed = {
             "saved_filters",
+            "moods",
+            "together_excluded_tags",
             "page_size",
             "diversity_enabled",
             "rotation_cooldown_days",
@@ -1424,6 +1457,43 @@ class CuratorAPI:
                 default = saved.get("default")
                 if default is not None and (not isinstance(default, str) or default not in presets):
                     raise ValueError("saved filter default must name an existing preset")
+        if "moods" in values:
+            moods = values["moods"]
+            if not isinstance(moods, list) or len(moods) > 50:
+                raise ValueError("moods must be a list of at most 50 moods")
+            ids, names = set(), set()
+            for mood in moods:
+                if (
+                    not isinstance(mood, dict)
+                    or not isinstance(mood.get("id"), str)
+                    or not mood["id"]
+                    or len(mood["id"].encode()) > 128
+                    or not isinstance(mood.get("name"), str)
+                    or not mood["name"].strip()
+                    or len(mood["name"].encode()) > 80
+                    or not isinstance(mood.get("excluded_tags"), list)
+                ):
+                    raise ValueError(
+                        "each mood needs a string id, a name, and an excluded_tags list"
+                    )
+                name_key = mood["name"].strip().lower()
+                if mood["id"] in ids or name_key in names:
+                    raise ValueError("mood ids and names must be unique")
+                ids.add(mood["id"])
+                names.add(name_key)
+                CuratorAPI._validate_config({"together_excluded_tags": mood["excluded_tags"]})
+        tags = values.get("together_excluded_tags")
+        if tags is not None:
+            if not isinstance(tags, list) or len(tags) > 50:
+                raise ValueError("together_excluded_tags must be a list of at most 50 tags")
+            if any(
+                not isinstance(tag, dict)
+                or any(not isinstance(tag.get(key), str) or not tag[key] for key in ("id", "name"))
+                for tag in tags
+            ):
+                raise ValueError(
+                    "together_excluded_tags entries must have nonempty string id and name"
+                )
         diversity = values.get("diversity_enabled")
         if diversity is not None and not isinstance(diversity, bool):
             raise ValueError("diversity_enabled must be true or false")

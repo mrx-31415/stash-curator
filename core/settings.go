@@ -24,6 +24,8 @@ var defaultPluginConfig = jvObj(
 	jvKey("model_update_min_interval_minutes", jvInt(60)),
 	jvKey("prune_tag_name", jvStr("[Prune]")),
 	jvKey("ignored_tags", jvStr("")),
+	jvKey("together_excluded_tags", jvArr()),
+	jvKey("moods", jvArr(jvObj(jvKey("id", jvStr("together")), jvKey("name", jvStr("Together")), jvKey("excluded_tags", jvArr())))),
 	jvKey("expand_horizon_days", jvInt(90)),
 	jvKey("expand_gender", jvStr("FEMALE")),
 	jvKey("expand_wildcard", jvBool(false)),
@@ -248,6 +250,37 @@ func validateConfig(values jVal) error {
 			}
 			if def.kind != jNull && (def.kind != jStr || !presets.has(def.s)) {
 				return fmt.Errorf("saved filter default must name an existing preset")
+			}
+		}
+	}
+	if values.has("moods") {
+		moods := values.get("moods")
+		if moods.kind != jArr || len(moods.arr) > 50 {
+			return fmt.Errorf("moods must be a list of at most 50 moods")
+		}
+		ids, names := map[string]bool{}, map[string]bool{}
+		for _, mood := range moods.arr {
+			id, name := mood.get("id"), mood.get("name")
+			if mood.kind != jObj || id.kind != jStr || id.s == "" || len(id.s) > 128 || name.kind != jStr || strings.TrimSpace(name.s) == "" || len(name.s) > 80 || mood.get("excluded_tags").kind != jArr {
+				return fmt.Errorf("each mood needs a string id, a name, and an excluded_tags list")
+			}
+			nameKey := strings.ToLower(strings.TrimSpace(name.s))
+			if ids[id.s] || names[nameKey] {
+				return fmt.Errorf("mood ids and names must be unique")
+			}
+			ids[id.s], names[nameKey] = true, true
+			if err := validateConfig(jvObj(jvKey("together_excluded_tags", mood.get("excluded_tags")))); err != nil {
+				return err
+			}
+		}
+	}
+	if tags := values.get("together_excluded_tags"); tags.kind != jNull {
+		if tags.kind != jArr || len(tags.arr) > 50 {
+			return fmt.Errorf("together_excluded_tags must be a list of at most 50 tags")
+		}
+		for _, tag := range tags.arr {
+			if tag.kind != jObj || tag.get("id").kind != jStr || tag.get("id").s == "" || tag.get("name").kind != jStr || tag.get("name").s == "" {
+				return fmt.Errorf("together_excluded_tags entries must have nonempty string id and name")
 			}
 		}
 	}
