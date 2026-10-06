@@ -221,6 +221,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opClearPprofFiles(pluginDir, payload)
 	case "get_external_tag_choices":
 		return opGetExternalTagChoices(pluginDir, payload)
+	case "get_external_tag_search":
+		return opGetExternalTagSearch(pluginDir, payload)
 	case "get_scene_tag_choices":
 		return opGetSceneTagChoices(pluginDir, payload)
 	case "get_scene_description_tokens":

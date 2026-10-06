@@ -896,6 +896,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.submit_impact_correction(
                 str(args.get("scene_id") or ""), str(args.get("direction") or "")
             )
+        if operation == "get_external_tag_search":
+            return api.external_tag_search(args.get("query", ""))
         if operation == "get_external_tag_choices":
             tags = args.get("tags")
             if not isinstance(tags, list):

@@ -775,6 +775,27 @@ def test_submit_events_impression_attribution_state_parity(
 # ── update_config ────────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"expand": {"presets": {"Favorites": {"favoriteOnly": True}}, "default": "Favorites"}},
+        [],
+        {"unknown": {"presets": {}}},
+        {"expand": {"presets": []}},
+        {"expand": {"presets": {"": {}}}},
+        {"expand": {"presets": {"Name": []}}},
+        {"expand": {"presets": {}, "default": "Missing"}},
+    ],
+)
+def test_saved_filters_config_byte_identical(
+    writes_sidecar: Path, binary: Path, stub_stash: str, filters: object
+) -> None:
+    raw = _writes_payload(
+        "update_config", writes_sidecar, stub_stash, values={"saved_filters": filters}
+    )
+    assert_slice3_identical(binary, raw, writes_sidecar, normalize=("updated_at_ms",))
+
+
 def test_update_config_byte_identical(writes_sidecar: Path, binary: Path, stub_stash: str) -> None:
     raw = _writes_payload(
         "update_config",

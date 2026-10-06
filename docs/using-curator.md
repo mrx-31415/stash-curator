@@ -122,13 +122,26 @@ cache** task, then browse candidates, save filters, or shortlist leads. The refr
 retains eligible leads found through Similar and Performer Hunt, updates their scores
 after model changes, and drops scenes outside the recent-release horizon.
 
+Saved filters and their defaults are stored in Curator's database and are shared
+across browsers, including private browsing sessions. Plugin updates retain them.
+Existing browser-only filters are imported when you open Curator in that browser;
+if a name already exists in the database, the database version takes precedence.
+Mark a filter **Default** to apply it automatically when reopening its view.
+Choose a saved filter from the selector, or expand **Save current filters** to
+name and save your current settings. The selector shows the matching saved name;
+changing its settings shows **Current filters (unsaved)** until you save them.
+
 Results come from a cached selection, not a search of the entire catalog. By default,
 each refresh fetches up to 1,000 candidates within a 90-day release window; you can
 adjust both in settings.
 
 External results are metadata leads, not proof that a scene is available locally.
-Filters and ordering apply before paging. If Whisparr is configured, **Send to
-Whisparr** appears on external scene cards; it sends only the scene you select. Use
+Filters and ordering apply before paging. Include and exclude tag pickers search
+both local tags and the cached StashDB tag catalog in Expand, Performer Hunt, and
+StashDB Similar. StashDB-only tags do not need to exist in your library; names and
+aliases filter remote results. Refresh Expand's cache to update that catalog.
+If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
+it sends only the scene you select. Use
 **Rate tags & terms** to rate tags that map exactly to local tags and description
 terms known to the model. This does not create scene-level feedback for media
 outside the library. Saved candidates appear in **Expand → Shortlist**.

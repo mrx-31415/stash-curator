@@ -14,6 +14,49 @@ import (
 	"strings"
 )
 
+func opGetExternalTagSearch(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_external_tag_search", func(settings jVal) (jVal, error) {
+		args := payload.get("args")
+		query := args.get("query")
+		if !args.has("query") {
+			query = jvStr("")
+		}
+		if query.kind != jStr || len(query.s) > 100 {
+			return jvNull(), fmt.Errorf("query must be a string up to 100 bytes")
+		}
+		db, err := openAPISidecar(pluginDir, payload, settings)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer db.Close()
+		var ready bool
+		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM taxonomy_snapshot WHERE snapshot_id=
+            (SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id'))`).Scan(&ready); err != nil {
+			return jvNull(), err
+		}
+		text := strings.TrimSpace(query.s)
+		rows, err := db.Query(`SELECT t.tag_id, t.name FROM taxonomy_tag t
+            WHERE t.snapshot_id=(SELECT value FROM application_meta WHERE key='taxonomy_snapshot_id')
+              AND ?<>'' AND (instr(lower(t.name), lower(?))>0 OR EXISTS(
+                SELECT 1 FROM taxonomy_tag_alias a WHERE a.snapshot_id=t.snapshot_id AND a.tag_id=t.tag_id
+                  AND instr(lower(a.alias), lower(?))>0))
+            ORDER BY lower(t.name)=lower(?) DESC, t.name COLLATE NOCASE, t.tag_id LIMIT 8`, text, text, text, text)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer rows.Close()
+		items := jvArr()
+		for rows.Next() {
+			var id, name string
+			if err := rows.Scan(&id, &name); err != nil {
+				return jvNull(), err
+			}
+			items.arr = append(items.arr, jvObj(jvKey("id", jvStr(id)), jvKey("name", jvStr(name))))
+		}
+		return jvObj(jvKey("schema_version", jvInt(apiSchemaVersion)), jvKey("ready", jvBool(ready)), jvKey("items", items)), rows.Err()
+	})
+}
+
 // ── get_external_tag_choices ───────────────────────────────────────────────
 
 // opGetExternalTagChoices mirrors backend.py's get_external_tag_choices
