@@ -2733,6 +2733,131 @@
     }));
     return React.createElement(PreviewWall, { entries, thumbnails });
   }
+  function virtualWallRange(count, columns, rowHeight, top, viewportHeight) {
+    const rows = Math.ceil(count / columns);
+    const firstRow = Math.min(rows, Math.max(0, Math.floor(top / rowHeight) - 2));
+    const lastRow = Math.min(rows, Math.max(firstRow, Math.ceil((top + viewportHeight) / rowHeight) + 2));
+    return { first: firstRow * columns, last: Math.min(count, lastRow * columns), height: rows * rowHeight, offset: firstRow * rowHeight };
+  }
+  function EndlessRecommendationTile({ entry, thumbnails, index, seen }) {
+    const node = React.useRef(null);
+    React.useEffect(() => {
+      let timer;
+      const id = `impression:${entry.item.impression_id}:${entry.scene_id}`;
+      if (seen.has(id) || !window.IntersectionObserver) return;
+      const observer = new IntersectionObserver(([event]) => {
+        clearTimeout(timer);
+        if (event.intersectionRatio >= 0.5) timer = setTimeout(() => {
+          if (seen.has(id)) return;
+          seen.add(id);
+          enqueue({ event_id: id, event_type: "qualified_impression", impression_id: entry.item.impression_id, scene_id: entry.scene_id, occurred_at_ms: Date.now() });
+        }, 1000);
+      }, { threshold: 0.5 });
+      observer.observe(node.current);
+      return () => { clearTimeout(timer); observer.disconnect(); };
+    }, [entry, seen]);
+    return React.createElement("div", { ref: node, onClick: (event) => {
+      if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: entry.scene_id, impression_id: entry.item.impression_id, lane: entry.slate.lane, impression_position: entry.item.position, model_id: entry.slate.model_id }));
+    } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
+  }
+  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onThumbDown }) {
+    const [entries, setEntries] = React.useState(() => visibleItems.map((item) => ({ scene_id: item.scene_id, scene: scenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate })));
+    const [lastPage, setLastPage] = React.useState(slate);
+    const [pending, setPending] = React.useState(null);
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState("");
+    const [geometry, setGeometry] = React.useState({ columns: 1, rowHeight: 200, top: 0, viewportHeight: window.innerHeight });
+    const root = React.useRef(null);
+    const grid = React.useRef(null);
+    const more = React.useRef(null);
+    const busy = React.useRef(false);
+    const active = React.useRef(true);
+    const seen = React.useRef(new Set());
+    React.useEffect(() => {
+      active.current = true;
+      const node = root.current;
+      if (node.getBoundingClientRect().top < 0) node.scrollIntoView({ block: "start" });
+      return () => { active.current = false; };
+    }, []);
+    const ids = pending?.items.map((item) => Number(item.scene_id)) || [];
+    const query = GQL.useFindScenesQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids }, skip: !ids.length });
+    React.useEffect(() => {
+      if (!pending || (ids.length && query.loading)) return;
+      if (ids.length && query.error) {
+        setError(query.error.message);
+      } else if (!ids.length || query.data) {
+        const nextScenes = new Map((query.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+        setEntries((current) => {
+          const existing = new Set(current.map((entry) => String(entry.scene_id)));
+          return [...current, ...pending.items.filter((item) => !existing.has(String(item.scene_id)) && nextScenes.has(String(item.scene_id))).map((item) => ({ scene_id: item.scene_id, scene: nextScenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate: pending }))];
+        });
+        setLastPage(pending);
+      } else return;
+      setPending(null);
+      setLoading(false);
+      busy.current = false;
+    }, [pending, query.loading, query.error, query.data]);
+    React.useEffect(() => {
+      if (cards) return;
+      let frame;
+      const measure = () => {
+        frame = null;
+        const style = window.getComputedStyle(grid.current);
+        const tracks = style.gridTemplateColumns.split(" ");
+        const columns = Math.max(1, tracks.length);
+        const gap = parseFloat(style.columnGap) || 0;
+        const width = parseFloat(tracks[0]) || (root.current.getBoundingClientRect().width - gap * (columns - 1)) / columns;
+        const rowHeight = width * 9 / 16 + gap;
+        setGeometry({ columns, rowHeight: Math.max(1, rowHeight), top: -root.current.getBoundingClientRect().top, viewportHeight: window.innerHeight });
+      };
+      const schedule = () => { if (frame == null) frame = requestAnimationFrame(measure); };
+      measure();
+      window.addEventListener("scroll", schedule, { passive: true, capture: true });
+      window.addEventListener("resize", schedule);
+      const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+      observer?.observe(root.current);
+      return () => { cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
+    }, [cards]);
+    async function loadMore() {
+      if (busy.current || !lastPage.has_more) return;
+      busy.current = true;
+      setLoading(true);
+      setError("");
+      try {
+        const next = await loadSlate(lane, lastPage.page + 1, false, filters);
+        if (!active.current) return;
+        if (next.model_id !== slate.model_id || next.config_updated_at_ms !== slate.config_updated_at_ms || next.mood_id !== slate.mood_id) {
+          onRestart();
+          return;
+        }
+        setPending(next);
+      } catch (failure) {
+        if (active.current) { setError(failure.message); setLoading(false); busy.current = false; }
+      }
+    }
+    React.useEffect(() => {
+      if (!lastPage.has_more || loading || error || !window.IntersectionObserver) return;
+      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) loadMore(); }, { rootMargin: "600px" });
+      observer.observe(more.current);
+      return () => observer.disconnect();
+    }, [lastPage, loading, error]);
+    const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
+    return React.createElement(React.Fragment, null,
+      cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
+        entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onThumbDown }))
+      ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
+        React.createElement("div", { ref: grid, className: "curator-preview-wall", style: { position: "absolute", top: range.offset, width: "100%" } },
+          entries.slice(range.first, range.last).map((entry, index) => React.createElement(EndlessRecommendationTile, { key: String(entry.scene_id), entry, index, thumbnails, seen: seen.current }))
+        )
+      ),
+      React.createElement("div", { ref: more, className: "curator-pager", "aria-live": "polite" },
+        error && React.createElement("span", { className: "text-danger" }, error),
+        loading ? React.createElement("span", { role: "status" }, "Loading more recommendations…")
+          : lastPage.has_more ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: loadMore }, error ? "Retry" : "Load more")
+            : React.createElement("span", null, "End of recommendations")
+      )
+    );
+  }
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown, evidenceScenes }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
@@ -4808,9 +4933,15 @@
   ];
   const SETTINGS_FIELD_GROUPS = [
     {
+      title: "Page settings",
+      fields: [
+        { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
+        { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more recommendations while scrolling in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
+      ],
+    },
+    {
       title: "Sync & model timing",
       fields: [
-        { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20." },
         { key: "rotationCooldownDays", configKey: "rotation_cooldown_days", type: "NUMBER", label: "Rotation cooldown (days)", description: "Days until a viewed but unpicked recommendation regains its full draw chance. Default 7; range 1-30." },
         { key: "syncPageSize", configKey: "sync_page_size", type: "NUMBER", label: "Sync page size", description: "Number of Stash records fetched per synchronization request. Default 250." },
         { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
@@ -4944,7 +5075,7 @@
     );
   }
 
-  function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved }) {
+  function SettingsPanel({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved, onConfigSaved }) {
     const [config, setConfig] = React.useState(null);
     const [raw, setRaw] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
@@ -4999,6 +5130,8 @@
           const data = await operation({ operation: "get_config" });
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setConfig(data.config);
+          if (field.key === "recommendationEndlessScroll") onConfigSaved?.(data.config);
+          setRaw(await getPluginSettings());
         } else {
           setRaw(await getPluginSettings());
         }
@@ -5146,14 +5279,14 @@
     );
   }
 
-  function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved }) {
+  function ManagePanel({ section, onSelectSection, diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved, onConfigSaved }) {
     const items = MAINTENANCE_ITEMS;
     const active = items.find((item) => item.value === section) || items[0];
     const body = MANAGE_BODIES[active.value];
     return React.createElement(
       SectionShell,
       { items, active, onSelect: onSelectSection, navLabel: "Manage sections" },
-      body && body({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved })
+      body && body({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved, onConfigSaved })
     );
   }
 
@@ -5235,10 +5368,19 @@
     }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
+    const [endlessEnabled, setEndlessEnabled] = React.useState(false);
     const [recommendationView, setRecommendationView] = React.useState(readRecommendationView);
     function changeRecommendationView(value) {
       setRecommendationView(value);
       writeRecommendationView(value);
+      if (endlessEnabled) setPage(1);
+    }
+    const endless = endlessEnabled;
+    function applyDisplayConfig(config) {
+      setEndlessEnabled(Boolean(config.recommendation_endless_scroll));
+      clearSlateCache();
+      setPage(1);
+      setRefreshKey((value) => value + 1);
     }
     const [followUps, setFollowUps] = React.useState([]);
     const [theme, setTheme] = React.useState(() => {
@@ -5302,6 +5444,7 @@
           applySavedSlateFilters(defaultFilters("recommendations"), false);
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setDiversityEnabled(Boolean(data.config.diversity_enabled));
+          setEndlessEnabled(Boolean(data.config.recommendation_endless_scroll));
           applyMoods(data.config.moods || []);
           persistSlateCache();
           setConfigReady(true);
@@ -5613,7 +5756,7 @@
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
-      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods }),
+      lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods, onConfigSaved: applyDisplayConfig }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
@@ -5622,14 +5765,16 @@
           React.Fragment,
           null,
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
-          recommendationView !== "cards"
-            ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
+          endless
+            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onThumbDown: showFollowUp })
+            : recommendationView !== "cards"
+              ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
               { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },
               visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
             ),
-          React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
+          !endless && React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )
     );
   }

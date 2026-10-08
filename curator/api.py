@@ -30,6 +30,7 @@ from curator.storage import transaction
 API_SCHEMA_VERSION = 2
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
+    "recommendation_endless_scroll": False,
     "diversity_enabled": True,
     "rotation_cooldown_days": 7,
     "sync_page_size": 250,
@@ -1394,6 +1395,7 @@ class CuratorAPI:
             "moods",
             "together_excluded_tags",
             "page_size",
+            "recommendation_endless_scroll",
             "diversity_enabled",
             "rotation_cooldown_days",
             "sync_page_size",
@@ -1497,6 +1499,9 @@ class CuratorAPI:
         diversity = values.get("diversity_enabled")
         if diversity is not None and not isinstance(diversity, bool):
             raise ValueError("diversity_enabled must be true or false")
+        endless = values.get("recommendation_endless_scroll")
+        if endless is not None and not isinstance(endless, bool):
+            raise ValueError("recommendation_endless_scroll must be true or false")
         for key in (
             "schedule_expand_refresh_at_hour",
             "schedule_sync_build_at_hour",

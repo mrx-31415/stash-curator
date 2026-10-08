@@ -1241,6 +1241,7 @@ var allowedConfigKeys = map[string]bool{
 	"moods":                                  true,
 	"together_excluded_tags":                 true,
 	"page_size":                              true,
+	"recommendation_endless_scroll":          true,
 	"diversity_enabled":                      true,
 	"rotation_cooldown_days":                 true,
 	"sync_page_size":                         true,

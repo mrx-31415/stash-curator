@@ -36,8 +36,12 @@ settings:
     type: STRING
   pageSize:
     displayName: Results per page
-    description: Number of results shown on Curator recommendation, Similar, and Expand pages. Default 20.
+    description: Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20.
     type: NUMBER
+  recommendationEndlessScroll:
+    displayName: Virtual endless scrolling
+    description: Load more recommendations while scrolling in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default.
+    type: BOOLEAN
   diversityDisabled:
     displayName: Disable recommendation variety
     description: Use score-first ordering instead of avoiding repeated performers, studios, and similar content.

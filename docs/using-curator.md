@@ -40,6 +40,14 @@ explanations, **Thumbnails** for a compact grid of screenshots without text over
 or **Wall** for muted playing previews. Thumbnails play a muted preview while hovered
 and restore the screenshot when the pointer leaves; touch devices show screenshots.
 The selected recommendation view is remembered in this browser.
+For endless scrolling, enable **Virtual endless scrolling** under
+**Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
+It is off by default. All three recommendation views then load the next ranked page
+near the bottom. Thumbnails and Wall render only nearby rows. Cards use the browser's
+offscreen rendering support and stay mounted, preserving expanded panels and feedback
+state; loaded cards still occupy memory. Changing lanes, filters,
+moods, or choosing **New picks** starts a fresh list. **Results per page** controls
+the fetch size; **Load more** also lets you load explicitly or retry a failed request.
 
 Use **New picks** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw

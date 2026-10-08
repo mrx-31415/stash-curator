@@ -505,6 +505,7 @@ def _backup_control(
 def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
     mapping = {
         "pageSize": ("page_size", int),
+        "recommendationEndlessScroll": ("recommendation_endless_scroll", bool),
         "rotationCooldownDays": ("rotation_cooldown_days", int),
         "syncPageSize": ("sync_page_size", int),
         "modelUpdateEventThreshold": ("model_update_event_threshold", int),
