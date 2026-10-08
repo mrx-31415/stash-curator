@@ -216,6 +216,21 @@
   const THEME_STORAGE_KEY = "stash-curator:theme";
   const WALL_STORAGE_KEY = "stash-curator:preview-wall:v1";
   const WALL_CAP = 20;
+  const RECOMMENDATION_VIEW_KEY = "stash-curator:recommendation-view:v1";
+  function readRecommendationView() {
+    try {
+      const value = window.localStorage.getItem(RECOMMENDATION_VIEW_KEY);
+      if (["cards", "thumbnails", "wall"].includes(value)) return value;
+    } catch {}
+    return readWallMode() ? "wall" : "cards";
+  }
+  function writeRecommendationView(value) {
+    try {
+      window.localStorage.setItem(RECOMMENDATION_VIEW_KEY, value);
+    } catch {
+      // Storage can be unavailable; the selection still works for this session.
+    }
+  }
   function readWallMode() {
     try {
       return window.localStorage.getItem(WALL_STORAGE_KEY) === "1";
@@ -2634,6 +2649,32 @@
   function PreviewWallToggle({ wall, onToggle }) {
     return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Wall");
   }
+  function RecommendationViewSelector({ view, onChange }) {
+    return React.createElement(ButtonGroup, { size: "sm", "aria-label": "Recommendation view" },
+      ["cards", "thumbnails", "wall"].map((value) => React.createElement(Button, {
+        key: value, variant: view === value ? "primary" : "secondary",
+        "aria-pressed": view === value, onClick: () => onChange(value),
+      }, value[0].toUpperCase() + value.slice(1)))
+    );
+  }
+  function ThumbnailTile({ entry }) {
+    const [hovered, setHovered] = React.useState(false);
+    const { scene_id, scene } = entry;
+    const title = scene?.title || `Scene ${scene_id}`;
+    return React.createElement("article", {
+      className: "curator-preview-tile",
+      onMouseEnter: () => {
+        if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) setHovered(true);
+      },
+      onMouseLeave: () => setHovered(false),
+    }, React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, "aria-label": title },
+      React.createElement("div", { className: "card-section" },
+        hovered
+          ? React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, ref: (node) => { if (node) { node.muted = true; node.defaultMuted = true; } }, muted: true, loop: true, playsInline: true, autoPlay: true })
+          : React.createElement("img", { className: "curator-preview-video", src: `/scene/${scene_id}/screenshot`, alt: "", loading: "lazy" })
+      )
+    ));
+  }
   function PreviewTile({ entry, index }) {
     const [hovered, setHovered] = React.useState(false);
     const { scene_id, scene, affinity, lane } = entry;
@@ -2680,17 +2721,17 @@
       )
     );
   }
-  function PreviewWall({ entries }) {
-    return React.createElement("div", { className: "curator-preview-wall" }, entries.map((entry, index) => React.createElement(PreviewTile, { key: `${entry.scene_id}:${index}`, entry, index })));
+  function PreviewWall({ entries, thumbnails = false }) {
+    return React.createElement("div", { className: "curator-preview-wall" }, entries.map((entry, index) => React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { key: `${entry.scene_id}:${index}`, entry, index })));
   }
-  function RecommendationWall({ visibleItems, scenes, lane }) {
+  function RecommendationWall({ visibleItems, scenes, lane, thumbnails = false }) {
     const entries = visibleItems.map((item) => ({
       scene_id: item.scene_id,
       scene: scenes.get(String(item.scene_id)),
       affinity: item.appeal,
       lane: item.source_lane || lane,
     }));
-    return React.createElement(PreviewWall, { entries });
+    return React.createElement(PreviewWall, { entries, thumbnails });
   }
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown, evidenceScenes }) {
     const { SceneCard } = Api.components;
@@ -5194,13 +5235,10 @@
     }
     const [diversityEnabled, setDiversityEnabled] = React.useState(null);
     const [diversitySaving, setDiversitySaving] = React.useState(false);
-    const [wall, setWall] = React.useState(readWallMode);
-    function toggleWall() {
-      setWall((value) => {
-        const next = !value;
-        writeWallMode(next);
-        return next;
-      });
+    const [recommendationView, setRecommendationView] = React.useState(readRecommendationView);
+    function changeRecommendationView(value) {
+      setRecommendationView(value);
+      writeRecommendationView(value);
     }
     const [followUps, setFollowUps] = React.useState([]);
     const [theme, setTheme] = React.useState(() => {
@@ -5551,8 +5589,8 @@
             React.createElement(FontAwesomeIcon, { icon: faBalanceScale }),
             diversityEnabled ? " Balanced" : " Score-first"
           ),
-          laneByValue.has(lane) && slate && React.createElement(Button, { className: "curator-rotate-button", size: "sm", variant: "secondary", disabled: loading || !slate.items.length, onClick: showSomethingElse, "aria-busy": rotatingLane === lane }, React.createElement(FontAwesomeIcon, { icon: faSync, className: rotatingLane === lane ? "curator-rotate-icon-spinning" : "curator-rotate-icon" }), " ", rotatingLane === lane ? "Finding new picks…" : "Show me something else"),
-          laneByValue.has(lane) && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
+          laneByValue.has(lane) && slate && React.createElement(Button, { className: "curator-rotate-button", size: "sm", variant: "secondary", disabled: loading || !slate.items.length, onClick: showSomethingElse, "aria-busy": rotatingLane === lane, title: "Show me something else", "aria-label": "Show me something else" }, React.createElement(FontAwesomeIcon, { icon: faSync, className: rotatingLane === lane ? "curator-rotate-icon-spinning" : "curator-rotate-icon" }), " ", rotatingLane === lane ? "Finding…" : "New picks"),
+          laneByValue.has(lane) && React.createElement(RecommendationViewSelector, { view: recommendationView, onChange: changeRecommendationView }),
           laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
           configReady && laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
@@ -5584,8 +5622,8 @@
           React.Fragment,
           null,
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
-          wall
-            ? React.createElement(RecommendationWall, { visibleItems, scenes, lane })
+          recommendationView !== "cards"
+            ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
               { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },

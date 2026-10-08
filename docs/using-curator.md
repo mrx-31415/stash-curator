@@ -35,10 +35,13 @@ variety decisions. Use the **Balanced** button beside a recommendation lane's
 description to switch between varied and score-first order. This also updates
 **Disable recommendation variety** in Curator's plugin settings. Paging uses the
 current model; new feedback, plays, filters, or a model update can change the results.
-Use the lane filters to narrow the selection. **Wall** switches to a compact grid of
-muted scene previews; switch back to the card grid for feedback and explanations.
+Use the lane filters to narrow the selection. Choose **Cards** for feedback and
+explanations, **Thumbnails** for a compact grid of screenshots without text overlays,
+or **Wall** for muted playing previews. Thumbnails play a muted preview while hovered
+and restore the screenshot when the pointer leaves; touch devices show screenshots.
+The selected recommendation view is remembered in this browser.
 
-Use **Show me something else** for a fresh draw from the lane's strongest
+Use **New picks** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw
 on screen recently have lower odds for a while. Scenes are never permanently
 removed by rotation: their odds recover over the configured rotation cooldown
