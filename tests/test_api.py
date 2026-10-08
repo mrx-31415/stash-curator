@@ -576,13 +576,23 @@ def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     api = CuratorAPI(connection)
     assert api.config()["config"]["rotation_cooldown_days"] == 7
+    assert api.config()["config"]["recommendation_endless_scroll"] is False
 
     config = api.update_config(
-        {"page_size": 30, "diversity_enabled": False, "rotation_cooldown_days": 3}, now_ms=10
+        {
+            "page_size": 30,
+            "diversity_enabled": False,
+            "rotation_cooldown_days": 3,
+            "recommendation_endless_scroll": True,
+        },
+        now_ms=10,
     )["config"]
     assert config["page_size"] == 30
     assert config["diversity_enabled"] is False
     assert config["rotation_cooldown_days"] == 3
+    assert config["recommendation_endless_scroll"] is True
+    with pytest.raises(ValueError, match="recommendation_endless_scroll"):
+        api.update_config({"recommendation_endless_scroll": "true"})
     with pytest.raises(ValueError, match="page_size"):
         api.update_config({"page_size": 0})
     with pytest.raises(ValueError, match="diversity_enabled"):

@@ -336,6 +336,7 @@ def test_get_config_code_version_matches_python(
     [
         {"pageSize": 25, "diversityDisabled": True, "pruneTagName": "Prune"},
         {"modelUpdateMaxWaitMinutes": 45, "expandWildcard": True, "syncPageSize": 100},
+        {"recommendationEndlessScroll": True},
     ],
 )
 def test_settings_application_matches_python(

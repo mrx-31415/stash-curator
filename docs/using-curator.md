@@ -35,10 +35,21 @@ variety decisions. Use the **Balanced** button beside a recommendation lane's
 description to switch between varied and score-first order. This also updates
 **Disable recommendation variety** in Curator's plugin settings. Paging uses the
 current model; new feedback, plays, filters, or a model update can change the results.
-Use the lane filters to narrow the selection. **Wall** switches to a compact grid of
-muted scene previews; switch back to the card grid for feedback and explanations.
+Use the lane filters to narrow the selection. Choose **Cards** for feedback and
+explanations, **Thumbnails** for a compact grid of screenshots without text overlays,
+or **Wall** for muted playing previews. Thumbnails play a muted preview while hovered
+and restore the screenshot when the pointer leaves; touch devices show screenshots.
+The selected recommendation view is remembered in this browser.
+For endless scrolling, enable **Virtual endless scrolling** under
+**Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
+It is off by default. All three recommendation views then load the next ranked page
+near the bottom. Thumbnails and Wall render only nearby rows. Cards use the browser's
+offscreen rendering support and stay mounted, preserving expanded panels and feedback
+state; loaded cards still occupy memory. Changing lanes, filters,
+moods, or choosing **New picks** starts a fresh list. **Results per page** controls
+the fetch size; **Load more** also lets you load explicitly or retry a failed request.
 
-Use **Show me something else** for a fresh draw from the lane's strongest
+Use **New picks** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw
 on screen recently have lower odds for a while. Scenes are never permanently
 removed by rotation: their odds recover over the configured rotation cooldown

@@ -784,13 +784,14 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     assert "curator-switch" in source and 'role: "switch"' in source
     assert "schedule_expand_refresh_at_hour" in source
     assert (
-        "body && body({ diversityEnabled, diversitySaving, onToggleDiversity, onMoodsSaved })"
-        in source
+        "body && body({ diversityEnabled, diversitySaving, onToggleDiversity, "
+        "onMoodsSaved, onConfigSaved })" in source
     )
     assert (
         "React.createElement(ManagePanel, { section: currentSection, "
         "onSelectSection: openManage, diversityEnabled, diversitySaving, "
-        "onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods })" in source
+        "onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods, "
+        "onConfigSaved: applyDisplayConfig })" in source
     )
 
     # Raw plugin settings (Whisparr fields) aren't in curator_config, so the
@@ -811,6 +812,7 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     # Whisparr-only ones left to read back via getPluginSettings().
     expected_fields = {
         "pageSize": "page_size",
+        "recommendationEndlessScroll": "recommendation_endless_scroll",
         "rotationCooldownDays": "rotation_cooldown_days",
         "syncPageSize": "sync_page_size",
         "modelUpdateEventThreshold": "model_update_event_threshold",
@@ -823,6 +825,11 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
     }
     for key, config_key in expected_fields.items():
         assert f'key: "{key}", configKey: "{config_key}"' in source
+    page_settings = source.split('title: "Page settings"', 1)[1].split(
+        'title: "Sync & model timing"', 1
+    )[0]
+    assert 'key: "pageSize"' in page_settings
+    assert 'key: "recommendationEndlessScroll"' in page_settings
     for key in (
         "whisparrUrl",
         "whisparrApiKey",

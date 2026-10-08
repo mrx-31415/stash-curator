@@ -15,6 +15,7 @@ import (
 // insertion order (get_config and config() output key order).
 var defaultPluginConfig = jvObj(
 	jvKey("page_size", jvInt(20)),
+	jvKey("recommendation_endless_scroll", jvBool(false)),
 	jvKey("diversity_enabled", jvBool(true)),
 	jvKey("rotation_cooldown_days", jvInt(7)),
 	jvKey("sync_page_size", jvInt(250)),
@@ -61,6 +62,7 @@ var settingMapping = []struct {
 	conv   settingConv
 }{
 	{"pageSize", "page_size", convInt},
+	{"recommendationEndlessScroll", "recommendation_endless_scroll", convBool},
 	{"rotationCooldownDays", "rotation_cooldown_days", convInt},
 	{"syncPageSize", "sync_page_size", convInt},
 	{"modelUpdateEventThreshold", "model_update_event_threshold", convInt},
@@ -286,6 +288,9 @@ func validateConfig(values jVal) error {
 	}
 	if v := values.get("diversity_enabled"); v.kind != jNull && v.kind != jBool {
 		return fmt.Errorf("diversity_enabled must be true or false")
+	}
+	if v := values.get("recommendation_endless_scroll"); v.kind != jNull && v.kind != jBool {
+		return fmt.Errorf("recommendation_endless_scroll must be true or false")
 	}
 	for _, key := range []string{"schedule_expand_refresh_at_hour", "schedule_sync_build_at_hour", "schedule_backup_at_hour"} {
 		v := values.get(key)

@@ -2022,6 +2022,11 @@
   gap: 0.8rem;
   grid-template-columns: repeat(auto-fill, minmax(var(--curator-card-min-width, 22rem), 1fr));
 }
+/* shortcut: loaded cards stay mounted to retain panels; use measured rows if retained card memory becomes a problem. */
+.curator-endless-cards > .curator-card {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 42rem;
+}
 
 .curator-grid-enter {
   animation: curator-grid-enter 0.22s ease-out both;

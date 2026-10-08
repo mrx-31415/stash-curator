@@ -805,6 +805,7 @@ def test_update_config_byte_identical(writes_sidecar: Path, binary: Path, stub_s
             "page_size": 40,
             "expand_gender": "MALE",
             "diversity_enabled": False,
+            "recommendation_endless_scroll": True,
             "rotation_cooldown_days": 3,
         },
     )
