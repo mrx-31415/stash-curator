@@ -134,6 +134,17 @@ diagnostics, and settings.
 Find opens on Expand. Connect StashDB and refresh its candidate cache to see external
 leads; Similar also works with scenes already in your library.
 
+Choose **Cards** or **Thumbnails** in Expand, Similar, Performer Hunt, or Shortlist.
+Find remembers this choice separately from Recommendations. Thumbnails show only
+the image; switch to Cards for match details and actions. Library scene thumbnails
+play previews on hover; external results and performers show still images.
+
+The **Virtual endless scrolling** switch in **Page settings** applies to Find too.
+Both Cards and Thumbnails load the next batch early as you approach the bottom.
+Loaded cards retain their expanded controls while the browser skips offscreen
+rendering. Turn the switch off to use pagination.
+Library Similar's playing Wall keeps pagination to bound simultaneous videos.
+
 ### Expand
 
 Scene cards in Find show a compact, two-line preview of the available match

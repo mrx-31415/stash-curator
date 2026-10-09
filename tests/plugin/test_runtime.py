@@ -447,7 +447,15 @@ def test_curator_tabs_update_browser_history() -> None:
     assert (
         'for (const param of ["performer", "label", "id", "type"]) route.delete(param);' in source
     )
-    assert 'lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),' in source
+    assert (
+        'lane === "expand" && React.createElement(ExpandPanel, '
+        '{ key: "expand", endless: endlessEnabled }),' in source
+    )
+    assert "React.createElement(SimilarityPanel, { endless: endlessEnabled })" in source
+    assert (
+        'React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", '
+        "huntOnly: true, endless: endlessEnabled })" in source
+    )
 
 
 def test_recent_recommendations_reuse_qualified_impression_history() -> None:

@@ -25,7 +25,7 @@ const expandSource = source.slice(source.indexOf("  function ExpandPanel("), sou
 assert.equal(expandSource.match(/^      pager,?$/gm).length, 2);
 const pagerDefinition = expandSource.match(/^    const pager = (.*);$/m)[1];
 let nextState;
-Object.assign(context, { Pager() {}, page: 2, entityType: "scene", data: { ready: true, total: 60, page_size: 20, has_more: true }, loading: false, updateUrl: (change) => { nextState = change({ page: 2, sort: "newest" }); } });
+Object.assign(context, { Pager() {}, endless: false, page: 2, entityType: "scene", data: { ready: true, total: 60, page_size: 20, has_more: true }, loading: false, updateUrl: (change) => { nextState = change({ page: 2, sort: "newest" }); } });
 const pager = vm.runInNewContext(pagerDefinition, context);
 assert.equal(pager.props.page, 2);
 assert.equal(pager.props.total, 60);

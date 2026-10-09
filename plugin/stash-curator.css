@@ -2027,6 +2027,18 @@
   content-visibility: auto;
   contain-intrinsic-block-size: auto 42rem;
 }
+.curator-find-endless .curator-find-thumbnail,
+.curator-find-endless .curator-preview-tile {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 14rem;
+}
+.curator-find-endless .curator-find-thumbnail.performer-card {
+  contain-intrinsic-block-size: auto 21rem;
+}
+.curator-find-endless > .curator-grid,
+.curator-find-endless > .curator-preview-wall {
+  margin-bottom: 0.8rem;
+}
 
 .curator-grid-enter {
   animation: curator-grid-enter 0.22s ease-out both;

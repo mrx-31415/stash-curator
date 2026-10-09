@@ -40,7 +40,7 @@ settings:
     type: NUMBER
   recommendationEndlessScroll:
     displayName: Virtual endless scrolling
-    description: Load more recommendations while scrolling in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default.
+    description: Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default.
     type: BOOLEAN
   diversityDisabled:
     displayName: Disable recommendation variety

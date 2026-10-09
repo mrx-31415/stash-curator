@@ -217,6 +217,18 @@
   const WALL_STORAGE_KEY = "stash-curator:preview-wall:v1";
   const WALL_CAP = 20;
   const RECOMMENDATION_VIEW_KEY = "stash-curator:recommendation-view:v1";
+  const FIND_VIEW_KEY = "stash-curator:find-view:v1";
+  function useFindView() {
+    const [view, setView] = React.useState(() => {
+      try { return window.localStorage.getItem(FIND_VIEW_KEY) === "thumbnails" ? "thumbnails" : "cards"; }
+      catch { return "cards"; }
+    });
+    function changeView(value) {
+      setView(value);
+      try { window.localStorage.setItem(FIND_VIEW_KEY, value); } catch {}
+    }
+    return [view, changeView];
+  }
   function readRecommendationView() {
     try {
       const value = window.localStorage.getItem(RECOMMENDATION_VIEW_KEY);
@@ -2334,9 +2346,20 @@
     );
   }
 
+  function FindThumbnail({ image, title, href, kind, external = true }) {
+    return React.createElement("article", { className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card` },
+      React.createElement("div", { className: "curator-external-thumbnail thumbnail-section" },
+        React.createElement("a", { className: `${kind}-card-link`, href, "aria-label": title, target: external ? "_blank" : undefined, rel: external ? "noreferrer" : undefined },
+          image ? React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })
+            : React.createElement("div", { className: "curator-card-placeholder" }, title)
+        )
+      ),
+      React.createElement("div", { className: "card-section", hidden: true }, React.createElement("span", { className: "card-section-title" }, title))
+    );
+  }
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
-    const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled } = transformComponentProps("stash-curator.ExternalCard", props);
+    const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
     const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
     const [tagChoices, setTagChoices] = React.useState(null);
@@ -2354,6 +2377,7 @@
     const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
     const people = gender ? cast.filter((person) => person.gender === gender) : cast;
     const tags = kind === "scene" ? payload.tags || [] : [];
+    if (thumbnails) return React.createElement(FindThumbnail, { image, title, href, kind });
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
       const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
@@ -2649,9 +2673,9 @@
   function PreviewWallToggle({ wall, onToggle }) {
     return React.createElement(Button, { size: "sm", variant: wall ? "primary" : "secondary", "aria-pressed": wall, title: wall ? "Show the full card grid" : "Show a wall of playing scene previews", "aria-label": wall ? "Show the full card grid" : "Show a wall of playing scene previews", onClick: onToggle }, React.createElement(FontAwesomeIcon, { icon: faThLarge }), " Wall");
   }
-  function RecommendationViewSelector({ view, onChange }) {
-    return React.createElement(ButtonGroup, { size: "sm", "aria-label": "Recommendation view" },
-      ["cards", "thumbnails", "wall"].map((value) => React.createElement(Button, {
+  function RecommendationViewSelector({ view, onChange, views = ["cards", "thumbnails", "wall"], label = "Recommendation view" }) {
+    return React.createElement(ButtonGroup, { size: "sm", "aria-label": label },
+      views.map((value) => React.createElement(Button, {
         key: value, variant: view === value ? "primary" : "secondary",
         "aria-pressed": view === value, onClick: () => onChange(value),
       }, value[0].toUpperCase() + value.slice(1)))
@@ -3270,8 +3294,103 @@
     );
   }
 
-  function SimilarityPanel() {
+  function EndlessFindResults({ first, page, pageSize, clientItems = null, loadPage, renderPage, metadata = false }) {
+    const [pages, setPages] = React.useState([first]);
+    const [readyPages, setReadyPages] = React.useState(new Set());
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState("");
+    const sentinel = React.useRef(null);
+    const busy = React.useRef(false);
+    const alive = React.useRef(true);
+    const nextRef = React.useRef(null);
+    const lastPage = page + pages.length - 1;
+    const last = pages[pages.length - 1];
+    const ready = !metadata || readyPages.has(lastPage);
+    const hasMore = clientItems ? lastPage * pageSize < clientItems.length : Boolean(last.has_more);
+    React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+    React.useEffect(() => { setPages((current) => current[0] === first ? current : [first, ...current.slice(1)]); }, [first]);
+    const markReady = React.useCallback((value) => setReadyPages((current) => current.has(value) ? current : new Set([...current, value])), []);
+    function next() {
+      if (busy.current || !ready || !hasMore) return;
+      busy.current = true;
+      setLoading(true);
+      setError("");
+      Promise.resolve().then(() => clientItems ? first : loadPage(lastPage + 1)).then((data) => {
+        if (!Array.isArray(data?.items)) throw new Error("The next batch did not contain results.");
+        if (alive.current) setPages((current) => [...current, data]);
+      }).catch((failure) => { if (alive.current) setError(failure.message); }).finally(() => {
+        busy.current = false;
+        if (alive.current) setLoading(false);
+      });
+    }
+    nextRef.current = next;
+    React.useEffect(() => {
+      if (!hasMore || loading || !ready || error || !window.IntersectionObserver) return undefined;
+      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) nextRef.current(); }, { rootMargin: `0px 0px ${Math.max(1200, window.innerHeight * 2)}px 0px` });
+      observer.observe(sentinel.current);
+      return () => observer.disconnect();
+    }, [lastPage, hasMore, loading, ready, error]);
+    return React.createElement("div", { className: "curator-find-endless" },
+      pages.map((data, index) => {
+        const number = page + index;
+        const batch = clientItems ? { ...first, page: number, items: clientItems.slice((number - 1) * pageSize, number * pageSize) } : { ...data, page: number };
+        return React.createElement(React.Fragment, { key: number }, renderPage(batch, markReady));
+      }),
+      error && React.createElement("div", { className: "alert alert-danger", role: "alert" }, error),
+      hasMore && React.createElement("div", { ref: sentinel, className: "curator-endless-more" }, React.createElement(Button, { size: "sm", disabled: loading || !ready, onClick: next }, loading || !ready ? "Loading…" : error ? "Retry" : "Load more"))
+    );
+  }
+
+  function relationshipChips(item) {
+      const labels = {
+        same_performer: "Same performer",
+        similar_performer: "Similar performer",
+        shared_content: "Shared content",
+        similar_structure: "Similar structure",
+        same_studio: "Same studio",
+        multi_hop: item.details?.multi_hop_via || "Multi-hop",
+      };
+      const chips = item.relationships.map((value) =>
+        React.createElement("span", { key: value, className: `curator-chip curator-chip-${value}` }, labels[value] || value)
+      );
+      if (item.details.shared_tags?.length) {
+        chips.push(
+          React.createElement("span", { key: "tags", className: "curator-chip curator-chip-tags" }, item.details.shared_tags.join(", "))
+        );
+      }
+      return React.createElement("span", { className: "curator-chips" }, ...chips);
+    }
+
+  function SimilarLibraryResults({ result, entityType, findView, wall, endless, onRemove, onThumbDown, onReady }) {
     const { SceneCard, PerformerCard } = Api.components;
+    const items = result.items || [];
+    const ids = items.map((item) => item.entity_id);
+    const sceneQuery = GQL.useFindScenesQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) }, skip: entityType !== "scene" || ids.length === 0 });
+    const performerQuery = GQL.useFindPerformersQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, performer_filter: performerNameFilter(items) }, skip: entityType !== "performer" || ids.length === 0 });
+    const query = entityType === "scene" ? sceneQuery : performerQuery;
+    const entities = new Map((entityType === "scene" ? sceneQuery.data?.findScenes?.scenes || [] : performerQuery.data?.findPerformers?.performers || []).map((entity) => [String(entity.id), entity]));
+    React.useEffect(() => { if (!ids.length || (!query.loading && !query.error && query.data)) onReady?.(result.page); }, [result.page, query.loading, query.error, query.data, onReady]);
+    if (query.error) return React.createElement("div", { className: "alert alert-danger", role: "alert" }, "Could not load library details. ", React.createElement(Button, { size: "sm", onClick: () => query.refetch() }, "Retry details"));
+    if (query.loading) return React.createElement("div", { className: "curator-loading", role: "status" }, "Loading library details…");
+    if (entityType === "scene" && (findView === "thumbnails" || wall)) return React.createElement(PreviewWall, { entries: items.flatMap((item) => {
+      const scene = entities.get(String(item.entity_id));
+      return scene ? [{ scene_id: item.entity_id, scene, affinity: (item.appeal * 2) - 1, lane: "similar" }] : [];
+    }), thumbnails: findView === "thumbnails" });
+    return React.createElement("div", { className: `curator-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, items.map((item) => {
+      const entity = entities.get(String(item.entity_id));
+      if (!entity) return null;
+      if (entityType === "performer" && findView === "thumbnails") return React.createElement(FindThumbnail, { key: item.entity_id, image: entity.image_path, title: entity.name || String(item.entity_id), href: `/performers/${item.entity_id}`, kind: "performer", external: false });
+      const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(FindSceneReason, { item }), entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
+      if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
+      const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
+      function rememberOrigin(event) {
+        if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
+      }
+      return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), entity.details && React.createElement("p", { className: "curator-card-description curator-card-description-local" }, entity.details), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove, onThumbDown })));
+    }));
+  }
+
+  function SimilarityPanel({ endless: endlessSetting = false }) {
     const initialFilters = React.useMemo(() => defaultFilters("similar"), []);
     const similarSpec = React.useMemo(() => ({
       defaults: {
@@ -3343,6 +3462,8 @@
       });
     }
     const codeVersionRef = React.useRef("");
+    const [findView, changeFindView] = useFindView();
+    const endless = endlessSetting && (findView === "thumbnails" || source !== "library" || entityType !== "scene" || !wall);
     useCuratorActivity("similar", loading, "Finding close matches…");
     const sceneSearch = GQL.useFindScenesQuery({
       variables: { filter: { q: search, per_page: 8 } },
@@ -3356,21 +3477,6 @@
     const items = source === "stashdb"
       ? externalItems.slice((page - 1) * pageSize, page * pageSize)
       : externalItems;
-    const ids = source === "library" ? items.map((item) => item.entity_id) : [];
-    const similarScenes = GQL.useFindScenesQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
-      skip: entityType !== "scene" || ids.length === 0,
-    });
-    const similarPerformers = GQL.useFindPerformersQuery({
-      variables: { filter: { per_page: Math.max(1, ids.length) }, performer_filter: performerNameFilter(items) },
-      skip: entityType !== "performer" || ids.length === 0,
-    });
-    const entities = new Map(
-      ((entityType === "scene"
-        ? similarScenes.data?.findScenes?.scenes
-        : similarPerformers.data?.findPerformers?.performers) || []
-      ).map((entity) => [String(entity.id), entity])
-    );
     const candidates = entityType === "scene"
       ? sceneSearch.data?.findScenes?.scenes || []
       : performerSearch.data?.findPerformers?.performers || [];
@@ -3383,6 +3489,7 @@
     // back/forward restores) and reads current filter values through
     // filterStateRef, so filters stay lazy (applied on the next fetch) exactly
     // as before.
+    const continuationRequest = React.useRef(null);
     const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity });
     filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity };
     const requestKey = selected
@@ -3415,6 +3522,7 @@
         request.page = page;
         request.exclude_scene_ids = excludedIds;
       }
+      continuationRequest.current = request;
       let active = true;
       const cacheKey = JSON.stringify(request) + ":" + (codeVersionRef.current || "");
       const cached = similarityCache.get(cacheKey);
@@ -3489,38 +3597,11 @@
       } catch (failure) { setError(failure.message); }
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
-    function relationshipChips(item) {
-      const labels = {
-        same_performer: "Same performer",
-        similar_performer: "Similar performer",
-        shared_content: "Shared content",
-        similar_structure: "Similar structure",
-        same_studio: "Same studio",
-        multi_hop: item.details?.multi_hop_via || "Multi-hop",
-      };
-      const chips = item.relationships.map((value) =>
-        React.createElement("span", { key: value, className: `curator-chip curator-chip-${value}` }, labels[value] || value)
-      );
-      if (item.details.shared_tags?.length) {
-        chips.push(
-          React.createElement("span", { key: "tags", className: "curator-chip curator-chip-tags" }, item.details.shared_tags.join(", "))
-        );
-      }
-      return React.createElement("span", { className: "curator-chips" }, ...chips);
-    }
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
-    const similarWallEntries = entityType === "scene" && source === "library" && result
-      ? items.map((item) => {
-          const entity = entities.get(String(item.entity_id));
-          if (!entity) return null;
-          return {
-            scene_id: item.entity_id,
-            scene: entity,
-            affinity: (item.appeal * 2) - 1,
-            lane: "similar",
-          };
-        }).filter(Boolean)
-      : [];
+    function renderSimilarPage(batch, onReady) {
+      if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView, wall, endless, onRemove: removeSimilar, onThumbDown: showFollowUp, onReady });
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: findView === "thumbnails", onShortlist: shortlistExternal, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
+    }
     return React.createElement(
       "section",
       { className: "curator-similar" },
@@ -3541,7 +3622,7 @@
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
-        entityType === "scene" && React.createElement(PreviewWallToggle, { wall, onToggle: toggleWall }),
+        React.createElement(RecommendationViewSelector, { label: "Find view", views: source === "library" && entityType === "scene" ? ["cards", "thumbnails", "wall"] : ["cards", "thumbnails"], view: findView === "thumbnails" ? "thumbnails" : source === "library" && entityType === "scene" && wall ? "wall" : "cards", onChange: (value) => { changeFindView(value === "thumbnails" ? "thumbnails" : "cards"); if (wall !== (value === "wall")) toggleWall(); } }),
         React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
       filtersOpen && React.createElement(FilterBar, {
@@ -3570,28 +3651,10 @@
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      result && source === "library" && (entityType === "scene" && wall ? React.createElement(PreviewWall, { entries: similarWallEntries }) : React.createElement(
-        "div",
-        { className: "curator-grid" },
-        items.map((item) => {
-          const entity = entities.get(String(item.entity_id));
-          if (!entity) return null;
-          const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(FindSceneReason, { item }), entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
-          if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
-          const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
-          function rememberOrigin(event) {
-            if (!event.target.closest("a")) return;
-            sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
-          }
-          return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), entity.details && React.createElement("p", { className: "curator-card-description curator-card-description-local" }, entity.details), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove: removeSimilar, onThumbDown: showFollowUp })));
-        })
-      )),
-      result && source === "stashdb" && React.createElement(
-        "div",
-        { className: "curator-grid curator-external-grid" },
-        items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, onShortlist: shortlistExternal, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled }))
-      ),
-      result && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
+      result && (endless
+        ? !loading && React.createElement(EndlessFindResults, { key: requestKey, first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
+        : renderSimilarPage({ ...result, page, items })),
+      result && !endless && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
   }
 
@@ -3718,7 +3781,7 @@
     );
   }
 
-  function ExpandPanel({ initialType = "scene", huntOnly = false }) {
+  function ExpandPanel({ initialType = "scene", huntOnly = false, endless = false }) {
     const initialFilters = React.useMemo(() => defaultFilters(huntOnly ? "hunt" : "expand"), []);
     const expandSpec = React.useMemo(() => huntOnly ? {
       defaults: {
@@ -3801,6 +3864,8 @@
     const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
     const [pageSize, setPageSize] = React.useState(20);
     useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, "Working");
+    const [findView, changeFindView] = useFindView();
+    const continuationRequest = React.useRef(null);
     React.useEffect(() => {
       let active = true;
       if (entityType === "hunt" && !huntPerformer) {
@@ -3816,6 +3881,7 @@
         : entityType === "hunt"
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
           : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
+      continuationRequest.current = request;
       operation(request, entityType === "hunt" ? 60000 : 30000).then(
         (result) => {
           if (!active) return;
@@ -3895,7 +3961,13 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
-    const pager = data?.ready && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
+    function renderExpandPage(batch) {
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
+        const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
+        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: findView === "thumbnails", onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
+      }));
+    }
+    const pager = data?.ready && !endless && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
@@ -3903,6 +3975,7 @@
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
+        React.createElement(RecommendationViewSelector, { view: findView, onChange: changeFindView, views: ["cards", "thumbnails"], label: "Find view" }),
         !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
@@ -3952,14 +4025,9 @@
       data && !data.ready && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       pager,
-      data?.ready && React.createElement(
-        "div",
-        { className: "curator-grid curator-external-grid" },
-        visibleItems.map((item) => {
-          const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
-          return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
-        })
-      ),
+      data?.ready && (endless
+        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderExpandPage })
+        : renderExpandPage({ ...data, items: visibleItems })),
       pager
     );
   }
@@ -4942,7 +5010,7 @@
       title: "Page settings",
       fields: [
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
-        { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more recommendations while scrolling in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
+        { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
       ],
     },
     {
@@ -5755,10 +5823,10 @@
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel),
+      configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { endless: endlessEnabled }),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
-      configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand" }),
-      configReady && lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true }),
+      configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand", endless: endlessEnabled }),
+      configReady && lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, endless: endlessEnabled }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
