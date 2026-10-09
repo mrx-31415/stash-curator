@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.30.0](https://github.com/mrx-31415/stash-curator/compare/v0.29.0...v0.30.0) (2026-10-09)
+
+
+### Features
+
+* add thumbnail views and endless scrolling to Find ([e2adc31](https://github.com/mrx-31415/stash-curator/commit/e2adc31c6e68075b66bb2f64b71edd03ee6e82ab))
+* compact Find and recommendation cards ([c64f0e5](https://github.com/mrx-31415/stash-curator/commit/c64f0e5c5bd8e2084446bae433591954f182ab86))
+
+
+### Performance Improvements
+
+* preload endless recommendation batches earlier ([d45498c](https://github.com/mrx-31415/stash-curator/commit/d45498ca997266976d116df249080f6a468edfb3))
+
 ## [0.29.0](https://github.com/mrx-31415/stash-curator/compare/v0.28.0...v0.29.0) (2026-10-08)
 
 
