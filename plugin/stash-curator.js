@@ -2787,6 +2787,12 @@
         setError(query.error.message);
       } else if (!ids.length || query.data) {
         const nextScenes = new Map((query.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+        if (thumbnails) for (const item of pending.items) {
+          if (!nextScenes.has(String(item.scene_id))) continue;
+          const image = new Image();
+          image.fetchPriority = "low";
+          image.src = `/scene/${item.scene_id}/screenshot`;
+        }
         setEntries((current) => {
           const existing = new Set(current.map((entry) => String(entry.scene_id)));
           return [...current, ...pending.items.filter((item) => !existing.has(String(item.scene_id)) && nextScenes.has(String(item.scene_id))).map((item) => ({ scene_id: item.scene_id, scene: nextScenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate: pending }))];
@@ -2818,13 +2824,13 @@
       observer?.observe(root.current);
       return () => { cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
     }, [cards]);
-    async function loadMore() {
+    async function loadMore(prefetched = false) {
       if (busy.current || !lastPage.has_more) return;
       busy.current = true;
       setLoading(true);
       setError("");
       try {
-        const next = await loadSlate(lane, lastPage.page + 1, false, filters);
+        const next = await loadSlate(lane, lastPage.page + 1, prefetched, filters);
         if (!active.current) return;
         if (next.model_id !== slate.model_id || next.config_updated_at_ms !== slate.config_updated_at_ms || next.mood_id !== slate.mood_id) {
           onRestart();
@@ -2837,7 +2843,7 @@
     }
     React.useEffect(() => {
       if (!lastPage.has_more || loading || error || !window.IntersectionObserver) return;
-      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) loadMore(); }, { rootMargin: "600px" });
+      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) loadMore(true); }, { rootMargin: `0px 0px ${Math.max(1200, window.innerHeight * 2)}px 0px` });
       observer.observe(more.current);
       return () => observer.disconnect();
     }, [lastPage, loading, error]);
@@ -2853,7 +2859,7 @@
       React.createElement("div", { ref: more, className: "curator-pager", "aria-live": "polite" },
         error && React.createElement("span", { className: "text-danger" }, error),
         loading ? React.createElement("span", { role: "status" }, "Loading more recommendations…")
-          : lastPage.has_more ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: loadMore }, error ? "Retry" : "Load more")
+          : lastPage.has_more ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => loadMore() }, error ? "Retry" : "Load more")
             : React.createElement("span", null, "End of recommendations")
       )
     );

@@ -16,6 +16,7 @@ let queriedIDs = [];
 let metadataError = null;
 const listeners = new Map();
 const observers = [];
+const warmedImages = [];
 const dom = { getBoundingClientRect: () => ({ top, width: 800 }), scrollIntoView: () => { top = 0; } };
 const context = {
   React: {
@@ -48,10 +49,11 @@ const context = {
     removeEventListener: (name) => listeners.delete(name),
   },
   IntersectionObserver: class {
-    constructor(fn) { this.fn = fn; observers.push(this); }
+    constructor(fn, options) { this.fn = fn; this.options = options; observers.push(this); }
     observe(node) { this.node = node; }
     disconnect() { this.disconnected = true; }
   },
+  Image: class { set src(value) { warmedImages.push({ src: value, priority: this.fetchPriority }); } },
   requestAnimationFrame: (fn) => { frame = fn; return 1; }, cancelAnimationFrame() {},
   GQL: { useFindScenesQuery: ({ variables, skip }) => {
     queriedIDs = skip ? [] : variables.scene_ids;
@@ -87,8 +89,21 @@ const tiles = (tree) => tree.children[0].children[0].children[0];
 const load = (tree) => tree.children[1].children.at(-1).props.onClick();
 (async () => {
   let tree = render();
+  assert.equal(observers.at(-1).options.rootMargin, "0px 0px 1200px 0px");
   assert.ok(tiles(tree).length < 40); // DOM size depends on viewport, not loaded count.
   assert.equal(queriedIDs.length, 0);
+  let failPrefetch;
+  next = new Promise((resolve, reject) => { failPrefetch = reject; });
+  const prefetch = observers.at(-1);
+  prefetch.fn([{ isIntersecting: true }]);
+  prefetch.fn([{ isIntersecting: true }]);
+  assert.equal(calls.length, 1); // Only one request may be in flight.
+  assert.equal(calls[0][2], true);
+  failPrefetch(new Error("Prefetch failed"));
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(tree.children[1].children.at(-1).children[0], "Retry");
+  calls = [];
   top = -2000; listeners.get("scroll")(); frame();
   tree = render();
   assert.notEqual(tiles(tree)[0].props.entry.scene_id, "1");
@@ -98,6 +113,9 @@ const load = (tree) => tree.children[1].children.at(-1).props.onClick();
   assert.deepEqual(calls[0].slice(0, 3), ["for_you", 2, false]);
   assert.equal(calls[0][3], props.filters);
   assert.equal(hooks[0].length, 121); // Duplicate and deleted scenes are omitted.
+  assert.ok(warmedImages.some((image) => image.src === "/scene/121/screenshot" && image.priority === "low"));
+  assert.ok(warmedImages.every((image) => image.src.endsWith("/screenshot")));
+  assert.ok(!warmedImages.some((image) => image.src === "/scene/122/screenshot"));
   assert.ok(queriedIDs.length <= 3); // Metadata fetches stay bounded to one page.
   next = new Error("Offline");
   await load(tree);

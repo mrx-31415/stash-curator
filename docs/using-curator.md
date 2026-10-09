@@ -43,7 +43,9 @@ The selected recommendation view is remembered in this browser.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
 It is off by default. All three recommendation views then load the next ranked page
-near the bottom. Thumbnails and Wall render only nearby rows. Cards use the browser's
+about two screen heights before the bottom, one request at a time. Thumbnails also
+preload the next batch's screenshots at low priority; videos wait for hover.
+Thumbnails and Wall render only nearby rows. Cards use the browser's
 offscreen rendering support and stay mounted, preserving expanded panels and feedback
 state; loaded cards still occupy memory. Changing lanes, filters,
 moods, or choosing **New picks** starts a fresh list. **Results per page** controls
