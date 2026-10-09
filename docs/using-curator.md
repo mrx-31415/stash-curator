@@ -40,6 +40,7 @@ explanations, **Thumbnails** for a compact grid of screenshots without text over
 or **Wall** for muted playing previews. Thumbnails play a muted preview while hovered
 and restore the screenshot when the pointer leaves; touch devices show screenshots.
 The selected recommendation view is remembered in this browser.
+Cards keep Appeal visible; selection evidence and lane rank are under **Why this?**.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
 It is off by default. All three recommendation views then load the next ranked page
@@ -147,9 +148,12 @@ Library Similar's playing Wall keeps pagination to bound simultaneous videos.
 
 ### Expand
 
-Scene cards in Find show a compact, two-line preview of the available match
-evidence, with full details under **Why this?**. Expand has pagination above and
-below its results; both controls preserve the current filters and sort order.
+Find and recommendation cards keep evidence and score breakdowns under **Why this?**,
+with the remaining actions alongside it. Date, primary score, and tag/performer counts
+share a row where space allows, above the description. Local tag ratings sit beside
+the thumbs. External thumbnails open StashDB, so cards omit separate Open and Copy
+buttons. Expand has pagination above and below its results; both controls preserve
+the current filters and sort order.
 On mobile, pagination uses compact first («), previous (‹), next (›), and last (») page buttons around the current page, all on one line.
 
 Expand ranks a refreshed pool of StashDB scene candidates and related performers

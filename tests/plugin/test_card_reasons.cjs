@@ -140,7 +140,6 @@ assert.match(rendered, /Selected challenge/);
 assert.match(rendered, /card-section/);
 assert.match(rendered, /General evidence/);
 assert.match(source, /className: "curator-selection-reason card-section"/);
-assert.match(source, /selection.teaser \|\| selection.summary/);
 // The expanded explanation keeps the full summary, not the clamped teaser.
 assert.match(rendered, /Stretch because/);
 assert.doesNotMatch(rendered, /Familiar “Anchor”, with/);

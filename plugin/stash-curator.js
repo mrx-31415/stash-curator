@@ -2319,25 +2319,26 @@
   // The intrinsic Appeal headline is always visible. Surface-specific
   // Similarity, Match, or lane rank stays separately labeled and unit-bearing;
   // the named component breakdown remains progressively disclosed.
-  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreLabel = "Match", scoreHeadline, scoreHeadlineValue, scoreHeadlineBar, scoreContent }) {
+  function EvidenceScore({ evidenceProps, evidenceContent, scoreBarContent, scoreSummary, scoreLabel = "Match", scoreHeadline, scoreHeadlineValue, scoreHeadlineBar, scoreContent, metadataContent, dateContent, descriptionContent, actionsContent }) {
     return React.createElement(
       "div",
       { className: "curator-score-stack" },
-      (scoreHeadline || scoreHeadlineBar) && React.createElement("div", { className: "curator-score-appeal-row" }, scoreHeadline && React.createElement("span", { className: "curator-score-headline" }, scoreHeadline), scoreHeadlineBar && React.createElement("div", { className: "curator-score-headline-bar" }, scoreHeadlineBar), scoreHeadlineValue && React.createElement("strong", { className: "curator-score-headline-value" }, scoreHeadlineValue)),
+      (scoreHeadline || scoreHeadlineBar) && React.createElement("div", { className: "curator-score-appeal-row" }, dateContent, scoreHeadline && !["Match", "Appeal"].includes(scoreHeadline) && React.createElement("span", { className: "curator-score-headline" }, scoreHeadline), scoreHeadlineBar && React.createElement("div", { className: "curator-score-headline-bar" }, scoreHeadlineBar), scoreHeadlineValue && React.createElement("strong", { className: "curator-score-headline-value" }, scoreHeadlineValue), metadataContent),
       scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, scoreLabel), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
-      evidenceContent !== null && React.createElement("div", { className: "curator-why-row" }, React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent)),
-      scoreContent && React.createElement("details", { className: "curator-score" }, React.createElement("summary", null, `${scoreLabel} breakdown`), scoreContent)
+      descriptionContent,
+      (evidenceContent !== null || scoreContent || actionsContent) && React.createElement("div", { className: "curator-why-row" },
+        (evidenceContent !== null || scoreContent) && React.createElement("details", { className: "curator-evidence", ...evidenceProps }, React.createElement("summary", null, "Why this?"), evidenceContent, scoreContent),
+        actionsContent
+      )
     );
   }
 
   // The "external" action-set variant (StashDB/Whisparr/shortlist), sibling
   // to Feedback's "local" variant (thumbs up/down + More menu).
-  function ExternalActions({ href, item, kind, copied, onCopy, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
+  function ExternalActions({ item, kind, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
     return React.createElement(
       "div",
       { className: "curator-prune-actions" },
-      React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, target: "_blank", rel: "noreferrer", title: "Open on StashDB", "aria-label": "Open on StashDB" }, React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt })),
-      React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: copied ? "Copied" : "Copy StashDB ID", "aria-label": copied ? "Copied" : "Copy StashDB ID", onClick: onCopy }, React.createElement(FontAwesomeIcon, { icon: copied ? faCheckCircle : faCopy })),
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags & terms", "aria-label": "Rate tags & terms", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
@@ -2360,7 +2361,6 @@
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
-    const [copied, setCopied] = React.useState(false);
     const [whisparr, setWhisparr] = React.useState(null);
     const [tagChoices, setTagChoices] = React.useState(null);
     const [termChoices, setTermChoices] = React.useState(null);
@@ -2446,14 +2446,13 @@
     }
     return React.createElement(
       "article",
-      { className: `curator-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}` },
+      { className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
-      React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)), React.createElement("div", { className: kind === "scene" ? "scene-card__details" : "curator-external-details" }, React.createElement("span", null, payload.release_date || payload.birth_date || ""), metadataControls), kind === "scene" && payload.details && React.createElement("p", { className: "curator-card-description" }, payload.details)),
-      React.createElement("div", { className: "curator-card-body" }, kind === "scene" && React.createElement(FindSceneReason, { item }), (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : null, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : null, scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : null, evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : null, scoreBarContent: utilityBar(score), scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
-      React.createElement(ExternalActions, { href, item, kind, copied, onCopy: async () => { try { await copyText(item.id); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (_) { setCopied(false); } }, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }),
+      React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title))),
+      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : label, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : score.toFixed(2), scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(score), evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
     );
   });
@@ -2961,10 +2960,9 @@
     // not a real recommendation source) — it was never given a label,
     const laneLabel = item.source_lane === "score_review" ? "Sentiment review" : (laneByValue.get(item.source_lane)?.label || item.source_lane);
     const hasLaneRank = item.source_lane !== "score_review";
-    const selection = cardReason(item, scene, evidenceScenes);
     return React.createElement(
       "article",
-      { className: `curator-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
+      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
@@ -2972,14 +2970,11 @@
         React.createElement("span", null, laneLabel.toUpperCase())
       ),
       scene
-        ? React.createElement(SceneCard, { scene })
+        ? React.createElement(SceneCard, { scene, curatorAppeal: item.appeal })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
-      scene?.details && React.createElement("p", { className: "curator-card-description curator-card-description-local" }, scene.details),
       React.createElement(
         "div",
         { className: "curator-card-body" },
-        selection && React.createElement("p", { className: "curator-selection-reason card-section" }, selection.teaser || selection.summary),
-        scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }),
         React.createElement(
           "div",
           { className: "curator-card-details" },
@@ -2988,21 +2983,18 @@
             evidenceContent: React.createElement(
               React.Fragment,
               null,
+              hasLaneRank && React.createElement("p", { className: "curator-explanation" }, `Rank in ${laneLabel}: ${item.lane_value.toFixed(2)} (0..1)`),
               explanationLoading && React.createElement("small", { role: "status" }, "Explaining…"),
               explanationError && React.createElement("small", { className: "text-danger", role: "alert" }, explanationError),
-              explanation && React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
+              React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation?.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
             ),
-            scoreHeadline: "Appeal",
-            scoreHeadlineValue: formatAppealValue(item.appeal),
-            scoreHeadlineBar: scoreBar(item.appeal, true),
-            // Issue #210: score_review has no lane rank — rendering the
-            // second "Appeal" row would duplicate the headline row, so it is
-            // dropped for the pseudo-lane.
-            scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : null,
-            scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : null,
-            scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : null,
-          }),
-          React.createElement(Feedback, { item, onRemove, onThumbDown })
+            descriptionContent: scene?.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, scene.details),
+            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove, onThumbDown })),
+            scoreHeadline: scene ? null : "Appeal",
+            scoreHeadlineValue: scene ? null : formatAppealValue(item.appeal),
+            scoreHeadlineBar: scene ? null : scoreBar(item.appeal, true),
+
+          })
         )
       )
     );
@@ -3380,13 +3372,13 @@
       const entity = entities.get(String(item.entity_id));
       if (!entity) return null;
       if (entityType === "performer" && findView === "thumbnails") return React.createElement(FindThumbnail, { key: item.entity_id, image: entity.image_path, title: entity.name || String(item.entity_id), href: `/performers/${item.entity_id}`, kind: "performer", external: false });
-      const body = React.createElement("div", { className: "curator-card-body" }, entityType === "scene" && React.createElement(FindSceneReason, { item }), entityType === "scene" && React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: "Appeal", scoreHeadlineValue: formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement("p", { className: "curator-explanation" }, relationshipChips(item)), scoreBarContent: utilityBar(item.similarity), scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
-      if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card" }, React.createElement(PerformerCard, { performer: entity }), body);
       const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
+      const body = React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { descriptionContent: entityType === "scene" && entity.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, entity.details), actionsContent: entityType === "scene" && React.createElement(React.Fragment, null, React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement(Feedback, { item: feedbackItem, onRemove, onThumbDown })), scoreHeadline: entityType === "scene" ? null : "Appeal", scoreHeadlineValue: entityType === "scene" ? null : formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: entityType === "scene" ? null : scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement(React.Fragment, null, entityType === "scene" && React.createElement(FindSceneReason, { item }), relationshipChips(item)), scoreBarContent: null, scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} (0..1) · Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
+      if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card curator-compact-card" }, React.createElement(PerformerCard, { performer: entity }), body);
       function rememberOrigin(event) {
         if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
       }
-      return React.createElement("article", { key: item.entity_id, className: "curator-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity }), entity.details && React.createElement("p", { className: "curator-card-description curator-card-description-local" }, entity.details), body, React.createElement("div", { className: "curator-similar-feedback" }, React.createElement(Feedback, { item: feedbackItem, onRemove, onThumbDown })));
+      return React.createElement("article", { key: item.entity_id, className: "curator-card curator-compact-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity, curatorAppeal: (item.appeal * 2) - 1 }), body);
     }));
   }
 
@@ -6033,6 +6025,21 @@
       )
     );
   }
+  Api.patch.after("SceneCard", function (props, _, result) {
+    if (props.curatorAppeal === undefined || !result?.props) return result;
+    return React.cloneElement(result, {
+      details: null,
+      popovers: React.createElement("div", { className: "curator-native-score-row" }, React.createElement(EvidenceScore, {
+        evidenceContent: null,
+        dateContent: React.createElement("div", { className: "card-section curator-native-details" }, result.props.details),
+        scoreHeadline: "Appeal",
+        scoreHeadlineValue: formatAppealValue(props.curatorAppeal),
+        scoreHeadlineBar: scoreBar(props.curatorAppeal, true),
+        metadataContent: result.props.popovers,
+      })),
+    });
+  });
+
   Api.patch.after("MainNavBar.MenuItems", function (props, _, result) {
     const children = React.Children.toArray(props.children);
     if (!children.some((child) => child.key === "stash-curator")) {

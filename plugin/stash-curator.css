@@ -4291,6 +4291,40 @@
 .curator-evidence-fingerprint { background: var(--curator-wash-raised); border: 1px solid var(--curator-border); border-radius: var(--curator-radius-sm); padding: 0.55rem 0.65rem; }
 .curator-score-appeal-row .curator-score-headline { color: var(--curator-card-text-muted); font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .curator-score-headline-value { color: var(--curator-card-text-muted); flex: 0 0 auto; font-size: 0.75rem; font-weight: 600; }
+.curator-compact-card .curator-score-stack { display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; }
+.curator-compact-card .curator-score-appeal-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.curator-compact-card .curator-score-headline-bar { flex: 1 1 2rem; min-width: 2rem; }
+.curator-compact-card .curator-card-date { color: var(--curator-text-muted); font-size: 0.75rem; white-space: nowrap; }
+.curator-compact-card .curator-score-headline { flex: 0 0 auto; }
+.curator-compact-card .curator-match-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; }
+.curator-compact-card .curator-match-label { flex: 0 1 auto; max-width: 50%; min-width: 0; }
+.curator-compact-card .curator-match-row .curator-score-bar { flex: 1 1 2rem; min-width: 2rem; }
+.curator-compact-card .curator-match-row .card-popovers { flex: 0 0 auto; }
+.curator-compact-card .curator-why-row { border: 0; flex: 1 1 auto; padding: 0; width: auto; }
+.curator-compact-card .curator-score { flex: 0 1 auto; margin: 0; }
+.curator-compact-card .curator-score > summary { color: var(--curator-text-muted); font-size: 0.78rem; font-weight: 600; padding: 0.2rem 0; }
+.curator-compact-card .curator-why-row:has(.curator-evidence[open]),
+.curator-compact-card .curator-score[open] { flex-basis: 100%; width: 100%; }
 .curator-metadata-status { border-top: 1px solid var(--curator-border); color: var(--curator-text-muted); font-size: 0.75rem; padding-top: 0.35rem; }
 .curator-metadata-complete { color: #8fbf4f; }
 .curator-metadata-incomplete { color: var(--curator-text-muted); }
+
+.curator-compact-card .curator-why-row { align-items: center; display: flex; flex-wrap: wrap; gap: 0.35rem; width: 100%; }
+.curator-compact-card .curator-why-row .curator-evidence { flex: 1 1 auto; width: auto; min-width: 0; }
+.curator-compact-card .curator-why-row .curator-evidence[open] { flex-basis: 100%; width: 100%; }
+.curator-compact-card .curator-why-row .curator-prune-actions { margin: 0; }
+.curator-compact-card .curator-score-stack > .curator-card-description { flex-basis: 100%; width: 100%; margin: 0; padding: 0; }
+
+.curator-compact-card .card-section { padding-bottom: 0.1rem; }
+.curator-compact-card .card-section-title { min-height: 0; margin-bottom: 0.1rem; }
+.curator-compact-card .curator-card-body { padding-top: 0.2rem; }
+.curator-compact-card .scene-card__details { margin-bottom: 0.1rem; }
+.curator-compact-card .curator-why-row > .curator-external-tag-rating { flex-basis: 100%; order: 1; }
+
+.curator-compact-card .card-section-title { font-size: calc(1.05rem * var(--curator-card-text-scale, 1)); }
+.curator-compact-card .curator-native-score-row { padding: 0.1rem 0.7rem; }
+.curator-compact-card .curator-native-score-row .card-popovers { position: static; flex: 0 0 auto; }
+.curator-compact-card .curator-native-score-row .card-popovers .btn { font-size: 0.85rem; height: 1.65rem; padding: 0 0.25rem; }
+.curator-compact-card .curator-native-score-row hr { display: none; }
+.curator-compact-card .curator-native-details { padding: 0; }
+.curator-compact-card .curator-native-details .scene-card__details { font-size: 0.75rem; min-height: 0; margin: 0; padding: 0; }

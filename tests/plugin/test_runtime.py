@@ -1128,7 +1128,8 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "function EvidenceScore({ evidenceProps, evidenceContent," in source
     assert (
         'scoreBarContent, scoreSummary, scoreLabel = "Match", scoreHeadline, '
-        "scoreHeadlineValue, scoreHeadlineBar, scoreContent })" in source
+        "scoreHeadlineValue, scoreHeadlineBar, scoreContent, "
+        "metadataContent, dateContent, descriptionContent, actionsContent })" in source
     )
     assert 'React.createElement("summary", null, "Why this?")' in source
     assert 'className: "curator-evidence", ...evidenceProps' in source
@@ -1150,12 +1151,11 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "curator-metadata-status" in source
     assert "Metadata covered" in source
     assert "function fingerprintPoint(" in source
-    assert "scoreLabel: hasLaneRank ? `Rank in ${laneLabel}` : null" in source
-    assert "scoreHeadlineValue: formatAppealValue(item.appeal)" in source
+    assert "`Rank in ${laneLabel}: ${item.lane_value.toFixed(2)} (0..1)`" in source
+    assert "curatorAppeal: item.appeal" in source
     assert "function clamp01(value)" in source
-    # Issue #210: score_review cards drop the duplicate second "Appeal" row.
-    assert "scoreBarContent: hasLaneRank ? utilityBar(item.lane_value) : null" in source
-    assert "scoreSummary: hasLaneRank ? item.lane_value.toFixed(2) : null" in source
+    # Rank stays under Why this? and is absent for score_review's pseudo-lane.
+    assert 'hasLaneRank && React.createElement("p", { className: "curator-explanation" }' in source
     # Issue #237: the bar scales to 1.0, so the lane's best — normalized to
     # 1.00 by #226 — renders a full bar. The old 1.2 ceiling (raw final
     # utility, no longer passed anywhere) is gone.
@@ -1178,8 +1178,11 @@ def test_external_card_actions_are_a_named_shared_component() -> None:
     assert "function ExternalActions({" in source
     assert "React.createElement(ExternalActions, {" in source
     assert 'className: "curator-prune-actions"' in source
-    assert '"Open on StashDB"' in source
-    assert "onCopy" in source
+    actions = source[
+        source.index("  function ExternalActions(") : source.index("  function FindThumbnail(")
+    ]
+    assert '"Open on StashDB"' not in actions
+    assert "onCopy" not in actions
     assert "onAddToWhisparr" in source
     assert "tagsAvailable: tags.length > 0" in source
     assert "tagsActive: tagChoices !== null" in source
