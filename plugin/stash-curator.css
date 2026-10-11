@@ -2035,8 +2035,8 @@
 .curator-find-endless .curator-find-thumbnail.performer-card {
   contain-intrinsic-block-size: auto 21rem;
 }
-.curator-find-endless > .curator-grid,
-.curator-find-endless > .curator-preview-wall {
+.curator-find-endless > [data-endless-page] > .curator-grid,
+.curator-find-endless > [data-endless-page] > .curator-preview-wall {
   margin-bottom: 0.8rem;
 }
 

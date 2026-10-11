@@ -328,7 +328,7 @@
     return text;
   }
 
-  async function operation(args, timeoutMs = 30000) {
+  async function operation(args, timeoutMs = args.operation === "get_expand" ? 120000 : 30000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -450,12 +450,16 @@
     }
   }
 
-  function clearSlateCache() {
+  function clearSlateCache(preservePosition = false) {
+    if (!preservePosition) clearEndlessCache();
     slateCache.clear();
     slateRequests.clear();
     cachedModelId = null;
-    cachedConfigUpdatedAtMs = null;
-    sessionStorage.removeItem(SLATE_CACHE_KEY);
+    if (preservePosition) persistSlateCache();
+    else {
+      cachedConfigUpdatedAtMs = null;
+      sessionStorage.removeItem(SLATE_CACHE_KEY);
+    }
     cacheGeneration += 1;
     similarityCache.clear();
   }
@@ -2756,6 +2760,171 @@
     }));
     return React.createElement(PreviewWall, { entries, thumbnails });
   }
+  // Shared by Recommendations and Find. Keep only nearby batches on navigation.
+  const ENDLESS_CACHE_KEY = "stash-curator:endless:v1";
+  const endlessCache = new Map();
+  let endlessGeneration = 0;
+  function clearEndlessCache() {
+    endlessGeneration++;
+    endlessCache.clear();
+    try { sessionStorage.removeItem(ENDLESS_CACHE_KEY); } catch (_) { /* Storage may be unavailable. */ }
+  }
+  function readEndlessCache(key) {
+    try {
+      if (!endlessCache.size) {
+        const saved = JSON.parse(sessionStorage.getItem(ENDLESS_CACHE_KEY) || "[]");
+        for (const [name, value] of saved) {
+          if (Number.isInteger(value?.anchor?.page) && Array.isArray(value.pages) && value.pages.length &&
+              value.pages.every((batch) => Number.isInteger(batch.page) && Array.isArray(batch.items))) endlessCache.set(name, value);
+        }
+      }
+    } catch (_) { /* Ignore unavailable or corrupt storage. */ }
+    return endlessCache.get(key) || null;
+  }
+  function saveEndlessCache(key, pages, anchor, filters = null) {
+    const index = Math.max(0, pages.findIndex((batch) => batch.page === anchor.page));
+    const start = Math.max(0, Math.min(index - 5, pages.length - 12));
+    const value = { pages: pages.slice(start, start + 12), anchor, filters, configUpdatedAtMs: cachedConfigUpdatedAtMs };
+    endlessCache.delete(key);
+    endlessCache.set(key, value);
+    while (endlessCache.size > 6) endlessCache.delete(endlessCache.keys().next().value);
+    // Bound serialized storage too: remote payloads can be much larger than cards.
+    let serialized = JSON.stringify([...endlessCache]);
+    while (serialized.length > 1000000) {
+      if (endlessCache.size > 1) endlessCache.delete(endlessCache.keys().next().value);
+      else if (value.pages.length > 1) {
+        const distance = (batch) => Math.abs(batch.page - anchor.page);
+        if (distance(value.pages[0]) > distance(value.pages.at(-1))) value.pages.shift();
+        else value.pages.pop();
+      } else { endlessCache.delete(key); break; }
+      serialized = JSON.stringify([...endlessCache]);
+    }
+    try { sessionStorage.setItem(ENDLESS_CACHE_KEY, JSON.stringify([...endlessCache])); } catch (_) { /* Memory still works. */ }
+  }
+  function endlessScrollParent(node) {
+    for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+      if (/(auto|scroll)/.test(window.getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return parent;
+    }
+    return window;
+  }
+  function readEndlessRecommendationFilters() {
+    readEndlessCache("");
+    for (const value of [...endlessCache.values()].reverse()) {
+      const filters = value.filters;
+      if (filters && typeof filters.gender === "string" && ["includeTags", "excludeTags", "performers", "studios"].every((field) => Array.isArray(filters[field]))) return value;
+    }
+    return null;
+  }
+  function endlessBatchKey(first, identity) {
+    if (identity[0] === "recommendations") return JSON.stringify([identity, cachedConfigUpdatedAtMs, first.model_id, first.mood_id, first.config_updated_at_ms, first.page_size]);
+    return JSON.stringify([identity, cachedConfigUpdatedAtMs, first.model_id, first.mood_id, first.config_updated_at_ms, first.page_size, first.fetched_at_ms, first.total,
+      first.items.map((item) => item.id || item.scene_id || item.entity_id)]);
+  }
+  function EndlessFindResults({ first, page = 1, pageSize, cacheKey, clientItems = null, loadPage, renderPage, metadata = false }) {
+    const initial = React.useRef(readEndlessCache(cacheKey));
+    const clientBatch = (number) => ({ ...first, page: number, items: clientItems.slice((number - 1) * pageSize, number * pageSize), has_more: number * pageSize < clientItems.length });
+    const [pages, setPages] = React.useState(() => initial.current?.pages || [clientItems ? clientBatch(page) : { ...first, page }]);
+    const [readyPages, setReadyPages] = React.useState(new Set());
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState("");
+    const [restoring, setRestoring] = React.useState(Boolean(initial.current));
+    const root = React.useRef(null), before = React.useRef(null), after = React.useRef(null);
+    const busy = React.useRef(false), alive = React.useRef(true), current = React.useRef(null);
+    const prepend = React.useRef(null);
+    const requestedDirection = React.useRef(1);
+    const generation = React.useRef(endlessGeneration);
+    const anchor = React.useRef(initial.current?.anchor || null);
+    const ready = !metadata || pages.every((batch) => readyPages.has(batch.page));
+    const markReady = React.useCallback((number) => setReadyPages((old) => old.has(number) ? old : new Set([...old, number])), []);
+    current.current = { pages: clientItems ? pages.map((batch) => clientBatch(batch.page)) : pages, restoring };
+    React.useEffect(() => { if (clientItems) generation.current = endlessGeneration; }, [first]);
+    React.useEffect(() => {
+      alive.current = true;
+      const capture = () => {
+        if (current.current.restoring) return;
+        const scroller = endlessScrollParent(root.current);
+        const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
+        const nodes = [...root.current.querySelectorAll("[data-endless-page]")];
+        const node = nodes.find((element) => element.getBoundingClientRect().bottom > top) || nodes.at(-1);
+        if (node) {
+          const items = [...node.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")];
+          const index = items.findIndex((item) => item.getBoundingClientRect().bottom > top);
+          anchor.current = { page: Number(node.dataset.endlessPage), index, offset: (items[index] || node).getBoundingClientRect().top - top };
+        }
+      };
+      const save = () => {
+        capture();
+        if (anchor.current && generation.current === endlessGeneration) saveEndlessCache(cacheKey, current.current.pages, anchor.current);
+      };
+      window.addEventListener("scroll", capture, { passive: true, capture: true });
+      root.current.addEventListener("click", save, true);
+      window.addEventListener("pagehide", save);
+      capture();
+      const node = root.current;
+      return () => {
+        // The DOM may already be detached at cleanup; use the last captured anchor.
+        if (anchor.current && generation.current === endlessGeneration) saveEndlessCache(cacheKey, current.current.pages, anchor.current);
+        alive.current = false;
+        window.removeEventListener("scroll", capture, true);
+        node.removeEventListener("click", save, true);
+        window.removeEventListener("pagehide", save);
+      };
+    }, [cacheKey]);
+    React.useEffect(() => {
+      if (!ready || (!restoring && !prepend.current)) return undefined;
+      const frame = requestAnimationFrame(() => {
+        const saved = prepend.current || anchor.current;
+        const batch = root.current.querySelector(`[data-endless-page="${saved.page}"]`);
+        if (batch) {
+          const node = batch.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")[saved.index] || batch;
+          const scroller = endlessScrollParent(root.current);
+          const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
+          scroller.scrollBy({ top: node.getBoundingClientRect().top - top - saved.offset, behavior: "instant" });
+        }
+        prepend.current = null;
+        setRestoring(false);
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [ready, restoring, pages]);
+    async function more(direction = 1) {
+      if (busy.current || restoring || !ready) return;
+      const number = direction > 0 ? pages.at(-1).page + 1 : pages[0].page - 1;
+      if (number < page || (direction > 0 && !pages.at(-1).has_more)) return;
+      requestedDirection.current = direction;
+      busy.current = true; setLoading(true); setError("");
+      try {
+        const batch = clientItems ? clientBatch(number) : await loadPage(number);
+        if (!Array.isArray(batch?.items)) throw new Error("The next batch did not contain results.");
+        if (first.model_id !== batch.model_id || first.config_updated_at_ms !== batch.config_updated_at_ms || first.fetched_at_ms !== batch.fetched_at_ms) throw new Error("Results changed. Refresh this list to continue.");
+        if (!alive.current) return;
+        if (direction < 0) {
+          const node = root.current.querySelector("[data-endless-page]");
+          const scroller = endlessScrollParent(root.current);
+          prepend.current = { page: pages[0].page, offset: node.getBoundingClientRect().top - (scroller === window ? 0 : scroller.getBoundingClientRect().top) };
+        }
+        setPages((old) => direction > 0 ? [...old, { ...batch, page: number }] : [{ ...batch, page: number }, ...old]);
+      } catch (failure) { if (alive.current) setError(failure.message); }
+      finally { busy.current = false; if (alive.current) setLoading(false); }
+    }
+    const next = React.useRef(null); next.current = more;
+    React.useEffect(() => {
+      if (loading || restoring || !ready || error || !window.IntersectionObserver) return undefined;
+      const scroller = endlessScrollParent(root.current);
+      const observer = new IntersectionObserver((events) => {
+        for (const event of events) if (event.isIntersecting) next.current(event.target === before.current ? -1 : 1);
+      }, { root: scroller === window ? null : scroller, rootMargin: `0px 0px ${Math.max(2400, window.innerHeight * 4)}px 0px` });
+      if (pages.at(-1).has_more) observer.observe(after.current);
+      if (pages[0].page > page) observer.observe(before.current);
+      return () => observer.disconnect();
+    }, [pages, loading, ready, restoring, error]);
+    return React.createElement("div", { ref: root, className: "curator-endless-results curator-find-endless" },
+      pages[0].page > page && React.createElement("div", { ref: before }, React.createElement(Button, { disabled: loading || restoring || !ready, onClick: () => more(-1) }, "Load earlier results")),
+      pages.map((batch) => React.createElement("div", { key: batch.page, "data-endless-page": batch.page }, renderPage(clientItems ? clientBatch(batch.page) : batch, markReady))),
+      error && React.createElement("div", { role: "alert", className: "alert alert-danger" }, error),
+      pages.at(-1).has_more && React.createElement("div", { ref: after }, React.createElement(Button, { disabled: loading || restoring || !ready, onClick: () => more(error ? requestedDirection.current : 1) }, loading ? "Loading…" : error ? "Retry" : "Load more"))
+    );
+  }
+
   function virtualWallRange(count, columns, rowHeight, top, viewportHeight) {
     const rows = Math.ceil(count / columns);
     const firstRow = Math.min(rows, Math.max(0, Math.floor(top / rowHeight) - 2));
@@ -2779,14 +2948,23 @@
       observer.observe(node.current);
       return () => { clearTimeout(timer); observer.disconnect(); };
     }, [entry, seen]);
-    return React.createElement("div", { ref: node, onClick: (event) => {
+    return React.createElement("div", { ref: node, "data-endless-item": String(entry.scene_id), onClick: (event) => {
       if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: entry.scene_id, impression_id: entry.item.impression_id, lane: entry.slate.lane, impression_position: entry.item.position, model_id: entry.slate.model_id }));
     } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
   }
   function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onThumbDown }) {
-    const [entries, setEntries] = React.useState(() => visibleItems.map((item) => ({ scene_id: item.scene_id, scene: scenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate })));
-    const [lastPage, setLastPage] = React.useState(slate);
+    const cacheKey = endlessBatchKey(slate, ["recommendations", lane, filters, rotationLane(lane), cards, thumbnails]);
+    const saved = React.useRef(readEndlessCache(cacheKey));
+    const [restoring, setRestoring] = React.useState(Boolean(saved.current));
+    const snapshot = React.useRef(null);
+    const anchor = React.useRef(saved.current?.anchor || null);
+    const generation = React.useRef(endlessGeneration);
+    const earlier = React.useRef(null);
+    const [entries, setEntries] = React.useState(() => saved.current?.pages.flatMap((batch) => batch.items.map((entry) => ({ ...entry, slate: batch.slate }))) || visibleItems.map((item) => ({ scene_id: item.scene_id, scene: scenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate })));
+    const [lastPage, setLastPage] = React.useState(() => saved.current?.pages.at(-1).slate || slate);
+    const [startPage, setStartPage] = React.useState(() => saved.current?.pages[0].page || slate.page);
     const [pending, setPending] = React.useState(null);
+    const pendingDirection = React.useRef(1);
     const [loading, setLoading] = React.useState(false);
     const [error, setError] = React.useState("");
     const [geometry, setGeometry] = React.useState({ columns: 1, rowHeight: 200, top: 0, viewportHeight: window.innerHeight });
@@ -2796,10 +2974,59 @@
     const busy = React.useRef(false);
     const active = React.useRef(true);
     const seen = React.useRef(new Set());
+    snapshot.current = { entries, restoring, geometry };
+    React.useEffect(() => {
+      const capture = () => {
+        if (snapshot.current.restoring) return;
+        const scroller = endlessScrollParent(root.current);
+        const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
+        const nodes = [...root.current.querySelectorAll("[data-endless-item]")];
+        const node = nodes.find((element) => element.getBoundingClientRect().bottom > top) || nodes.at(-1);
+        const entry = node && snapshot.current.entries.find((value) => String(value.scene_id) === node.dataset.endlessItem);
+        if (entry) anchor.current = { page: entry.slate.page, item: String(entry.scene_id), offset: node.getBoundingClientRect().top - top };
+      };
+      const save = (captureNow = true) => {
+        if (captureNow) capture();
+        if (!anchor.current || generation.current !== endlessGeneration) return;
+        const batches = new Map();
+        for (const entry of snapshot.current.entries) {
+          const { slate: batchSlate, ...value } = entry;
+          if (!batches.has(batchSlate.page)) batches.set(batchSlate.page, { page: batchSlate.page, slate: { ...batchSlate, items: undefined }, items: [] });
+          batches.get(batchSlate.page).items.push(value);
+        }
+        saveEndlessCache(cacheKey, [...batches.values()], anchor.current, filters);
+      };
+      window.addEventListener("scroll", capture, { passive: true, capture: true });
+      const node = root.current;
+      node.addEventListener("click", save, true);
+      window.addEventListener("pagehide", save);
+      capture();
+      return () => {
+        save(false);
+        window.removeEventListener("scroll", capture, true);
+        node.removeEventListener("click", save, true);
+        window.removeEventListener("pagehide", save);
+      };
+    }, [cacheKey]);
+    React.useEffect(() => {
+      if (!restoring) return undefined;
+      const frame = requestAnimationFrame(() => {
+        const scroller = endlessScrollParent(root.current);
+        const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
+        const index = entries.findIndex((entry) => String(entry.scene_id) === anchor.current.item);
+        if (index >= 0) {
+          const node = cards && [...root.current.querySelectorAll("[data-endless-item]")].find((element) => element.dataset.endlessItem === anchor.current.item);
+          const position = node ? node.getBoundingClientRect().top : root.current.getBoundingClientRect().top + Math.floor(index / geometry.columns) * geometry.rowHeight;
+          scroller.scrollBy({ top: position - top - anchor.current.offset, behavior: "instant" });
+        }
+        setRestoring(false);
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [restoring, entries, geometry.columns, geometry.rowHeight, cards]);
     React.useEffect(() => {
       active.current = true;
       const node = root.current;
-      if (node.getBoundingClientRect().top < 0) node.scrollIntoView({ block: "start" });
+      if (!saved.current && node.getBoundingClientRect().top < 0) node.scrollIntoView({ block: "start" });
       return () => { active.current = false; };
     }, []);
     const ids = pending?.items.map((item) => Number(item.scene_id)) || [];
@@ -2818,9 +3045,11 @@
         }
         setEntries((current) => {
           const existing = new Set(current.map((entry) => String(entry.scene_id)));
-          return [...current, ...pending.items.filter((item) => !existing.has(String(item.scene_id)) && nextScenes.has(String(item.scene_id))).map((item) => ({ scene_id: item.scene_id, scene: nextScenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate: pending }))];
+          const added = pending.items.filter((item) => !existing.has(String(item.scene_id)) && nextScenes.has(String(item.scene_id))).map((item) => ({ scene_id: item.scene_id, scene: nextScenes.get(String(item.scene_id)), affinity: item.appeal, lane: item.source_lane || lane, item, slate: pending }));
+          return pendingDirection.current > 0 ? [...current, ...added] : [...added, ...current];
         });
-        setLastPage(pending);
+        if (pendingDirection.current > 0) setLastPage(pending);
+        else { setStartPage(pending.page); setRestoring(true); }
       } else return;
       setPending(null);
       setLoading(false);
@@ -2847,13 +3076,21 @@
       observer?.observe(root.current);
       return () => { cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
     }, [cards]);
-    async function loadMore(prefetched = false) {
-      if (busy.current || !lastPage.has_more) return;
+    async function loadMore(prefetched = false, direction = 1) {
+      if (busy.current || restoring || (direction > 0 && !lastPage.has_more)) return;
+      const number = direction > 0 ? lastPage.page + 1 : startPage - 1;
+      if (number < slate.page) return;
+      if (direction < 0) {
+        const node = root.current.querySelector("[data-endless-item]");
+        const scroller = endlessScrollParent(root.current);
+        if (node) anchor.current = { page: entries[0].slate.page, item: node.dataset.endlessItem, offset: node.getBoundingClientRect().top - (scroller === window ? 0 : scroller.getBoundingClientRect().top) };
+      }
+      pendingDirection.current = direction;
       busy.current = true;
       setLoading(true);
       setError("");
       try {
-        const next = await loadSlate(lane, lastPage.page + 1, prefetched, filters);
+        const next = await loadSlate(lane, number, prefetched, filters);
         if (!active.current) return;
         if (next.model_id !== slate.model_id || next.config_updated_at_ms !== slate.config_updated_at_ms || next.mood_id !== slate.mood_id) {
           onRestart();
@@ -2865,13 +3102,15 @@
       }
     }
     React.useEffect(() => {
-      if (!lastPage.has_more || loading || error || !window.IntersectionObserver) return;
-      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) loadMore(true); }, { rootMargin: `0px 0px ${Math.max(1200, window.innerHeight * 2)}px 0px` });
-      observer.observe(more.current);
+      if (loading || restoring || error || !window.IntersectionObserver) return;
+      const scroller = endlessScrollParent(root.current);
+      const observer = new IntersectionObserver((events) => { for (const event of events) if (event.isIntersecting) loadMore(true, event.target === earlier.current ? -1 : 1); }, { root: scroller === window ? null : scroller, rootMargin: `0px 0px ${Math.max(2400, window.innerHeight * 4)}px 0px` });
+      if (lastPage.has_more) observer.observe(more.current);
+      if (startPage > slate.page) observer.observe(earlier.current);
       return () => observer.disconnect();
-    }, [lastPage, loading, error]);
+    }, [lastPage, startPage, loading, error, restoring, entries]);
     const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
-    return React.createElement(React.Fragment, null,
+    return React.createElement("div", { style: { position: "relative", paddingTop: startPage > slate.page ? "2.5rem" : 0 } },
       cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
         entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onThumbDown }))
       ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
@@ -2882,9 +3121,10 @@
       React.createElement("div", { ref: more, className: "curator-pager", "aria-live": "polite" },
         error && React.createElement("span", { className: "text-danger" }, error),
         loading ? React.createElement("span", { role: "status" }, "Loading more recommendations…")
-          : lastPage.has_more ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => loadMore() }, error ? "Retry" : "Load more")
+          : lastPage.has_more ? React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => loadMore(false, error ? pendingDirection.current : 1) }, error ? "Retry" : "Load more")
             : React.createElement("span", null, "End of recommendations")
-      )
+      ),
+      startPage > slate.page && React.createElement("div", { ref: earlier, style: { position: "absolute", top: 0 } }, React.createElement(Button, { disabled: loading || restoring, onClick: () => loadMore(false, -1) }, "Load earlier results"))
     );
   }
   function RecommendationCard({ item, scene, slate, onRemove, onThumbDown, evidenceScenes }) {
@@ -2962,7 +3202,7 @@
     const hasLaneRank = item.source_lane !== "score_review";
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, ref: card },
+      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, "data-endless-item": String(item.scene_id), ref: card },
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
@@ -3286,53 +3526,6 @@
     );
   }
 
-  function EndlessFindResults({ first, page, pageSize, clientItems = null, loadPage, renderPage, metadata = false }) {
-    const [pages, setPages] = React.useState([first]);
-    const [readyPages, setReadyPages] = React.useState(new Set());
-    const [loading, setLoading] = React.useState(false);
-    const [error, setError] = React.useState("");
-    const sentinel = React.useRef(null);
-    const busy = React.useRef(false);
-    const alive = React.useRef(true);
-    const nextRef = React.useRef(null);
-    const lastPage = page + pages.length - 1;
-    const last = pages[pages.length - 1];
-    const ready = !metadata || readyPages.has(lastPage);
-    const hasMore = clientItems ? lastPage * pageSize < clientItems.length : Boolean(last.has_more);
-    React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-    React.useEffect(() => { setPages((current) => current[0] === first ? current : [first, ...current.slice(1)]); }, [first]);
-    const markReady = React.useCallback((value) => setReadyPages((current) => current.has(value) ? current : new Set([...current, value])), []);
-    function next() {
-      if (busy.current || !ready || !hasMore) return;
-      busy.current = true;
-      setLoading(true);
-      setError("");
-      Promise.resolve().then(() => clientItems ? first : loadPage(lastPage + 1)).then((data) => {
-        if (!Array.isArray(data?.items)) throw new Error("The next batch did not contain results.");
-        if (alive.current) setPages((current) => [...current, data]);
-      }).catch((failure) => { if (alive.current) setError(failure.message); }).finally(() => {
-        busy.current = false;
-        if (alive.current) setLoading(false);
-      });
-    }
-    nextRef.current = next;
-    React.useEffect(() => {
-      if (!hasMore || loading || !ready || error || !window.IntersectionObserver) return undefined;
-      const observer = new IntersectionObserver(([event]) => { if (event.isIntersecting) nextRef.current(); }, { rootMargin: `0px 0px ${Math.max(1200, window.innerHeight * 2)}px 0px` });
-      observer.observe(sentinel.current);
-      return () => observer.disconnect();
-    }, [lastPage, hasMore, loading, ready, error]);
-    return React.createElement("div", { className: "curator-find-endless" },
-      pages.map((data, index) => {
-        const number = page + index;
-        const batch = clientItems ? { ...first, page: number, items: clientItems.slice((number - 1) * pageSize, number * pageSize) } : { ...data, page: number };
-        return React.createElement(React.Fragment, { key: number }, renderPage(batch, markReady));
-      }),
-      error && React.createElement("div", { className: "alert alert-danger", role: "alert" }, error),
-      hasMore && React.createElement("div", { ref: sentinel, className: "curator-endless-more" }, React.createElement(Button, { size: "sm", disabled: loading || !ready, onClick: next }, loading || !ready ? "Loading…" : error ? "Retry" : "Load more"))
-    );
-  }
-
   function relationshipChips(item) {
       const labels = {
         same_performer: "Same performer",
@@ -3585,6 +3778,7 @@
     async function shortlistExternal(item, kind) {
       try {
         await operation({ operation: "update_shortlist", entity_type: kind, external_id: item.id, selected: !item.shortlisted });
+        clearEndlessCache();
         setResult((current) => ({ ...current, items: current.items.map((value) => value.id === item.id ? { ...value, shortlisted: !item.shortlisted } : value) }));
       } catch (failure) { setError(failure.message); }
     }
@@ -3630,7 +3824,7 @@
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
         minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
         applyVisible: Boolean(selected),
-        onApply: () => updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })),
+        onApply: () => { clearEndlessCache(); updateUrl((s) => ({ ...s, excludedIds: [], page: 1, fetchTick: s.fetchTick + 1 })); },
       }),
       search && !selected && React.createElement(
         "div",
@@ -3644,7 +3838,7 @@
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       result && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: requestKey, first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
+        ? !loading && React.createElement(EndlessFindResults, { key: requestKey, cacheKey: endlessBatchKey(result, ["similar", continuationRequest.current, findView, wall, pageSize]), first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
         : renderSimilarPage({ ...result, page, items })),
       result && !endless && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
@@ -3874,7 +4068,7 @@
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
           : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
       continuationRequest.current = request;
-      operation(request, entityType === "hunt" ? 60000 : 30000).then(
+      operation(request, entityType === "hunt" ? 60000 : undefined).then(
         (result) => {
           if (!active) return;
           setData(result);
@@ -3898,6 +4092,7 @@
       updateUrl((s) => ({ ...s, page: 1, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], performers: value.performers || [], studios: value.studios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumScore: value.minimum ?? 0 }));
     }
     async function refresh() {
+      clearEndlessCache();
       if (entityType === "hunt") {
         setVersion((value) => value + 1);
         return;
@@ -3917,6 +4112,7 @@
     async function shortlist(item, kind) {
       try {
         await operation({ operation: "update_shortlist", entity_type: kind, external_id: item.id, selected: !item.shortlisted });
+        clearEndlessCache();
         if (entityType === "hunt") {
           setData((current) => ({ ...current, items: current.items.map((value) => value.id === item.id ? { ...value, shortlisted: !item.shortlisted } : value) }));
         } else {
@@ -4008,7 +4204,7 @@
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
         minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
-        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFilterVersion((value) => value + 1)),
+        onApply: () => { clearEndlessCache(); updateUrl((s) => ({ ...s, page: 1 })); setFilterVersion((value) => value + 1); },
       }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
@@ -4018,7 +4214,7 @@
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       pager,
       data?.ready && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderExpandPage })
+        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, findView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
         : renderExpandPage({ ...data, items: visibleItems })),
       pager
     );
@@ -5424,12 +5620,14 @@
       setPage(1);
       setRefreshKey((value) => value + 1);
     }
-    function applyMoods(next) {
+    function applyMoods(next, reset = true) {
       setMoods(next);
       const selected = readMoodID();
-      selectMood(next.some((mood) => mood.id === selected) ? selected : "");
+      const valid = next.some((mood) => mood.id === selected) ? selected : "";
+      if (reset || valid !== moodID) selectMood(valid);
     }
-    const initialSlateFilters = React.useMemo(() => defaultFilters("recommendations"), []);
+    const restoredSlateFilters = React.useMemo(readEndlessRecommendationFilters, []);
+    const initialSlateFilters = React.useMemo(() => restoredSlateFilters?.filters || defaultFilters("recommendations"), []);
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterIncludeTags, setFilterIncludeTags] = React.useState(initialSlateFilters.includeTags || []);
     const [filterExcludeTags, setFilterExcludeTags] = React.useState(initialSlateFilters.excludeTags || []);
@@ -5521,11 +5719,11 @@
           try { await loadFilterPresets(data.config.saved_filters || {}); }
           catch (failure) { if (active) setError(`Could not load saved filters: ${failure.message}`); return; }
           if (!active) return;
-          applySavedSlateFilters(defaultFilters("recommendations"), false);
+          if (restoredSlateFilters?.configUpdatedAtMs !== data.updated_at_ms) applySavedSlateFilters(defaultFilters("recommendations"), false);
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setDiversityEnabled(Boolean(data.config.diversity_enabled));
           setEndlessEnabled(Boolean(data.config.recommendation_endless_scroll));
-          applyMoods(data.config.moods || []);
+          applyMoods(data.config.moods || [], false);
           persistSlateCache();
           setConfigReady(true);
         },
@@ -5881,7 +6079,7 @@
     try {
       await operation({ operation: "submit_events", entries });
       if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
-        clearSlateCache();
+        clearSlateCache(true);
         scheduleModelUpdate();
         schedulePlaySync();
       }

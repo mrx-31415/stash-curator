@@ -44,11 +44,14 @@ Cards keep Appeal visible; selection evidence and lane rank are under **Why this
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
 It is off by default. All three recommendation views then load the next ranked page
-about two screen heights before the bottom, one request at a time. Thumbnails also
+about four screen heights before the bottom, one request at a time. Thumbnails also
 preload the next batch's screenshots at low priority; videos wait for hover.
 Thumbnails and Wall render only nearby rows. Cards use the browser's
 offscreen rendering support and stay mounted, preserving expanded panels and feedback
-state; loaded cards still occupy memory. Changing lanes, filters,
+state; loaded cards still occupy memory. Returning from another Stash page restores
+your position and nearby loaded batches in the same tab. Deep lists retain up to
+12 nearby batches; earlier results load as you scroll upward. Storage size limits
+can retain fewer batches. Changing filters,
 moods, or choosing **New picks** starts a fresh list. **Results per page** controls
 the fetch size; **Load more** also lets you load explicitly or retry a failed request.
 
@@ -142,6 +145,7 @@ play previews on hover; external results and performers show still images.
 
 The **Virtual endless scrolling** switch in **Page settings** applies to Find too.
 Both Cards and Thumbnails load the next batch early as you approach the bottom.
+They restore your position and nearby batches when you return from another Stash page.
 Loaded cards retain their expanded controls while the browser skips offscreen
 rendering. Turn the switch off to use pagination.
 Library Similar's playing Wall keeps pagination to bound simultaneous videos.
