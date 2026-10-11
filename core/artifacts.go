@@ -10,7 +10,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,9 +117,7 @@ func readonlyArtifactURI(path string, immutable bool) string {
 	if immutable {
 		suffix = "&immutable=1"
 	}
-	u := url.URL{Scheme: "file", Path: path}
-	u.RawQuery = "mode=ro" + suffix
-	return u.String()
+	return fileURI(path, true) + suffix
 }
 
 // attachActiveArtifacts mirrors artifacts.attach_active_artifacts: attach the

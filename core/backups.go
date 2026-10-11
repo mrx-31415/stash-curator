@@ -168,7 +168,7 @@ func backupDatabase(db dbx, dst string, overwrite bool, progress func(done, tota
 		// The mattn backup API backs up into a *connection* opened on the
 		// destination; open the temp destination and back the source's main
 		// database into it (the same sqlite3_backup_init Python uses).
-		destDB, err := sql.Open("sqlite3", "file:"+temporary+"?mode=rwc")
+		destDB, err := sql.Open("sqlite3", fileURI(temporary, false)+"?mode=rwc")
 		if err != nil {
 			return err
 		}
