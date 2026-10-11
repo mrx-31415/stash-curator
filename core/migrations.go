@@ -103,6 +103,8 @@ func allDigits(s string) bool {
 // without one is incomplete (verified against sqlite3.complete_statement).
 func completeStatement(buffer string) bool {
 	state := 0 // 0 normal, 1 line comment, 2 block comment, 3 string, 4 quoted ident, 5 bracket ident, 6 backtick ident
+	previousWord, beforePreviousWord := "", ""
+	trigger, afterSemicolon, triggerEnd := false, false, false
 	for i := 0; i < len(buffer); i++ {
 		c := buffer[i]
 		next := byte(0)
@@ -152,15 +154,39 @@ func completeStatement(buffer string) bool {
 				state = 2
 				i++
 			case c == '\'':
+				afterSemicolon, triggerEnd = false, false
 				state = 3
 			case c == '"':
+				afterSemicolon, triggerEnd = false, false
 				state = 4
 			case c == '[':
+				afterSemicolon, triggerEnd = false, false
 				state = 5
 			case c == '`':
+				afterSemicolon, triggerEnd = false, false
 				state = 6
+			case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_':
+				start := i
+				for i+1 < len(buffer) && (buffer[i+1] >= 'a' && buffer[i+1] <= 'z' || buffer[i+1] >= 'A' && buffer[i+1] <= 'Z' || buffer[i+1] >= '0' && buffer[i+1] <= '9' || buffer[i+1] == '_') {
+					i++
+				}
+				word := strings.ToUpper(buffer[start : i+1])
+				if word == "TRIGGER" && (previousWord == "CREATE" || beforePreviousWord == "CREATE" && (previousWord == "TEMP" || previousWord == "TEMPORARY")) {
+					trigger = true
+				}
+				// A trigger finishes at ; END ;, including bodies containing CASE END.
+				triggerEnd = word == "END" && afterSemicolon
+				afterSemicolon = false
+				beforePreviousWord, previousWord = previousWord, word
 			case c == ';':
-				return true
+				if !trigger || triggerEnd {
+					return true
+				}
+				afterSemicolon = true
+			default:
+				if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+					afterSemicolon, triggerEnd = false, false
+				}
 			}
 		}
 	}

@@ -242,29 +242,21 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 	scenePhashes := jvObj()
 	performers := jvObj()
 	studios := jvObj()
+	indexes := make([]map[string]int, 5)
+	for i := range indexes {
+		indexes[i] = make(map[string]int)
+	}
 	for index, page := range pages {
 		if page.err != nil {
 			return jvNull(), page.err
 		}
 		// Merge in page order: per-kind maps take the last seen id mapping,
 		// scene_phashes keeps the first page that reported the value.
-		for _, pair := range page.scenes.obj {
-			scenes.set(pair.key, pair.val)
-		}
-		for _, pair := range page.sceneIDs.obj {
-			sceneIDs.set(pair.key, pair.val)
-		}
-		for _, pair := range page.scenePhashes.obj {
-			if !scenePhashes.has(pair.key) {
-				scenePhashes.set(pair.key, pair.val)
-			}
-		}
-		for _, pair := range page.performers.obj {
-			performers.set(pair.key, pair.val)
-		}
-		for _, pair := range page.studios.obj {
-			studios.set(pair.key, pair.val)
-		}
+		mergeLinkPage(&scenes, indexes[0], page.scenes, false)
+		mergeLinkPage(&sceneIDs, indexes[1], page.sceneIDs, false)
+		mergeLinkPage(&scenePhashes, indexes[2], page.scenePhashes, true)
+		mergeLinkPage(&performers, indexes[3], page.performers, false)
+		mergeLinkPage(&studios, indexes[4], page.studios, false)
 		if progress != nil {
 			processed := int64(index+1) * pageSize
 			if processed > total {
@@ -290,6 +282,20 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		}
 	}
 	return result, nil
+}
+
+// Preserve insertion order and duplicate semantics without scanning every prior key.
+func mergeLinkPage(target *jVal, index map[string]int, page jVal, keepFirst bool) {
+	for _, pair := range page.obj {
+		if position, exists := index[pair.key]; exists {
+			if !keepFirst {
+				target.obj[position].val = pair.val
+			}
+		} else {
+			index[pair.key] = len(target.obj)
+			target.obj = append(target.obj, pair)
+		}
+	}
 }
 
 // normalizePhash mirrors curator/expand.py's normalize_phash: exactly 16 hex

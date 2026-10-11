@@ -162,6 +162,11 @@ cache** task, then browse candidates, save filters, or shortlist leads. The refr
 retains eligible leads found through Similar and Performer Hunt, updates their scores
 after model changes, and drops scenes outside the recent-release horizon.
 
+Expand reuses the last query's ordering across pages. Changes to candidates, filters,
+blocks, tag equivalents, or local library matches invalidate it; shortlist changes
+appear immediately. Unchanged pages load only their own candidate payloads, using a
+database revision marker instead of scanning the entire pool.
+
 Saved filters and their defaults are stored in Curator's database and are shared
 across browsers, including private browsing sessions. Plugin updates retain them.
 Existing browser-only filters are imported when you open Curator in that browser;
@@ -237,6 +242,12 @@ removed from the same view or in Stash.
 
 - Curator's background worker can apply pending model updates and recent-play syncs;
   optionally schedule Expand refresh, sync/build, and backups in plugin settings.
+- Automatic and scheduled tasks wait while a Curator page is visible, then resume
+  90 seconds after its last heartbeat. This applies across tabs and users. Tasks
+  you start explicitly still run; a task already running finishes normally.
+- On Linux containers, the worker uses half the container memory limit as a soft
+  Go memory budget, leaving room for Stash and build subprocesses. An explicit
+  `GOMEMLIMIT` takes precedence.
 - Sync after meaningful library or metadata changes; a full sync reconciles deletions and
   tag merges that targeted entity hooks do not cover.
 - Run the first sync/build before expecting recommendation lanes to contain results.
@@ -248,4 +259,5 @@ removed from the same view or in Stash.
 - Treat Blind Spots and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
 - Enable profiling only while measuring a reproducible slow operation; retained
-  traces stay local until cleared.
+  traces stay local until cleared. `worker-*` traces measure actual background
+  execution; task traces without that prefix measure the request to enqueue work.

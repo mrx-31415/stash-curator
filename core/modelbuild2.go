@@ -23,7 +23,8 @@ type buildModelScore struct {
 	confidence         float64
 	metadataConfidence float64
 	recovery           float64
-	components         jVal
+	componentsJSON     string
+	classificationJSON string
 	neighbors          []jVal
 	eligibility        jVal
 }
@@ -1060,7 +1061,9 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 		confidence:         confidence,
 		metadataConfidence: metadataConfidence,
 		recovery:           recovery,
-		components:         components,
+		// Publication only needs JSON; release each scene's object tree now.
+		componentsJSON:     components.marshalSortedKeys(),
+		classificationJSON: classificationPayload(components).marshalSortedKeys(),
 		neighbors:          neighborItems,
 		eligibility:        eligibilityValue,
 	}
@@ -1096,8 +1099,8 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	if err := allSceneRows.Err(); err != nil {
 		return nil, jvNull(), nil, err
 	}
-	preferenceVectors, discriminative := preferenceContentVectors(vectors, sceneFeatures, affinities)
-	progressTotal := len(preferenceVectors) + len(allSceneIDs)
+	discriminative := preferenceContentDimensions(sceneFeatures, affinities)
+	progressTotal := len(vectors) + len(allSceneIDs)
 	similarityStarted := time.Now()
 	neighbors, err := contentNeighbors(db, featureVersion, affinities, trainingLabels,
 		labelMean, progressTotal, report)
@@ -1191,7 +1194,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 			defer close(reporterDone)
 			progressReporter.wait(reportPoints(totalScenes), func(completed int) {
 				if report != nil {
-					progressIndex := len(preferenceVectors) + completed
+					progressIndex := len(vectors) + completed
 					report(0.35 + 0.40*float64(progressIndex)/float64(maxInt(1, progressTotal)))
 				}
 			})

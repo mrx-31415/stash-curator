@@ -101,6 +101,13 @@ VALUES (?, ?, 'queued', ?, ?, ?)`, jobID, mode, now, now, payloadRaw)
 			return err
 		}
 		existingJobID, existingJobType = existingID, existingType
+		// An explicit request can release an automatic job deferred by browsing.
+		if !payload.get("args").get("automatic").truthy() {
+			_, err = conn.ExecContext(ctx, `UPDATE curator_job
+SET payload_json=json_set(payload_json, '$.args.automatic', json('false'))
+WHERE job_id=? AND state='queued'`, existingID)
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -153,8 +160,15 @@ func marshalJVal(v jVal) (string, error) {
 // transitions. Shared by the inline fallback and the daemon.
 func executeClaimedJob(db dbx, pluginDir string, payload jVal, mode string, settings jVal, jobID string, startedAtMs int64) (jVal, error) {
 	done := make(chan struct{})
-	defer close(done)
-	go heartbeatLoop(db, jobID, done)
+	heartbeatFinished := make(chan struct{})
+	go func() {
+		defer close(heartbeatFinished)
+		heartbeatLoop(db, jobID, done)
+	}()
+	defer func() {
+		close(done)
+		<-heartbeatFinished
+	}()
 	// The sink writes on its own connection (the execution pool is pinned to
 	// one conn), so progress updates never block behind the mode's own
 	// statements — or deadlock when a marker fires inside one of its txns.

@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 pytest() (
   local base temporary
-  base="${TMPDIR:-../.tmp}"
+  base="${TMPDIR:-/tmp}"
   mkdir -p "$base"
   temporary=$(mktemp -d "$base/pytest-curator.XXXXXX")
   trap 'rm -rf "$temporary"' EXIT
@@ -13,7 +13,9 @@ pytest() (
 )
 
 pytest_not_integration() (
-  pytest -m "not integration" "$@"
+  # Keep module fixtures together; bound native threads inside each worker.
+  OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    pytest -n "${CURATOR_TEST_WORKERS:-4}" --dist=loadfile -m "not integration" "$@"
 )
 
 # ── compiled core (Go) ─────────────────────────────────────────────────
@@ -36,7 +38,7 @@ core_gate() {
   if [[ ! -x "core/bin/curator-core" ]]; then
     core_build_and_check
   fi
-  CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest tests/core tests/model/test_core.py
+  CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest_not_integration tests/core tests/model/test_core.py
 }
 
 case "${1:-}" in
@@ -60,12 +62,11 @@ case "${1:-}" in
     uv run --frozen python scripts/scoring_fingerprint.py --write >/dev/null
     if [[ "$core_changed" == true ]]; then
       core_build_and_check
-      core_gate
     fi
     ((${#python[@]} == 0)) || uv run --frozen ruff format "${python[@]}"
     ((${#python[@]} == 0)) || uv run --frozen ruff check "${python[@]}"
     [[ "$javascript" == false ]] || node --check plugin/stash-curator.js
-    (($# == 0)) || pytest_not_integration "$@"
+    (($# == 0)) || CURATOR_TEST_WORKERS="${CURATOR_TEST_WORKERS:-0}" pytest_not_integration "$@"
     git diff --check
     ;;
   core)
@@ -76,7 +77,7 @@ case "${1:-}" in
     core_build_and_check
     uv run --frozen python scripts/perf_gate.py
     ;;
-  full)
+  test|full)
     # Fails rather than rewrites: a stale constant means the digest does not
     # identify the code, and CI must not paper over that by mutating the tree.
     uv run --frozen python scripts/scoring_fingerprint.py --check
@@ -86,16 +87,22 @@ case "${1:-}" in
     uv run --frozen mypy curator plugin/backend.py
     # Build the archive before pytest so the packaging/archive tests validate
     # the zip this run produces, not a stale one.
-    uv run --frozen python scripts/build_plugin.py
+    pytest_args=()
+    if [[ "$1" == full ]]; then
+      uv run --frozen python scripts/build_plugin.py
+    else
+      pytest_args=(-k 'not test_plugin_archive_contains_runtime_and_core')
+    fi
     # One pytest pass with the built binary pinned. core_gate's test set
     # (tests/core + tests/model/test_core.py) is a subset of the full
     # non-integration suite, so running both doubled the core tests; the
     # env-sensitive resolver tests shadow CURATOR_CORE per-test, so a global
     # pin does not change their behavior.
-    CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest_not_integration
-    # Perf budget: CI-shape synthetic model build within the checked-in
-    # baseline x PERF_BUDGET_MULTIPLIER.
-    uv run --frozen python scripts/perf_gate.py
+    CURATOR_CORE="$(pwd)/core/bin/curator-core" pytest_not_integration --durations=20 "${pytest_args[@]}"
+    # The full gate retains the benchmark; routine native tests omit its setup.
+    if [[ "$1" == full ]]; then
+      uv run --frozen python scripts/perf_gate.py
+    fi
     node --check plugin/stash-curator.js
     git diff --check
     ;;
@@ -140,7 +147,7 @@ case "${1:-}" in
       --output=/tmp/stash-curator-integration-test-output
     ;;
   *)
-    echo "usage: scripts/verify {changed [pytest-target ...]|core|perf|full|integration}" >&2
+    echo "usage: scripts/verify {changed [pytest-target ...]|core|perf|test|full|integration}" >&2
     exit 2
     ;;
 esac

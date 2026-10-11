@@ -11,6 +11,8 @@ import (
 )
 
 func TestStartProfilingForExplicitDir(t *testing.T) {
+	t.Setenv("CURATOR_CORE_CPU_PROFILE_DIR", "previous-cpu")
+	t.Setenv("CURATOR_CORE_MEM_PROFILE_DIR", "previous-mem")
 	settings := jvObj(jvKey("pprofEnabled", jvBool(true)))
 	pluginDir := t.TempDir()
 	payload := jvObj(jvKey("args", jvObj(jvKey("database_path", jvStr(filepath.Join(pluginDir, "data", "curator.sqlite3"))))))
@@ -19,6 +21,9 @@ func TestStartProfilingForExplicitDir(t *testing.T) {
 	runtime.KeepAlive(work)
 	stopCPU()
 	dumpMem()
+	if os.Getenv("CURATOR_CORE_CPU_PROFILE_DIR") != "previous-cpu" || os.Getenv("CURATOR_CORE_MEM_PROFILE_DIR") != "previous-mem" {
+		t.Fatal("capture environment leaked into the next worker job")
+	}
 	dir := filepath.Join(pluginDir, "data", "profiles")
 	for _, kind := range []string{"cpu", "mem"} {
 		matches, err := filepath.Glob(filepath.Join(dir, kind+"-get_similar-*.pprof"))

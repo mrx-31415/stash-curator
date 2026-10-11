@@ -135,6 +135,15 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		}
 	}
 	switch operation {
+	case "page_activity":
+		path := filepath.Join(workerStateDataDir(pluginDir), "curator-page-active")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return jvNull(), err
+		}
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			return jvNull(), err
+		}
+		return jvObj(jvKey("ok", jvBool(true))), nil
 	case "health":
 		return opHealth(pluginDir, payload)
 	case "restart_worker":

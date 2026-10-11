@@ -161,6 +161,29 @@ def core_binary_name(goos: str, goarch: str) -> str:
     return f"curator-core-{goos}-{goarch}{suffix}"
 
 
+def cached_link_shims() -> Path:
+    """Keep CGO linker flags identical across checkouts with identical stubs."""
+    files = {
+        source.relative_to(ZIG_SHIM_DIR): source.read_bytes()
+        for source in sorted(ZIG_SHIM_DIR.rglob("*"))
+        if source.is_file()
+    }
+    digest = sha256()
+    for relative, data in files.items():
+        digest.update(str(relative).encode() + b"\0" + data + b"\0")
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    directory = cache_home / "stash-curator" / "zig-shims" / digest.hexdigest()
+    for relative, data in files.items():
+        target = directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_file() and target.read_bytes() == data:
+            continue
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temporary:
+            temporary.write(data)
+        os.replace(temporary.name, target)
+    return directory
+
+
 def _core_binary_fresh(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -168,7 +191,13 @@ def _core_binary_fresh(path: Path) -> bool:
         ROOT / "pyproject.toml",
         ROOT / "core" / "go.mod",
         ROOT / "core" / "go.sum",
-        *sorted((ROOT / "core").glob("*.go")),
+        ROOT / "scripts" / "build_plugin.py",
+        *(
+            source
+            for source in sorted((ROOT / "core").glob("*.go"))
+            if not source.name.endswith("_test.go")
+        ),
+        *sorted((ROOT / "core" / "migrations").glob("*.sql")),
         *sorted((ROOT / "scripts" / "zig").rglob("*")),
     ]
     newest = max(source.stat().st_mtime for source in sources)
@@ -188,7 +217,7 @@ def core_binaries() -> list[Path]:
             "packaging the plugin requires the Go toolchain (install Go, then see core/README.md)"
         )
     plugin_version = version()
-    pending: list[tuple[tuple[str, str], Path, dict[str, str]]] = []
+    pending: list[tuple[Path, dict[str, str]]] = []
     for goos, goarch in SHIPPED_PLATFORMS:
         target = ROOT / "core" / "bin" / core_binary_name(goos, goarch)
         if _core_binary_fresh(target):
@@ -201,7 +230,8 @@ def core_binaries() -> list[Path]:
             CC=ZIG_CC[(goos, goarch)],
         )
         if goos == "darwin":
-            target_env["CGO_LDFLAGS"] = f"-L{ZIG_SHIM_DIR} -F{ZIG_SHIM_DIR}"
+            shims = cached_link_shims()
+            target_env["CGO_LDFLAGS"] = f"-L{shims} -F{shims}"
         pending.append((target, target_env))
     if pending:
         zig_bin = bootstrap_zig()
@@ -213,7 +243,7 @@ def core_binaries() -> list[Path]:
                 f"or let the bootstrap download it on a supported host ({hosts})"
             )
         if zig_bin is not None:
-            prepend = f"{zig_bin}{os.pathsep}"
+            prepend = f"{zig_bin.resolve()}{os.pathsep}"
             for _, target_env in pending:
                 target_env["PATH"] = prepend + target_env.get("PATH", "")
 

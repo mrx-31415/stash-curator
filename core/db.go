@@ -145,6 +145,10 @@ func fileURI(path string, readonly bool) string {
 // settings are transactional/idempotent, so the whole open is retried with
 // backoff (the #109 mitigation), matching withTxn/execImmediate.
 func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool) (dbx, error) {
+	opened := time.Now()
+	defer func() {
+		currentTrace().record("core", "sidecar.open", opened.UnixNano(), time.Since(opened).Nanoseconds(), jvNull())
+	}()
 	path := realpath(databasePath(pluginDir, payload, settings))
 	parent := filepath.Dir(path)
 	if _, err := os.Stat(parent); os.IsNotExist(err) {
@@ -154,7 +158,9 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 	}
 	var lastErr error
 	for attempt := range busyRetryAttempts {
+		stage := time.Now()
 		db, err := openDatabase(path, false, currentTrace())
+		currentTrace().record("core", "sidecar.connect", stage.UnixNano(), time.Since(stage).Nanoseconds(), jvNull())
 		if err != nil {
 			if isBusyError(err) && attempt < busyRetryAttempts-1 {
 				lastErr = err
@@ -163,7 +169,10 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 			}
 			return nil, err
 		}
-		if err := migrate(db, nowMs()); err != nil {
+		stage = time.Now()
+		err = migrate(db, nowMs())
+		currentTrace().record("core", "sidecar.migrate", stage.UnixNano(), time.Since(stage).Nanoseconds(), jvNull())
+		if err != nil {
 			db.Close()
 			if isBusyError(err) && attempt < busyRetryAttempts-1 {
 				lastErr = err
@@ -172,7 +181,10 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 			}
 			return nil, err
 		}
-		if err := applyPluginSettings(db, settings, nowMs()); err != nil {
+		stage = time.Now()
+		err = applyPluginSettings(db, settings, nowMs())
+		currentTrace().record("core", "sidecar.settings", stage.UnixNano(), time.Since(stage).Nanoseconds(), jvNull())
+		if err != nil {
 			db.Close()
 			if isBusyError(err) && attempt < busyRetryAttempts-1 {
 				lastErr = err
@@ -182,7 +194,10 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 			return nil, err
 		}
 		if attachArtifacts {
-			if err := attachActiveArtifacts(db); err != nil {
+			stage = time.Now()
+			err = attachActiveArtifacts(db)
+			currentTrace().record("core", "sidecar.artifacts", stage.UnixNano(), time.Since(stage).Nanoseconds(), jvNull())
+			if err != nil {
 				db.Close()
 				if isBusyError(err) && attempt < busyRetryAttempts-1 {
 					lastErr = err

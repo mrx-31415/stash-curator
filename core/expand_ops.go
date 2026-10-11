@@ -4,8 +4,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -88,7 +92,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if (entityType != "scene" && entityType != "performer") || (sortBy != "match" && sortBy != "newest") {
 		return jvNull(), errors.New("invalid Expand query")
 	}
-	if page < 1 || count < 1 || count > 500 {
+	if page < 1 || count < 1 || count > 500 || page > math.MaxInt64/count {
 		return jvNull(), errors.New("invalid Expand page")
 	}
 	if minimumScore < -1 || minimumScore > 1 {
@@ -150,45 +154,101 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if links.kind == jObj {
 		byExternalID, byPhash = sceneLinkMaps(links)
 	}
-	entityRows, err := db.Query(`SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'`, entityType)
-	if err != nil {
+	var revision int64
+	if err := db.QueryRow(`SELECT revision FROM expand_candidate_revision WHERE entity_type=?`, entityType).Scan(&revision); err != nil {
 		return jvNull(), err
 	}
-	columns, err := entityRows.Columns()
-	if err != nil {
+	digest := sha256.New()
+	encoder := json.NewEncoder(digest)
+	if err := encoder.Encode([]any{entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
+		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery, hidePhash,
+		minimumScore, includeGroups, excludeGroups, blockedGroups, blockedTerms, byExternalID, byPhash, revision}); err != nil {
 		return jvNull(), err
 	}
-	// The candidate rows are materialized first so the parse/annotate/filter
-	// phase can run across all cores: each row's work is independent, and the
-	// outputs land in index-ordered slots, so the assembled rows are
-	// identical to the sequential loop (and the first payload error by row
-	// order is the one returned, matching the old behavior).
 	type expandRow struct {
 		externalID  string
 		score       float64
 		payloadJSON string
 		sourcesJSON string
 	}
-	materialized := make([]expandRow, 0)
-	for entityRows.Next() {
-		values := make([]any, len(columns))
-		scanned := make([]any, len(columns))
-		for i := range columns {
-			scanned[i] = &values[i]
+	render := func(row expandRow, payload jVal) jVal {
+		sources, err := parseJSON([]byte(row.sourcesJSON))
+		if err != nil {
+			sources = jvArr()
 		}
-		if err := entityRows.Scan(scanned...); err != nil {
+		return jvObj(
+			jvKey("id", jvStr(row.externalID)),
+			jvKey("score", jvFloat(row.score)),
+			jvKey("sources", sources),
+			jvKey("payload", payload),
+			jvKey("shortlisted", jvBool(shortlisted[row.externalID])),
+		)
+	}
+	fingerprint := hex.EncodeToString(digest.Sum(nil))
+	// Candidate triggers advance the revision; unchanged pages only load their
+	// own payloads. Filter, taxonomy, block and library inputs stay fingerprinted.
+	cacheKey := "expand_order:v2:" + entityType
+	var cached string
+	err = db.QueryRow(`SELECT value FROM application_meta WHERE key=?`, cacheKey).Scan(&cached)
+	if err != nil && err != sql.ErrNoRows {
+		return jvNull(), err
+	}
+	if parsed, parseErr := parseJSON([]byte(cached)); parseErr == nil && parsed.get("fingerprint").asString() == fingerprint && parsed.get("ids").kind == jArr {
+		ids := parsed.get("ids").arr
+		start, end := (page-1)*count, minInt64(page*count, int64(len(ids)))
+		requested := jvArr()
+		for i := start; i < end; i++ {
+			requested.arr = append(requested.arr, ids[i])
+		}
+		// Check the revision in the page query's snapshot too, so a concurrent
+		// candidate update cannot combine an old ordering with new payloads.
+		pageRows, err := db.Query(`SELECT e.external_id, e.score, e.payload_json, e.sources_json
+FROM json_each(?) requested CROSS JOIN external_entity e ON e.external_id=requested.value
+WHERE e.entity_type=? AND e.pool='candidate'
+AND (SELECT revision FROM expand_candidate_revision WHERE entity_type=?)=?
+ORDER BY CAST(requested.key AS INTEGER)`, requested.marshalCompact(), entityType, entityType, revision)
+		if err != nil {
 			return jvNull(), err
 		}
-		row := make(map[string]any, len(columns))
-		for i, name := range columns {
-			row[name] = values[i]
+		items := jvArr()
+		for pageRows.Next() {
+			var row expandRow
+			if err := pageRows.Scan(&row.externalID, &row.score, &row.payloadJSON, &row.sourcesJSON); err != nil {
+				pageRows.Close()
+				return jvNull(), err
+			}
+			payload, err := parseJSON([]byte(row.payloadJSON))
+			if err != nil {
+				pageRows.Close()
+				return jvNull(), err
+			}
+			if links.kind == jObj && entityType == "scene" {
+				payload = annotateLocalMatch(payload, byExternalID, byPhash)
+			}
+			items.arr = append(items.arr, render(row, payload))
 		}
-		materialized = append(materialized, expandRow{
-			externalID:  asDBString(row["external_id"]),
-			score:       asDBFloat(row["score"]),
-			payloadJSON: asDBString(row["payload_json"]),
-			sourcesJSON: asDBString(row["sources_json"]),
-		})
+		pageRows.Close()
+		if err := pageRows.Err(); err != nil {
+			return jvNull(), err
+		}
+		if len(items.arr) == len(requested.arr) {
+			return expandPageResult(page, count, fetchedAtMs, expiresAtMs, int64(len(ids)), items), nil
+		}
+	}
+	// Cache misses still parse and rank the full candidate pool in parallel.
+	entityRows, err := db.Query(`SELECT external_id, score, payload_json, sources_json
+FROM external_entity WHERE entity_type=? AND pool='candidate' ORDER BY external_id`, entityType)
+	if err != nil {
+		return jvNull(), err
+	}
+	materialized := make([]expandRow, 0)
+	for entityRows.Next() {
+		var row expandRow
+		if err := entityRows.Scan(&row.externalID, &row.score, &row.payloadJSON, &row.sourcesJSON); err != nil {
+			entityRows.Close()
+			return jvNull(), err
+		}
+		materialized = append(materialized, row)
 	}
 	entityRows.Close()
 	if err := entityRows.Err(); err != nil {
@@ -263,17 +323,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 					includeGroups, excludeGroups, blockedGroups, blockedTerms) {
 					continue
 				}
-				sources, err := parseJSON([]byte(row.sourcesJSON))
-				if err != nil {
-					sources = jvArr()
-				}
-				results[i] = jvObj(
-					jvKey("id", jvStr(row.externalID)),
-					jvKey("score", jvFloat(row.score)),
-					jvKey("sources", sources),
-					jvKey("payload", payload),
-					jvKey("shortlisted", jvBool(shortlisted[row.externalID])),
-				)
+				results[i] = render(row, payload)
 			}
 		}()
 	}
@@ -323,16 +373,29 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	} else {
 		pageItems = jvArr()
 	}
+	ids := jvArr()
+	for _, row := range rows {
+		ids.arr = append(ids.arr, row.get("id"))
+	}
+	if err := execImmediate(db, `INSERT INTO application_meta(key,value) VALUES (?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, cacheKey,
+		jvObj(jvKey("fingerprint", jvStr(fingerprint)), jvKey("ids", ids)).marshalCompact()); err != nil {
+		warnLog("Could not cache Expand ordering: " + err.Error())
+	}
+	return expandPageResult(page, count, fetchedAtMs, expiresAtMs, int64(len(rows)), pageItems), nil
+}
+
+func expandPageResult(page, count, fetchedAtMs, expiresAtMs, total int64, items jVal) jVal {
 	return jvObj(
 		jvKey("ready", jvBool(true)),
 		jvKey("fetched_at_ms", jvInt(fetchedAtMs)),
 		jvKey("expires_at_ms", jvInt(expiresAtMs)),
 		jvKey("page", jvInt(page)),
 		jvKey("page_size", jvInt(count)),
-		jvKey("total", jvInt(int64(len(rows)))),
-		jvKey("has_more", jvBool(int64(len(rows)) > end)),
-		jvKey("items", pageItems),
-	), nil
+		jvKey("total", jvInt(total)),
+		jvKey("has_more", jvBool(total > page*count)),
+		jvKey("items", items),
+	)
 }
 
 type newestKey struct {

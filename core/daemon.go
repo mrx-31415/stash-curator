@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +81,11 @@ func workerLogPath(pluginDir string) string {
 
 func workerStateDataDir(pluginDir string) string {
 	return filepath.Join(pluginDir, "data")
+}
+
+func curatorPageActive(pluginDir string, now int64) bool {
+	info, err := os.Stat(filepath.Join(workerStateDataDir(pluginDir), "curator-page-active"))
+	return err == nil && now-info.ModTime().UnixMilli() < 90_000
 }
 
 // checkWorkerStateWritable fails before a task mutates the sidecar when the
@@ -490,6 +496,7 @@ func spawnWorker(pluginDir string) error {
 		return err
 	}
 	cmd := exec.Command(exe, pluginDir, "daemon")
+	cmd.Env = workerEnvironment()
 	cmd.SysProcAttr = daemonSysProcAttr()
 	cmd.Stdin = devnull
 	cmd.Stdout = logFile
@@ -502,6 +509,18 @@ func spawnWorker(pluginDir string) error {
 	devnull.Close()
 	logFile.Close()
 	return nil
+}
+
+// The worker starts its own captures; inheriting an enqueue capture would
+// profile the daemon forever and prevent per-job CPU profiling.
+func workerEnvironment() []string {
+	var env []string
+	for _, item := range os.Environ() {
+		if !strings.HasPrefix(item, "CURATOR_CORE_CPU_PROFILE_DIR=") && !strings.HasPrefix(item, "CURATOR_CORE_MEM_PROFILE_DIR=") {
+			env = append(env, item)
+		}
+	}
+	return env
 }
 
 // ensureAutoWorker spawns the daemon when schedules or auto tasks are
@@ -572,7 +591,9 @@ WHERE state='running' AND heartbeat_at_ms IS NULL AND started_at_ms<=?`,
 	execImmediate(db, `UPDATE model_update_state SET last_error='interrupted before task completion'
 WHERE last_started_at_ms IS NOT NULL
 AND last_started_at_ms>COALESCE(last_finished_at_ms, -1)
-AND last_error IS NULL`)
+AND last_error IS NULL
+AND NOT EXISTS (SELECT 1 FROM curator_job WHERE state='running'
+AND job_type IN ('build','force-build','update-model','sync-build','full-sync-build'))`)
 }
 
 // ensureWorker guarantees a daemon exists whenever there is queued work. The
@@ -714,6 +735,13 @@ func runDaemon(pluginDir string) {
 	// work competing with a Stash the user is actively using. Foreground
 	// plugin invocations deliberately do not call this.
 	lowerWorkerPriority()
+	if os.Getenv("GOMEMLIMIT") == "" {
+		if budget := workerMemoryBudget("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"); budget > 0 {
+			debug.SetMemoryLimit(budget)
+			os.Setenv("GOMEMLIMIT", strconv.FormatInt(budget, 10))
+			infoLog(fmt.Sprintf("worker Go memory budget: %d MiB", budget>>20))
+		}
+	}
 
 	state, err := readWorkerState(pluginDir)
 	if err != nil {
@@ -805,7 +833,11 @@ func runDaemon(pluginDir string) {
 			autoPayload = autoPayloadFromState(fresh)
 		}
 		now := nowMs()
-		if now-lastTick >= autoTickMs {
+		pageActive := curatorPageActive(pluginDir, now)
+		if pageActive {
+			idleSince = now // stay available to resume deferred work when the page closes
+		}
+		if !pageActive && now-lastTick >= autoTickMs {
 			lastTick = now
 			if enqueued, err := schedulerTick(loop, autoPayload, now); err != nil {
 				errorLog("auto-scheduler failed: " + err.Error())
@@ -828,7 +860,7 @@ func runDaemon(pluginDir string) {
 				schedulerFailures = 0
 			}
 		}
-		jobID, startedAtMs, payload, mode, err := claimQueuedJob(loop)
+		jobID, startedAtMs, payload, mode, err := claimQueuedJob(loop, pageActive)
 		if err != nil {
 			errorLog("daemon claim failed: " + err.Error())
 			time.Sleep(claimPollMs * time.Millisecond)
@@ -910,14 +942,15 @@ WHERE state='running' AND (owner_pid=? OR owner_pid IS NULL)`, nowMs(), os.Getpi
 // claimQueuedJob atomically claims the oldest queued row: state queued →
 // running with owner_pid + heartbeat, returning the payload snapshot. An
 // empty jobID means the queue is empty.
-func claimQueuedJob(db dbx) (string, int64, jVal, string, error) {
+func claimQueuedJob(db dbx, deferAutomatic bool) (string, int64, jVal, string, error) {
 	var jobID, jobType, payloadJSON string
 	var startedAtMs int64
 	err := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
 		row := conn.QueryRowContext(ctx, `
 SELECT job_id, job_type, started_at_ms, payload_json FROM curator_job
-WHERE state='queued' ORDER BY queued_at_ms, started_at_ms LIMIT 1`)
+WHERE state='queued' AND (?=0 OR COALESCE(json_extract(payload_json, '$.args.automatic'), 0)=0)
+ORDER BY queued_at_ms, started_at_ms LIMIT 1`, deferAutomatic)
 		if err := row.Scan(&jobID, &jobType, &startedAtMs, &payloadJSON); err != nil {
 			if err == sql.ErrNoRows {
 				jobID = ""
@@ -960,16 +993,19 @@ WHERE job_id=? AND state='queued'`, os.Getpid(), nowMs(), jobID)
 // opened because the installed binary is older than the sidecar schema, so no
 // job can ever run and a fresh worker with the current binary must take over.
 func runWorkerJob(pluginDir string, loop dbx, jobID string, startedAtMs int64, payload jVal, mode string) bool {
-	settings := pluginSettings(payload)
-	db, err := openTaskSidecarFn(pluginDir, payload, settings, mode)
-	if err != nil {
-		execImmediate(loop, `UPDATE curator_job SET state='failed', finished_at_ms=?, error=?
+	retire := false
+	_, _ = profiledKind(pluginDir, payload, "worker-"+mode, "task", func(settings jVal) (jVal, error) {
+		db, err := openTaskSidecarFn(pluginDir, payload, settings, mode)
+		if err != nil {
+			execImmediate(loop, `UPDATE curator_job SET state='failed', finished_at_ms=?, error=?
 WHERE job_id=? AND state='running'`, nowMs(), truncateString(err.Error(), 2000), jobID)
-		return isSchemaSkewError(err)
-	}
-	defer db.Close()
-	_, _ = executeClaimedJob(db, pluginDir, payload, mode, settings, jobID, startedAtMs)
-	return false
+			retire = isSchemaSkewError(err)
+			return jvNull(), err
+		}
+		defer db.Close()
+		return executeClaimedJob(db, pluginDir, payload, mode, settings, jobID, startedAtMs)
+	})
+	return retire
 }
 
 // heartbeatLoop writes liveness and watches the cooperative-cancel flag for

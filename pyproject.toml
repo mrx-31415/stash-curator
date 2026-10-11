@@ -21,6 +21,7 @@ dev = [
   "networkx>=3.6",
   "numpy>=2.5,<3",
   "pytest>=8.3",
+  "pytest-xdist>=3.8,<4",
   "ruff>=0.9",
   "scipy>=1.14",
 ]

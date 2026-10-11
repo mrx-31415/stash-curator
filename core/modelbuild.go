@@ -616,6 +616,7 @@ ORDER BY ef.entity_id, fd.family, fd.name`, featureVersion, entityType)
 		return nil, err
 	}
 	result := map[string][]storedFeature{}
+	definitions := map[string]storedFeature{}
 	for rows.Next() {
 		var entityID, featureID, family, name string
 		var value, confidence float64
@@ -624,14 +625,18 @@ ORDER BY ef.entity_id, fd.family, fd.name`, featureVersion, entityType)
 			rows.Close()
 			return nil, err
 		}
-		metadata := jvObj()
-		if parsed, err := parseJSON([]byte(metadataJSON)); err == nil {
-			metadata = parsed
+		feature, seen := definitions[featureID]
+		if !seen {
+			metadata := jvObj()
+			if parsed, err := parseJSON([]byte(metadataJSON)); err == nil {
+				metadata = parsed
+			}
+			// Definitions are immutable and shared by every scene using the feature.
+			feature = storedFeature{featureID: featureID, family: family, name: name, metadata: metadata}
+			definitions[featureID] = feature
 		}
-		result[entityID] = append(result[entityID], storedFeature{
-			featureID: featureID, family: family, name: name,
-			value: value, confidence: confidence, metadata: metadata,
-		})
+		feature.value, feature.confidence = value, confidence
+		result[entityID] = append(result[entityID], feature)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -1132,9 +1137,9 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	return result, nil
 }
 
-// preferenceContentVectors mirrors _preference_content_vectors.
-func preferenceContentVectors(vectors map[string]map[string]float64,
-	sceneFeatures map[string][]storedFeature, affinities map[string]modelAffinity) (map[string]map[string]float64, int) {
+// The content-neighbors kernel builds its own vectors; scoring only needs
+// the number of learned content dimensions from _preference_content_vectors.
+func preferenceContentDimensions(sceneFeatures map[string][]storedFeature, affinities map[string]modelAffinity) int {
 	strengths := map[string]float64{}
 	for _, sceneID := range sortedStringKeys(sceneFeatures) {
 		for _, feature := range sceneFeatures[sceneID] {
@@ -1158,46 +1163,13 @@ func preferenceContentVectors(vectors map[string]map[string]float64,
 			strengths[feature.name] = math.Max(0, learnedAffinity) * learnedConfidence
 		}
 	}
-	maximum := 0.0
-	for _, strength := range strengths {
-		if strength > maximum {
-			maximum = strength
-		}
-	}
-	const generic = 0.0
-	weighted := map[string]map[string]float64{}
 	discriminative := 0
 	for _, strength := range strengths {
 		if strength > 0 {
 			discriminative++
 		}
 	}
-	for sceneID, vector := range vectors {
-		values := map[string]float64{}
-		for name, value := range vector {
-			multiplier := 1.0
-			if maximum > 0 {
-				multiplier = generic + (1-generic)*strengths[name]/maximum
-			}
-			if multiplier > 1e-9 {
-				values[name] = value * multiplier
-			}
-		}
-		var normSquared float64
-		for _, value := range values {
-			normSquared += value * value
-		}
-		norm := math.Sqrt(normSquared)
-		if norm == 0 {
-			norm = 1.0
-		}
-		normalized := map[string]float64{}
-		for name, value := range values {
-			normalized[name] = value / norm
-		}
-		weighted[sceneID] = normalized
-	}
-	return weighted, discriminative
+	return discriminative
 }
 
 func copysign(x, y float64) float64 {

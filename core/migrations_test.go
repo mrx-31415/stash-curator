@@ -34,18 +34,18 @@ func TestMigrateFullChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.currentVersion != 38 || status.latestVersion != 38 || len(status.pending) != 0 {
+	if status.currentVersion != 39 || status.latestVersion != 39 || len(status.pending) != 0 {
 		t.Fatalf("unexpected status: %+v", status)
 	}
-	if len(migrations) != 38 {
-		t.Fatalf("expected 38 migrations, got %d", len(migrations))
+	if len(migrations) != 39 {
+		t.Fatalf("expected 39 migrations, got %d", len(migrations))
 	}
 	var rows int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 38 {
-		t.Fatalf("schema_migration has %d rows, want 38", rows)
+	if rows != 39 {
+		t.Fatalf("schema_migration has %d rows, want 39", rows)
 	}
 	// Idempotent second migrate.
 	if err := migrate(db, 1_700_000_000_001); err != nil {
@@ -54,7 +54,7 @@ func TestMigrateFullChain(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 38 {
+	if rows != 39 {
 		t.Fatalf("second migrate added rows: %d", rows)
 	}
 	var integrity string
@@ -102,6 +102,8 @@ func TestCompleteStatement(t *testing.T) {
 		"INSERT INTO t VALUES ('a;b');",
 		";",
 		"CREATE TABLE x (a TEXT);\n",
+		"CREATE TRIGGER t AFTER INSERT ON x BEGIN SELECT 1; END;",
+		"create temporary trigger t after insert on x begin SELECT CASE WHEN 1 THEN 'END;' END; -- comment\n END;",
 	}
 	for _, c := range complete {
 		if !completeStatement(c) {
@@ -118,6 +120,9 @@ func TestCompleteStatement(t *testing.T) {
 		"",
 		"INSERT INTO t VALUES ('a;b')",
 		"CREATE TABLE x (a TEXT) STRICT",
+		"CREATE TRIGGER t AFTER INSERT ON x BEGIN SELECT 1;",
+		"CREATE TRIGGER t AFTER INSERT ON x BEGIN SELECT CASE WHEN 1 THEN 2 END;",
+		"CREATE TRIGGER t AFTER INSERT ON x BEGIN SELECT 1; END",
 	}
 	for _, c := range incomplete {
 		if completeStatement(c) {
