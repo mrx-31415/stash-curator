@@ -119,7 +119,7 @@ func TestClaimQueuedJob(t *testing.T) {
 	payload := `{"args":{"operation":"sync-plays"},"server_connection":{"host":"h","port":"1"}}`
 	pinTime(t, 5_000, func() {
 		insertQueued(t, db, "job-a", "sync-plays", payload, 4_000)
-		jobID, startedAtMs, got, mode, err := claimQueuedJob(db)
+		jobID, startedAtMs, got, mode, err := claimQueuedJob(db, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,12 +143,49 @@ func TestClaimQueuedJob(t *testing.T) {
 	})
 }
 
+func TestVisiblePageDefersAutomaticJobs(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, nowMs()); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := t.TempDir()
+	if curatorPageActive(pluginDir, nowMs()) {
+		t.Fatal("no heartbeat must allow background work")
+	}
+	if _, err := dispatch(pluginDir, jvObj(jvKey("args", jvObj(jvKey("operation", jvStr("page_activity")))))); err != nil {
+		t.Fatal(err)
+	}
+	now := nowMs()
+	if !curatorPageActive(pluginDir, now) {
+		t.Fatal("heartbeat must defer background work")
+	}
+	if ok, err := enqueueAutoTask(db, "expand-refresh", jvObj(), now); err != nil || !ok {
+		t.Fatalf("enqueue automatic: %v %v", ok, err)
+	}
+	insertQueued(t, db, "manual", "backup", `{}`, now+1)
+	id, _, _, _, err := claimQueuedJob(db, curatorPageActive(pluginDir, now))
+	if err != nil || id != "manual" {
+		t.Fatalf("explicit job must bypass deferred automatic job: %q %v", id, err)
+	}
+	id, _, _, _, err = claimQueuedJob(db, true)
+	if err != nil || id != "" {
+		t.Fatalf("automatic job must remain queued: %q %v", id, err)
+	}
+	if curatorPageActive(pluginDir, now+90_000) {
+		t.Fatal("stale heartbeat must release background work")
+	}
+	id, _, payload, mode, err := claimQueuedJob(db, curatorPageActive(pluginDir, now+90_000))
+	if err != nil || id == "" || mode != "expand-refresh" || !payload.get("args").get("automatic").truthy() {
+		t.Fatalf("automatic job must resume after lease expiry: %q %q %v", id, mode, err)
+	}
+}
+
 func TestClaimEmptyAndSingleShot(t *testing.T) {
 	db, _ := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
 		t.Fatal(err)
 	}
-	jobID, _, _, _, err := claimQueuedJob(db)
+	jobID, _, _, _, err := claimQueuedJob(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +194,7 @@ func TestClaimEmptyAndSingleShot(t *testing.T) {
 	}
 	insertQueued(t, db, "job-a", "build", `{}`, 1)
 	insertQueued(t, db, "job-b", "build", `{}`, 2)
-	first, _, _, _, err := claimQueuedJob(db)
+	first, _, _, _, err := claimQueuedJob(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +203,7 @@ func TestClaimEmptyAndSingleShot(t *testing.T) {
 	}
 	// The first claim removed the row from the queue; a second claim takes
 	// the next one, never the claimed row again.
-	second, _, _, _, err := claimQueuedJob(db)
+	second, _, _, _, err := claimQueuedJob(db, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +222,7 @@ func TestEnqueueCoalescesSameType(t *testing.T) {
 	}
 	pluginDir := t.TempDir()
 	pinTime(t, 10_000, func() {
-		insertQueued(t, db, "existing", "update-model", `{}`, 9_000)
+		insertQueued(t, db, "existing", "update-model", `{"args":{"automatic":true}}`, 9_000)
 		out, err := runTaskBody(pluginDir, taskPayload(path, "update-model"), "update-model", jvObj())
 		if err != nil {
 			t.Fatal(err)
@@ -202,6 +239,10 @@ func TestEnqueueCoalescesSameType(t *testing.T) {
 		}
 		if queued != 1 {
 			t.Fatalf("coalescing added a queued row: %d", queued)
+		}
+		id, _, payload, _, err := claimQueuedJob(db, true)
+		if err != nil || id != "existing" || payload.get("args").get("automatic").truthy() {
+			t.Fatalf("explicit request must release deferred job: %q %v", id, err)
 		}
 	})
 }
@@ -227,7 +268,7 @@ func TestEnqueueQueuesAndWorkerClaims(t *testing.T) {
 		if jobID == "" || jobState(t, db, jobID) != "queued" {
 			t.Fatalf("row not queued: %s %s", jobID, jobState(t, db, jobID))
 		}
-		claimed, _, _, mode, err := claimQueuedJob(db)
+		claimed, _, _, mode, err := claimQueuedJob(db, false)
 		if err != nil {
 			t.Fatal(err)
 		}

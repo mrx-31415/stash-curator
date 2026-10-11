@@ -119,8 +119,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.write:
         for relative, content in rendered.items():
-            (REPO_ROOT / relative).write_text(content)
-        print(f"wrote {fingerprint} to {', '.join(rendered)}")
+            target = REPO_ROOT / relative
+            if not target.is_file() or target.read_text() != content:
+                target.write_text(content)
+        print(f"scoring fingerprint {fingerprint}; generated targets are up to date")
         return 0
 
     if args.check:

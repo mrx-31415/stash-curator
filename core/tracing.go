@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,9 +49,9 @@ type trace struct {
 }
 
 // activeTrace is the current operation's trace, or nil (Python ContextVar).
-var activeTrace *trace
+var activeTrace atomic.Pointer[trace]
 
-func currentTrace() *trace { return activeTrace }
+func currentTrace() *trace { return activeTrace.Load() }
 
 func beginTrace(name, kind string) *trace {
 	t := &trace{
@@ -61,13 +62,13 @@ func beginTrace(name, kind string) *trace {
 		startedNs:   time.Now().UnixNano(), // perf_counter_ns equivalent
 		status:      "ok",
 	}
-	activeTrace = t
+	activeTrace.Store(t)
 	return t
 }
 
 func endTrace(t *trace) {
 	t.durationUs = (time.Now().UnixNano() - t.startedNs) / 1_000
-	activeTrace = nil
+	activeTrace.Store(nil)
 }
 
 func (t *trace) fail(err error) {
@@ -275,7 +276,6 @@ func (d *tracedDB) Exec(query string, args ...any) (sql.Result, error) {
 	d.t.record("sqlite", name, started, time.Now().UnixNano()-started, details)
 	return result, err
 }
-
 
 func (d *tracedDB) Query(query string, args ...any) (*sql.Rows, error) {
 	name, details := sqlSpanDetails(query)

@@ -40,6 +40,12 @@ func autoPayloadFromState(state workerState) jVal {
 // does, but without the worker-ensure dance (the daemon IS the worker). An
 // active job of the same type coalesces into a no-op.
 func enqueueAutoTask(db dbx, mode string, payload jVal, now int64) (bool, error) {
+	args := payload.get("args")
+	if args.kind != jObj {
+		args = jvObj()
+	}
+	args.set("automatic", jvBool(true))
+	payload.set("args", args)
 	payloadRaw, err := marshalJVal(payload)
 	if err != nil {
 		return false, err

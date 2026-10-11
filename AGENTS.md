@@ -52,8 +52,9 @@ environment once:
 uv sync --locked
 ```
 
-The verifier creates unique pytest temporary space under the workspace. Override its
-location with `TMPDIR` only when needed.
+The verifier creates unique pytest temporary space in system temporary storage.
+Override its location with `TMPDIR` when needed; durable workspace storage can make
+SQLite-heavy tests much slower.
 
 Enable the repository's native pre-push verification hook once per clone:
 

@@ -146,9 +146,24 @@ func startProfilingFor(pluginDir string, payload, settings jVal, mode string) (s
 	}
 	dir := pprofProfilesDir(pluginDir, payload, settings)
 	prunePprofFiles(dir, maxPprofFiles)
+	cpuDir, hadCPU := os.LookupEnv("CURATOR_CORE_CPU_PROFILE_DIR")
+	memDir, hadMem := os.LookupEnv("CURATOR_CORE_MEM_PROFILE_DIR")
 	os.Setenv("CURATOR_CORE_CPU_PROFILE_DIR", dir)
 	os.Setenv("CURATOR_CORE_MEM_PROFILE_DIR", dir)
-	return startProfiling(mode, dir, dir)
+	stop, dumpMem := startProfiling(mode, dir, dir)
+	return func() {
+		stop()
+		if hadCPU {
+			os.Setenv("CURATOR_CORE_CPU_PROFILE_DIR", cpuDir)
+		} else {
+			os.Unsetenv("CURATOR_CORE_CPU_PROFILE_DIR")
+		}
+		if hadMem {
+			os.Setenv("CURATOR_CORE_MEM_PROFILE_DIR", memDir)
+		} else {
+			os.Unsetenv("CURATOR_CORE_MEM_PROFILE_DIR")
+		}
+	}, dumpMem
 }
 
 // prunePprofFiles keeps the newest max profile files in dir (by mtime),

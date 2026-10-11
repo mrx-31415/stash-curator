@@ -8,6 +8,7 @@ identical `model_id`: the build found the published row, incremented
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,24 @@ import pytest
 
 from curator.model.fingerprint import SCORING_FINGERPRINT
 from scripts import scoring_fingerprint
+
+
+def test_write_preserves_unchanged_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scoring_fingerprint, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(scoring_fingerprint, "compute", lambda: "test")
+    rendered = scoring_fingerprint.render("test")
+    for relative, content in rendered.items():
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        os.utime(target, ns=(1, 1))
+    assert scoring_fingerprint.main(["--write"]) == 0
+    assert all((tmp_path / relative).stat().st_mtime_ns == 1 for relative in rendered)
+
+    target = tmp_path / scoring_fingerprint.GO_TARGET
+    target.write_text("stale")
+    assert scoring_fingerprint.main(["--write"]) == 0
+    assert target.read_text() == rendered[scoring_fingerprint.GO_TARGET]
 
 
 def test_generated_constants_match_the_manifest() -> None:

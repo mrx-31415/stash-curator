@@ -21,11 +21,28 @@ scripts/verify changed
 ```
 
 Use `scripts/verify changed tests/path/to/test_file.py` while implementing a focused
-change. Before push, run the CI-equivalent suite once:
+change. For a broad native test pass, run `scripts/verify test`: it builds the host
+core and runs lint, type checks, Go tests and Python compatibility tests.
+It omits cross-platform packaging and the performance benchmark. Run
+`scripts/verify perf` for that benchmark. Focused `verify changed` checks run Go
+tests when needed and only the Python tests requested; broad differential coverage
+runs in `verify core`, `verify test` and `verify full`.
+
+Before release, run the CI-equivalent suite with all five platform builds:
 
 ```bash
 scripts/verify full
 ```
+
+Tests use unique directories in system temporary storage; set `TMPDIR` to override
+that location. Prefer local storage for SQLite-heavy tests. Non-integration tests run
+on four pytest-xdist workers, keeping each file's fixtures together and limiting
+numerical libraries to one thread per worker. Set `CURATOR_TEST_WORKERS=0` for
+serial debugging, or another worker count for your machine. The full suite reports
+its 20 slowest tests. Test-only Go edits and unchanged generated fingerprints do
+not invalidate packaged binaries.
+macOS linker stubs use a content-addressed cache, so moving between checkouts does
+not invalidate SQLite's C compilation when the stubs are unchanged.
 
 Build the plugin source with `uv run --frozen python scripts/build_plugin.py`. It
 writes `dist/stash-curator.zip` and a checksummed `dist/index.yml`. Repository tests

@@ -345,8 +345,8 @@ INSERT INTO model_scene_neighbor(
 			modelID, score.sceneID, score.generalAppeal, score.directAppeal,
 			score.directConfidence, score.appeal, score.currentFit, score.confidence,
 			score.metadataConfidence, score.recovery,
-			score.components.marshalSortedKeys(),
-			classificationPayload(score.components).marshalSortedKeys(),
+			score.componentsJSON,
+			score.classificationJSON,
 			score.eligibility.marshalSortedKeys(),
 		})
 		if len(scoreRows) >= scoreRowChunk {
@@ -855,6 +855,9 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	report(0.35)
 	var publishTimings map[string]int64
 	err = rec.stage("", "model.publish", func() error {
+		// Scoring is complete; do not retain feature vectors through publication.
+		sceneFeatures = nil
+		releaseMemoryToOS()
 		artifact, temporary, final, err := modelWriteTables(db, modelID, featureVersion, affinities,
 			labels, scores, performerSimilarity, report, rec)
 		if err != nil {
@@ -865,7 +868,6 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		// and ordering-materialization stages so their peak memory no longer
 		// stacks on top of it.
 		scoreCount := len(scores)
-		sceneFeatures = nil
 		affinities = nil
 		scores = nil
 		performerSimilarity = jvNull()

@@ -837,16 +837,16 @@
     return `${Math.round(hours / 24)}d ago`;
   }
 
-  async function runTask(taskName) {
+  async function runTask(taskName, automatic = false) {
     const response = await fetch("/graphql", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query:
-          "mutation CuratorTask($task: String!) { " +
-          "runPluginTask(plugin_id: \"stash-curator\", task_name: $task) }",
-        variables: { task: taskName },
+          "mutation CuratorTask($task: String!, $args: Map!) { " +
+          "runPluginTask(plugin_id: \"stash-curator\", task_name: $task, args_map: $args) }",
+        variables: { task: taskName, args: { automatic } },
       }),
     });
     const payload = await response.json();
@@ -861,7 +861,7 @@
     modelUpdateTimer = setTimeout(
       () => operation({ operation: "health" })
         .then((health) => health.model_update_ready && !health.model_rebuilding
-          ? runTask("Apply recent Curator feedback")
+          ? runTask("Apply recent Curator feedback", true)
           : null)
         .catch(() => {}),
       delay
@@ -907,7 +907,7 @@
   function schedulePlaySync() {
     clearTimeout(playSyncTimer);
     playSyncTimer = setTimeout(() => {
-      runTask("Sync recent plays").catch(() => {
+      runTask("Sync recent plays", true).catch(() => {
         // Retry on the next play, route change, or online event.
       });
     }, 8000);
@@ -5357,6 +5357,20 @@
   }
 
   function CuratorPage() {
+    React.useEffect(() => {
+      const heartbeat = () => {
+        if (document.visibilityState === "visible") {
+          operation({ operation: "page_activity" }).catch(() => {});
+        }
+      };
+      heartbeat();
+      const timer = setInterval(heartbeat, 20000);
+      document.addEventListener("visibilitychange", heartbeat);
+      return () => {
+        clearInterval(timer);
+        document.removeEventListener("visibilitychange", heartbeat);
+      };
+    }, []);
     const history = useHistory();
     const routeLocation = useLocation();
     const route = new URLSearchParams(routeLocation.search);
@@ -6132,16 +6146,4 @@
     new MutationObserver(syncSfwBlur).observe(document.body, { attributes: true, childList: true, subtree: true });
     syncSfwBlur();
   }
-  function scheduleModelMaintenance() {
-    operation({ operation: "health" })
-      .then((health) => {
-        if (health.model_update_ready && !health.model_rebuilding) {
-          return runTask("Apply recent Curator feedback");
-        }
-        return null;
-      })
-      .catch(() => {});
-  }
-  scheduleModelMaintenance();
-  setInterval(scheduleModelMaintenance, 15 * 60 * 1000);
 })();
