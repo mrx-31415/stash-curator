@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/mrx-31415/stash-curator/compare/v0.30.1...v0.31.0) (2026-10-11)
+
+
+### Features
+
+* restore infinite scroll position and prefetch batches earlier ([d18c98d](https://github.com/mrx-31415/stash-curator/commit/d18c98d5a7821f1b4520983ddee194e8c5e94618))
+
 ## [0.30.1](https://github.com/mrx-31415/stash-curator/compare/v0.30.0...v0.30.1) (2026-10-11)
 
 
