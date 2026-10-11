@@ -16,7 +16,7 @@ import (
 // per connection, but has no mmap_size key, so they are Exec'd here like
 // openDatabase does).
 func openReadonly(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
+	db, err := sql.Open("sqlite3", fileURI(path, true))
 	if err != nil {
 		return nil, err
 	}

@@ -131,6 +131,11 @@ func openDatabase(path string, readonly bool, trace *trace) (dbx, error) {
 // fileURI builds a Python-connect-style file URI: file:///abs/path with the
 // mode=ro query for read-only opens.
 func fileURI(path string, readonly bool) string {
+	path = filepath.ToSlash(path)
+	// SQLite expects /C:/...; without the slash Go emits C: as the authority.
+	if len(path) >= 2 && path[1] == ':' {
+		path = "/" + path
+	}
 	u := url.URL{Scheme: "file", Path: path}
 	if readonly {
 		u.RawQuery = "mode=ro"
