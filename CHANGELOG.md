@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/mrx-31415/stash-curator/compare/v0.31.0...v0.31.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* open SQLite database paths correctly on Windows ([#324](https://github.com/mrx-31415/stash-curator/issues/324)) ([684ea2a](https://github.com/mrx-31415/stash-curator/commit/684ea2a1207faa43e0740907b611835fbc2acd0c))
+
 ## [0.31.0](https://github.com/mrx-31415/stash-curator/compare/v0.30.1...v0.31.0) (2026-10-11)
 
 
