@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/mrx-31415/stash-curator/compare/v0.30.0...v0.30.1) (2026-10-11)
+
+
+### Performance Improvements
+
+* reduce Curator page latency and rebuild memory ([#321](https://github.com/mrx-31415/stash-curator/issues/321)) ([ea0bd12](https://github.com/mrx-31415/stash-curator/commit/ea0bd12092700ab2dcd193cd1a8fcf79a078681b))
+
 ## [0.30.0](https://github.com/mrx-31415/stash-curator/compare/v0.29.0...v0.30.0) (2026-10-09)
 
 
