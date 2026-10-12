@@ -280,19 +280,20 @@ type historicalBuildResult struct {
 
 // historicalRebuild mirrors HistoricalEventStore.rebuild.
 func historicalRebuild(db dbx, sceneIDs []string, progress func(processed, total int)) (historicalBuildResult, error) {
-	// _selection: nil -> no clause; empty -> WHERE 0; else WHERE col IN (...).
+	// _selection: nil -> no clause; empty -> WHERE 0; else select the requested IDs.
 	clause := ""
 	var args []any
 	limited := sceneIDs != nil
 	if limited && len(sceneIDs) == 0 {
 		clause = "WHERE 0"
 	} else if limited {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sceneIDs)), ",")
-		clause = "WHERE scene_id IN (" + placeholders + ")"
-		args = make([]any, len(sceneIDs))
-		for i, id := range sceneIDs {
-			args[i] = id
+		// One JSON parameter avoids SQLite's variable limit on large library syncs.
+		clause = "WHERE scene_id IN (SELECT value FROM json_each(?))"
+		selected := jvArr()
+		for _, id := range sceneIDs {
+			selected.arr = append(selected.arr, jvStr(id))
 		}
+		args = []any{selected.marshalCompact()}
 	}
 	type sceneRow struct {
 		sceneID  string
