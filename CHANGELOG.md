@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.2](https://github.com/mrx-31415/stash-curator/compare/v0.31.1...v0.31.2) (2026-10-12)
+
+
+### Performance Improvements
+
+* maintain local scene matches outside Expand browsing ([#326](https://github.com/mrx-31415/stash-curator/issues/326)) ([be9c9aa](https://github.com/mrx-31415/stash-curator/commit/be9c9aa6d028ae765065743ca2d7cc6b7ba12a32))
+
 ## [0.31.1](https://github.com/mrx-31415/stash-curator/compare/v0.31.0...v0.31.1) (2026-10-11)
 
 
