@@ -9,7 +9,7 @@ const stored = new Map(), listeners = new Map();
 let frames = [], scroll = 0;
 const root = {
   addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name),
-  querySelectorAll: () => (batches || []).map(({ batch }, index) => ({ dataset: { endlessPage: String(batch.page) }, querySelectorAll: () => [], getBoundingClientRect: () => ({ top: index * 100 - scroll, bottom: (index + 1) * 100 - scroll }) })),
+  querySelectorAll: () => (batches || []).map(({ batch }, index) => ({ dataset: { endlessPage: String(batch.page) }, querySelectorAll: () => [{ getBoundingClientRect: () => ({ top: index * 100 - scroll, bottom: (index + 1) * 100 - scroll }) }], getBoundingClientRect: () => ({ top: 0, bottom: 0 }) })),
   querySelector(selector) { return selector === "[data-endless-page]" ? this.querySelectorAll()[0] : this.querySelectorAll().find(node => selector.includes(`"${node.dataset.endlessPage}"`)); },
 };
 const context = {
@@ -58,6 +58,7 @@ const flush = () => new Promise(setImmediate);
     renderPage: (batch, ready) => { batches.push({ batch, ready }); return batch; },
   };
   render();
+  assert.equal(tree.props.className, "curator-grid curator-endless-results curator-find-endless");
   assert.equal(more().props.disabled, true); // Wait for Stash metadata before advancing.
   batches[0].ready(1); render();
   assert.equal(observers.at(-1).options.rootMargin, "0px 0px 3200px 0px");

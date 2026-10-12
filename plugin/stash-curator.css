@@ -2035,9 +2035,16 @@
 .curator-find-endless .curator-find-thumbnail.performer-card {
   contain-intrinsic-block-size: auto 21rem;
 }
+.curator-find-endless > [data-endless-page],
 .curator-find-endless > [data-endless-page] > .curator-grid,
 .curator-find-endless > [data-endless-page] > .curator-preview-wall {
-  margin-bottom: 0.8rem;
+  /* Keep batch components mounted while their cards share continuous rows. */
+  display: contents;
+}
+.curator-find-endless > :not([data-endless-page]),
+.curator-find-endless > [data-endless-page] > .curator-loading,
+.curator-find-endless > [data-endless-page] > .alert {
+  grid-column: 1 / -1;
 }
 
 .curator-grid-enter {
