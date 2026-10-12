@@ -78,7 +78,14 @@ def _scene(sid: str, title: str) -> dict[str, object]:
         },
         "tags": [_tag("t1", "Familiar Scenario"), _tag("t2", "Augmentation")],
         "performers": [_performer("p1", "Performer One")],
-        "files": [{"id": f"file-{sid}", "duration": 300}],
+        "stash_ids": [{"endpoint": "https://stashdb.org/graphql", "stash_id": f"remote-{sid}"}],
+        "files": [
+            {
+                "id": f"file-{sid}",
+                "duration": 300,
+                "fingerprints": [{"type": "phash", "value": "0123456789abcdef"}],
+            }
+        ],
         "scene_markers": (
             [
                 {
@@ -433,8 +440,17 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
             finally:
                 connection.close()
             assert model_id is not None
+            connection = sqlite3.connect(run_db)
+            try:
+                matches = connection.execute(
+                    "SELECT scene_id,kind,value FROM local_scene_match ORDER BY scene_id,kind,value"
+                ).fetchall()
+                assert any(kind == "stashdb_id" for _, kind, _ in matches)
+                assert any(kind == "phash" for _, kind, _ in matches)
+            finally:
+                connection.close()
             artifact = run_dir / f"{run_db.stem}-derived" / f"{model_id[0]}.sqlite3"
-            states.append({"model_id": model_id[0], "job": job})
+            states.append({"model_id": model_id[0], "job": job, "matches": matches})
             from tests.core.compare import artifact_tolerant_diff
 
             artifact_diffs.append(artifact_tolerant_diff(artifact, artifact))

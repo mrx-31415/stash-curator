@@ -37,6 +37,7 @@ var taskDisplayNames = map[string]string{
 	"compact":         "Compact legacy Curator data",
 	"vacuum":          "Vacuum compacted Curator data",
 	"expand-refresh":  "Refresh Expand cache",
+	localMatchTask:    "Prepare local scene matches",
 }
 
 // activeCuratorJobs renders the queued + running curator_job rows in the

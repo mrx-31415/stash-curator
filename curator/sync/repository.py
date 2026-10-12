@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from typing import cast
 
 from curator.graphql.adapters import Marker, Performer, Scene, SourceEntity, SourceFile, Studio, Tag
+from curator.local_matches import write_scene_match
 from curator.storage import transaction
 
 
@@ -127,9 +129,12 @@ class SyncRepository:
         page_high_watermark: str | None,
         now_ms: int,
         record_seen: bool,
+        match_scenes: Sequence[Mapping[str, object]] = (),
     ) -> tuple[str, ...]:
         changed: list[str] = []
         with transaction(self.connection):
+            for scene in match_scenes:
+                write_scene_match(self.connection, scene)
             for item in items:
                 if self._upsert(item):
                     changed.append(item.id)
@@ -232,6 +237,11 @@ class SyncRepository:
             "INSERT INTO deleted_entity(entity_id) VALUES (?)",
             ((identifier,) for identifier in deleted),
         )
+        if entity_type == "scene":
+            self.connection.execute(
+                "DELETE FROM local_scene_match "
+                "WHERE scene_id IN (SELECT entity_id FROM deleted_entity)"
+            )
         if entity_type == "tag":
             # Stash drops a marker along with its primary tag, and nothing here reads a
             # marker without one.

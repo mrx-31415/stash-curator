@@ -82,6 +82,11 @@ ON CONFLICT(entity_type, entity_id) DO UPDATE SET
 			entityType, entityID, operation, now); err != nil {
 			return err
 		}
+		if entityType == "scene" {
+			if err := queueLocalSceneMatch(conn, entityID); err != nil {
+				return err
+			}
+		}
 		return coordinatorRequest(conn, "entity_hook", now)
 	})
 	if err != nil {

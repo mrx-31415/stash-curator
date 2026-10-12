@@ -26,6 +26,8 @@ from curator.graphql.operations import (
     FIND_TAG,
     EntityOperation,
 )
+from curator.local_matches import write_scene_match
+from curator.storage import transaction
 from curator.sync.repository import SyncRepository
 
 # Id-only rows are small, and the sweep cost is dominated by per-request overhead.
@@ -197,6 +199,13 @@ class SyncService:
             current_entity = None
             if full:
                 self.repository.reconcile(run_id)
+                with transaction(self.repository.connection):
+                    self.repository.connection.execute(
+                        "DELETE FROM local_scene_match "
+                        "WHERE scene_id NOT IN (SELECT scene_id FROM source_scene) "
+                        "AND scene_id NOT IN (SELECT entity_id FROM pending_entity_change "
+                        "WHERE entity_type='scene' AND operation='upsert')"
+                    )
             elif not plays_only:
                 # The play pass has no id sweep (its ids_document is None), so pruning would
                 # be a no-op; skip it explicitly so a later play-only pass can never grow one.
@@ -272,7 +281,11 @@ class SyncService:
         root = data.get(_FIND_ROOTS[entity_type])
         if not isinstance(root, Mapping):
             raise RuntimeError(f"Stash did not return {_FIND_ROOTS[entity_type]}")
-        return self.repository.upsert_entity(_FIND_ADAPTERS[entity_type](root))
+        changed = self.repository.upsert_entity(_FIND_ADAPTERS[entity_type](root))
+        if entity_type == "scene":
+            with transaction(self.repository.connection):
+                write_scene_match(self.repository.connection, root)
+        return changed
 
     def delete_entity(self, entity_type: str, entity_id: str) -> None:
         """Remove one entity from the sidecar, cascading like the reconcile pass."""
@@ -314,6 +327,8 @@ class SyncService:
                 },
             )
             adapted = adapt_page(data, root_key=operation.root_key, items_key=operation.items_key)
+            raw_root = data[operation.root_key]
+            assert isinstance(raw_root, dict)
             timestamps = tuple(
                 timestamp
                 for timestamp in (operation.watermark_of(item) for item in adapted.items)
@@ -327,6 +342,9 @@ class SyncService:
                 page_high_watermark=max(timestamps, default=None),
                 now_ms=self.clock_ms(),
                 record_seen=full,
+                match_scenes=raw_root[operation.items_key]
+                if operation.entity_type == "scene"
+                else (),
             )
             processed += len(adapted.items)
             ids.extend(changed)
@@ -343,6 +361,16 @@ class SyncService:
             )
             exhausted = not adapted.items or page * self.page_size >= adapted.total
             if reached_watermark or exhausted:
+                if (
+                    operation.entity_type == "scene"
+                    and not operation.incremental_only
+                    and (full or not baseline)
+                ):
+                    with transaction(self.repository.connection):
+                        self.repository.connection.execute(
+                            "INSERT OR IGNORE INTO application_meta(key,value) "
+                            "VALUES ('local_scene_matches_ready','1')"
+                        )
                 self.repository.complete_entity(run_id, operation.entity_type, self.clock_ms())
                 return processed, tuple(ids)
             page += 1

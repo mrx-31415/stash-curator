@@ -1532,7 +1532,7 @@ class ExpandService:
                     match_type = "phash"
                     break
         if local_scene_id is None:
-            return scene
+            return {key: value for key, value in scene.items() if key != "curator_local_match"}
         return {
             **scene,
             "curator_local_match": {

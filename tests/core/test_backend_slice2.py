@@ -268,6 +268,8 @@ class _StubExpand(BaseHTTPRequestHandler):
                     }
                 }
             }
+        if operation == "CuratorLocalSceneMatches":
+            return {"data": {"findScenes": {"count": len(LINKED_SCENES), "scenes": LINKED_SCENES}}}
         if operation == "CuratorExternalLinksState":
             return {
                 "data": {
@@ -348,6 +350,7 @@ class _StubExpand(BaseHTTPRequestHandler):
         for name in (
             "CuratorPluginSettings",
             "CuratorStashBoxes",
+            "CuratorLocalSceneMatches",
             "CuratorExternalLinksState",
             "CuratorExternalLinks",
             "CuratorExpandScenes",
@@ -578,6 +581,13 @@ def make_expand_sidecar(path: Path) -> None:
                     REFERENCE_MS - 86_400_000,
                 ),
             ],
+        )
+        from curator.local_matches import write_scene_match
+
+        for scene in LINKED_SCENES:
+            write_scene_match(connection, scene)
+        connection.execute(
+            "INSERT INTO application_meta(key,value) VALUES ('local_scene_matches_ready','1')"
         )
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
