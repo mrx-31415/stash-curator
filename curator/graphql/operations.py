@@ -132,7 +132,8 @@ SCENE_FIELDS = """
       studio { id name favorite rating100 updated_at parent_studio { id name updated_at } }
       tags { id name updated_at }
       performers { id name updated_at }
-      files { id duration }
+      stash_ids { endpoint stash_id }
+      files { id duration fingerprints { type value } }
       scene_markers {
         id seconds end_seconds
         primary_tag { id name updated_at }

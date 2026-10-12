@@ -238,7 +238,29 @@ func truncateString(s string, n int) string {
 // runTaskMode dispatches the mode-specific body and returns the summary dict
 // (Python's `summary` variable; summary_json is its sorted-key dump).
 func runTaskMode(db dbx, pluginDir string, payload jVal, mode string, settings jVal, startedAtMs int64) (jVal, error) {
+	if mode == "expand-refresh" || mode == "expand-rebuild" {
+		infoLog("Preparing local scene matches for Expand")
+		base, headers := stashConnection(payload)
+		if err := backfillLocalSceneMatches(db, base, headers, mappedProgress(0.01, 0.04)); err != nil {
+			return jvNull(), err
+		}
+		if err := pythonSpan("local_matches.pending", func() error { return refreshPendingLocalSceneMatches(db, base, headers) }); err != nil {
+			return jvNull(), err
+		}
+	}
 	switch mode {
+	case localMatchTask:
+		progressLog(0.05)
+		infoLog("Checking your library for scenes already owned")
+		base, headers := stashConnection(payload)
+		if err := backfillLocalSceneMatches(db, base, headers, mappedProgress(0.05, 0.7)); err != nil {
+			return jvNull(), err
+		}
+		progressLog(0.99)
+		if err := pythonSpan("local_matches.pending", func() error { return refreshPendingLocalSceneMatches(db, base, headers) }); err != nil {
+			return jvNull(), err
+		}
+		return jvObj(jvKey("local_scene_matches_ready", jvBool(true))), nil
 	case "backup":
 		return taskBackup(db, pluginDir, payload, settings, startedAtMs)
 	case "compact":

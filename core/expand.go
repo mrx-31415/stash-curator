@@ -780,6 +780,15 @@ func annotateLocalMatch(scene jVal, byExternalID, byPhash map[string]string) jVa
 		}
 	}
 	if localSceneID == "" {
+		if scene.has("curator_local_match") {
+			clean := jvObj()
+			for _, pair := range scene.obj {
+				if pair.key != "curator_local_match" {
+					clean.obj = append(clean.obj, pair)
+				}
+			}
+			return clean
+		}
 		return scene
 	}
 	result := cloneObj(scene)
@@ -1643,6 +1652,7 @@ GROUP BY p.performer_id`, modelID)
 
 // profileMatch mirrors ExpandService._profile_match: combined similarity
 // scaled by profile coverage.
+//
 //go:noinline
 func profileMatch(left, right *performerProfile, weights map[string]float64) (float64, float64) {
 	total, _, used := performerSimilarity(left, right, weights)

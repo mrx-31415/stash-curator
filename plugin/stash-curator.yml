@@ -159,6 +159,10 @@ settings:
     description: Start a release search after adding a scene. Enabled by default.
     type: BOOLEAN
 tasks:
+  - name: Prepare local scene matches
+    description: Check your library for scenes already owned before browsing Expand.
+    execArgs:
+      - local-matches
   - name: Sync and build recommendations
     description: Use after Stash library changes. Sync changed metadata and history, then refresh recommendations.
     execArgs:

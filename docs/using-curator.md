@@ -171,6 +171,20 @@ blocks, tag equivalents, or local library matches invalidate it; shortlist chang
 appear immediately. Unchanged pages load only their own candidate payloads, using a
 database revision marker instead of scanning the entire pool.
 
+Scene ownership matches use a local index of StashDB IDs and exact pHashes, including
+scenes without StashDB links. Sync maintains the index; scene hooks queue targeted
+updates that Expand applies before filtering. Metadata edits that leave IDs and
+hashes unchanged preserve cached ordering. Existing installs populate the index
+as part of background Expand refresh and force-rebuild, or during a full sync.
+Refresh also applies queued scene updates, so opening Expand after it completes
+does not need to initialize the index. If none of these tasks has run yet, opening
+Expand starts a background initialization task as a fallback. Expand shows
+“Checking your library…” and automatically displays candidates when the task finishes;
+progress and any failures appear in Manage → Tasks. The “Prepare local scene matches”
+task retries interrupted initialization. Profiling separates fetching, indexing,
+pending updates, and loading the local matches. After bulk fingerprint generation or
+changes made outside Stash, run a full sync to reconcile changes missed by hooks.
+
 Saved filters and their defaults are stored in Curator's database and are shared
 across browsers, including private browsing sessions. Plugin updates retain them.
 Existing browser-only filters are imported when you open Curator in that browser;

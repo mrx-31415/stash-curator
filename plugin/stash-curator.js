@@ -4082,6 +4082,11 @@
       return () => { active = false; };
     }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
+      if (!data?.initializing || error || loading) return;
+      const timer = setTimeout(() => setVersion((value) => value + 1), 3000);
+      return () => clearTimeout(timer);
+    }, [data, error, loading]);
+    React.useEffect(() => {
       operation({ operation: "get_config" }).then((data) => {
         if (initialFilters.gender === undefined) updateUrl((s) => ({ ...s, gender: data.config.expand_gender || "" }), { replace: true });
         setWhisparrEnabled(data.whisparr_enabled);
@@ -4210,7 +4215,8 @@
       message && React.createElement("p", { role: "status" }, message),
       entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
-      data && !data.ready && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
+      data?.initializing && !error && React.createElement("div", { className: "alert alert-info", role: "status" }, "Checking your library for scenes you already own. Candidates will appear automatically when this finishes. Progress is available in Manage → Tasks."),
+      data && !data.ready && !data.initializing && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       pager,
       data?.ready && (endless
@@ -4602,7 +4608,11 @@
   function curatorTaskStage(job) {
     const description = String(job.description || "").toLowerCase();
     const progress = typeof job.progress === "number" ? job.progress : null;
-    const stages = description.includes("sync")
+    const stages = description.includes("local scene matches")
+      ? [[0.7, "Checking your library"], [0.99, "Saving library matches"]]
+      : description.includes("expand")
+        ? [[0.04, "Checking your library"], [0.98, "Collecting StashDB candidates"], [0.99, "Finishing"]]
+      : description.includes("sync")
       ? [
           [0.03, "Synchronizing library metadata"],
           [0.58, "Rebuilding preference history"],
@@ -4626,9 +4636,7 @@
               ? [[0.1, "Compacting legacy data"], [0.98, "Finishing"]]
               : description.includes("vacuum")
                 ? [[0.1, "Vacuuming the database"], [0.98, "Finishing"]]
-                : description.includes("expand")
-                  ? [[0.05, "Collecting StashDB candidates"], [0.98, "Finishing"]]
-                  : description.includes("optional") || description.includes("dependenc")
+                : description.includes("optional") || description.includes("dependenc")
                     ? [[0.05, "Creating the optional dependency environment"], [0.3, "Installing optional dependencies"], [0.95, "Finishing"]]
                     : [[0, "Working"]];
     if (progress === null) return "Working";
@@ -4640,6 +4648,7 @@
   }
 
   const TASK_MODE_LABELS = {
+    "local-matches": "Prepare local scene matches",
     "sync-build": "Sync and build recommendations",
     "full-sync-build": "Full sync and build recommendations",
     build: "Rebuild recommendation model",
@@ -4754,6 +4763,7 @@
       if (job.job_type === "backup") return "Backup created";
       if (job.job_type === "compact") return "Compaction finished";
       if (job.job_type === "expand-refresh") return "StashDB candidates refreshed";
+      if (job.job_type === "local-matches") return "Library check finished";
       if (job.job_type === "sync-plays") return "Play history synced";
       return scenes || "Done";
     }
@@ -4840,6 +4850,7 @@
         "div",
         { className: "curator-tasks-runnow" },
         React.createElement("span", null, "Run now"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(starting), onClick: () => start("Prepare local scene matches") }, starting === "Prepare local scene matches" ? "Starting…" : "Check local library"),
         React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(starting), onClick: () => start("Sync and build recommendations") }, starting === "Sync and build recommendations" ? "Starting…" : "Sync and build recommendations"),
         React.createElement(Button, { size: "sm", variant: "outline-danger", disabled: Boolean(starting), onClick: () => start("Force rebuild recommendation model") }, starting === "Force rebuild recommendation model" ? "Starting…" : "Force rebuild model"),
         React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(starting), onClick: () => start("Force rebuild Expand cache") }, starting === "Force rebuild Expand cache" ? "Starting…" : "Force rebuild Expand cache")

@@ -75,9 +75,21 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	// current links map: a candidate fetched while the local scene had no
 	// StashDB id keeps its missing annotation in payload_json forever, so
 	// the stored annotation is never authoritative for hiding (issue #118).
-	links, err := externalLinks(payload, db)
-	if err != nil {
-		return jvNull(), err
+	links := jvNull()
+	if entityType == "scene" {
+		ready, err := ensureLocalSceneMatches(pluginDir, payload, settings, db)
+		if err != nil {
+			return jvNull(), err
+		}
+		if !ready {
+			return jvObj(jvKey("ready", jvBool(false)), jvKey("initializing", jvBool(true)),
+				jvKey("page", jvInt(page)), jvKey("page_size", jvInt(count)),
+				jvKey("total", jvInt(0)), jvKey("has_more", jvBool(false)), jvKey("items", jvArr())), nil
+		}
+		links, err = localSceneLinks(payload, db)
+		if err != nil {
+			return jvNull(), err
+		}
 	}
 	return expandResults(db, entityType, page, sortBy, performerID, favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery,

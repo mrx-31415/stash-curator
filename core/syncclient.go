@@ -40,7 +40,8 @@ const syncSceneFields = `
       studio { id name favorite rating100 updated_at parent_studio { id name updated_at } }
       tags { id name updated_at }
       performers { id name updated_at }
-      files { id duration }
+      stash_ids { endpoint stash_id }
+      files { id duration fingerprints { type value } }
       scene_markers {
         id seconds end_seconds
         primary_tag { id name updated_at }
@@ -1020,7 +1021,7 @@ func (r *syncRepository) cursorWatermarks(entityType string) (string, string, er
 	return baselineValue, pendingValue, nil
 }
 
-func (r *syncRepository) savePage(runID, entityType string, items []syncSourceEntity,
+func (r *syncRepository) savePage(runID, entityType string, items []syncSourceEntity, matchScenes []jVal,
 	nextPage int64, pageHighWatermark string, nowMs int64, recordSeen bool) ([]string, error) {
 	changed := make([]string, 0)
 	conn, err := r.db.Conn(context.Background())
@@ -1034,6 +1035,11 @@ func (r *syncRepository) savePage(runID, entityType string, items []syncSourceEn
 	fail := func(err error) ([]string, error) {
 		conn.ExecContext(context.Background(), "ROLLBACK")
 		return nil, err
+	}
+	for _, scene := range matchScenes {
+		if err := writeLocalSceneMatch(conn, scene); err != nil {
+			return fail(err)
+		}
 	}
 	for _, item := range items {
 		changedFlag, err := syncUpsert(conn, item)
@@ -1252,6 +1258,10 @@ func syncDeleteEntitiesConn(conn *sql.Conn, entityType string, deleted []string)
 		}
 	}
 	switch entityType {
+	case "scene":
+		if _, err := conn.ExecContext(context.Background(), `DELETE FROM local_scene_match WHERE scene_id IN (SELECT entity_id FROM deleted_entity)`); err != nil {
+			return err
+		}
 	case "tag":
 		if _, err := conn.ExecContext(context.Background(), `
 DELETE FROM scene_marker WHERE primary_tag_id IN (SELECT entity_id FROM deleted_entity)`); err != nil {
@@ -1817,6 +1827,12 @@ func (s *syncService) sync(full, playsOnly bool) (syncResult, error) {
 			if err := s.repo.reconcile(runID); err != nil {
 				return err
 			}
+			// Hooks may have indexed a newly-created scene after the full scan.
+			if err := execImmediate(s.repo.db, `DELETE FROM local_scene_match
+WHERE scene_id NOT IN (SELECT scene_id FROM source_scene)
+AND scene_id NOT IN (SELECT entity_id FROM pending_entity_change WHERE entity_type='scene' AND operation='upsert')`); err != nil {
+				return err
+			}
 		} else if !playsOnly {
 			for _, operation := range operations {
 				currentEntity = operation.entityType
@@ -1918,7 +1934,11 @@ func (s *syncService) upsertEntity(entityType, entityID string) (bool, error) {
 		return false, fmt.Errorf("Stash did not return %s", syncFindRoots[entityType])
 	}
 	entity := adaptSyncEntity(syncEntityItemsKey(entityType), root)
-	return s.repo.upsertEntity(entity)
+	changed, err := s.repo.upsertEntity(entity)
+	if err == nil && entityType == "scene" {
+		err = withTxn(s.repo.db, func(conn *sql.Conn) error { return writeLocalSceneMatch(conn, root) })
+	}
+	return changed, err
 }
 
 func syncEntityItemsKey(entityType string) string {
@@ -2005,7 +2025,11 @@ func (s *syncService) syncEntity(runID string, operation syncOperation, full boo
 				}
 			}
 		}
-		changed, err := s.repo.savePage(runID, operation.entityType, adapted,
+		var matchScenes []jVal
+		if operation.entityType == "scene" {
+			matchScenes = items.arr
+		}
+		changed, err := s.repo.savePage(runID, operation.entityType, adapted, matchScenes,
 			page+1, pageHighWatermark, s.clockMs(), full)
 		if err != nil {
 			return 0, nil, err
@@ -2027,6 +2051,11 @@ func (s *syncService) syncEntity(runID string, operation syncOperation, full boo
 		}
 		exhausted := len(adapted) == 0 || page*s.pageSize >= total
 		if reachedWatermark || exhausted {
+			if operation.entityType == "scene" && !operation.incrementalOnly && (full || baseline == "") {
+				if err := execImmediate(s.repo.db, `INSERT OR IGNORE INTO application_meta(key,value) VALUES ('local_scene_matches_ready','1')`); err != nil {
+					return 0, nil, err
+				}
+			}
 			if err := s.repo.completeEntity(runID, operation.entityType, s.clockMs()); err != nil {
 				return 0, nil, err
 			}

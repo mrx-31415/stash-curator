@@ -64,6 +64,12 @@ from curator.expand import (  # noqa: E402
     normalize_phash,
 )
 from curator.graphql import GraphQLClient  # noqa: E402
+from curator.local_matches import (  # noqa: E402
+    backfill_scene_matches,
+    ensure_scene_matches,
+    queue_scene_match,
+    scene_links,
+)
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore  # noqa: E402
 from curator.profiling import (  # noqa: E402
     begin_trace,
@@ -750,6 +756,18 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "get_expand":
             config = api.config()["config"]
             assert isinstance(config, dict)
+            if str(args.get("entity_type") or "scene") == "scene" and not ensure_scene_matches(
+                connection, payload
+            ):
+                return {
+                    "ready": False,
+                    "initializing": True,
+                    "page": int(args.get("page") or 1),
+                    "page_size": int(args.get("count") or config["page_size"]),
+                    "total": 0,
+                    "has_more": False,
+                    "items": [],
+                }
             return api.expand(
                 str(args.get("entity_type") or "scene"),
                 page=int(args.get("page") or 1),
@@ -768,7 +786,9 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
                 count=int(args.get("count") or config["page_size"]),
-                links=_external_links(payload, connection),
+                links=scene_links(connection, _client(payload))
+                if str(args.get("entity_type") or "scene") == "scene"
+                else None,
             )
         if operation == "get_performer_hunt":
             return ExpandService(connection).performer_hunt(
@@ -1078,6 +1098,7 @@ def _job_status(connection: Any) -> dict[str, object]:
 
 
 DIAGNOSTIC_JOB_TYPES = {
+    "local-matches",
     "sync-build",
     "full-sync-build",
     "sync-plays",
@@ -1094,6 +1115,7 @@ DIAGNOSTIC_JOB_TYPES = {
 # Task mode → yml display name, mirroring the Go side's taskDisplayNames so
 # health synthesizes the Stash-style job description the frontend consumes.
 TASK_DISPLAY_NAMES = {
+    "local-matches": "Prepare local scene matches",
     "sync-build": "Sync and build recommendations",
     "full-sync-build": "Full sync and build recommendations",
     "build": "Rebuild recommendation model",
@@ -1252,6 +1274,8 @@ def _run_entity_hook(payload: dict[str, Any]) -> dict[str, object]:
                     """,
                     (entity_type, entity_id, operation, time.time_ns() // 1_000_000),
                 )
+                if entity_type == "scene":
+                    queue_scene_match(connection, entity_id)
             ModelUpdateCoordinator(connection).request("entity_hook")
             return {
                 "handled": True,
@@ -1565,6 +1589,12 @@ def _run_task_body(
     _log("i", f"Stash Curator {mode} started")
     _progress(0.01)
     try:
+        if mode in {"expand-refresh", "expand-rebuild"}:
+            _log("i", "Preparing local scene matches for Expand")
+            backfill_scene_matches(
+                connection, _client(payload), progress=lambda value: _progress(0.01 + 0.03 * value)
+            )
+            scene_links(connection, _client(payload))
         if mode in {"sync-build", "full-sync-build"}:
             sidecar_config = CuratorAPI(connection).config()["config"]
             assert isinstance(sidecar_config, dict)
@@ -1728,6 +1758,13 @@ def _run_task_body(
                 "changed_play_scenes": changed_plays,
                 "scene_ids": synced.scene_ids,
             }
+        elif mode == "local-matches":
+            _progress(0.05)
+            _log("i", "Checking your library for scenes already owned")
+            backfill_scene_matches(connection, _client(payload), progress=_progress)
+            _progress(0.99)
+            scene_links(connection, _client(payload))
+            summary = {"local_scene_matches_ready": True}
         elif mode == "prepare":
             _progress(0.05)
             prepared_model_id = RecommendationModelStore(connection).current_model_id()
