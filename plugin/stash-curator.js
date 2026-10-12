@@ -2844,12 +2844,11 @@
         if (current.current.restoring) return;
         const scroller = endlessScrollParent(root.current);
         const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
-        const nodes = [...root.current.querySelectorAll("[data-endless-page]")];
-        const node = nodes.find((element) => element.getBoundingClientRect().bottom > top) || nodes.at(-1);
-        if (node) {
-          const items = [...node.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")];
-          const index = items.findIndex((item) => item.getBoundingClientRect().bottom > top);
-          anchor.current = { page: Number(node.dataset.endlessPage), index, offset: (items[index] || node).getBoundingClientRect().top - top };
+        const items = [...root.current.querySelectorAll("[data-endless-page]")].flatMap((batch) =>
+          [...batch.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")].map((node, index) => ({ node, index, page: Number(batch.dataset.endlessPage) })));
+        const item = items.find(({ node }) => node.getBoundingClientRect().bottom > top) || items.at(-1);
+        if (item) {
+          anchor.current = { page: item.page, index: item.index, offset: item.node.getBoundingClientRect().top - top };
         }
       };
       const save = () => {
@@ -2876,7 +2875,7 @@
         const saved = prepend.current || anchor.current;
         const batch = root.current.querySelector(`[data-endless-page="${saved.page}"]`);
         if (batch) {
-          const node = batch.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")[saved.index] || batch;
+          const node = batch.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")[saved.index || 0] || batch;
           const scroller = endlessScrollParent(root.current);
           const top = scroller === window ? 0 : scroller.getBoundingClientRect().top;
           scroller.scrollBy({ top: node.getBoundingClientRect().top - top - saved.offset, behavior: "instant" });
@@ -2898,7 +2897,8 @@
         if (first.model_id !== batch.model_id || first.config_updated_at_ms !== batch.config_updated_at_ms || first.fetched_at_ms !== batch.fetched_at_ms) throw new Error("Results changed. Refresh this list to continue.");
         if (!alive.current) return;
         if (direction < 0) {
-          const node = root.current.querySelector("[data-endless-page]");
+          const batch = root.current.querySelector("[data-endless-page]");
+          const node = batch.querySelectorAll(":scope > .curator-grid > *, :scope > .curator-preview-wall > *")[0] || batch;
           const scroller = endlessScrollParent(root.current);
           prepend.current = { page: pages[0].page, offset: node.getBoundingClientRect().top - (scroller === window ? 0 : scroller.getBoundingClientRect().top) };
         }
@@ -2917,7 +2917,7 @@
       if (pages[0].page > page) observer.observe(before.current);
       return () => observer.disconnect();
     }, [pages, loading, ready, restoring, error]);
-    return React.createElement("div", { ref: root, className: "curator-endless-results curator-find-endless" },
+    return React.createElement("div", { ref: root, className: "curator-grid curator-endless-results curator-find-endless" },
       pages[0].page > page && React.createElement("div", { ref: before }, React.createElement(Button, { disabled: loading || restoring || !ready, onClick: () => more(-1) }, "Load earlier results")),
       pages.map((batch) => React.createElement("div", { key: batch.page, "data-endless-page": batch.page }, renderPage(clientItems ? clientBatch(batch.page) : batch, markReady))),
       error && React.createElement("div", { role: "alert", className: "alert alert-danger" }, error),
