@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.3](https://github.com/mrx-31415/stash-curator/compare/v0.31.2...v0.31.3) (2026-10-12)
+
+
+### Bug Fixes
+
+* keep endless Find results in continuous grid rows ([#328](https://github.com/mrx-31415/stash-curator/issues/328)) ([9a20be7](https://github.com/mrx-31415/stash-curator/commit/9a20be74feec7711fa66764d40da13d8b505aa51))
+
 ## [0.31.2](https://github.com/mrx-31415/stash-curator/compare/v0.31.1...v0.31.2) (2026-10-12)
 
 
