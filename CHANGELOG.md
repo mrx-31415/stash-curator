@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.4](https://github.com/mrx-31415/stash-curator/compare/v0.31.3...v0.31.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* avoid SQLite variable limits in historical rebuilds ([#330](https://github.com/mrx-31415/stash-curator/issues/330)) ([449dbc0](https://github.com/mrx-31415/stash-curator/commit/449dbc0b1a381082ca39538e1751020795e262d5))
+
 ## [0.31.3](https://github.com/mrx-31415/stash-curator/compare/v0.31.2...v0.31.3) (2026-10-12)
 
 
