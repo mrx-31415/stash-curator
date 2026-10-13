@@ -6293,9 +6293,8 @@
     return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
   });
   // Circular gauge around the affinity value (replaces the flat bar). The ring
-  // fill tracks |affinity| and the value is tinted by sign; a dash when there is
-  // no model evidence.
-  function CuratorAffinityGauge({ value, detail }) {
+  // fill tracks |affinity| and the value is tinted by sign.
+  function CuratorAffinityGauge({ value, detail, confidenceLabel }) {
     const radius = 15;
     const circumference = 2 * Math.PI * radius;
     const magnitude = value === null ? 0 : Math.min(1, Math.abs(value));
@@ -6309,19 +6308,24 @@
         React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: "rgba(127,127,127,0.25)", strokeWidth: 3 }),
         React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: color, strokeWidth: 3, strokeDasharray: String(circumference), strokeDashoffset: String(offset), strokeLinecap: "round", transform: "rotate(-90 18 18)" })
       ),
-      React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
+      confidenceLabel ? React.createElement("span", { className: "curator-affinity-readout" },
+        React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel),
+        React.createElement("small", { className: "curator-affinity-confidence" }, confidenceLabel)
+      ) : React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
     );
   }
   function CuratorContextControls({ type, id, label, details, className = "" }) {
     const raw = type === "scene" ? details?.score?.appeal : details?.affinity;
-    const value = typeof raw === "number" ? raw : null;
-    const confidence = typeof details?.confidence === "number" ? ` Model confidence ${Math.round(clamp01(details.confidence) * 100)}%.` : "";
+    const noEvidence = type === "performer" && details !== null && details !== undefined && raw == null;
+    const value = typeof raw === "number" ? raw : noEvidence ? 0 : null;
+    const confidenceLabel = type === "performer" && details ? noEvidence ? "No evidence" : typeof details.confidence === "number" ? `Confidence ${Math.round(clamp01(details.confidence) * 100)}%` : "Confidence unavailable" : null;
+    const confidence = confidenceLabel ? ` ${confidenceLabel}.` : "";
     const evidence = details?.affinity_details;
-    const affinityDetail = type === "performer" && value !== null ? `Performer preference used in recommendations.${evidence ? ` Scene evidence ${formatAppealValue(evidence.learned)}; Favorite and rating ${formatAppealValue(evidence.prior)}.` : ""}${confidence}` : null;
+    const affinityDetail = type === "performer" && value !== null ? noEvidence ? "No evidence yet; contributes zero to recommendations. This is not a learned neutral preference." : `Performer preference used in recommendations.${evidence ? ` Scene evidence ${formatAppealValue(evidence.learned)}; Favorite and rating ${formatAppealValue(evidence.prior)}.` : ""}${confidence}` : null;
     const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
     return React.createElement("div", { className: `curator-context-group${type === "performer" ? " curator-context-group-performer" : ""}${className ? ` ${className}` : ""}`, role: "group", "aria-label": "Curator actions", onClick: (event) => event.stopPropagation() },
         type === "performer" && React.createElement("span", { className: "curator-context-brand", title: "Curator", "aria-hidden": true }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
-        type === "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail }),
+        type === "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail, confidenceLabel }),
         React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faClone })),
         type === "performer" && React.createElement(PerformerHuntLink, { performer: { id, name: label }, className: "curator-context-button curator-context-button-hunt" }),
         type !== "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
@@ -6355,7 +6359,7 @@
       let active = true;
       setDetails(null);
       loadPerformerAffinities()
-        .then((data) => { if (active) setDetails(data.affinities[String(performer.id)] || null); })
+        .then((data) => { if (active) setDetails(data.affinities[String(performer.id)] || { affinity: null, confidence: null }); })
         .catch(() => { if (active) setDetails(null); });
       return () => { active = false; };
     }, [performer.id]);
