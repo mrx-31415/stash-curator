@@ -47,7 +47,7 @@ jobs:
             build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
       - run: uv run --frozen python scripts/build_plugin.py
-      - run: cp dist/stash-curator.zip dist/index.yml docs/
+      - run: cp dist/stash-curator*.zip dist/index*.yml docs/
       - uses: actions/jekyll-build-pages@v1
         with:
           source: ./docs

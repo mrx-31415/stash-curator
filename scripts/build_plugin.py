@@ -249,6 +249,10 @@ def core_binaries() -> list[Path]:
 
     def build_one(item: tuple[Path, dict[str, str]]) -> None:
         target, env = item
+        ldflags = f"-s -w -X main.coreVersion={plugin_version}"
+        if env["GOOS"] == "linux":
+            # Forward stripping explicitly: Zig retains C debug sections with Go's -s alone.
+            ldflags += " -extldflags=-Wl,--strip-all"
         subprocess.run(
             [
                 "go",
@@ -257,7 +261,7 @@ def core_binaries() -> list[Path]:
                 "sqlite_dbstat",
                 "-trimpath",
                 "-ldflags",
-                f"-s -w -X main.coreVersion={plugin_version}",
+                ldflags,
                 "-o",
                 str(target),
                 ".",
@@ -309,28 +313,43 @@ def build(output: Path = OUTPUT) -> Path:
         shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
         for binary in binaries:
             shutil.copy2(binary, staging / binary.name)
-        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(staging.rglob("*")):
-                if path.is_file():
-                    archive.write(path, path.relative_to(staging))
-    digest = sha256(output.read_bytes()).hexdigest()
-    (output.parent / "index.yml").write_text(
-        "\n".join(
+        archives = [(output, "index.yml", binaries)] + [
             (
-                "- id: stash-curator",
-                "  name: Stash Curator",
-                f"  version: {plugin_version}",
-                f"  date: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}",
-                f"  path: {output.name}",
-                f"  sha256: {digest}",
-                "  metadata:",
-                "    description: Local recommendations and StashDB discovery "
-                "— curated to your taste.",
-                "",
+                output.with_name(f"{output.stem}-{goos}-{goarch}{output.suffix}"),
+                f"index-{goos}-{goarch}.yml",
+                [binary],
             )
-        ),
-        encoding="utf-8",
-    )
+            for (goos, goarch), binary in zip(SHIPPED_PLATFORMS, binaries, strict=True)
+        ]
+        binary_names = {binary.name for binary in binaries}
+        files = sorted(path for path in staging.rglob("*") if path.is_file())
+        for archive_path, _, included_binaries in archives:
+            excluded = binary_names - {binary.name for binary in included_binaries}
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for path in files:
+                    relative = path.relative_to(staging)
+                    if relative.as_posix() not in excluded:
+                        archive.write(path, relative)
+    build_date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    for archive_path, index_name, _ in archives:
+        digest = sha256(archive_path.read_bytes()).hexdigest()
+        (output.parent / index_name).write_text(
+            "\n".join(
+                (
+                    "- id: stash-curator",
+                    "  name: Stash Curator",
+                    f"  version: {plugin_version}",
+                    f"  date: {build_date}",
+                    f"  path: {archive_path.name}",
+                    f"  sha256: {digest}",
+                    "  metadata:",
+                    "    description: Local recommendations and StashDB discovery "
+                    "— curated to your taste.",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
     return output
 
 

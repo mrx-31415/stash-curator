@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,17 @@ def test_plugin_archive_contains_runtime_and_core(tmp_path: Path) -> None:
         name = core_binary_name(goos, goarch)
         binary = extracted / name
         assert binary.is_file() and binary.stat().st_size > 1_000_000
+        if goos == "linux":
+            data = binary.read_bytes()
+            assert data[:6] == b"\x7fELF\x02\x01"  # ELF64, little endian on both targets.
+            section_offset = struct.unpack_from("<Q", data, 40)[0]
+            section_size, _, string_index = struct.unpack_from("<HHH", data, 58)
+            offset, size = struct.unpack_from(
+                "<QQ", data, section_offset + string_index * section_size + 24
+            )
+            section_names = data[offset : offset + size].split(b"\0")
+            assert b".symtab" not in section_names
+            assert not any(section.startswith(b".debug_") for section in section_names)
         if goos != "windows":
             # The archive must carry the exec bit (Stash's Go extraction honors
             # it). Python 3.14's zipfile masks extracted permissions, so restore

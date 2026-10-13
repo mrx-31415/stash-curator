@@ -1,9 +1,43 @@
 from __future__ import annotations
 
 import os
+import zipfile
+from hashlib import sha256
 from pathlib import Path
 
 from scripts import build_plugin
+
+
+def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    binaries = []
+    for goos, goarch in build_plugin.SHIPPED_PLATFORMS:
+        binary = tmp_path / build_plugin.core_binary_name(goos, goarch)
+        binary.write_bytes(f"{goos}-{goarch}".encode())
+        binary.chmod(0o755)
+        binaries.append(binary)
+    monkeypatch.setattr(build_plugin, "core_binaries", lambda: binaries)
+    output = build_plugin.build(tmp_path / "dist" / "stash-curator.zip")
+    binary_names = {binary.name for binary in binaries}
+    with zipfile.ZipFile(output) as multi:
+        common = set(multi.namelist()) - binary_names
+        assert {"launcher.py", "stash-curator.yml", "stash-curator.js", "LICENSE"} <= common
+        for (goos, goarch), binary in zip(build_plugin.SHIPPED_PLATFORMS, binaries, strict=True):
+            archive = output.with_name(f"stash-curator-{goos}-{goarch}.zip")
+            with zipfile.ZipFile(archive) as package:
+                assert set(package.namelist()) == common | {binary.name}
+                for name in common | {binary.name}:
+                    assert package.read(name) == multi.read(name)
+                    assert package.getinfo(name).external_attr == multi.getinfo(name).external_attr
+            index = (output.parent / f"index-{goos}-{goarch}.yml").read_text()
+            assert "- id: stash-curator\n" in index
+            assert f"  version: {build_plugin.version()}\n" in index
+            assert f"  path: {archive.name}\n" in index
+            assert f"  sha256: {sha256(archive.read_bytes()).hexdigest()}\n" in index
+    index = (output.parent / "index.yml").read_text()
+    assert "  path: stash-curator.zip\n" in index
+    assert f"sha256: {sha256(output.read_bytes()).hexdigest()}" in index
 
 
 def test_binary_freshness_ignores_tests_but_tracks_embedded_migrations(

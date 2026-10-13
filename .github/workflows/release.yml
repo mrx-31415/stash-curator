@@ -57,4 +57,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
           gh release upload "${{ needs.release-please.outputs.tag_name }}"
-          dist/stash-curator.zip dist/index.yml
+          dist/stash-curator*.zip dist/index*.yml
