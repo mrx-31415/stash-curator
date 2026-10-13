@@ -99,7 +99,7 @@ function pageControls(type, details) {
   const portal = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
   return { ...portal, element: context.CuratorContextControls(portal.element.props) };
 }
-const performerControls = pageControls("performer", { affinity: 0.62, confidence: 0.85 }).element;
+const performerControls = pageControls("performer", { affinity: 0.767, confidence: 0.90, affinity_details: { learned: 0.527, prior: 0.24 } }).element;
 assert.match(performerControls.props.className, /curator-context-group-performer/);
 assert.equal(performerControls.props.role, "group");
 const [brand, gauge, similar, hunt] = performerControls.props.children;
@@ -114,10 +114,11 @@ assert.equal(similarQuery.get("id"), performer.id);
 assert.equal(hunt.type, context.PerformerHuntLink);
 checkLink(hunt.props, false);
 assert.equal(context.PerformerHuntLink(hunt.props).props.className, "curator-context-button curator-context-button-hunt");
-assert.equal(gauge.props.value, 0.62);
+assert.equal(gauge.props.value, 0.767);
 const renderedGauge = context.CuratorAffinityGauge(gauge.props);
-assert.match(renderedGauge.props.title, /viewing and feedback/);
-assert.match(renderedGauge.props.title, /Model confidence 85%/);
+assert.match(renderedGauge.props.title, /preference used in recommendations/);
+assert.match(renderedGauge.props.title, /Scene evidence 0.53; Favorite and rating 0.24/);
+assert.match(renderedGauge.props.title, /Model confidence 90%/);
 assert.equal(renderedGauge.props["aria-label"], renderedGauge.props.title);
 assert.equal(renderedGauge.props.tabIndex, 0);
 const noEvidence = pageControls("performer", null).element;

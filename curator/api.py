@@ -17,7 +17,7 @@ from curator.config import DEFAULT_CONFIG
 from curator.events.contracts import OBSERVED_PLAYBACK_SQL
 from curator.expand import STASHDB, ExpandService
 from curator.explanations import ExplanationService
-from curator.features import FeatureStore
+from curator.features import FeatureBuilder, FeatureStore
 from curator.features.tag_roles import effective_tag_role_config_version
 from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
@@ -28,6 +28,26 @@ from curator.similarity import SimilarityService
 from curator.storage import transaction
 
 API_SCHEMA_VERSION = 2
+
+
+def _performer_preference(
+    favorite: bool, rating: int | None, affinity: float | None, confidence: float | None
+) -> dict[str, object]:
+    learned = affinity * (confidence or 0.0) if affinity is not None else 0.0
+    prior = DEFAULT_CONFIG.model.performer_favorite_prior if favorite else 0.0
+    if rating is not None:
+        prior += (
+            max(-1.0, min(1.0, (rating - 50) / 50)) * DEFAULT_CONFIG.model.performer_rating_bound
+        )
+    prior_confidence = 0.90 if favorite else 0.75 if rating is not None else 0.0
+    known = affinity is not None or prior_confidence > 0
+    return {
+        "affinity": learned + prior if known else None,
+        "confidence": max(confidence or 0.0, prior_confidence) if known else None,
+        "affinity_details": {"learned": learned, "prior": prior},
+    }
+
+
 DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "page_size": 20,
     "recommendation_endless_scroll": False,
@@ -375,16 +395,21 @@ class CuratorAPI:
             affinity_row = self.connection.execute(
                 """
                 SELECT fa.affinity, fa.confidence
-                FROM feature_affinity fa
-                JOIN feature_definition fd ON fd.feature_id = fa.feature_id
-                WHERE fa.model_id = ?
-                  AND fd.feature_version = ?
-                  AND fd.name = ?
+                FROM feature_affinity fa WHERE fa.model_id = ? AND fa.feature_id = ?
                 """,
-                (model_id, feature_version, f"performer:{entity_id}"),
+                (
+                    model_id,
+                    FeatureBuilder._feature_id(
+                        feature_version, "scene", "performer_identity", f"performer:{entity_id}"
+                    ),
+                ),
             ).fetchone()
-            affinity = affinity_row[0] if affinity_row is not None else None
-            confidence = affinity_row[1] if affinity_row is not None else None
+            preference = _performer_preference(
+                bool(row["favorite"]),
+                row["rating100"],
+                affinity_row[0] if affinity_row is not None else None,
+                affinity_row[1] if affinity_row is not None else None,
+            )
             matches = (
                 FeatureStore(self.connection).similar_performers(
                     str(feature_version),
@@ -401,8 +426,7 @@ class CuratorAPI:
                 "entity_id": entity_id,
                 "model_id": model_id,
                 "profile": dict(row),
-                "affinity": affinity,
-                "confidence": confidence,
+                **preference,
                 "similar": [
                     {
                         "performer_id": performer_id,
@@ -424,18 +448,25 @@ class CuratorAPI:
         rows = self.connection.execute(
             """
             SELECT fd.name, fa.affinity, fa.confidence
-            FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+            FROM feature_definition fd CROSS JOIN feature_affinity fa USING(feature_id)
             WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
             ORDER BY fd.name
             """,
             (model_id, feature_version),
         )
+        learned = {row[0].removeprefix("performer:"): (row[1], row[2]) for row in rows}
+        performers = self.connection.execute(
+            "SELECT performer_id, favorite, rating100 FROM source_performer ORDER BY performer_id"
+        )
         return {
             "schema_version": API_SCHEMA_VERSION,
             "model_id": model_id,
             "affinities": {
-                row[0].removeprefix("performer:"): {"affinity": row[1], "confidence": row[2]}
-                for row in rows
+                row[0]: _performer_preference(
+                    bool(row[1]), row[2], *learned.get(row[0], (None, None))
+                )
+                for row in performers
+                if row[0] in learned or row[1] or row[2] is not None
             },
         }
 

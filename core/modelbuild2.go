@@ -230,25 +230,26 @@ func performerPriors(db dbx) (map[string]modelPrior, error) {
 			rows.Close()
 			return nil, err
 		}
-		prior := 0.0
-		if favorite != 0 {
-			prior = 0.18
-		}
-		confidence := 0.0
-		if rating100.Valid {
-			prior += clamp((float64(rating100.Int64)-50)/50) * 0.10
-			confidence = 0.75
-		}
-		if favorite != 0 {
-			confidence = 0.90
-		}
-		result[performerID] = modelPrior{prior, confidence}
+		result[performerID] = performerPrior(favorite != 0, float64(rating100.Int64), rating100.Valid)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func performerPrior(favorite bool, rating float64, hasRating bool) modelPrior {
+	prior := modelPrior{}
+	if hasRating {
+		prior.value = clamp((rating-50)/50) * 0.10
+		prior.confidence = 0.75
+	}
+	if favorite {
+		prior.value += 0.18
+		prior.confidence = 0.90
+	}
+	return prior
 }
 
 // studioPriors mirrors _studio_priors.

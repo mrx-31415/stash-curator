@@ -6316,7 +6316,8 @@
     const raw = type === "scene" ? details?.score?.appeal : details?.affinity;
     const value = typeof raw === "number" ? raw : null;
     const confidence = typeof details?.confidence === "number" ? ` Model confidence ${Math.round(clamp01(details.confidence) * 100)}%.` : "";
-    const affinityDetail = type === "performer" && value !== null ? `Learned from your viewing and feedback. Positive values favour scenes featuring this performer; negative values reduce their fit.${confidence}` : null;
+    const evidence = details?.affinity_details;
+    const affinityDetail = type === "performer" && value !== null ? `Performer preference used in recommendations.${evidence ? ` Scene evidence ${formatAppealValue(evidence.learned)}; Favorite and rating ${formatAppealValue(evidence.prior)}.` : ""}${confidence}` : null;
     const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
     return React.createElement("div", { className: `curator-context-group${type === "performer" ? " curator-context-group-performer" : ""}${className ? ` ${className}` : ""}`, role: "group", "aria-label": "Curator actions", onClick: (event) => event.stopPropagation() },
         type === "performer" && React.createElement("span", { className: "curator-context-brand", title: "Curator", "aria-hidden": true }, React.createElement(FontAwesomeIcon, { icon: faCompass })),

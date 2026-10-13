@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -542,21 +543,21 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 				return jvNull(), err
 			}
 		}
-		affinity, confidence, hasAffinity := performerAffinity(db, modelID, featureVersion, entityID)
-		affinityVal := jvNull()
-		confidenceVal := jvNull()
-		if hasAffinity {
-			affinityVal = jvFloat(affinity)
-			confidenceVal = jvFloat(confidence)
+		affinity, confidence, hasAffinity, err := performerAffinity(db, modelID, featureVersion, entityID)
+		if err != nil {
+			return jvNull(), err
 		}
+		prior := performerPrior(profile.get("favorite").truthy(), number(profile.get("rating100")), profile.get("rating100").kind != jNull)
+		preference := performerPreference(affinity, confidence, hasAffinity, prior)
 		return jvObj(
 			jvKey("schema_version", jvInt(apiSchemaVersion)),
 			jvKey("entity_type", jvStr(entityType)),
 			jvKey("entity_id", jvStr(entityID)),
 			jvKey("model_id", jvStr(modelID)),
 			jvKey("profile", profile),
-			jvKey("affinity", affinityVal),
-			jvKey("confidence", confidenceVal),
+			jvKey("affinity", preference.get("affinity")),
+			jvKey("confidence", preference.get("confidence")),
+			jvKey("affinity_details", preference.get("affinity_details")),
 			jvKey("similar", similar),
 		), nil
 	}
@@ -581,8 +582,13 @@ func opGetPerformerAffinities(pluginDir string, payload jVal) (jVal, error) {
 		if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
 			return jvNull(), err
 		}
+		priors, err := performerPriors(db)
+		if err != nil {
+			return jvNull(), err
+		}
+		// Start with performer definitions instead of probing every content affinity.
 		rows, err := db.Query(`SELECT fd.name, fa.affinity, fa.confidence
-FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+FROM feature_definition fd CROSS JOIN feature_affinity fa USING(feature_id)
 WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
 ORDER BY fd.name`, modelID, featureVersion)
 		if err != nil {
@@ -590,14 +596,21 @@ ORDER BY fd.name`, modelID, featureVersion)
 		}
 		defer rows.Close()
 		affinities := jvObj()
+		for _, performerID := range sortedStringKeys(priors) {
+			if prior := priors[performerID]; prior.confidence > 0 {
+				affinities.set(performerID, performerPreference(0, 0, false, prior))
+			}
+		}
 		for rows.Next() {
 			var name string
 			var affinity, confidence float64
 			if err := rows.Scan(&name, &affinity, &confidence); err != nil {
 				return jvNull(), err
 			}
-			affinities.set(strings.TrimPrefix(name, "performer:"), jvObj(
-				jvKey("affinity", jvFloat(affinity)), jvKey("confidence", jvFloat(confidence))))
+			performerID := strings.TrimPrefix(name, "performer:")
+			if prior, exists := priors[performerID]; exists {
+				affinities.set(performerID, performerPreference(affinity, confidence, true, prior))
+			}
 		}
 		return jvObj(jvKey("schema_version", jvInt(apiSchemaVersion)),
 			jvKey("model_id", jvStr(modelID)), jvKey("affinities", affinities)), rows.Err()
@@ -700,19 +713,30 @@ func similarPerformers(db dbx, featureVersion, performerID string, count int) (j
 	return out, nil
 }
 
-// performerAffinity mirrors the inspector's performer affinity lookup: the
-// raw feature_affinity entry for the performer's identity feature (name
-// 'performer:<id>'), or none when the model has no evidence for it.
-func performerAffinity(db dbx, modelID, featureVersion, performerID string) (float64, float64, bool) {
+func performerPreference(affinity, confidence float64, hasAffinity bool, prior modelPrior) jVal {
+	value, certainty := jvNull(), jvNull()
+	learned := affinity * confidence
+	if hasAffinity || prior.confidence > 0 {
+		value = jvFloat(learned + prior.value)
+		certainty = jvFloat(math.Max(confidence, prior.confidence))
+	}
+	return jvObj(jvKey("affinity", value), jvKey("confidence", certainty),
+		jvKey("affinity_details", jvObj(jvKey("learned", jvFloat(learned)), jvKey("prior", jvFloat(prior.value)))))
+}
+
+// The deterministic identity key avoids scanning feature definitions for a name.
+func performerAffinity(db dbx, modelID, featureVersion, performerID string) (float64, float64, bool, error) {
 	var affinity, confidence float64
 	err := db.QueryRow(`SELECT fa.affinity, fa.confidence
-FROM feature_affinity fa JOIN feature_definition fd ON fd.feature_id = fa.feature_id
-WHERE fa.model_id = ? AND fd.feature_version = ? AND fd.name = ?`,
-		modelID, featureVersion, "performer:"+performerID).Scan(&affinity, &confidence)
-	if err != nil {
-		return 0, 0, false
+FROM feature_affinity fa WHERE fa.model_id = ? AND fa.feature_id = ?`,
+		modelID, featureID(featureVersion, "scene", "performer_identity", "performer:"+performerID)).Scan(&affinity, &confidence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, false, nil
 	}
-	return affinity, confidence, true
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return affinity, confidence, true, nil
 }
 
 // ── get_tag_sentiment_follow_up ────────────────────────────────────────────

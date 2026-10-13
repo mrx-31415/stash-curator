@@ -39,6 +39,22 @@ now** feedback. Time changes today's fit; it does not erase learned taste.
 not another preference score. A high estimate with thin evidence belongs in a
 different lane than a high estimate backed by varied outcomes.
 
+The **Curator affinity** gauge on performer cards and pages shows the performer
+signal used in recommendations: confidence-weighted scene evidence plus your
+performer rating and favorite bonus. Its tooltip breaks those contributions down
+and shows confidence. Scene evidence measures outcomes relative to your library
+baseline; a negative learned contribution can coexist with a positive overall
+preference. Favorites and rated performers can have a value without scene history.
+
+This is a signed recommendation contribution: zero is neutral, positive values
+favour the performer, and negative values reduce their contribution. Its size
+is separate from confidence. A favorite adds +0.18; a performer rating adds
+between -0.10 and +0.10, with 50/100 neutral. A favorite rated 100/100 therefore
+starts at +0.28 before scene evidence. There is no +0.35 cap. The raw combined
+signal can theoretically range from -1.10 to +1.28; the ring fills at magnitude
+1.0. For scene scoring, these values are combined into one contribution bounded
+to 0.30 in either direction, alongside content, studio, and other scoring signals.
+
 ## Lane policy
 
 - **Best Bets** requires strong fit supported by corroborating signals or reliable

@@ -26,7 +26,7 @@ import pytest
 from curator.api import CuratorAPI
 from curator.config import DEFAULT_CONFIG
 from curator.core import core_binary
-from curator.features import FeatureStore
+from curator.features import FeatureBuilder, FeatureStore
 from tests.core.test_backend import PLUGIN_DIR, make_sidecar, payload, run_backend
 from tests.core.test_backend_slice3_backups import assert_slice3_identical
 
@@ -240,9 +240,14 @@ def make_slice4_sidecar(path: Path) -> None:
             INSERT INTO feature_definition(
                 feature_id, feature_version, family, name, provenance, metadata_json
             ) VALUES
-                ('pf-perf-p1', ?, 'performer_identity', 'performer:p1', 'seed', '{}')
+                (?, ?, 'performer_identity', 'performer:p1', 'seed', '{}')
             """,
-            (FEATURE_VERSION,),
+            (
+                FeatureBuilder._feature_id(
+                    FEATURE_VERSION, "scene", "performer_identity", "performer:p1"
+                ),
+                FEATURE_VERSION,
+            ),
         )
         connection.execute(
             """
@@ -250,9 +255,14 @@ def make_slice4_sidecar(path: Path) -> None:
                 feature_id, model_id, affinity, confidence, effective_support,
                 distinct_scene_count
             ) VALUES
-                ('pf-perf-p1', ?, 0.62, 0.85, 0.5, 1)
+                (?, ?, 0.62, 0.85, 0.5, 1)
             """,
-            (MODEL_ID,),
+            (
+                FeatureBuilder._feature_id(
+                    FEATURE_VERSION, "scene", "performer_identity", "performer:p1"
+                ),
+                MODEL_ID,
+            ),
         )
         connection.execute(
             """
@@ -613,18 +623,103 @@ def test_inspector_performer_byte_identical(
 
 
 def test_inspector_performer_affinity_value(slice4_sidecar: Path) -> None:
-    """The performer branch surfaces the raw feature_affinity for the
-    performer's identity feature, or null when the model has no evidence."""
+    """The performer gauge uses confidence-weighted scene evidence."""
     connection = sqlite3.connect(slice4_sidecar)
     connection.row_factory = sqlite3.Row
     try:
         result = CuratorAPI(connection).inspector("performer", "p1")
-        assert result["affinity"] == pytest.approx(0.62)
+        assert result["affinity"] == pytest.approx(0.62 * 0.85)
         assert result["confidence"] == pytest.approx(0.85)
         assert CuratorAPI(connection).inspector("performer", "p2")["affinity"] is None
         assert CuratorAPI(connection).inspector("performer", "p2")["confidence"] is None
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize(
+    "performer,favorite,rating,learned,expected,confidence",
+    [
+        ("p1", True, 80, 0.62, 0.62 * 0.85 + 0.24, 0.90),
+        ("p1", True, 80, -0.4, -0.4 * 0.85 + 0.24, 0.90),
+        ("p2", True, 100, 0.0, 0.28, 0.90),
+        ("p2", False, 0, 0.0, -0.10, 0.75),
+        ("p2", False, 50, 0.0, 0.0, 0.75),
+        ("p2", True, None, 0.0, 0.18, 0.90),
+        ("p2", False, None, 0.0, None, None),
+    ],
+)
+def test_inspector_performer_explicit_preference(
+    binary: Path,
+    stub_stash: str,
+    slice4_sidecar: Path,
+    tmp_path: Path,
+    performer: str,
+    favorite: bool,
+    rating: int | None,
+    learned: float,
+    expected: float | None,
+    confidence: float | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sidecar = tmp_path / "performer.sqlite3"
+    shutil.copy2(slice4_sidecar, sidecar)
+    slice4_sidecar = sidecar
+    with sqlite3.connect(slice4_sidecar) as connection:
+        connection.execute(
+            "UPDATE source_performer SET favorite=?, rating100=? WHERE performer_id=?",
+            (favorite, rating, performer),
+        )
+        connection.execute(
+            "UPDATE feature_affinity SET affinity=? WHERE feature_id=?",
+            (
+                learned,
+                FeatureBuilder._feature_id(
+                    FEATURE_VERSION, "scene", "performer_identity", f"performer:{performer}"
+                ),
+            ),
+        )
+    assert_slice4_identical(
+        binary, payload("get_performer_affinities", slice4_sidecar, stub_stash), slice4_sidecar
+    )
+    assert_slice4_identical(
+        binary,
+        payload(
+            "get_inspector_entity",
+            slice4_sidecar,
+            stub_stash,
+            entity_type="performer",
+            entity_id=performer,
+            include_similar=False,
+        ),
+        slice4_sidecar,
+    )
+
+    def unexpected_similarity(*args: object, **kwargs: object) -> None:
+        pytest.fail("the gauge must not compute performer similarity")
+
+    monkeypatch.setattr(FeatureStore, "similar_performers", unexpected_similarity)
+    with sqlite3.connect(slice4_sidecar) as connection:
+        connection.row_factory = sqlite3.Row
+        queries: list[str] = []
+        connection.set_trace_callback(queries.append)
+        result = CuratorAPI(connection).inspector("performer", performer, include_similar=False)
+        assert result["affinity"] == (pytest.approx(expected) if expected is not None else None)
+        assert result["confidence"] == (
+            pytest.approx(confidence) if confidence is not None else None
+        )
+        assert result["similar"] == []
+        assert not any("feature_definition" in query for query in queries)
+        queries.clear()
+        batch = CuratorAPI(connection).performer_affinities()["affinities"]
+        assert isinstance(batch, dict)
+        assert batch.get(performer) == (
+            {k: result[k] for k in ("affinity", "confidence", "affinity_details")}
+            if expected is not None
+            else None
+        )
+        assert sum(query.lstrip().upper().startswith("SELECT") for query in queries) <= 4, (
+            "card affinities must use a bounded batch of queries"
+        )
 
 
 @pytest.mark.parametrize("performer_id", ["p1", "p2"])
@@ -653,7 +748,7 @@ def test_inspector_affinity_skips_similar_scan(
     connection.row_factory = sqlite3.Row
     try:
         result = CuratorAPI(connection).inspector("performer", "p1", include_similar=False)
-        assert result["affinity"] == pytest.approx(0.62)
+        assert result["affinity"] == pytest.approx(0.62 * 0.85)
         assert result["confidence"] == pytest.approx(0.85)
         assert result["similar"] == []
     finally:
@@ -693,7 +788,13 @@ def test_performer_affinities_byte_identical(
     connection.row_factory = sqlite3.Row
     try:
         result = CuratorAPI(connection).performer_affinities()
-        assert result["affinities"] == {"p1": {"affinity": 0.62, "confidence": 0.85}}
+        assert result["affinities"] == {
+            "p1": {
+                "affinity": 0.62 * 0.85,
+                "confidence": 0.85,
+                "affinity_details": {"learned": 0.62 * 0.85, "prior": 0.0},
+            }
+        }
     finally:
         connection.close()
 
