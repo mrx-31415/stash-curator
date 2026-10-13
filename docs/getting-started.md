@@ -36,6 +36,35 @@ appears as a compass in Stash's main navigation.
 See [Stash's plugin guide](https://docs.stashapp.cc/in-app-manual/plugins/)
 if you are adding a plugin source for the first time.
 
+### Smaller downloads
+
+For a smaller download, use a platform-specific plugin source below instead of
+the regular source. Each source offers the same Curator plugin and version, with
+just the matching backend binary.
+Choose the platform where **Stash runs**; for Docker, use the container's Linux
+architecture, even when the host is Windows or macOS.
+
+| Stash platform | Plugin source | Release archive |
+| --- | --- | --- |
+| Linux x86-64 | [index-linux-amd64.yml](https://mrx-31415.github.io/stash-curator/index-linux-amd64.yml) | `stash-curator-linux-amd64.zip` |
+| Linux ARM64 | [index-linux-arm64.yml](https://mrx-31415.github.io/stash-curator/index-linux-arm64.yml) | `stash-curator-linux-arm64.zip` |
+| Windows x86-64 | [index-windows-amd64.yml](https://mrx-31415.github.io/stash-curator/index-windows-amd64.yml) | `stash-curator-windows-amd64.zip` |
+| macOS Intel | [index-darwin-amd64.yml](https://mrx-31415.github.io/stash-curator/index-darwin-amd64.yml) | `stash-curator-darwin-amd64.zip` |
+| macOS Apple silicon | [index-darwin-arm64.yml](https://mrx-31415.github.io/stash-curator/index-darwin-arm64.yml) | `stash-curator-darwin-arm64.zip` |
+| All supported platforms | [index.yml](https://mrx-31415.github.io/stash-curator/index.yml) | `stash-curator.zip` |
+
+Use one Curator source at a time. When switching an existing installation, keep
+the source's **Local Path** unchanged so Stash updates the existing plugin folder
+and retains its data. Back up the folder before switching.
+
+For manual installation, download the matching ZIP from the
+[latest release](https://github.com/mrx-31415/stash-curator/releases/latest).
+Extract it into a `stash-curator` folder inside Stash's configured plugins directory,
+then reload plugins and refresh your browser. On Linux and macOS, ensure the
+`curator-core-*` binary has execute permission. When updating an existing manual
+installation, stop Stash first, back up the plugin folder, and preserve its `data/`
+directory. The regular plugin source continues to provide the multi-platform ZIP.
+
 The default database is `{pluginDir}/data/curator.sqlite3`. To use another location,
 open Stash's plugin settings for Curator and set **Sidecar database path** to an
 absolute **file path**, for example `/curator-data/curator.sqlite3`. The directory
