@@ -42,8 +42,11 @@ different lane than a high estimate backed by varied outcomes.
 The **Curator affinity** gauge on performer cards and pages shows the performer
 signal used in recommendations: confidence-weighted scene evidence plus your
 performer rating and favorite bonus. Its tooltip breaks those contributions down
-and shows confidence. Scene evidence measures outcomes relative to your library
-baseline; a negative learned contribution can coexist with a positive overall
+while confidence is shown separately below the value. A performer without evidence
+shows **0.00 · No evidence**: they contribute zero, but this is not a learned neutral
+preference. A dash means the value is loading or unavailable. Scene evidence
+measures outcomes relative to your library baseline; a negative learned
+contribution can coexist with a positive overall
 preference. Favorites and rated performers can have a value without scene history.
 
 This is a signed recommendation contribution: zero is neutral, positive values
