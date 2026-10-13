@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/mrx-31415/stash-curator/compare/v0.33.1...v0.33.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* clarify performer affinity and confidence display ([#337](https://github.com/mrx-31415/stash-curator/issues/337)) ([37222b3](https://github.com/mrx-31415/stash-curator/commit/37222b390a3bfbe0690a8f82d548ba2c208ff095))
+
 ## [0.33.1](https://github.com/mrx-31415/stash-curator/compare/v0.33.0...v0.33.1) (2026-10-13)
 
 
