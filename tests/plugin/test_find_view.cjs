@@ -25,7 +25,7 @@ assert.equal(context.useFindView()[0], "cards");
 context.useFindView()[1]("thumbnails");
 assert.equal(state, "thumbnails");
 
-vm.runInNewContext(source.slice(source.indexOf("  function FindThumbnail("), source.indexOf("  const ExternalCard")), context);
+vm.runInNewContext(source.slice(source.indexOf("  function FindThumbnail("), source.indexOf("  function PerformerHuntLink(")), context);
 for (const kind of ["scene", "performer"]) {
   const tile = context.FindThumbnail({ kind, image: "fixture.jpg", title: "Fixture", href: "/fixture" });
   assert.ok(tile.props.className.includes(`${kind}-card`));
@@ -61,7 +61,7 @@ assert.equal(context.testExternalCard({ item: { id: "fixture" }, kind: "scene", 
 const externalSource = source.slice(source.indexOf("  const ExternalCard"), source.indexOf("  const SourceReference"));
 for (const name of externalSource.match(/\bfa[A-Z]\w+/g)) context[name] = {};
 Object.assign(context, {
-  FontAwesomeIcon: "icon", NavLink: "link", ExternalActions: "actions",
+  FontAwesomeIcon: "icon", NavLink: "link", ExternalActions: "actions", PerformerHuntLink: "hunt-link",
   FindSceneReason: "reason", ExplanationView: "explanation", EvidenceScore: "score",
   findSceneSummary: () => "Match summary", formatSigned: () => "+0.8",
   formatAppealValue: () => "+0.8", scoreBar: () => null,
