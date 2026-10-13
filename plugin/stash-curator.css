@@ -3155,12 +3155,21 @@
   background: var(--curator-wash-raised) !important;
 }
 .performer-card .curator-performer-card-badge {
+  bottom: 0.45rem;
   gap: 0.1rem;
-  left: 0.45rem;
   padding: 0.15rem 0.3rem;
   position: absolute;
-  top: 3rem;
+  right: 0.45rem;
   z-index: 2;
+}
+.performer-card .thumbnail-section:has(.hon-battle-rank-badge) .curator-performer-card-badge {
+  /* shortcut: reserve Ascension's two-row badge; measure dynamically if its layout changes. */
+  bottom: 4.5rem;
+}
+@media (max-width: 575.98px) {
+  .performer-card .thumbnail-section:has(.hon-battle-rank-badge) .curator-performer-card-badge {
+    bottom: 2.9rem;
+  }
 }
 .curator-performer-card-badge .curator-context-button {
   height: 1.55rem;
