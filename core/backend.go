@@ -240,6 +240,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitTermPreferences(pluginDir, payload)
 	case "get_inspector_entity":
 		return opGetInspectorEntity(pluginDir, payload)
+	case "get_performer_affinities":
+		return opGetPerformerAffinities(pluginDir, payload)
 	case "get_tag_sentiment_follow_up":
 		return opGetTagSentimentFollowUp(pluginDir, payload)
 	case "get_curation_picks":

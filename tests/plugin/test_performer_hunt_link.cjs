@@ -16,7 +16,7 @@ const context = {
       toArray: (children) => Array.isArray(children) ? [...children] : [children],
     },
     isValidElement: (element) => Boolean(element?.type),
-    cloneElement: (element, props, children) => ({ ...element, props: { ...element.props, ...props, children } }),
+    cloneElement: (element, props, ...children) => ({ ...element, props: { ...element.props, ...props, ...(children.length ? { children: children.length === 1 ? children[0] : children } : {}) } }),
   },
   NavLink: "NavLink", FontAwesomeIcon: "Icon", faCrosshairs: "crosshairs",
 };
@@ -79,3 +79,108 @@ const iconStyle = css.slice(css.indexOf(".curator-performer-hunt {"), css.indexO
 assert.match(iconStyle, /position: absolute/);
 assert.match(iconStyle, /color: var\(--curator-hue-hunt\)/);
 console.log("PASS: Hunt icons overlay images without taking name width or changing profile links");
+
+let state;
+Object.assign(context, {
+  faClone: "clone",
+  faCompass: "compass",
+  ReactDOM: { createPortal: (element, host) => ({ element, host }) },
+  formatAppealValue: (value) => value.toFixed(2),
+  clamp01: (value) => Math.max(0, Math.min(1, value)),
+});
+context.React.useState = () => [state.shift(), () => {}];
+context.React.useEffect = () => {};
+let cardPatch;
+context.Api.patch.after = (name, callback) => { assert.equal(name, "PerformerCard"); cardPatch = callback; };
+vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
+function pageControls(type, details) {
+  const host = {};
+  state = [host, details];
+  const portal = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
+  return { ...portal, element: context.CuratorContextControls(portal.element.props) };
+}
+const performerControls = pageControls("performer", { affinity: 0.62, confidence: 0.85 }).element;
+assert.match(performerControls.props.className, /curator-context-group-performer/);
+assert.equal(performerControls.props.role, "group");
+const [brand, gauge, similar, hunt] = performerControls.props.children;
+assert.equal(brand.type, "span");
+assert.equal(brand.props.children[0].props.icon, "compass");
+assert.equal(brand.props["aria-hidden"], true);
+assert.equal(similar.props.children[0].props.icon, "clone");
+const similarQuery = new URL(similar.props.to, "http://example.test").searchParams;
+assert.equal(similarQuery.get("view"), "similar");
+assert.equal(similarQuery.get("type"), "performer");
+assert.equal(similarQuery.get("id"), performer.id);
+assert.equal(hunt.type, context.PerformerHuntLink);
+checkLink(hunt.props, false);
+assert.equal(context.PerformerHuntLink(hunt.props).props.className, "curator-context-button curator-context-button-hunt");
+assert.equal(gauge.props.value, 0.62);
+const renderedGauge = context.CuratorAffinityGauge(gauge.props);
+assert.match(renderedGauge.props.title, /viewing and feedback/);
+assert.match(renderedGauge.props.title, /Model confidence 85%/);
+assert.equal(renderedGauge.props["aria-label"], renderedGauge.props.title);
+assert.equal(renderedGauge.props.tabIndex, 0);
+const noEvidence = pageControls("performer", null).element;
+assert.equal(noEvidence.props.children[1].props.value, null);
+assert.equal(noEvidence.props.children[1].props.detail, null);
+assert.match(pageControls("performer", { affinity: -0.3, confidence: 0 }).element.props.children[1].props.detail, /confidence 0%/);
+assert.doesNotMatch(pageControls("performer", { affinity: 0.2 }).element.props.children[1].props.detail, /confidence/);
+const sceneControls = pageControls("scene", { score: { appeal: -0.4 } }).element;
+assert.equal(sceneControls.props.className, "curator-context-group");
+assert.equal(sceneControls.props.children[0], false, "scene pages must not gain a Curator brand marker");
+assert.equal(sceneControls.props.children[1], false, "scene pages must not gain a leading performer score");
+assert.equal(sceneControls.props.children[3], false, "scene pages must not gain a performer Hunt action");
+assert.equal(sceneControls.props.children[4].props.value, -0.4);
+state = [null, null];
+assert.equal(context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" }), null);
+const effects = [];
+context.React.useEffect = (effect) => effects.push(effect);
+let request;
+context.operation = (args) => { request = args; return Promise.resolve({}); };
+pageControls("performer", null);
+effects[1]();
+assert.equal(request.include_similar, false, "the pill must skip the full similar-performer scan");
+console.log("PASS: performer pages group Similar, Hunt, and an explained affinity gauge");
+
+context.window.location.pathname = "/performers";
+const nativeOverlays = { type: "NativeOverlays", props: {} };
+const nativeCard = { type: "GridCard", props: { className: "performer-card", image, title: name, overlays: nativeOverlays } };
+const enhancedCard = cardPatch({ performer }, null, nativeCard);
+assert.equal(enhancedCard.props.className, nativeCard.props.className);
+assert.equal(enhancedCard.props.image, image);
+assert.equal(enhancedCard.props.title, name);
+assert.equal(enhancedCard.props.overlays.props.children[0], nativeOverlays);
+assert.equal(enhancedCard.props.overlays.props.children[1].type, context.CuratorPerformerCardBadge);
+assert.equal(enhancedCard.props.overlays.props.children[1].props.performer, performer);
+assert.equal(nativeCard.props.overlays, nativeOverlays, "preserve native overlays without mutation");
+assert.equal(cardPatch({ performer }, nativeCard).props.overlays.props.children[0], nativeOverlays, "accept the native hook's variable render arguments");
+context.window.location.pathname = "/plugins/stash-curator";
+assert.equal(cardPatch({ performer }, null, nativeCard), nativeCard, "limit native card badges to the performer grid");
+const cardControls = context.CuratorContextControls({ type: "performer", id: performer.id, label: performer.name, details: { affinity: -0.3 }, className: "curator-performer-card-badge" });
+assert.match(cardControls.props.className, /curator-performer-card-badge/);
+assert.equal(cardControls.props.children[1].props.value, -0.3);
+let stopped = false;
+cardControls.props.onClick({ stopPropagation: () => { stopped = true; } });
+assert(stopped, "card controls must not trigger the native card's click handler");
+
+async function checkSharedAffinityRequest() {
+  let calls = 0;
+  let finish;
+  context.operation = (args) => {
+    assert.equal(args.operation, "get_performer_affinities");
+    calls++;
+    return new Promise((resolve) => { finish = resolve; });
+  };
+  const first = context.loadPerformerAffinities();
+  const second = context.loadPerformerAffinities();
+  assert.equal(first, second, "cards mounting together share one request");
+  assert.equal(calls, 1);
+  finish({ affinities: { "17": { affinity: 0.62, confidence: 0.85 } } });
+  assert.equal((await first).affinities["17"].affinity, 0.62);
+  const nextPage = context.loadPerformerAffinities();
+  assert.equal(calls, 2, "later page loads fetch fresh model data");
+  finish({ affinities: {} });
+  await nextPage;
+  console.log("PASS: performer-grid badges preserve native cards and share a fresh affinity request");
+}
+checkSharedAffinityRequest().catch((error) => { console.error(error); process.exitCode = 1; });

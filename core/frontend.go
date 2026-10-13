@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func opGetExternalTagSearch(pluginDir string, payload jVal) (jVal, error) {
@@ -532,9 +533,14 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 		if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
 			return jvNull(), err
 		}
-		similar, err := similarPerformers(db, featureVersion, entityID, 10)
-		if err != nil {
-			return jvNull(), err
+		similar := jvArr()
+		if !args.has("include_similar") || args.get("include_similar").truthy() {
+			started := time.Now()
+			similar, err = similarPerformers(db, featureVersion, entityID, 10)
+			currentTrace().record("core", "inspector.similar_performers", started.UnixNano(), time.Since(started).Nanoseconds(), jvNull())
+			if err != nil {
+				return jvNull(), err
+			}
 		}
 		affinity, confidence, hasAffinity := performerAffinity(db, modelID, featureVersion, entityID)
 		affinityVal := jvNull()
@@ -555,6 +561,47 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 		), nil
 	}
 	return jvNull(), fmt.Errorf("unsupported inspector entity type: %s", entityType)
+}
+
+func opGetPerformerAffinities(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_performer_affinities", func(settings jVal) (jVal, error) {
+		db, err := openAPISidecar(pluginDir, payload, settings)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer db.Close()
+		modelID, err := currentModelID(db)
+		if err != nil {
+			return jvNull(), err
+		}
+		if modelID == "" {
+			return jvNull(), fmt.Errorf("no published model")
+		}
+		var featureVersion string
+		if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
+			return jvNull(), err
+		}
+		rows, err := db.Query(`SELECT fd.name, fa.affinity, fa.confidence
+FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
+ORDER BY fd.name`, modelID, featureVersion)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer rows.Close()
+		affinities := jvObj()
+		for rows.Next() {
+			var name string
+			var affinity, confidence float64
+			if err := rows.Scan(&name, &affinity, &confidence); err != nil {
+				return jvNull(), err
+			}
+			affinities.set(strings.TrimPrefix(name, "performer:"), jvObj(
+				jvKey("affinity", jvFloat(affinity)), jvKey("confidence", jvFloat(confidence))))
+		}
+		return jvObj(jvKey("schema_version", jvInt(apiSchemaVersion)),
+			jvKey("model_id", jvStr(modelID)), jvKey("affinities", affinities)), rows.Err()
+	})
 }
 
 // performerRow mirrors Python's `SELECT * FROM source_performer` dict(row):

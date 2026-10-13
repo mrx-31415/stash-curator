@@ -341,7 +341,9 @@ class CuratorAPI:
             "model_version": model_id,
         }
 
-    def inspector(self, entity_type: str, entity_id: str) -> dict[str, object]:
+    def inspector(
+        self, entity_type: str, entity_id: str, *, include_similar: bool = True
+    ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
             raise RuntimeError("no published model")
@@ -383,11 +385,15 @@ class CuratorAPI:
             ).fetchone()
             affinity = affinity_row[0] if affinity_row is not None else None
             confidence = affinity_row[1] if affinity_row is not None else None
-            matches = FeatureStore(self.connection).similar_performers(
-                str(feature_version),
-                entity_id,
-                count=10,
-                block_weights=dict(DEFAULT_CONFIG.feature.performer_block_weights),
+            matches = (
+                FeatureStore(self.connection).similar_performers(
+                    str(feature_version),
+                    entity_id,
+                    count=10,
+                    block_weights=dict(DEFAULT_CONFIG.feature.performer_block_weights),
+                )
+                if include_similar
+                else []
             )
             return {
                 "schema_version": API_SCHEMA_VERSION,
@@ -407,6 +413,31 @@ class CuratorAPI:
                 ],
             }
         raise ValueError(f"unsupported inspector entity type: {entity_type}")
+
+    def performer_affinities(self) -> dict[str, object]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = self.connection.execute(
+            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()[0]
+        rows = self.connection.execute(
+            """
+            SELECT fd.name, fa.affinity, fa.confidence
+            FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+            WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
+            ORDER BY fd.name
+            """,
+            (model_id, feature_version),
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": model_id,
+            "affinities": {
+                row[0].removeprefix("performer:"): {"affinity": row[1], "confidence": row[2]}
+                for row in rows
+            },
+        }
 
     def similar(
         self,

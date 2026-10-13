@@ -1044,9 +1044,13 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 "schema_version": SCHEMA_VERSION,
                 "deleted": clear_traces(connection),
             }
+        if operation == "get_performer_affinities":
+            return api.performer_affinities()
         if operation == "get_inspector_entity":
             return api.inspector(
-                str(args.get("entity_type") or ""), str(args.get("entity_id") or "")
+                str(args.get("entity_type") or ""),
+                str(args.get("entity_id") or ""),
+                include_similar=bool(args.get("include_similar", True)),
             )
         if operation == "get_similar":
             config = api.config()["config"]

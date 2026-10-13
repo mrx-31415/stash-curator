@@ -2362,11 +2362,11 @@
       React.createElement("div", { className: "card-section", hidden: true }, React.createElement("span", { className: "card-section-title" }, title))
     );
   }
-  function PerformerHuntLink({ performer, external = false }) {
+  function PerformerHuntLink({ performer, external = false, className = "curator-performer-hunt" }) {
     const query = new URLSearchParams({ view: "hunt", performer: String(performer.id), label: performer.name || "" });
     if (external) query.set("ext", "1");
     const label = `Hunt scenes featuring ${performer.name || "this performer"}`;
-    return React.createElement(NavLink, { className: "curator-performer-hunt", to: `/plugins/stash-curator?${query}`, title: label, "aria-label": label, onClick: (event) => event.stopPropagation() }, React.createElement(FontAwesomeIcon, { icon: faCrosshairs }));
+    return React.createElement(NavLink, { className, to: `/plugins/stash-curator?${query}`, title: label, "aria-label": label, onClick: (event) => event.stopPropagation() }, React.createElement(FontAwesomeIcon, { icon: faCrosshairs }));
   }
 
   Api.patch.before("HoverPopover", function (props, ...args) {
@@ -6292,14 +6292,10 @@
     }
     return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
   });
-  // The affinity pill doubles as the Similar link: one compact control shows the
-  // curator affinity (or a dash when the model has no evidence) and navigates to
-  // Curator's Similar view for this asset. Always rendered so the Similar entry
-  // point is present regardless of model evidence.
   // Circular gauge around the affinity value (replaces the flat bar). The ring
   // fill tracks |affinity| and the value is tinted by sign; a dash when there is
   // no model evidence.
-  function CuratorAffinityGauge({ value }) {
+  function CuratorAffinityGauge({ value, detail }) {
     const radius = 15;
     const circumference = 2 * Math.PI * radius;
     const magnitude = value === null ? 0 : Math.min(1, Math.abs(value));
@@ -6307,7 +6303,8 @@
     const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
     const valueLabel = value === null ? "—" : formatAppealValue(value);
     const color = sign === "positive" ? "#5cc19c" : sign === "negative" ? "#e0645c" : "#adb5bd";
-    return React.createElement("span", { className: `curator-affinity-gauge curator-affinity-${sign}`, title: `Curator affinity ${valueLabel}`, "aria-label": `Curator affinity ${valueLabel}` },
+    const description = `Curator affinity ${valueLabel}${detail ? `. ${detail}` : ""}`;
+    return React.createElement("span", { className: `curator-affinity-gauge curator-affinity-${sign}`, title: description, "aria-label": description, tabIndex: detail ? 0 : undefined },
       React.createElement("svg", { className: "curator-affinity-gauge-ring", viewBox: "0 0 36 36", "aria-hidden": "true" },
         React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: "rgba(127,127,127,0.25)", strokeWidth: 3 }),
         React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: color, strokeWidth: 3, strokeDasharray: String(circumference), strokeDashoffset: String(offset), strokeLinecap: "round", transform: "rotate(-90 18 18)" })
@@ -6315,31 +6312,62 @@
       React.createElement("span", { className: "curator-affinity-gauge-value" }, valueLabel)
     );
   }
+  function CuratorContextControls({ type, id, label, details, className = "" }) {
+    const raw = type === "scene" ? details?.score?.appeal : details?.affinity;
+    const value = typeof raw === "number" ? raw : null;
+    const confidence = typeof details?.confidence === "number" ? ` Model confidence ${Math.round(clamp01(details.confidence) * 100)}%.` : "";
+    const affinityDetail = type === "performer" && value !== null ? `Learned from your viewing and feedback. Positive values favour scenes featuring this performer; negative values reduce their fit.${confidence}` : null;
+    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
+    return React.createElement("div", { className: `curator-context-group${type === "performer" ? " curator-context-group-performer" : ""}${className ? ` ${className}` : ""}`, role: "group", "aria-label": "Curator actions", onClick: (event) => event.stopPropagation() },
+        type === "performer" && React.createElement("span", { className: "curator-context-brand", title: "Curator", "aria-hidden": true }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
+        type === "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail }),
+        React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faClone })),
+        type === "performer" && React.createElement(PerformerHuntLink, { performer: { id, name: label }, className: "curator-context-button curator-context-button-hunt" }),
+        type !== "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
+    );
+  }
   function CuratorContextLink({ type, id, label, target }) {
     const [host, setHost] = React.useState(null);
-    const [value, setValue] = React.useState(null);
+    const [details, setDetails] = React.useState(null);
     React.useEffect(() => { setHost(document.querySelector(target)); }, [target]);
     React.useEffect(() => {
       let active = true;
-      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id) })
-        .then((data) => {
-          if (!active) return;
-          const raw = type === "scene" ? data?.score?.appeal : data?.affinity;
-          setValue(typeof raw === "number" ? raw : null);
-        })
-        .catch(() => { if (active) setValue(null); });
+      setDetails(null);
+      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id), include_similar: false })
+        .then((data) => { if (active) setDetails(data); })
+        .catch(() => { if (active) setDetails(null); });
       return () => { active = false; };
     }, [type, id]);
-    if (!host) return null;
-    const query = new URLSearchParams({ view: "similar", type, id: String(id), label: label || "" });
-    return ReactDOM.createPortal(
-      React.createElement("div", { className: "curator-context-group" },
-        React.createElement(NavLink, { className: "curator-context-button", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
-        React.createElement(CuratorAffinityGauge, { value })
-      ),
-      host
-    );
+    return host ? ReactDOM.createPortal(React.createElement(CuratorContextControls, { type, id, label, details }), host) : null;
   }
+  let performerAffinitiesPending = null;
+  function loadPerformerAffinities() {
+    if (!performerAffinitiesPending) {
+      performerAffinitiesPending = operation({ operation: "get_performer_affinities" })
+        .finally(() => { performerAffinitiesPending = null; });
+    }
+    return performerAffinitiesPending;
+  }
+  function CuratorPerformerCardBadge({ performer }) {
+    const [details, setDetails] = React.useState(null);
+    React.useEffect(() => {
+      let active = true;
+      setDetails(null);
+      loadPerformerAffinities()
+        .then((data) => { if (active) setDetails(data.affinities[String(performer.id)] || null); })
+        .catch(() => { if (active) setDetails(null); });
+      return () => { active = false; };
+    }, [performer.id]);
+    return React.createElement(CuratorContextControls, { type: "performer", id: performer.id, label: performer.name, details, className: "curator-performer-card-badge" });
+  }
+  Api.patch.after("PerformerCard", function (props, ...args) {
+    const result = args[args.length - 1];
+    if (!/^\/performers\/?$/.test(window.location.pathname) || props.performer?.id == null || !React.isValidElement(result)) return result;
+    return React.cloneElement(result, { overlays: React.createElement(React.Fragment, null,
+      result.props.overlays,
+      React.createElement(CuratorPerformerCardBadge, { key: "curator-performer-affinity", performer: props.performer })
+    ) });
+  });
   Api.patch.after("ScenePage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
   });
