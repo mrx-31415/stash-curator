@@ -3105,7 +3105,7 @@
 }
 .curator-context-group-performer {
   background: linear-gradient(135deg, var(--curator-surface-raised), var(--curator-surface));
-  border: 1px solid var(--curator-border-strong);
+  border: 1px solid var(--curator-text-muted);
   border-radius: 999px;
   flex-shrink: 0;
   gap: 0.15rem;
