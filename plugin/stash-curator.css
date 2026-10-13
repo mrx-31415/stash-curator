@@ -3103,6 +3103,62 @@
 .curator-context-button:focus {
   text-decoration: none;
 }
+.curator-context-group-performer {
+  background: linear-gradient(135deg, var(--curator-surface-raised), var(--curator-surface));
+  border: 1px solid var(--curator-border-strong);
+  border-radius: 999px;
+  flex-shrink: 0;
+  gap: 0.15rem;
+  padding: 0.2rem 0.4rem;
+}
+.curator-context-group-performer .curator-context-button {
+  background: transparent !important;
+  border-radius: 50%;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+.curator-context-brand {
+  align-items: center;
+  border-right: 1px solid var(--curator-border-strong);
+  color: var(--curator-text-muted);
+  display: inline-flex;
+  padding: 0 0.4rem 0 0.2rem;
+}
+#performer-page .curator-context-group-performer .curator-context-button svg,
+#performer-page .curator-context-group-performer .curator-context-brand svg {
+  height: 1rem;
+  margin: 0;
+  width: 1rem;
+}
+.curator-context-group-performer .curator-affinity-gauge {
+  align-items: center;
+  border-left: 1px solid var(--curator-border-strong);
+  display: inline-flex;
+  padding: 0 0.4rem;
+  width: auto;
+}
+#performer-page .curator-context-group-performer .curator-affinity-gauge-ring {
+  display: none;
+}
+.curator-context-group-performer .curator-affinity-gauge-value {
+  font-size: 0.8rem;
+  position: static;
+  transform: none;
+}
+.curator-context-group-performer .curator-context-button:hover {
+  background: var(--curator-wash-raised) !important;
+}
+.curator-context-group-performer .curator-context-button-similar {
+  color: var(--curator-hue-similar);
+}
+.curator-context-group-performer .curator-context-button-hunt {
+  color: var(--curator-hue-hunt);
+}
+.curator-context-group-performer .curator-context-button:focus-visible,
+.curator-affinity-gauge:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
 .curator-affinity-gauge {
   height: 1.9rem;
   position: relative;

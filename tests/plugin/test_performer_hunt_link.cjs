@@ -79,3 +79,54 @@ const iconStyle = css.slice(css.indexOf(".curator-performer-hunt {"), css.indexO
 assert.match(iconStyle, /position: absolute/);
 assert.match(iconStyle, /color: var\(--curator-hue-hunt\)/);
 console.log("PASS: Hunt icons overlay images without taking name width or changing profile links");
+
+let state;
+Object.assign(context, {
+  faClone: "clone",
+  faCompass: "compass",
+  ReactDOM: { createPortal: (element, host) => ({ element, host }) },
+  formatAppealValue: (value) => value.toFixed(2),
+  clamp01: (value) => Math.max(0, Math.min(1, value)),
+});
+context.React.useState = () => [state.shift(), () => {}];
+context.React.useEffect = () => {};
+vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
+function pageControls(type, details) {
+  const host = {};
+  state = [host, details];
+  return context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
+}
+const performerControls = pageControls("performer", { affinity: 0.62, confidence: 0.85 }).element;
+assert.match(performerControls.props.className, /curator-context-group-performer/);
+assert.equal(performerControls.props.role, "group");
+const [brand, similar, hunt, gauge] = performerControls.props.children;
+assert.equal(brand.type, "span");
+assert.equal(brand.props.children[0].props.icon, "compass");
+assert.equal(brand.props["aria-hidden"], true);
+assert.equal(similar.props.children[0].props.icon, "clone");
+const similarQuery = new URL(similar.props.to, "http://example.test").searchParams;
+assert.equal(similarQuery.get("view"), "similar");
+assert.equal(similarQuery.get("type"), "performer");
+assert.equal(similarQuery.get("id"), performer.id);
+assert.equal(hunt.type, context.PerformerHuntLink);
+checkLink(hunt.props, false);
+assert.equal(context.PerformerHuntLink(hunt.props).props.className, "curator-context-button curator-context-button-hunt");
+assert.equal(gauge.props.value, 0.62);
+const renderedGauge = context.CuratorAffinityGauge(gauge.props);
+assert.match(renderedGauge.props.title, /viewing and feedback/);
+assert.match(renderedGauge.props.title, /Model confidence 85%/);
+assert.equal(renderedGauge.props["aria-label"], renderedGauge.props.title);
+assert.equal(renderedGauge.props.tabIndex, 0);
+const noEvidence = pageControls("performer", null).element;
+assert.equal(noEvidence.props.children[3].props.value, null);
+assert.equal(noEvidence.props.children[3].props.detail, null);
+assert.match(pageControls("performer", { affinity: -0.3, confidence: 0 }).element.props.children[3].props.detail, /confidence 0%/);
+assert.doesNotMatch(pageControls("performer", { affinity: 0.2 }).element.props.children[3].props.detail, /confidence/);
+const sceneControls = pageControls("scene", { score: { appeal: -0.4 } }).element;
+assert.equal(sceneControls.props.className, "curator-context-group");
+assert.equal(sceneControls.props.children[0], false, "scene pages must not gain a Curator brand marker");
+assert.equal(sceneControls.props.children[2], false, "scene pages must not gain a performer Hunt action");
+assert.equal(sceneControls.props.children[3].props.value, -0.4);
+state = [null, null];
+assert.equal(context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" }), null);
+console.log("PASS: performer pages group Similar, Hunt, and an explained affinity gauge");
