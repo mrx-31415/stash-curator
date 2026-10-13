@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/mrx-31415/stash-curator/compare/v0.32.0...v0.33.0) (2026-10-13)
+
+
+### Features
+
+* group performer hunt and affinity controls ([#334](https://github.com/mrx-31415/stash-curator/issues/334)) ([fed6865](https://github.com/mrx-31415/stash-curator/commit/fed6865cab554614ee9a111f978cc2ff6620d450))
+
 ## [0.32.0](https://github.com/mrx-31415/stash-curator/compare/v0.31.4...v0.32.0) (2026-10-13)
 
 
