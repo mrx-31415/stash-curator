@@ -2362,6 +2362,28 @@
       React.createElement("div", { className: "card-section", hidden: true }, React.createElement("span", { className: "card-section-title" }, title))
     );
   }
+  function PerformerHuntLink({ performer, external = false }) {
+    const query = new URLSearchParams({ view: "hunt", performer: String(performer.id), label: performer.name || "" });
+    if (external) query.set("ext", "1");
+    const label = `Hunt scenes featuring ${performer.name || "this performer"}`;
+    return React.createElement(NavLink, { className: "curator-performer-hunt", to: `/plugins/stash-curator?${query}`, title: label, "aria-label": label, onClick: (event) => event.stopPropagation() }, React.createElement(FontAwesomeIcon, { icon: faCrosshairs }));
+  }
+
+  Api.patch.before("HoverPopover", function (props, ...args) {
+    if (window.location.pathname !== "/plugins/stash-curator" || props.className !== "performer-count") return [props, ...args];
+    const content = React.Children.map(props.content, (row) => {
+      if (!React.isValidElement(row)) return row;
+      const children = React.Children.toArray(row.props.children);
+      const performer = children.find((child) => child?.props?.performer)?.props.performer;
+      if (!performer) return row;
+      return React.cloneElement(row, {}, React.Children.map(children, (child) => {
+        if (!child?.props?.className?.split(" ").includes("performer-tag")) return child;
+        return React.createElement("div", { className: "curator-performer-image-actions" }, child, React.createElement(PerformerHuntLink, { performer }));
+      }));
+    });
+    return [{ ...props, content }, ...args];
+  });
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -2405,7 +2427,7 @@
         const performerImage = person.images?.find((value) => value.url)?.url;
         const PersonLink = person.curator_local ? NavLink : "a";
         const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" };
-        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage && React.createElement("img", { className: "image-thumbnail", src: performerImage, loading: "lazy", alt: person.name || "" })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
+        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage && React.createElement("img", { className: "image-thumbnail", src: performerImage, loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
       }), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)))
     );
     async function addToWhisparr() {
