@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/mrx-31415/stash-curator/compare/v0.33.0...v0.33.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* include explicit preferences in performer affinity ([511dbc5](https://github.com/mrx-31415/stash-curator/commit/511dbc553a3f7c0d06f9e1f66087bb178cfca947))
+
 ## [0.33.0](https://github.com/mrx-31415/stash-curator/compare/v0.32.0...v0.33.0) (2026-10-13)
 
 
