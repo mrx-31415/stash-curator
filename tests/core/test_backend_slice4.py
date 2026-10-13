@@ -683,10 +683,28 @@ def test_inspector_performer_error_paths(
     )
 
 
-def test_inspector_requires_published_model(tmp_path: Path, binary: Path, stub_stash: str) -> None:
+def test_performer_affinities_byte_identical(
+    binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    assert_slice4_identical(
+        binary, payload("get_performer_affinities", slice4_sidecar, stub_stash), slice4_sidecar
+    )
+    connection = sqlite3.connect(slice4_sidecar)
+    connection.row_factory = sqlite3.Row
+    try:
+        result = CuratorAPI(connection).performer_affinities()
+        assert result["affinities"] == {"p1": {"affinity": 0.62, "confidence": 0.85}}
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("operation", ["get_inspector_entity", "get_performer_affinities"])
+def test_inspector_requires_published_model(
+    tmp_path: Path, binary: Path, stub_stash: str, operation: str
+) -> None:
     sidecar = tmp_path / "nomodel.sqlite3"
     make_sidecar(sidecar, with_jobs=True)
-    raw = payload("get_inspector_entity", sidecar, stub_stash, entity_type="scene", entity_id="s1")
+    raw = payload(operation, sidecar, stub_stash, entity_type="scene", entity_id="s1")
     assert_slice4_identical(binary, raw, sidecar)
 
 

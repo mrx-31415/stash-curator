@@ -247,6 +247,11 @@ available.
 The film action on a StashDB Similar performer card opens the same hunt for that
 *external* performer directly, so its full catalog is fetched from StashDB instead of
 being limited to the bounded Expand candidate cache.
+
+On Stash's **Performers** card grid, a compact Curator pill sits near the top of
+each portrait, below the native selection and favorite controls. It shows affinity
+and the Similar/Hunt actions, leaving the bottom of the portrait for other badges.
+The grid shares one affinity request while cards load.
 The **Hide exact PHash matches** filter is enabled by default. It also applies to
 Expand and StashDB Similar scenes. Disable it to inspect candidates marked
 **Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed

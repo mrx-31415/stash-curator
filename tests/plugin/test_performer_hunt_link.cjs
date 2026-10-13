@@ -16,7 +16,7 @@ const context = {
       toArray: (children) => Array.isArray(children) ? [...children] : [children],
     },
     isValidElement: (element) => Boolean(element?.type),
-    cloneElement: (element, props, children) => ({ ...element, props: { ...element.props, ...props, children } }),
+    cloneElement: (element, props, ...children) => ({ ...element, props: { ...element.props, ...props, ...(children.length ? { children: children.length === 1 ? children[0] : children } : {}) } }),
   },
   NavLink: "NavLink", FontAwesomeIcon: "Icon", faCrosshairs: "crosshairs",
 };
@@ -90,11 +90,14 @@ Object.assign(context, {
 });
 context.React.useState = () => [state.shift(), () => {}];
 context.React.useEffect = () => {};
+let cardPatch;
+context.Api.patch.after = (name, callback) => { assert.equal(name, "PerformerCard"); cardPatch = callback; };
 vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
 function pageControls(type, details) {
   const host = {};
   state = [host, details];
-  return context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
+  const portal = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
+  return { ...portal, element: context.CuratorContextControls(portal.element.props) };
 }
 const performerControls = pageControls("performer", { affinity: 0.62, confidence: 0.85 }).element;
 assert.match(performerControls.props.className, /curator-context-group-performer/);
@@ -138,3 +141,46 @@ pageControls("performer", null);
 effects[1]();
 assert.equal(request.include_similar, false, "the pill must skip the full similar-performer scan");
 console.log("PASS: performer pages group Similar, Hunt, and an explained affinity gauge");
+
+context.window.location.pathname = "/performers";
+const nativeOverlays = { type: "NativeOverlays", props: {} };
+const nativeCard = { type: "GridCard", props: { className: "performer-card", image, title: name, overlays: nativeOverlays } };
+const enhancedCard = cardPatch({ performer }, null, nativeCard);
+assert.equal(enhancedCard.props.className, nativeCard.props.className);
+assert.equal(enhancedCard.props.image, image);
+assert.equal(enhancedCard.props.title, name);
+assert.equal(enhancedCard.props.overlays.props.children[0], nativeOverlays);
+assert.equal(enhancedCard.props.overlays.props.children[1].type, context.CuratorPerformerCardBadge);
+assert.equal(enhancedCard.props.overlays.props.children[1].props.performer, performer);
+assert.equal(nativeCard.props.overlays, nativeOverlays, "preserve native overlays without mutation");
+assert.equal(cardPatch({ performer }, nativeCard).props.overlays.props.children[0], nativeOverlays, "accept the native hook's variable render arguments");
+context.window.location.pathname = "/plugins/stash-curator";
+assert.equal(cardPatch({ performer }, null, nativeCard), nativeCard, "limit native card badges to the performer grid");
+const cardControls = context.CuratorContextControls({ type: "performer", id: performer.id, label: performer.name, details: { affinity: -0.3 }, className: "curator-performer-card-badge" });
+assert.match(cardControls.props.className, /curator-performer-card-badge/);
+assert.equal(cardControls.props.children[1].props.value, -0.3);
+let stopped = false;
+cardControls.props.onClick({ stopPropagation: () => { stopped = true; } });
+assert(stopped, "card controls must not trigger the native card's click handler");
+
+async function checkSharedAffinityRequest() {
+  let calls = 0;
+  let finish;
+  context.operation = (args) => {
+    assert.equal(args.operation, "get_performer_affinities");
+    calls++;
+    return new Promise((resolve) => { finish = resolve; });
+  };
+  const first = context.loadPerformerAffinities();
+  const second = context.loadPerformerAffinities();
+  assert.equal(first, second, "cards mounting together share one request");
+  assert.equal(calls, 1);
+  finish({ affinities: { "17": { affinity: 0.62, confidence: 0.85 } } });
+  assert.equal((await first).affinities["17"].affinity, 0.62);
+  const nextPage = context.loadPerformerAffinities();
+  assert.equal(calls, 2, "later page loads fetch fresh model data");
+  finish({ affinities: {} });
+  await nextPage;
+  console.log("PASS: performer-grid badges preserve native cards and share a fresh affinity request");
+}
+checkSharedAffinityRequest().catch((error) => { console.error(error); process.exitCode = 1; });

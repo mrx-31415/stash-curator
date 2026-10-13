@@ -414,6 +414,31 @@ class CuratorAPI:
             }
         raise ValueError(f"unsupported inspector entity type: {entity_type}")
 
+    def performer_affinities(self) -> dict[str, object]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = self.connection.execute(
+            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()[0]
+        rows = self.connection.execute(
+            """
+            SELECT fd.name, fa.affinity, fa.confidence
+            FROM feature_affinity fa JOIN feature_definition fd USING(feature_id)
+            WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
+            ORDER BY fd.name
+            """,
+            (model_id, feature_version),
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": model_id,
+            "affinities": {
+                row[0].removeprefix("performer:"): {"affinity": row[1], "confidence": row[2]}
+                for row in rows
+            },
+        }
+
     def similar(
         self,
         entity_type: str,
