@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func opGetExternalTagSearch(pluginDir string, payload jVal) (jVal, error) {
@@ -532,9 +533,14 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 		if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
 			return jvNull(), err
 		}
-		similar, err := similarPerformers(db, featureVersion, entityID, 10)
-		if err != nil {
-			return jvNull(), err
+		similar := jvArr()
+		if !args.has("include_similar") || args.get("include_similar").truthy() {
+			started := time.Now()
+			similar, err = similarPerformers(db, featureVersion, entityID, 10)
+			currentTrace().record("core", "inspector.similar_performers", started.UnixNano(), time.Since(started).Nanoseconds(), jvNull())
+			if err != nil {
+				return jvNull(), err
+			}
 		}
 		affinity, confidence, hasAffinity := performerAffinity(db, modelID, featureVersion, entityID)
 		affinityVal := jvNull()

@@ -6319,7 +6319,7 @@
     React.useEffect(() => {
       let active = true;
       setDetails(null);
-      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id) })
+      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id), include_similar: false })
         .then((data) => {
           if (!active) return;
           setDetails(data);
@@ -6336,9 +6336,10 @@
     return ReactDOM.createPortal(
       React.createElement("div", { className: `curator-context-group${type === "performer" ? " curator-context-group-performer" : ""}`, role: "group", "aria-label": "Curator actions" },
         type === "performer" && React.createElement("span", { className: "curator-context-brand", title: "Curator", "aria-hidden": true }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
+        type === "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail }),
         React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: `Find similar ${type}s with Curator`, "aria-label": `Find similar ${type}s with Curator` }, React.createElement(FontAwesomeIcon, { icon: faClone })),
         type === "performer" && React.createElement(PerformerHuntLink, { performer: { id, name: label }, className: "curator-context-button curator-context-button-hunt" }),
-        React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
+        type !== "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
       ),
       host
     );

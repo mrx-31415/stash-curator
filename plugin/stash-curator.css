@@ -3119,10 +3119,9 @@
 }
 .curator-context-brand {
   align-items: center;
-  border-right: 1px solid var(--curator-border-strong);
   color: var(--curator-text-muted);
   display: inline-flex;
-  padding: 0 0.4rem 0 0.2rem;
+  padding: 0 0.2rem;
 }
 #performer-page .curator-context-group-performer .curator-context-button svg,
 #performer-page .curator-context-group-performer .curator-context-brand svg {
@@ -3132,10 +3131,17 @@
 }
 .curator-context-group-performer .curator-affinity-gauge {
   align-items: center;
-  border-left: 1px solid var(--curator-border-strong);
   display: inline-flex;
-  padding: 0 0.4rem;
+  padding: 0 0.2rem;
   width: auto;
+}
+.curator-context-group-performer .curator-affinity-gauge::after {
+  background: var(--curator-text-muted);
+  content: "";
+  flex-shrink: 0;
+  height: 1.1rem;
+  margin-left: 0.4rem;
+  width: 1px;
 }
 #performer-page .curator-context-group-performer .curator-affinity-gauge-ring {
   display: none;

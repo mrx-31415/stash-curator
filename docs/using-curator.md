@@ -239,9 +239,10 @@ missing because local scenes without StashDB identities cannot be matched. Queri
 follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
 result. Include and exclude tag filters apply to the fetched result.
 
-Performer pages group **Similar**, **Performer Hunt**, and your affinity score
-beside the name, with Curator's compass icon at the left. The score's tooltip
-explains the affinity scale and shows model confidence when available.
+Performer pages show Curator's compass icon and your affinity score beside the
+name, followed by a divider and the **Similar** and **Performer Hunt** buttons.
+The score's tooltip explains the affinity scale and shows model confidence when
+available.
 
 The film action on a StashDB Similar performer card opens the same hunt for that
 *external* performer directly, so its full catalog is fetched from StashDB instead of
