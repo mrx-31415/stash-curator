@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/mrx-31415/stash-curator/compare/v0.31.4...v0.32.0) (2026-10-13)
+
+
+### Features
+
+* add Performer Hunt shortcuts to Curator hover cards ([#332](https://github.com/mrx-31415/stash-curator/issues/332)) ([dafaf8f](https://github.com/mrx-31415/stash-curator/commit/dafaf8f342083eccfe1bd8c2d1d1e254a629c4ab))
+
 ## [0.31.4](https://github.com/mrx-31415/stash-curator/compare/v0.31.3...v0.31.4) (2026-10-12)
 
 
