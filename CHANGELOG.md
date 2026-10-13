@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.3](https://github.com/mrx-31415/stash-curator/compare/v0.33.2...v0.33.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* provide smaller platform-specific plugin sources ([#339](https://github.com/mrx-31415/stash-curator/issues/339)) ([dbba192](https://github.com/mrx-31415/stash-curator/commit/dbba19216435b5249bcdd1b3b4fa084451800608))
+
 ## [0.33.2](https://github.com/mrx-31415/stash-curator/compare/v0.33.1...v0.33.2) (2026-10-13)
 
 
