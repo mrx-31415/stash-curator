@@ -6495,6 +6495,151 @@
     }
     return performerAffinitiesPending;
   }
+  const PERFORMER_AFFINITY_SORT = "curator_affinity";
+  let performerSortIds = null;
+  let performerSortInstalled = false;
+  function configurePerformerAffinityFilter(filter) {
+    const options = filter.options.criterionOptions;
+    let option = options.find((item) => item.type === PERFORMER_AFFINITY_SORT);
+    if (!option) {
+      const textOption = options.find((item) => item.type === "name");
+      option = new textOption.constructor({
+        type: PERFORMER_AFFINITY_SORT, messageID: PERFORMER_AFFINITY_SORT,
+        inputType: "number", defaultModifier: "GREATER_THAN",
+        modifierOptions: ["GREATER_THAN", "LESS_THAN", "EQUALS", "NOT_EQUALS", "IS_NULL", "NOT_NULL"],
+      });
+      const makeCriterion = option.makeCriterionFn;
+      option.makeCriterionFn = (type, config) => {
+        const criterion = makeCriterion(type, config);
+        criterion.isValid = function () {
+          return this.modifier === "IS_NULL" || this.modifier === "NOT_NULL"
+            || (String(this.value ?? "").trim() !== "" && Number.isFinite(Number(this.value)));
+        };
+        criterion.toCriterionInput = function () { return { modifier: this.modifier, value: Number(this.value) }; };
+        return criterion;
+      };
+      // Stash's filter dialog and URL parser use the shared criterion registry.
+      options.push(option);
+    }
+    filter.criteria = filter.criteria.map((criterion) => {
+      if (criterion.criterionOption.type !== PERFORMER_AFFINITY_SORT || criterion.criterionOption.messageID === PERFORMER_AFFINITY_SORT) return criterion;
+      const restored = option.makeCriterion();
+      restored.fromDecodedParams(criterion.toQueryParams());
+      return restored;
+    });
+    return filter;
+  }
+  function matchesPerformerAffinity(value, criterion) {
+    if (!criterion) return true;
+    const known = Number.isFinite(value);
+    if (criterion.modifier === "IS_NULL") return !known;
+    if (criterion.modifier === "NOT_NULL") return known;
+    if (!Number.isFinite(criterion.value)) throw new Error("Enter a valid Curator affinity value.");
+    if (!known) return false;
+    switch (criterion.modifier) {
+      case "GREATER_THAN": return value > criterion.value;
+      case "LESS_THAN": return value < criterion.value;
+      case "EQUALS": return value === criterion.value;
+      case "NOT_EQUALS": return value !== criterion.value;
+      default: throw new Error("Unsupported Curator affinity comparison.");
+    }
+  }
+  function matchingPerformerSortIds(client, variables, context) {
+    const affinitySort = variables.filter?.sort === PERFORMER_AFFINITY_SORT;
+    const filter = { ...variables.filter, page: 1, per_page: -1,
+      ...(affinitySort ? { sort: "name", direction: "ASC" } : {}) };
+    const { [PERFORMER_AFFINITY_SORT]: ignored, ...performerFilter } = variables.performer_filter || {};
+    const queryVariables = { filter, performer_filter: performerFilter };
+    const key = JSON.stringify(queryVariables);
+    // shortcut: matching IDs can lag edits by 30 seconds; invalidate on edits if this becomes noticeable.
+    if (!performerSortIds || performerSortIds.key !== key || performerSortIds.expires < Date.now()) {
+      const entry = { key, expires: Date.now() + 30000 };
+      entry.promise = client.query({
+        query: libraries.Apollo.gql`query CuratorPerformerSortIds($filter: FindFilterType, $performer_filter: PerformerFilterType) {
+          findPerformers(filter: $filter, performer_filter: $performer_filter) { performers { id } }
+        }`,
+        variables: queryVariables, context, fetchPolicy: "no-cache",
+      }).then((result) => result.data.findPerformers.performers.map((performer) => String(performer.id)))
+        .catch((error) => { if (performerSortIds === entry) performerSortIds = null; throw error; });
+      performerSortIds = entry;
+    }
+    return performerSortIds.promise;
+  }
+  async function affinitySortedPerformers(client, request) {
+    const variables = request.variables;
+    const context = request.getContext();
+    const [matchingIds, details] = await Promise.all([
+      matchingPerformerSortIds(client, variables, context), loadPerformerAffinities(),
+    ]);
+    const direction = variables.filter?.direction === "ASC" ? 1 : -1;
+    const ids = matchingIds.filter((id) => matchesPerformerAffinity(details.affinities[id]?.affinity, variables.performer_filter?.[PERFORMER_AFFINITY_SORT]));
+    if (variables.filter?.sort === PERFORMER_AFFINITY_SORT) ids.sort((left, right) => {
+      const a = details.affinities[left]?.affinity;
+      const b = details.affinities[right]?.affinity;
+      const hasA = Number.isFinite(a), hasB = Number.isFinite(b);
+      if (hasA !== hasB) return hasA ? -1 : 1;
+      return hasA ? direction * (a - b) : 0;
+    });
+    const perPage = variables.filter?.per_page ?? 40;
+    const page = variables.filter?.page ?? 1;
+    const pageIds = perPage < 0 ? ids : ids.slice((page - 1) * perPage, page * perPage);
+    if (!pageIds.length) return { data: { findPerformers: { __typename: "FindPerformersResultType", count: ids.length, performers: [] } } };
+    const result = await client.query({
+      query: request.query, context, fetchPolicy: "no-cache",
+      variables: { ...variables, performer_ids: pageIds.map(Number), performer_filter: null,
+        filter: { ...variables.filter, page: 1, per_page: pageIds.length, sort: "name" } },
+    });
+    const performers = new Map(result.data.findPerformers.performers.map((performer) => [String(performer.id), performer]));
+    return { ...result, data: { ...result.data, findPerformers: { ...result.data.findPerformers,
+      count: ids.length, performers: pageIds.map((id) => performers.get(id)).filter(Boolean) } } };
+  }
+  function installPerformerAffinitySort() {
+    if (performerSortInstalled) return;
+    const client = Api.utils.StashService.getClient();
+    const { ApolloLink, Observable } = libraries.Apollo;
+    const adapter = new ApolloLink((request, forward) => {
+      if (request.operationName !== "FindPerformers" || (request.variables.filter?.sort !== PERFORMER_AFFINITY_SORT && !request.variables.performer_filter?.[PERFORMER_AFFINITY_SORT])) return forward(request);
+      return new Observable((observer) => {
+        let active = true;
+        affinitySortedPerformers(client, request).then(
+          (result) => { if (active) { observer.next(result); observer.complete(); } },
+          (error) => { if (active) observer.error(error); }
+        );
+        return () => { active = false; };
+      });
+    });
+    client.setLink(adapter.concat(client.link));
+    performerSortInstalled = true;
+  }
+  Api.patch.before("FilteredPerformerList", function (props) {
+    installPerformerAffinitySort();
+    const existingHook = props.filterHook;
+    return [{ ...props, filterHook: (filter) => {
+      configurePerformerAffinityFilter(filter);
+      return existingHook ? existingHook(filter) : filter;
+    } }];
+  });
+  function addPerformerAffinitySortOption(element) {
+    if (!React.isValidElement(element)) return;
+    const filter = element.props.filter;
+    if (filter?.options?.criterionOptions) configurePerformerAffinityFilter(filter);
+    if (/^\/performers\/?$/.test(window.location.pathname) && filter?.options?.sortByOptions && !filter.options.sortByOptions.some((option) => option.value === PERFORMER_AFFINITY_SORT)) {
+      filter.options = { ...filter.options, sortByOptions: [...filter.options.sortByOptions,
+        { value: PERFORMER_AFFINITY_SORT, messageID: PERFORMER_AFFINITY_SORT }] };
+    }
+    React.Children.forEach(element.props.children, addPerformerAffinitySortOption);
+  }
+  function CuratorPerformerSortLocale({ children }) {
+    const intl = libraries.Intl.useIntl();
+    return React.createElement(libraries.Intl.IntlProvider, {
+      ...intl, messages: { ...intl.messages, [PERFORMER_AFFINITY_SORT]: "Curator affinity" },
+    }, children);
+  }
+  Api.patch.after("FilteredPerformerList", function (props, ...args) {
+    const result = args[args.length - 1];
+    addPerformerAffinitySortOption(result);
+    return React.createElement(CuratorPerformerSortLocale, null, result);
+  });
   function CuratorPerformerCardBadge({ performer }) {
     const [details, setDetails] = React.useState(null);
     React.useEffect(() => {
