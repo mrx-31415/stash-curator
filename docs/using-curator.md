@@ -265,6 +265,17 @@ On Stash's **Performers** card grid, a compact Curator pill sits at the bottom r
 of each portrait, above Ascension's badge when present. It shows affinity and the
 Similar/Hunt actions.
 The grid shares one affinity request while cards load.
+Choose **Curator affinity** in Stash's **Performers** sort menu to order the full
+filtered result by your current affinity estimate. The direction arrow switches
+between highest and lowest affinity; performers without an estimate remain last.
+Filters, pagination, and the existing card and list views still apply. Matching
+performer IDs are cached for up to 30 seconds, so recent metadata edits may take
+that long to change the result set.
+In the same page's filter dialog, choose **Curator affinity** to compare the score
+with a decimal value (for example, **Greater than 0.15**). It works with native
+sorts as well as Curator affinity sorting, and filters before pagination. **Is
+null** selects performers without an estimate; **Is not null** selects performers
+with an estimate, including zero. Other comparisons exclude unestimated performers.
 The **Hide exact PHash matches** filter is enabled by default. It also applies to
 Expand and StashDB Similar scenes. Disable it to inspect candidates marked
 **Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed

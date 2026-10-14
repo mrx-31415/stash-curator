@@ -91,7 +91,11 @@ Object.assign(context, {
 context.React.useState = () => [state.shift(), () => {}];
 context.React.useEffect = () => {};
 let cardPatch;
-context.Api.patch.after = (name, callback) => { assert.equal(name, "PerformerCard"); cardPatch = callback; };
+context.Api.patch.before = (name) => { assert.equal(name, "FilteredPerformerList"); };
+context.Api.patch.after = (name, callback) => {
+  assert.ok(["PerformerCard", "FilteredPerformerList"].includes(name));
+  if (name === "PerformerCard") cardPatch = callback;
+};
 vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
 function pageControls(type, details) {
   const host = {};
