@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/mrx-31415/stash-curator/compare/v0.35.0...v0.36.0) (2026-10-14)
+
+
+### Features
+
+* show affinity evidence on detail pages ([#347](https://github.com/mrx-31415/stash-curator/issues/347)) ([eea79f6](https://github.com/mrx-31415/stash-curator/commit/eea79f619dbc11105a74aab2053f4f2e27f2e86e))
+
 ## [0.35.0](https://github.com/mrx-31415/stash-curator/compare/v0.34.0...v0.35.0) (2026-10-14)
 
 
