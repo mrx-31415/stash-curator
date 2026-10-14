@@ -64,6 +64,19 @@ Returning to the page keeps the current draw; a new local day or a new model
 refreshes it. Refreshing the same lane twice in one tab also draws again; a
 single refresh keeps the current cards in place.
 
+## Play a lane
+
+Choose a recommendation lane and your filters or mood, then click **Play lane**.
+Playback starts with the current picks. Use **Next** beside the player or the
+player's next-track button to advance; Curator fetches another batch from the
+same lane when needed. Filters and mood stay fixed for that playlist, and scenes
+already queued do not repeat. Deleted scenes are skipped.
+
+The playlist stays in the current browser tab, including after a refresh.
+**Stop playlist** returns the current scene to ordinary playback. When no more
+scenes qualify, Curator shows **End of recommendations**. A failed fetch keeps
+the current scene playing and offers **Retry next**. Moving on is manual.
+
 ## Inspect and teach
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
