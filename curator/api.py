@@ -379,7 +379,12 @@ class CuratorAPI:
         }
 
     def inspector(
-        self, entity_type: str, entity_id: str, *, include_similar: bool = True
+        self,
+        entity_type: str,
+        entity_id: str,
+        *,
+        include_similar: bool = True,
+        include_evidence: bool = False,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
         if model_id is None:
@@ -443,7 +448,7 @@ class CuratorAPI:
                 if include_similar
                 else []
             )
-            return {
+            result = {
                 "schema_version": API_SCHEMA_VERSION,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
@@ -459,6 +464,52 @@ class CuratorAPI:
                     for performer_id, result in matches
                 ],
             }
+            if include_evidence:
+                result["evidence"] = {
+                    "scenes": [
+                        {
+                            "scene_id": evidence[0],
+                            "title": evidence[1],
+                            "direct": json.loads(evidence[2]),
+                        }
+                        for evidence in self.connection.execute(
+                            """SELECT ef.entity_id, COALESCE(s.title, ''),
+                            json_extract(ms.components_json, '$.direct')
+                            FROM entity_feature ef JOIN model_scene_score ms
+                            ON ms.scene_id=ef.entity_id AND ms.model_id=?
+                            LEFT JOIN source_scene s ON s.scene_id=ef.entity_id
+                            WHERE ef.feature_version=? AND ef.entity_type='scene'
+                            AND ef.feature_id=? AND ef.value>0
+                            AND json_extract(ms.components_json, '$.direct.learning_evidence')>0
+                            ORDER BY
+                            json_extract(ms.components_json, '$.direct.learning_evidence') DESC,
+                            ef.entity_id LIMIT 8""",
+                            (
+                                model_id,
+                                feature_version,
+                                FeatureBuilder._feature_id(
+                                    feature_version,
+                                    "scene",
+                                    "performer_identity",
+                                    f"performer:{entity_id}",
+                                ),
+                            ),
+                        )
+                    ],
+                    "performers": [
+                        dict(evidence)
+                        for evidence in self.connection.execute(
+                            """SELECT e.similar_performer_id AS performer_id,
+                            COALESCE(p.name, '') AS name,
+                            e.similarity, e.affinity, e.confidence
+                            FROM model_performer_edge e LEFT JOIN source_performer p
+                            ON p.performer_id=e.similar_performer_id
+                            WHERE e.model_id=? AND e.performer_id=? ORDER BY e.rank""",
+                            (model_id, entity_id),
+                        )
+                    ],
+                }
+            return result
         raise ValueError(f"unsupported inspector entity type: {entity_type}")
 
     def performer_affinities(self) -> dict[str, object]:

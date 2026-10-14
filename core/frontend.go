@@ -555,7 +555,7 @@ WHERE model_id=? AND performer_id=?`, modelID, entityID).Scan(&estimate.value, &
 			return jvNull(), err
 		}
 		preference := performerPreference(affinity, confidence, hasAffinity || err == nil, prior, estimate)
-		return jvObj(
+		result := jvObj(
 			jvKey("schema_version", jvInt(apiSchemaVersion)),
 			jvKey("entity_type", jvStr(entityType)),
 			jvKey("entity_id", jvStr(entityID)),
@@ -565,9 +565,66 @@ WHERE model_id=? AND performer_id=?`, modelID, entityID).Scan(&estimate.value, &
 			jvKey("confidence", preference.get("confidence")),
 			jvKey("affinity_details", preference.get("affinity_details")),
 			jvKey("similar", similar),
-		), nil
+		)
+		if args.get("include_evidence").truthy() {
+			evidence, err := performerInspectorEvidence(db, modelID, featureVersion, entityID)
+			if err != nil {
+				return jvNull(), err
+			}
+			result.set("evidence", evidence)
+		}
+		return result, nil
 	}
 	return jvNull(), fmt.Errorf("unsupported inspector entity type: %s", entityType)
+}
+
+func performerInspectorEvidence(db dbx, modelID, featureVersion, performerID string) (jVal, error) {
+	scenes := jvArr()
+	rows, err := db.Query(`SELECT ef.entity_id, COALESCE(s.title, ''), json_extract(ms.components_json, '$.direct')
+FROM entity_feature ef JOIN model_scene_score ms ON ms.scene_id=ef.entity_id AND ms.model_id=?
+LEFT JOIN source_scene s ON s.scene_id=ef.entity_id
+WHERE ef.feature_version=? AND ef.entity_type='scene' AND ef.feature_id=? AND ef.value>0
+AND json_extract(ms.components_json, '$.direct.learning_evidence')>0
+ORDER BY json_extract(ms.components_json, '$.direct.learning_evidence') DESC, ef.entity_id LIMIT 8`,
+		modelID, featureVersion, featureID(featureVersion, "scene", "performer_identity", "performer:"+performerID))
+	if err != nil {
+		return jvNull(), err
+	}
+	for rows.Next() {
+		var id, title, directJSON string
+		if err := rows.Scan(&id, &title, &directJSON); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		direct, err := parseJSON([]byte(directJSON))
+		if err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		scenes.arr = append(scenes.arr, jvObj(jvKey("scene_id", jvStr(id)), jvKey("title", jvStr(title)), jvKey("direct", direct)))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	matches := jvArr()
+	rows, err = db.Query(`SELECT e.similar_performer_id, COALESCE(p.name, ''), e.similarity, e.affinity, e.confidence
+FROM model_performer_edge e LEFT JOIN source_performer p ON p.performer_id=e.similar_performer_id
+WHERE e.model_id=? AND e.performer_id=? ORDER BY e.rank`, modelID, performerID)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		var similarity, affinity, confidence float64
+		if err := rows.Scan(&id, &name, &similarity, &affinity, &confidence); err != nil {
+			return jvNull(), err
+		}
+		matches.arr = append(matches.arr, jvObj(jvKey("performer_id", jvStr(id)), jvKey("name", jvStr(name)),
+			jvKey("similarity", jvFloat(similarity)), jvKey("affinity", jvFloat(affinity)), jvKey("confidence", jvFloat(confidence))))
+	}
+	return jvObj(jvKey("scenes", scenes), jvKey("performers", matches)), rows.Err()
 }
 
 func opGetPerformerAffinities(pluginDir string, payload jVal) (jVal, error) {

@@ -100,10 +100,9 @@ context.Api.patch.after = (name, callback) => {
 vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  const SCENE_AFFINITY_SORT ='))
   + source.slice(source.indexOf("  function CuratorPerformerCardBadge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
 function pageControls(type, details) {
-  const host = {};
-  state = [host, details];
-  const portal = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
-  return { ...portal, element: context.CuratorContextControls(portal.element.props) };
+  state = [details, false];
+  const page = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
+  return { element: context.CuratorContextControls(page.props) };
 }
 const performerControls = pageControls("performer", { affinity: 0.767, confidence: 0.90, affinity_details: { learned: 0.527, prior: 0.24 } }).element;
 assert.match(performerControls.props.className, /curator-context-group-performer/);
@@ -152,14 +151,16 @@ const sceneControls = pageControls("scene", { score: { appeal: -0.4 } }).element
 assert.equal(sceneControls.type, context.CuratorSceneAffinityPill);
 assert.equal(sceneControls.props.className, "curator-scene-page-pill");
 assert.equal(sceneControls.props.score.appeal, -0.4);
-state = [null, null];
-assert.equal(context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" }), null);
+state = [null, false];
+const unmounted = context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" });
+assert.equal(unmounted.type, context.CuratorEntityPanel);
+assert.equal(unmounted.props.details, null);
 const effects = [];
 context.React.useEffect = (effect) => effects.push(effect);
 let request;
 context.operation = (args) => { request = args; return Promise.resolve({}); };
 pageControls("performer", null);
-effects[1]();
+effects[0]();
 assert.equal(request.include_similar, false, "the pill must skip the full similar-performer scan");
 console.log("PASS: performer pages group Similar, Hunt, and an explained affinity gauge");
 

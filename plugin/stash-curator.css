@@ -3081,6 +3081,33 @@
   outline-offset: 2px;
 }
 
+.curator-entity-panel { background: var(--curator-wash-raised); border: 1px solid var(--curator-text-muted); border-radius: 0.5rem; color: var(--curator-text); margin: 1rem 0; padding: 0.4rem 0.6rem; width: 100%; }
+.curator-entity-summary { align-items: center; cursor: pointer; display: flex; gap: 0.5rem; list-style: none; }
+.curator-entity-summary::-webkit-details-marker { display: none; }
+.curator-entity-summary::before { content: "▸"; }
+.curator-entity-panel[open] > .curator-entity-summary::before { transform: rotate(90deg); }
+.curator-entity-panel[open] > .curator-entity-summary { margin-bottom: 0.8rem; }
+.curator-entity-summary > .curator-context-group { background: none; border: 0; border-radius: 0; flex: 1; min-width: 0; padding: 0; }
+.curator-entity-summary .curator-context-button-similar { margin-left: auto; }
+.curator-entity-summary .curator-context-group-scene .curator-affinity-gauge-ring { display: none; }
+.curator-entity-panel-host { min-width: 0; width: 100%; }
+.curator-entity-specifics { border-top: 1px solid var(--curator-border); margin-top: 0.8rem; padding-top: 0.8rem; }
+.curator-entity-specifics h4 { font-size: 1rem; }
+.curator-entity-specifics h5 { font-size: 0.9rem; margin-top: 0.9rem; }
+.curator-entity-specifics ul { margin: 0.6rem 0; padding-left: 1.25rem; }
+.curator-entity-specifics li { margin: 0.35rem 0; overflow-wrap: anywhere; }
+.curator-entity-tiles { display: grid; gap: 0.65rem; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
+.curator-entity-tile { background: var(--curator-wash-recessed); border: 1px solid var(--curator-border); border-radius: 0.45rem; display: flex; flex-direction: column; gap: 0.3rem; padding: 0.8rem; }
+.curator-entity-tile > span { color: var(--curator-text-muted); font-size: 0.8rem; }
+.curator-entity-tile strong { font-size: 1.4rem; }
+.curator-entity-tile small, .curator-entity-note { color: var(--curator-text-muted); }
+.curator-entity-positive { color: #5cc19c; }
+.curator-entity-negative { color: #e0645c; }
+.curator-entity-panel p { margin: 0.8rem 0 0; }
+.curator-entity-evidence { border-top: 1px solid var(--curator-border); margin-top: 0.8rem; padding-top: 0.65rem; }
+.curator-entity-evidence summary { cursor: pointer; font-weight: 600; }
+.curator-entity-evidence .curator-explanation-view { margin-top: 0.65rem; }
+
 .curator-context-group {
   align-items: center;
   display: inline-flex;
