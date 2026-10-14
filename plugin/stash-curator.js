@@ -264,6 +264,11 @@
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
   const TERM_PREFERENCE_QUEUE_KEY = "stash-curator:term-preference-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
+  const LANE_PLAYLIST_KEY = "stash-curator:lane-playlist:v1";
+  let lanePlaylist = readLanePlaylist();
+  let lanePlaylistPending = false;
+  let lanePlaylistError = "";
+  const lanePlaylistListeners = new Set();
   const SLATE_CACHE_KEY = "stash-curator:slates:v2";
   const ROTATION_KEY = "stash-curator:rotation:v2";
   const RELOAD_ROTATION_KEY = "stash-curator:recommendation-reloads:v1";
@@ -361,6 +366,142 @@
   function slateKey(lane, page = 1) {
     return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`;
   }
+
+  function readLanePlaylist() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(LANE_PLAYLIST_KEY) || "null");
+      if (value && typeof value.id === "string" && laneByValue.has(value.lane) && value.request && Array.isArray(value.request.exclude_scene_ids) && Array.isArray(value.items) && value.items.length && value.items.every((item) => /^\d+$/.test(item.scene_id)) && Number.isInteger(value.index) && value.index >= 0 && value.index < value.items.length) return value;
+    } catch (_) { /* An unavailable or stale queue must not affect ordinary playback. */ }
+    return null;
+  }
+  function activeLanePlaylist(sceneId) {
+    return lanePlaylist && location.pathname === `/scenes/${sceneId}` && new URLSearchParams(location.search).get("curator_playlist") === lanePlaylist.id && String(lanePlaylist.items[lanePlaylist.index].scene_id) === String(sceneId) ? lanePlaylist : null;
+  }
+  function notifyLanePlaylist() {
+    lanePlaylistListeners.forEach((listener) => listener());
+  }
+  function saveLanePlaylist(value) {
+    if (value) sessionStorage.setItem(LANE_PLAYLIST_KEY, JSON.stringify(value));
+    else sessionStorage.removeItem(LANE_PLAYLIST_KEY);
+    lanePlaylist = value;
+    notifyLanePlaylist();
+  }
+  function playlistOrigins(slate, items) {
+    return items.map((item) => ({ scene_id: String(item.scene_id), impression_id: item.impression_id || slate.impression_id, lane: slate.lane, impression_position: item.position, model_id: slate.model_id }));
+  }
+  function openPlaylistScene(playlist, history) {
+    const origin = playlist.items[playlist.index];
+    sessionStorage.setItem(ORIGIN_KEY, JSON.stringify(origin));
+    saveLanePlaylist(playlist);
+    const search = new URLSearchParams({ curator_playlist: playlist.id, autoplay: "true", continue: "false" });
+    history.push(`/scenes/${origin.scene_id}?${search}`);
+  }
+  function startLanePlaylist(slate, items, filters, history) {
+    if (!items.length) return;
+    const draw = rotationLane(slate.lane);
+    const playlist = {
+      id: uuid(), lane: slate.lane, index: 0, items: playlistOrigins(slate, items), finished: false,
+      request: {
+        lane: slate.lane, page: 1, count: slate.page_size, exploration: 0,
+        mood_id: readMoodID(), together_mode: readTogetherMode(),
+        draw_seed: draw.seed, draw_at_ms: draw.atMs,
+        exclude_scene_ids: [...(laneExclusions.get(slate.lane) || [])],
+        include_tags: (filters.includeTags || []).map((item) => item.name),
+        exclude_tags: (filters.excludeTags || []).map((item) => item.name),
+        performer_ids: (filters.performers || []).map((item) => String(item.id)),
+        studio_ids: (filters.studios || []).map((item) => String(item.id)), gender: filters.gender || "",
+      },
+    };
+    lanePlaylistError = "";
+    openPlaylistScene(playlist, history);
+  }
+  async function existingPlaylistSceneIDs(items) {
+    // findScene returns null for deleted entries; findScenes(scene_ids) rejects the batch.
+    const declarations = items.map((_, index) => `$s${index}: ID!`).join(", ");
+    const fields = items.map((_, index) => `s${index}: findScene(id: $s${index}) { id }`).join(" ");
+    const response = await fetch("/graphql", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: `query PlaylistScenes(${declarations}) { ${fields} }`, variables: Object.fromEntries(items.map((item, index) => [`s${index}`, String(item.scene_id)])) }),
+    });
+    const result = await response.json();
+    if (!response.ok || result.errors?.length) throw new Error(result.errors?.map((error) => error.message).join("; ") || "Could not load the next playlist scenes.");
+    if (!result.data || Object.keys(result.data).length !== items.length) throw new Error("Could not load the next playlist scenes.");
+    return new Set(Object.values(result.data).filter(Boolean).map((scene) => String(scene.id)));
+  }
+  async function nextLanePlaylist(sceneId, history) {
+    const current = activeLanePlaylist(sceneId);
+    if (!current || current.finished || lanePlaylistPending) return;
+    lanePlaylistPending = true;
+    lanePlaylistError = "";
+    notifyLanePlaylist();
+    try {
+      let items = current.items;
+      const excluded = new Set([...current.request.exclude_scene_ids.map(String), ...items.map((item) => item.scene_id)]);
+      let verified = null;
+      // Restart at page one after exclusions; advancing the page would skip unplayed picks.
+      while (true) {
+        if (current.index + 1 >= items.length) {
+          const slate = await operation({ ...current.request, operation: "get_slate", exclude_scene_ids: [...excluded], context: { route: location.pathname, playlist: true } });
+          if (activeLanePlaylist(sceneId) !== current) return;
+          const candidates = slate.items.filter((item) => !excluded.has(String(item.scene_id)));
+          if (!candidates.length) {
+            saveLanePlaylist({ ...current, finished: true });
+            return;
+          }
+          verified = await existingPlaylistSceneIDs(candidates);
+          if (activeLanePlaylist(sceneId) !== current) return;
+          candidates.forEach((item) => excluded.add(String(item.scene_id)));
+          items = [...items, ...playlistOrigins(slate, candidates.filter((item) => verified.has(String(item.scene_id))))];
+          continue;
+        }
+        const nextItem = items[current.index + 1];
+        const existing = verified || await existingPlaylistSceneIDs([nextItem]);
+        if (activeLanePlaylist(sceneId) !== current) return;
+        if (existing.has(nextItem.scene_id)) break;
+        items = items.filter((_, index) => index !== current.index + 1);
+      }
+      if (activeLanePlaylist(sceneId) !== current) return;
+      const next = { ...current, index: current.index + 1, items, request: { ...current.request, exclude_scene_ids: [...excluded] } };
+      openPlaylistScene(next, history);
+    } catch (failure) {
+      if (activeLanePlaylist(sceneId) === current) lanePlaylistError = failure.message;
+    } finally {
+      lanePlaylistPending = false;
+      notifyLanePlaylist();
+    }
+  }
+
+  function LanePlaylistControls({ sceneId }) {
+    const history = useHistory();
+    const [, update] = React.useState(0);
+    const [host, setHost] = React.useState(null);
+    React.useEffect(() => {
+      const listener = () => update((value) => value + 1);
+      lanePlaylistListeners.add(listener);
+      return () => lanePlaylistListeners.delete(listener);
+    }, []);
+    React.useEffect(() => { setHost(document.querySelector(".scene-tabs .scene-toolbar")); }, [sceneId]);
+    const playlist = activeLanePlaylist(sceneId);
+    if (!playlist) return null;
+    const content = React.createElement("div", { className: "scene-toolbar-group curator-playlist-controls", "aria-label": "Curator playlist" },
+      React.createElement("span", { className: "curator-playlist-status", role: "status" },
+        React.createElement(FontAwesomeIcon, { icon: faList, "aria-hidden": "true" }),
+        laneByValue.get(playlist.lane).label,
+        React.createElement("span", { className: "curator-playlist-count", title: "Position in playlist" }, playlist.index + 1),
+        playlist.finished && "End of recommendations"
+      ),
+      React.createElement(ButtonGroup, { size: "sm", className: "curator-playlist-actions" },
+        React.createElement(Button, { className: "curator-playlist-next", variant: "link", disabled: lanePlaylistPending || playlist.finished, "aria-busy": lanePlaylistPending, onClick: () => nextLanePlaylist(sceneId, history), title: "Play the next recommendation from this lane" }, React.createElement(FontAwesomeIcon, { icon: faPlay, "aria-hidden": "true" }), lanePlaylistPending ? "Loading…" : lanePlaylistError ? "Retry next" : "Next"),
+        React.createElement(Button, { className: "curator-playlist-stop", variant: "link", title: "Stop playlist", "aria-label": "Stop playlist", onClick: () => { saveLanePlaylist(null); history.replace(`/scenes/${sceneId}`); } }, React.createElement(FontAwesomeIcon, { icon: faXmark, "aria-hidden": "true" }))
+      ),
+      lanePlaylistError && React.createElement("small", { className: "curator-playlist-error text-danger", role: "alert" }, lanePlaylistError)
+    );
+    return host ? ReactDOM.createPortal(content, host) : content;
+  }
+  Api.patch.before("ScenePlayer", function (props) {
+    const history = useHistory();
+    return [activeLanePlaylist(props.scene.id) ? { ...props, onNext: () => nextLanePlaylist(props.scene.id, history), onPrevious: undefined } : props];
+  });
 
   function localDay() {
     const now = new Date();
@@ -6027,6 +6168,7 @@
         React.createElement(
           "div",
           { className: "curator-view-actions" },
+          laneByValue.has(lane) && slate && React.createElement(Button, { size: "sm", variant: "primary", disabled: loading || !resolved || !visibleItems.length || slate.lane !== lane, onClick: () => { try { startLanePlaylist(slate, visibleItems, slateFilters, history); } catch (failure) { setError(failure.message); } }, title: "Play these recommendations and keep fetching more from this lane" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play lane"),
           laneByValue.has(lane) && React.createElement(MoodMenu, { moods, moodID, disabled: !configReady, onSelect: selectMood, onManage: () => openManage("settings") }),
           laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
             Button,
@@ -6374,7 +6516,7 @@
     ) });
   });
   Api.patch.after("ScenePage", function (props, _, result) {
-    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }));
+    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
   });
   Api.patch.after("PerformerPage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}`, target: "#performer-page .name-icons" }));
