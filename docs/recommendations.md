@@ -40,23 +40,32 @@ not another preference score. A high estimate with thin evidence belongs in a
 different lane than a high estimate backed by varied outcomes.
 
 The **Curator affinity** gauge on performer cards and pages shows the performer
-signal used in recommendations: confidence-weighted scene evidence plus your
-performer rating and favorite bonus. Its tooltip breaks those contributions down
-while confidence is shown separately below the value. A performer without evidence
+signal used in recommendations: confidence-weighted scene evidence, your
+performer rating and favorite bonus, and a weaker estimate from similar performers.
+Similarity confidence increases with strong, agreeing matches and is capped at
+65%. Missing performer attributes are unknown: similarity compares the usable
+attributes on both performers, without requiring every field to be populated.
+Conflicting matches reduce confidence. Strong direct evidence reduces the inferred
+contribution. Estimates never become training evidence for other performers.
+The similarity estimate appears after rebuilding the model. Its tooltip breaks
+those contributions down while confidence is shown separately below the value.
+A performer without evidence
 shows **0.00 · No evidence**: they contribute zero, but this is not a learned neutral
 preference. A dash means the value is loading or unavailable. Scene evidence
 measures outcomes relative to your library baseline; a negative learned
 contribution can coexist with a positive overall
-preference. Favorites and rated performers can have a value without scene history.
+preference. Favorites, rated performers, and performers with similarity evidence
+can have a value without scene history.
 
 This is a signed recommendation contribution: zero is neutral, positive values
 favour the performer, and negative values reduce their contribution. Its size
 is separate from confidence. A favorite adds +0.18; a performer rating adds
 between -0.10 and +0.10, with 50/100 neutral. A favorite rated 100/100 therefore
 starts at +0.28 before scene evidence. There is no +0.35 cap. The raw combined
-signal can theoretically range from -1.10 to +1.28; the ring fills at magnitude
-1.0. For scene scoring, these values are combined into one contribution bounded
-to 0.30 in either direction, alongside content, studio, and other scoring signals.
+signal includes a confidence-weighted similarity estimate; the ring fills at
+magnitude 1.0. For scene scoring, direct performer evidence and similarity remain
+separate contributions bounded to 0.30 and 0.16 respectively, alongside content,
+studio, and other scoring signals.
 
 ## Lane policy
 

@@ -622,6 +622,59 @@ def test_inspector_performer_byte_identical(
     assert_slice4_identical(binary, raw, slice4_sidecar)
 
 
+@pytest.mark.parametrize(
+    "performer,estimate,estimate_confidence,expected,confidence",
+    [
+        ("p2", 0.5, 0.6, 0.3, 0.6),
+        ("p2", -0.5, 0.6, -0.3, 0.6),
+        ("p2", 0.0, 0.0, 0.0, 0.0),
+        ("p1", 0.5, 0.6, 0.62 * 0.85 + 0.5 * 0.6 * 0.15, 0.94),
+        ("p1", -0.5, 0.6, 0.62 * 0.85 - 0.5 * 0.6 * 0.15, 0.85),
+    ],
+)
+def test_performer_similarity_estimate_inspector_and_cards(
+    binary: Path,
+    stub_stash: str,
+    slice4_sidecar: Path,
+    tmp_path: Path,
+    performer: str,
+    estimate: float,
+    estimate_confidence: float,
+    expected: float,
+    confidence: float,
+) -> None:
+    sidecar = tmp_path / "estimated.sqlite3"
+    shutil.copy2(slice4_sidecar, sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute(
+            "INSERT INTO model_performer_estimate(model_id, performer_id, value, confidence) "
+            "VALUES (?, ?, ?, ?)",
+            (MODEL_ID, performer, estimate, estimate_confidence),
+        )
+    for operation in ("get_performer_affinities", "get_inspector_entity"):
+        assert_slice4_identical(
+            binary,
+            payload(
+                operation,
+                sidecar,
+                stub_stash,
+                entity_type="performer",
+                entity_id=performer,
+                include_similar=False,
+            ),
+            sidecar,
+        )
+    with sqlite3.connect(sidecar) as connection:
+        connection.row_factory = sqlite3.Row
+        api = CuratorAPI(connection)
+        result = api.inspector("performer", performer, include_similar=False)
+        assert result["affinity"] == pytest.approx(expected)
+        assert result["confidence"] == pytest.approx(confidence)
+        assert api.performer_affinities()["affinities"][performer] == {
+            key: result[key] for key in ("affinity", "confidence", "affinity_details")
+        }
+
+
 def test_inspector_performer_affinity_value(slice4_sidecar: Path) -> None:
     """The performer gauge uses confidence-weighted scene evidence."""
     connection = sqlite3.connect(slice4_sidecar)
@@ -717,7 +770,7 @@ def test_inspector_performer_explicit_preference(
             if expected is not None
             else None
         )
-        assert sum(query.lstrip().upper().startswith("SELECT") for query in queries) <= 4, (
+        assert sum(query.lstrip().upper().startswith("SELECT") for query in queries) <= 5, (
             "card affinities must use a bounded batch of queries"
         )
 
@@ -792,7 +845,12 @@ def test_performer_affinities_byte_identical(
             "p1": {
                 "affinity": 0.62 * 0.85,
                 "confidence": 0.85,
-                "affinity_details": {"learned": 0.62 * 0.85, "prior": 0.0},
+                "affinity_details": {
+                    "learned": 0.62 * 0.85,
+                    "prior": 0.0,
+                    "similarity": 0.0,
+                    "similarity_confidence": 0.0,
+                },
             }
         }
     finally:
@@ -952,7 +1010,7 @@ def test_reset_removes_core_and_artifacts_identically(
     assert py[0] == go[0], f"stdout differs:\npython: {py[0]!r}\ngo:     {go[0]!r}"
     assert py[2] == go[2] == ["curator-derived", "curator.sqlite3"]
     assert py[3] == go[3] == ["junk.txt"]
-    assert py[4] == go[4] == 40
+    assert py[4] == go[4] == 41
     assert py[5] == go[5] == "ok"
 
 

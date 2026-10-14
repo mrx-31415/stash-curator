@@ -24,10 +24,10 @@ differential gate (`scripts/verify core` — the binary must reproduce the numpy
 oracle's stage outputs on seeded synthetic corpora; `tests/core/`,
 `tests/model/test_core.py`, `tests/oracle.py`). Packaging
 (`scripts/build_plugin.py`) cross-compiles the shipped per-arch binaries and
-requires Go. The kernels mirror the production numpy semantics exactly,
-including the documented masked-NaN performer behavior (see
-`docs/decisions/002-runtime-swap-planning.md` section 8) — do not "fix" that
-divergence without a reviewed product decision. `scripts/verify full` builds
+requires Go. The kernels and the numpy test oracle must agree. The approved
+missing-field decision in `docs/decisions/002-runtime-swap-planning.md` section 8
+supersedes the old masked-NaN performer behavior: unavailable blocks are skipped,
+and performers do not need every attribute populated. `scripts/verify full` builds
 the core and runs the unit suite with the binary active.
 
 Custom scene and performer cards must preserve Stash's native SFW Switch class

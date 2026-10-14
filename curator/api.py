@@ -31,7 +31,11 @@ API_SCHEMA_VERSION = 2
 
 
 def _performer_preference(
-    favorite: bool, rating: int | None, affinity: float | None, confidence: float | None
+    favorite: bool,
+    rating: int | None,
+    affinity: float | None,
+    confidence: float | None,
+    estimate: tuple[float, float] | None = None,
 ) -> dict[str, object]:
     learned = affinity * (confidence or 0.0) if affinity is not None else 0.0
     prior = DEFAULT_CONFIG.model.performer_favorite_prior if favorite else 0.0
@@ -40,11 +44,23 @@ def _performer_preference(
             max(-1.0, min(1.0, (rating - 50) / 50)) * DEFAULT_CONFIG.model.performer_rating_bound
         )
     prior_confidence = 0.90 if favorite else 0.75 if rating is not None else 0.0
-    known = affinity is not None or prior_confidence > 0
+    direct_confidence = max(confidence or 0.0, prior_confidence)
+    estimated_value, estimated_confidence = estimate or (0.0, 0.0)
+    similarity_confidence = estimated_confidence * max(0.05, 1 - direct_confidence)
+    similarity = estimated_value * similarity_confidence
+    combined_confidence = direct_confidence + (1 - direct_confidence) * estimated_confidence
+    if (learned + prior) * estimated_value < 0:
+        combined_confidence = max(direct_confidence, similarity_confidence)
+    known = affinity is not None or prior_confidence > 0 or estimate is not None
     return {
-        "affinity": learned + prior if known else None,
-        "confidence": max(confidence or 0.0, prior_confidence) if known else None,
-        "affinity_details": {"learned": learned, "prior": prior},
+        "affinity": learned + prior + similarity if known else None,
+        "confidence": combined_confidence if known else None,
+        "affinity_details": {
+            "learned": learned,
+            "prior": prior,
+            "similarity": similarity,
+            "similarity_confidence": similarity_confidence,
+        },
     }
 
 
@@ -404,11 +420,17 @@ class CuratorAPI:
                     ),
                 ),
             ).fetchone()
+            estimate = self.connection.execute(
+                "SELECT value, confidence FROM model_performer_estimate "
+                "WHERE model_id=? AND performer_id=?",
+                (model_id, entity_id),
+            ).fetchone()
             preference = _performer_preference(
                 bool(row["favorite"]),
                 row["rating100"],
                 affinity_row[0] if affinity_row is not None else None,
                 affinity_row[1] if affinity_row is not None else None,
+                (estimate[0], estimate[1]) if estimate is not None else None,
             )
             matches = (
                 FeatureStore(self.connection).similar_performers(
@@ -455,6 +477,14 @@ class CuratorAPI:
             (model_id, feature_version),
         )
         learned = {row[0].removeprefix("performer:"): (row[1], row[2]) for row in rows}
+        estimates = {
+            row[0]: (row[1], row[2])
+            for row in self.connection.execute(
+                "SELECT performer_id, value, confidence FROM model_performer_estimate "
+                "WHERE model_id=? ORDER BY performer_id",
+                (model_id,),
+            )
+        }
         performers = self.connection.execute(
             "SELECT performer_id, favorite, rating100 FROM source_performer ORDER BY performer_id"
         )
@@ -463,10 +493,13 @@ class CuratorAPI:
             "model_id": model_id,
             "affinities": {
                 row[0]: _performer_preference(
-                    bool(row[1]), row[2], *learned.get(row[0], (None, None))
+                    bool(row[1]),
+                    row[2],
+                    *learned.get(row[0], (None, None)),
+                    estimates.get(row[0]),
                 )
                 for row in performers
-                if row[0] in learned or row[1] or row[2] is not None
+                if row[0] in learned or row[1] or row[2] is not None or row[0] in estimates
             },
         }
 

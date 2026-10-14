@@ -198,6 +198,16 @@ def test_publish_writes_performer_edges_matching_the_build(
     expected = builder._performer_similarity_scores(
         built.feature_version, scene_features, affinities
     )
+    estimates = connection.execute(
+        "SELECT performer_id, value, confidence FROM model_performer_estimate "
+        "WHERE model_id=? ORDER BY performer_id",
+        (built.model_id,),
+    ).fetchall()
+    assert [tuple(row) for row in estimates] == [
+        (performer_id, pytest.approx(entry["value"]), pytest.approx(entry["confidence"]))
+        for performer_id, entry in sorted(expected.items())
+        if entry["matches"]
+    ]
     expected_rows = [
         (
             performer_id,

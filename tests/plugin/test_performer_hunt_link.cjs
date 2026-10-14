@@ -117,7 +117,7 @@ assert.equal(context.PerformerHuntLink(hunt.props).props.className, "curator-con
 assert.equal(gauge.props.value, 0.767);
 const renderedGauge = context.CuratorAffinityGauge(gauge.props);
 assert.match(renderedGauge.props.title, /preference used in recommendations/);
-assert.match(renderedGauge.props.title, /Scene evidence 0.53; Favorite and rating 0.24/);
+assert.match(renderedGauge.props.title, /Scene evidence 0.53; Favorite and rating 0.24; Similar performers 0.00 \(inferred\)/);
 assert.match(renderedGauge.props.title, /Confidence 90%/);
 assert.equal(renderedGauge.props.children[1].props.children[1].props.children[0], "Confidence 90%");
 assert.equal(renderedGauge.props["aria-label"], renderedGauge.props.title);
@@ -134,6 +134,10 @@ assert.equal(emptyGauge.props.children[1].props.children[0].props.children[0], "
 assert.equal(emptyGauge.props.children[1].props.children[1].props.children[0], "No evidence");
 assert.match(emptyGauge.props.title, /contributes zero/);
 const neutral = pageControls("performer", { affinity: 0, confidence: 0.7 }).element.props.children[1];
+const inferred = pageControls("performer", { affinity: 0.3, confidence: 0.6, affinity_details: { learned: 0, prior: 0, similarity: 0.3 } }).element.props.children[1];
+assert.equal(inferred.props.value, 0.3);
+assert.match(inferred.props.detail, /Similar performers 0.30 \(inferred\)/);
+assert.equal(inferred.props.confidenceLabel, "Confidence 60%");
 assert.equal(neutral.props.value, 0);
 assert.equal(neutral.props.confidenceLabel, "Confidence 70%", "learned neutral preference differs from missing evidence");
 assert.match(pageControls("performer", { affinity: -0.3, confidence: 0 }).element.props.children[1].props.detail, /Confidence 0%/);

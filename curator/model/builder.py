@@ -1450,7 +1450,9 @@ class PreferenceModelBuilder:
                         "performer_id": performer_id,
                         **similarity,
                         "raw_value": _number(similarity.get("value")),
-                        "value": _number(similarity.get("value")) * novelty_weight,
+                        "value": _number(similarity.get("value"))
+                        * _number(similarity.get("confidence"))
+                        * novelty_weight,
                         "confidence": _number(similarity.get("confidence")) * novelty_weight,
                         "identity_confidence": identity_confidence,
                         "novelty_weight": novelty_weight,
@@ -1812,6 +1814,12 @@ class PreferenceModelBuilder:
         result dict is already the production format.
         """
         identity_affinity = self._identity_affinity(scene_features, affinities)
+        for performer_id, prior in self._performer_priors().items():
+            value, confidence = identity_affinity.get(performer_id, (0.0, 0.0))
+            identity_affinity[performer_id] = (
+                value + prior.value,
+                max(confidence, prior.confidence),
+            )
         payload: dict[str, object] = {
             "db": str(self._feature_artifact_path(feature_version)),
             "feature_version": feature_version,
@@ -2146,6 +2154,20 @@ class PreferenceModelBuilder:
                 ),
             )
             self._report(0.85)
+            insert_rows(
+                "INSERT INTO model_performer_estimate(model_id, performer_id, value, confidence) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    (
+                        model_id,
+                        performer_id,
+                        _number(entry.get("value")),
+                        _number(entry.get("confidence")),
+                    )
+                    for performer_id, entry in sorted(performer_similarity_scores.items())
+                    if _edge_matches(entry)
+                ),
+            )
             insert_rows(
                 """
                 INSERT INTO model_performer_edge(

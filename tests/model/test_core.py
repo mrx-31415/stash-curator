@@ -127,6 +127,32 @@ def test_content_neighbors_core_matches_numpy_on_built_corpus(tmp_path: Path) ->
             assert core_neighbor["outcome"] == pytest.approx(numpy_neighbor["outcome"], rel=1e-9)
 
 
+def test_performer_similarity_uses_ratings_as_original_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder, context = _built_context(tmp_path)
+    performer_id = builder.connection.execute(
+        "SELECT performer_id FROM source_performer ORDER BY performer_id LIMIT 1"
+    ).fetchone()[0]
+    builder.connection.execute(
+        "UPDATE source_performer SET favorite=1, rating100=100 WHERE performer_id=?",
+        (performer_id,),
+    )
+    captured: dict[str, object] = {}
+
+    def capture_kernel(
+        command: str, payload: dict[str, object], **kwargs: object
+    ) -> dict[str, object]:
+        assert command == "performer-similarity"
+        captured.update(payload)
+        return {}
+
+    monkeypatch.setattr(builder_module.core, "run_core", capture_kernel)
+    builder._performer_similarity_scores(context["feature_version"], {}, {})
+    assert captured["identity_affinity"][performer_id] == pytest.approx([0.28, 0.90])
+
+
 def test_performer_similarity_core_matches_numpy_on_built_corpus(tmp_path: Path) -> None:
     if not optional_deps.NUMPY_AVAILABLE:
         pytest.skip("numpy is not installed")
