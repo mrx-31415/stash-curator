@@ -1,4 +1,4 @@
 """Stash Curator recommendation and discovery tools."""
 
 # x-release-please-version keeps this in sync with pyproject.toml on releases.
-__version__ = "0.33.3"  # x-release-please-version
+__version__ = "0.34.0"  # x-release-please-version
