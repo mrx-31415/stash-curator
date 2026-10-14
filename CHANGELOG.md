@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.0](https://github.com/mrx-31415/stash-curator/compare/v0.33.3...v0.34.0) (2026-10-14)
+
+
+### Features
+
+* add continuous recommendation lane playback ([#342](https://github.com/mrx-31415/stash-curator/issues/342)) ([185dc46](https://github.com/mrx-31415/stash-curator/commit/185dc46e53f4216d7ad70366d17a29760e9d68e4))
+* infer performer preferences from similar performers ([#341](https://github.com/mrx-31415/stash-curator/issues/341)) ([6eb3069](https://github.com/mrx-31415/stash-curator/commit/6eb3069e4bf8bc2abac92c6a562c39fa7f98f9ad))
+
 ## [0.33.3](https://github.com/mrx-31415/stash-curator/compare/v0.33.2...v0.33.3) (2026-10-13)
 
 
