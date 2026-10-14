@@ -57,7 +57,7 @@ const context = {
   } }),
 };
 vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf('  const PERFORMER_AFFINITY_SORT ='), source.indexOf('  function CuratorPerformerCardBadge(')), context);
+vm.runInContext(source.slice(source.indexOf('  const PERFORMER_AFFINITY_SORT ='), source.indexOf('  const SCENE_AFFINITY_SORT =')), context);
 const request = (direction = "DESC", page = 1, performerFilter = { filter_favorites: true }) => ({
   query: "page", operationName: "FindPerformers", getContext: () => ({ token: "test-context" }),
   variables: { filter: { sort: "curator_affinity", direction, page, per_page: 2, q: "query" }, performer_filter: performerFilter },
@@ -87,7 +87,7 @@ const resultIds = (result) => Array.from(result.data.findPerformers.performers, 
   assert.equal(criterion.isValid(), false);
   criterion.modifier = "IS_NULL";
   assert.ok(criterion.isValid());
-  const restored = context.configurePerformerAffinityFilter({ options, criteria: [{
+  const restored = context.configureAffinityFilter({ options, criteria: [{
     criterionOption: { type: "curator_affinity", messageID: "unsupported_criterion" },
     toQueryParams: () => ({ modifier: "LESS_THAN", value: "-0.15" }),
   }] });
