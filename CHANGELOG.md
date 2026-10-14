@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.35.0](https://github.com/mrx-31415/stash-curator/compare/v0.34.0...v0.35.0) (2026-10-14)
+
+
+### Features
+
+* add scene Appeal badges, sorting, and filters ([#346](https://github.com/mrx-31415/stash-curator/issues/346)) ([2b04d69](https://github.com/mrx-31415/stash-curator/commit/2b04d69a7969a3e31ea72e361a36d44e54b27935))
+* sort and filter performers by Curator affinity ([#344](https://github.com/mrx-31415/stash-curator/issues/344)) ([6fb6e4b](https://github.com/mrx-31415/stash-curator/commit/6fb6e4b825ff2348e7abfeaa8809f78c53e3a41e))
+
 ## [0.34.0](https://github.com/mrx-31415/stash-curator/compare/v0.33.3...v0.34.0) (2026-10-14)
 
 
