@@ -153,6 +153,14 @@ func modelPerformerSimilarityScores(db dbx, featureVersion string,
 		}
 	}
 	identityPayload := jvObj()
+	priors, err := performerPriors(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	for performerID, prior := range priors {
+		values := identityAffinity[performerID]
+		identityAffinity[performerID] = [2]float64{values[0] + prior.value, math.Max(values[1], prior.confidence)}
+	}
 	for _, performerID := range sortedStringKeys(identityAffinity) {
 		values := identityAffinity[performerID]
 		identityPayload.set(performerID, jvArr(jvFloat(values[0]), jvFloat(values[1])))
@@ -836,19 +844,19 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 			simValue = numberValue(similarity.get("value"))
 			simConfidence = numberValue(similarity.get("confidence"))
 		}
-		noveltyWeight := math.Max(0.05, 1-identityConfidence)
+		noveltyWeight := math.Max(0.05, 1-math.Max(affinityConfidence, prior.confidence))
 		similarityItem := jvObj()
 		for _, pair := range similarity.obj {
 			similarityItem.set(pair.key, pair.val)
 		}
 		similarityItem.set("performer_id", jvStr(performerID))
 		similarityItem.set("raw_value", jvFloat(simValue))
-		similarityItem.set("value", jvFloat(simValue*noveltyWeight))
+		similarityItem.set("value", jvFloat(simValue*simConfidence*noveltyWeight))
 		similarityItem.set("confidence", jvFloat(simConfidence*noveltyWeight))
-		similarityItem.set("identity_confidence", jvFloat(identityConfidence))
+		similarityItem.set("identity_confidence", jvFloat(math.Max(affinityConfidence, prior.confidence)))
 		similarityItem.set("novelty_weight", jvFloat(noveltyWeight))
 		similarityValues.arr = append(similarityValues.arr, similarityItem)
-		similarityValueList = append(similarityValueList, simValue*noveltyWeight)
+		similarityValueList = append(similarityValueList, simValue*simConfidence*noveltyWeight)
 		similarityConfidence = math.Max(similarityConfidence, simConfidence*noveltyWeight)
 	}
 	identityRaw = asymmetric(identityValueList)

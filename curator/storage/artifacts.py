@@ -11,8 +11,8 @@ from uuid import uuid4
 
 from curator.storage.database import StorageError
 
-ARTIFACT_SCHEMA_VERSION = 3
-SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2, 3})
+ARTIFACT_SCHEMA_VERSION = 4
+SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
 _FINAL_NAME = re.compile(r"(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.sqlite3")
 _TEMP_NAME = re.compile(r"\.(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.[0-9a-f]{32}\.tmp")
 FEATURE_TABLES = ("feature_definition", "entity_feature", "scene_content_search")
@@ -22,6 +22,7 @@ MODEL_TABLES = (
     "model_scene_score",
     "model_scene_neighbor",
     "model_performer_edge",
+    "model_performer_estimate",
     "model_scene_reason",
     "model_scene_lane",
     "model_lane_candidate_cache",
@@ -89,6 +90,11 @@ CREATE TABLE model_scene_neighbor (
     rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 4), neighbor_scene_id TEXT NOT NULL,
     similarity REAL NOT NULL, weight REAL NOT NULL, outcome REAL NOT NULL,
     PRIMARY KEY (model_id, scene_id, rank)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE model_performer_estimate (
+    model_id TEXT NOT NULL, performer_id TEXT NOT NULL, value REAL NOT NULL,
+    confidence REAL NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+    PRIMARY KEY (model_id, performer_id)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE model_performer_edge (
     model_id TEXT NOT NULL, performer_id TEXT NOT NULL,

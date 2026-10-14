@@ -372,6 +372,14 @@ yet** — distribution (5.2/5.3) is the next work package.
   `core/performer.go`). This is an existing numpy-path behavior the pure-Python
   fallback does not share; fixing it is a separate product decision that would
   change model output vs today's numpy builds.
+  **Superseded by the approved 2026-10-14 product decision:** performers must not
+  require every metadata field populated. Missing or zero-norm categorical blocks
+  are skipped, like unavailable numeric blocks, and similarity is normalized over
+  the usable shared blocks. No shared usable blocks still means no match. Explicit
+  attribute differences continue to affect similarity. The Go kernel and numpy
+  test oracle both implement this rule; existing models must be rebuilt. Missing
+  piercing metadata demonstrated the defect: it excluded all
+  build-time comparisons despite strong, positively rated similar performers.
 - Python wiring (`curator/core.py` + `curator/model/builder.py`): resolver
   (`CURATOR_CORE` env > installed `plugin/curator-core` > repo
   `core/bin/curator-core`), protocol probe (version mismatch degrades to

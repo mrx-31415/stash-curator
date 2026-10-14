@@ -548,7 +548,13 @@ func inspectorEntityBody(pluginDir string, payload, settings jVal) (jVal, error)
 			return jvNull(), err
 		}
 		prior := performerPrior(profile.get("favorite").truthy(), number(profile.get("rating100")), profile.get("rating100").kind != jNull)
-		preference := performerPreference(affinity, confidence, hasAffinity, prior)
+		var estimate modelPrior
+		err = db.QueryRow(`SELECT value, confidence FROM model_performer_estimate
+WHERE model_id=? AND performer_id=?`, modelID, entityID).Scan(&estimate.value, &estimate.confidence)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return jvNull(), err
+		}
+		preference := performerPreference(affinity, confidence, hasAffinity || err == nil, prior, estimate)
 		return jvObj(
 			jvKey("schema_version", jvInt(apiSchemaVersion)),
 			jvKey("entity_type", jvStr(entityType)),
@@ -587,6 +593,26 @@ func opGetPerformerAffinities(pluginDir string, payload jVal) (jVal, error) {
 			return jvNull(), err
 		}
 		// Start with performer definitions instead of probing every content affinity.
+		estimates := map[string]modelPrior{}
+		estimateRows, err := db.Query(`SELECT performer_id, value, confidence
+FROM model_performer_estimate WHERE model_id=? ORDER BY performer_id`, modelID)
+		if err != nil {
+			return jvNull(), err
+		}
+		for estimateRows.Next() {
+			var performerID string
+			var estimate modelPrior
+			if err := estimateRows.Scan(&performerID, &estimate.value, &estimate.confidence); err != nil {
+				estimateRows.Close()
+				return jvNull(), err
+			}
+			estimates[performerID] = estimate
+		}
+		err = estimateRows.Err()
+		estimateRows.Close()
+		if err != nil {
+			return jvNull(), err
+		}
 		rows, err := db.Query(`SELECT fd.name, fa.affinity, fa.confidence
 FROM feature_definition fd CROSS JOIN feature_affinity fa USING(feature_id)
 WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='performer_identity'
@@ -597,8 +623,9 @@ ORDER BY fd.name`, modelID, featureVersion)
 		defer rows.Close()
 		affinities := jvObj()
 		for _, performerID := range sortedStringKeys(priors) {
-			if prior := priors[performerID]; prior.confidence > 0 {
-				affinities.set(performerID, performerPreference(0, 0, false, prior))
+			estimate, hasEstimate := estimates[performerID]
+			if prior := priors[performerID]; prior.confidence > 0 || hasEstimate {
+				affinities.set(performerID, performerPreference(0, 0, hasEstimate, prior, estimate))
 			}
 		}
 		for rows.Next() {
@@ -609,7 +636,7 @@ ORDER BY fd.name`, modelID, featureVersion)
 			}
 			performerID := strings.TrimPrefix(name, "performer:")
 			if prior, exists := priors[performerID]; exists {
-				affinities.set(performerID, performerPreference(affinity, confidence, true, prior))
+				affinities.set(performerID, performerPreference(affinity, confidence, true, prior, estimates[performerID]))
 			}
 		}
 		return jvObj(jvKey("schema_version", jvInt(apiSchemaVersion)),
@@ -713,15 +740,23 @@ func similarPerformers(db dbx, featureVersion, performerID string, count int) (j
 	return out, nil
 }
 
-func performerPreference(affinity, confidence float64, hasAffinity bool, prior modelPrior) jVal {
+func performerPreference(affinity, confidence float64, hasEvidence bool, prior, estimate modelPrior) jVal {
 	value, certainty := jvNull(), jvNull()
 	learned := affinity * confidence
-	if hasAffinity || prior.confidence > 0 {
-		value = jvFloat(learned + prior.value)
-		certainty = jvFloat(math.Max(confidence, prior.confidence))
+	directConfidence := math.Max(confidence, prior.confidence)
+	similarityConfidence := estimate.confidence * math.Max(0.05, 1-directConfidence)
+	similarity := estimate.value * similarityConfidence
+	if hasEvidence || prior.confidence > 0 || estimate.confidence > 0 {
+		value = jvFloat(learned + prior.value + similarity)
+		combinedConfidence := directConfidence + (1-directConfidence)*estimate.confidence
+		if (learned+prior.value)*estimate.value < 0 {
+			combinedConfidence = math.Max(directConfidence, similarityConfidence)
+		}
+		certainty = jvFloat(combinedConfidence)
 	}
 	return jvObj(jvKey("affinity", value), jvKey("confidence", certainty),
-		jvKey("affinity_details", jvObj(jvKey("learned", jvFloat(learned)), jvKey("prior", jvFloat(prior.value)))))
+		jvKey("affinity_details", jvObj(jvKey("learned", jvFloat(learned)), jvKey("prior", jvFloat(prior.value)),
+			jvKey("similarity", jvFloat(similarity)), jvKey("similarity_confidence", jvFloat(similarityConfidence)))))
 }
 
 // The deterministic identity key avoids scanning feature definitions for a name.

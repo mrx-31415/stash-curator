@@ -378,11 +378,16 @@ INSERT INTO model_scene_neighbor(
 	}
 	// model_performer_edge
 	var edgeRows [][]any
+	var estimateRows [][]any
 	for _, performerID := range sortedStringKeys(jvKeys(performerSimilarity)) {
 		entry := performerSimilarity.get(performerID)
 		matches, err := edgeMatches(entry)
 		if err != nil {
 			return fail(err)
+		}
+		if len(matches) > 0 {
+			estimateRows = append(estimateRows, []any{modelID, performerID,
+				numberValue(entry.get("value")), numberValue(entry.get("confidence"))})
 		}
 		for rank, match := range matches {
 			edgeRows = append(edgeRows, []any{
@@ -391,6 +396,11 @@ INSERT INTO model_scene_neighbor(
 				numberValue(match.get("confidence")),
 			})
 		}
+	}
+	if err := insertArtifactRows(artifact, `INSERT INTO model_performer_estimate(
+    model_id, performer_id, value, confidence
+) VALUES (?, ?, ?, ?)`, estimateRows); err != nil {
+		return fail(err)
 	}
 	if err := insertArtifactRows(artifact, `
 INSERT INTO model_performer_edge(

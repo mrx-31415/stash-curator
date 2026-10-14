@@ -287,12 +287,7 @@ func performerSimilarityScores(
 // performerPair computes the weighted block similarity plus penalties for one
 // (profile, known) pair, mirroring the numpy per-block matrix math.
 //
-// numpy densifies every block over the GLOBAL block set (all blocks any profile
-// has) and multiplies block_value * block_used per cell; a cosine block whose
-// norm is zero on either side yields 0/0 = NaN, and NaN * False keeps the
-// numerator NaN for the pair even though the block is unused. The pair is then
-// excluded from candidates. Mirror that exactly: any weight>0 cosine block with
-// a zero norm on either profile poisons the pair's similarity.
+// Missing or zero-norm blocks are unknown: compare only usable shared blocks.
 func performerPair(
 	left, right *performerProfile,
 	globalBlocks []string,
@@ -304,7 +299,6 @@ func performerPair(
 		blocks = make(map[string]float64)
 	}
 	var numerator, denominator float64
-	cosineZero := false
 	for _, block := range globalBlocks {
 		weight := weights[block]
 		if weight <= 0 {
@@ -351,9 +345,6 @@ func performerPair(
 			normLeft := left.norms[block]
 			normRight := right.norms[block]
 			if normLeft == 0 || normRight == 0 {
-				// numpy: dot/(norms*known_norms) over the dense matrix is 0/0,
-				// and the masked multiply keeps the NaN in the numerator.
-				cosineZero = true
 				continue
 			}
 			var dot, confidenceSum float64
@@ -399,11 +390,6 @@ func performerPair(
 	}
 	if denominator <= 0 {
 		return 0.0, blocks
-	}
-	if cosineZero {
-		// numpy: where(denominator > 0, numerator/denominator*penalty, 0)
-		// yields NaN, which never passes the similarity > 0 candidate filter.
-		return math.NaN(), blocks
 	}
 	penalty := 1.0
 	if measurementsLeft, ok := left.blocks["measurements"]; ok {
@@ -502,15 +488,21 @@ func performerForProfile(
 	for _, c := range candidates {
 		denominator += c.similarity * c.similarity * c.similarity
 	}
-	value, confidence := 0.0, 0.0
+	value, confidence, absolute := 0.0, 0.0, 0.0
 	if denominator > 0 {
 		for _, c := range candidates {
 			weight := c.similarity * c.similarity * c.similarity
 			value += c.affinity * weight
 			confidence += c.confidence * weight
+			absolute += math.Abs(c.affinity) * weight
+		}
+		// Similar matches are correlated evidence; cap certainty and discount disagreement.
+		agreement := 0.0
+		if absolute > 0 {
+			agreement = math.Abs(value) / absolute
 		}
 		value /= denominator
-		confidence /= denominator
+		confidence = math.Min(0.65, 1-math.Exp(-confidence)) * agreement
 	}
 	kept := min(3, len(candidates))
 	matches := make([]performerMatch, 0, kept)

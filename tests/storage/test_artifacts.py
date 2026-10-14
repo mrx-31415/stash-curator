@@ -196,6 +196,7 @@ def test_attach_skips_tables_missing_from_older_artifact(tmp_path: Path) -> None
     try:
         # Simulate an artifact built by code that predates model_performer_edge.
         artifact.execute("DROP TABLE model_performer_edge")
+        artifact.execute("DROP TABLE model_performer_estimate")
     finally:
         publish_file(artifact, temporary, final)
     core.execute(
@@ -215,8 +216,9 @@ def test_attach_skips_tables_missing_from_older_artifact(tmp_path: Path) -> None
             for row in attached.execute("SELECT name FROM sqlite_temp_master WHERE type='view'")
         }
         assert "model_performer_edge" not in views
+        assert "model_performer_estimate" not in views
         # Migration 25 creates and indexes model_performer_edge; the shadowing view
         # used to make its CREATE INDEX fail with "views may not be indexed".
-        assert MigrationRunner(attached).migrate(applied_at_ms=2).current_version == 40
+        assert MigrationRunner(attached).migrate(applied_at_ms=2).current_version == 41
     finally:
         attached.close()

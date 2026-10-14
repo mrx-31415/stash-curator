@@ -140,6 +140,15 @@ def performer_similarity_numpy(
     identity_affinity = PreferenceModelBuilder._identity_affinity(  # type: ignore[arg-type]
         scene_features, affinities
     )
+    for row in connection.execute("SELECT performer_id, favorite, rating100 FROM source_performer"):
+        value, confidence = identity_affinity.get(str(row[0]), (0.0, 0.0))
+        prior = 0.18 if row[1] else 0.0
+        if row[2] is not None:
+            prior += max(-1.0, min(1.0, (row[2] - 50) / 50)) * 0.10
+        identity_affinity[str(row[0])] = (
+            value + prior,
+            max(confidence, 0.90 if row[1] else 0.75 if row[2] is not None else 0.0),
+        )
     profiles = FeatureStore(connection).performer_profiles(feature_version)  # type: ignore[arg-type]
     known = {
         key: profiles[key]
@@ -238,7 +247,9 @@ def performer_similarity_numpy(
                     confidences[block][:, column],
                     known_confidences[block][:, column],  # type: ignore[index]
                 )
-            confidence = np.where(shared > 0, confidence_sum / shared, 0.0)
+            confidence = np.divide(
+                confidence_sum, shared, out=np.zeros_like(confidence_sum), where=shared > 0
+            )
             with np.errstate(divide="ignore", invalid="ignore"):
                 block_value = np.clip(
                     dot / (norms[:, None] * known_norms[None, :]) * confidence, 0.0, 1.0
@@ -246,7 +257,7 @@ def performer_similarity_numpy(
             block_used = both_present & (norms[:, None] != 0) & (known_norms[None, :] != 0)
         block_similarities[block] = block_value
         used[block] = block_used
-        numerator += block_value * block_used * weight
+        numerator += np.where(block_used, block_value, 0.0) * weight
         denominator += block_used * weight
     penalty = np.ones((len(profile_ids), len(known_ids)), dtype=np.float64)
     measurements = values.get("measurements")
@@ -292,14 +303,14 @@ def performer_similarity_numpy(
             if denominator_value
             else 0.0
         )
-        confidence = (
-            sum(
-                float(known_confidence[known_position[item[0]]]) * item[1] ** 3 for item in selected
-            )
-            / denominator_value
-            if denominator_value
-            else 0.0
+        support = sum(
+            float(known_confidence[known_position[item[0]]]) * item[1] ** 3 for item in selected
         )
+        absolute = sum(
+            abs(float(known_affinity[known_position[item[0]]])) * item[1] ** 3 for item in selected
+        )
+        agreement = abs(value * denominator_value) / absolute if absolute else 0.0
+        confidence = min(0.65, 1 - math.exp(-support)) * agreement
         result[performer_id] = {
             "value": value,
             "confidence": confidence,

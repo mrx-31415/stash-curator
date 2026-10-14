@@ -41,6 +41,7 @@ MANIFEST = (
     "core/modelbuild3.go",
     "core/multi_hop.go",
     "core/multihop.go",
+    "core/performer.go",
     "curator/model/boundaries.py",
     "curator/model/builder.py",
     "curator/model/curves.py",

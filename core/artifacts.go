@@ -16,9 +16,9 @@ import (
 	"strings"
 )
 
-const artifactSchemaVersion = 3
+const artifactSchemaVersion = 4
 
-var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true}
+var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true}
 
 var featureTables = []string{"feature_definition", "entity_feature", "scene_content_search"}
 
@@ -28,6 +28,7 @@ var modelTables = []string{
 	"model_scene_score",
 	"model_scene_neighbor",
 	"model_performer_edge",
+	"model_performer_estimate",
 	"model_scene_reason",
 	"model_scene_lane",
 	"model_lane_candidate_cache",
