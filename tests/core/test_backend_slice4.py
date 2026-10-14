@@ -56,6 +56,7 @@ class _StubSlice4(BaseHTTPRequestHandler):
     """Stash stub answering the settings query (empty plugin settings)."""
 
     plugin_settings: ClassVar[dict[str, object]] = {}
+    affinity_metadata_variables: ClassVar[list[dict[str, object]]] = []
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
@@ -66,6 +67,25 @@ class _StubSlice4(BaseHTTPRequestHandler):
                 data = {
                     "data": {"configuration": {"plugins": {"stash-curator": self.plugin_settings}}}
                 }
+        elif "CuratorSceneAffinityIds" in body:
+            data = {
+                "data": {
+                    "findScenes": {"scenes": [{"id": item} for item in ["5", "2", "1", "3", "4"]]}
+                }
+            }
+        elif "CuratorSceneAffinityMetadata" in body:
+            variables = json.loads(body)["variables"]
+            self.affinity_metadata_variables.append(variables)
+            ids = variables["scene_ids"] or [5, 2, 1, 3, 4]
+            data = {
+                "data": {
+                    "findScenes": {
+                        "count": len(ids),
+                        "duration": float(sum(ids)),
+                        "filesize": float(sum(ids) * 100),
+                    }
+                }
+            }
         else:
             data = {"errors": [{"message": f"no stub for {body[:80]}"}]}
         payload_bytes = json.dumps(data).encode()
@@ -857,7 +877,112 @@ def test_performer_affinities_byte_identical(
         connection.close()
 
 
-@pytest.mark.parametrize("operation", ["get_inspector_entity", "get_performer_affinities"])
+@pytest.fixture
+def scene_affinity_sidecar(tmp_path: Path, slice4_sidecar: Path) -> Path:
+    sidecar = tmp_path / "scene-affinity.sqlite3"
+    shutil.copy2(slice4_sidecar, sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute("UPDATE model_scene_score SET scene_id=substr(scene_id, 2)")
+        connection.execute("UPDATE model_scene_score SET appeal=0 WHERE scene_id='2'")
+    return sidecar
+
+
+@pytest.mark.parametrize("scene_ids", [["3", "2", "1", "4"], [], "bad", [1], [""]])
+def test_scene_affinities_parity(
+    binary: Path, stub_stash: str, scene_affinity_sidecar: Path, scene_ids: object
+) -> None:
+    assert_slice4_identical(
+        binary,
+        payload("get_scene_affinities", scene_affinity_sidecar, stub_stash, scene_ids=scene_ids),
+        scene_affinity_sidecar,
+    )
+    if scene_ids == ["3", "2", "1", "4"]:
+        with sqlite3.connect(scene_affinity_sidecar) as connection:
+            connection.row_factory = sqlite3.Row
+            assert CuratorAPI(connection).scene_affinities(scene_ids)["affinities"] == {
+                "3": {"appeal": 0.2, "confidence": 0.8},
+                "2": {"appeal": 0.0, "confidence": 0.4},
+                "1": {"appeal": -0.3, "confidence": 0.9},
+            }
+
+
+@pytest.mark.parametrize(
+    "options,expected,count,duration",
+    [
+        ({"sort": True}, ["3", "2"], 5, 15.0),
+        ({"sort": True, "direction": "ASC"}, ["1", "2"], 5, 15.0),
+        ({"sort": True, "page": 2}, ["1", "5"], 5, 15.0),
+        ({"sort": True, "page": 3}, ["4"], 5, 15.0),
+        ({"sort": True, "page": 4}, [], 5, 15.0),
+        ({"sort": True, "per_page": 0}, [], 5, 15.0),
+        ({"sort": True, "per_page": -1}, ["3", "2", "1", "5", "4"], 5, 15.0),
+        ({"criterion": {"modifier": "GREATER_THAN", "value": 0.15}}, ["3"], 1, 3.0),
+        ({"criterion": {"modifier": "LESS_THAN", "value": -0.15}}, ["1"], 1, 1.0),
+        ({"criterion": {"modifier": "EQUALS", "value": 0}}, ["2"], 1, 2.0),
+        ({"criterion": {"modifier": "NOT_EQUALS", "value": 0}}, ["1", "3"], 2, 4.0),
+        ({"criterion": {"modifier": "IS_NULL"}}, ["5", "4"], 2, 9.0),
+        ({"criterion": {"modifier": "NOT_NULL"}}, ["2", "1"], 3, 6.0),
+        ({"criterion": {"modifier": "GREATER_THAN", "value": 1}}, [], 0, 0.0),
+    ],
+)
+def test_scene_affinity_page(
+    binary: Path,
+    stub_stash: str,
+    scene_affinity_sidecar: Path,
+    options: dict[str, object],
+    expected: list[str],
+    count: int,
+    duration: float,
+) -> None:
+    raw = payload(
+        "get_scene_affinity_page", scene_affinity_sidecar, stub_stash, **{"per_page": 2, **options}
+    )
+    assert_slice4_identical(binary, raw, scene_affinity_sidecar)
+    result = json.loads(run_backend(binary, PLUGIN_DIR, raw).stdout)["output"]
+    assert result["scene_ids"] == expected
+    assert result["count"] == count
+    assert result["duration"] == duration
+    assert result["filesize"] == duration * 100
+    assert set(result["affinities"]) <= set(expected), "Only return the selected page's scores"
+    if count and "criterion" not in options:
+        metadata = _StubSlice4.affinity_metadata_variables[-1]
+        assert metadata["scene_ids"] is None, "Use native filters, not the whole library ID list"
+        assert metadata["filter"]["per_page"] == 0
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"criterion": {"modifier": "BAD"}},
+        {"criterion": {"modifier": "GREATER_THAN", "value": "0.1"}},
+        {"criterion": {"modifier": "GREATER_THAN", "value": True}},
+        {"sort": True, "direction": "invalid"},
+        {"page": 0},
+        {"per_page": -2},
+    ],
+)
+def test_scene_affinity_page_validation(
+    binary: Path,
+    stub_stash: str,
+    scene_affinity_sidecar: Path,
+    options: dict[str, object],
+) -> None:
+    assert_slice4_identical(
+        binary,
+        payload("get_scene_affinity_page", scene_affinity_sidecar, stub_stash, **options),
+        scene_affinity_sidecar,
+    )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "get_inspector_entity",
+        "get_performer_affinities",
+        "get_scene_affinities",
+        "get_scene_affinity_page",
+    ],
+)
 def test_inspector_requires_published_model(
     tmp_path: Path, binary: Path, stub_stash: str, operation: str
 ) -> None:

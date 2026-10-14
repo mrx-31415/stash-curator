@@ -276,6 +276,22 @@ with a decimal value (for example, **Greater than 0.15**). It works with native
 sorts as well as Curator affinity sorting, and filters before pagination. **Is
 null** selects performers without an estimate; **Is not null** selects performers
 with an estimate, including zero. Other comparisons exclude unestimated performers.
+
+Stash's native scene card grids show a compact Curator pill over the thumbnail,
+with Appeal, model confidence, a divider, and a **Similar** shortcut. It uses the
+performer pill's design and sits at the bottom left, leaving native resolution and
+duration visible at the bottom right.
+The scene detail toolbar uses the same pill, including the **Similar** shortcut.
+**Curator Appeal** in a scene list's sort menu orders
+the full filtered result by long-term scene Appeal; scenes without a published
+estimate stay last in either direction. The same filter accepts decimal comparisons
+and **Is null**/**Is not null** for scenes without/with an estimate, including zero.
+Native search, other filters, pagination, counts, duration, and file-size totals
+apply to the matching scenes. Scores are looked up in batches, and sorting and
+filtering run in the backend. This uses the existing published model's Appeal on
+the -1 to +1 scale; Current Fit and lane ranking remain separate. Newly added scenes
+may lack an estimate until the next sync and model build.
+
 The **Hide exact PHash matches** filter is enabled by default. It also applies to
 Expand and StashDB Similar scenes. Disable it to inspect candidates marked
 **Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed

@@ -1046,6 +1046,67 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             }
         if operation == "get_performer_affinities":
             return api.performer_affinities()
+        if operation == "get_scene_affinities":
+            return api.scene_affinities(args.get("scene_ids"))
+        if operation == "get_scene_affinity_page":
+            page, per_page = int(args.get("page", 1)), int(args.get("per_page", 40))
+            if page < 1 or per_page < -1:
+                raise ValueError("invalid scene page")
+            client = _client(payload)
+            data = client.execute(
+                """query CuratorSceneAffinityIds(
+  $filter: FindFilterType, $scene_filter: SceneFilterType, $scene_ids: [Int!]
+) {
+  findScenes(filter: $filter, scene_filter: $scene_filter, scene_ids: $scene_ids) { scenes { id } }
+}""",
+                {
+                    "filter": {**(args.get("filter") or {}), "page": 1, "per_page": -1},
+                    "scene_filter": args.get("scene_filter"),
+                    "scene_ids": args.get("scene_ids"),
+                },
+            )
+            rows = api.scene_affinity_rows(
+                [scene["id"] for scene in data["findScenes"]["scenes"]],
+                sort=bool(args.get("sort")),
+                direction=str(args.get("direction", "DESC")),
+                criterion=args.get("criterion"),
+            )
+            metadata = (
+                client.execute(
+                    """query CuratorSceneAffinityMetadata(
+  $filter: FindFilterType, $scene_filter: SceneFilterType, $scene_ids: [Int!]
+) {
+  findScenes(filter: $filter, scene_filter: $scene_filter, scene_ids: $scene_ids) {
+    count duration filesize
+  }
+}""",
+                    {
+                        "filter": {"per_page": 0},
+                        "scene_filter": None,
+                        "scene_ids": [int(row["scene_id"]) for row in rows],
+                    }
+                    if args.get("criterion") is not None
+                    else {
+                        "filter": {**(args.get("filter") or {}), "per_page": 0},
+                        "scene_filter": args.get("scene_filter"),
+                        "scene_ids": args.get("scene_ids"),
+                    },
+                )["findScenes"]
+                if rows
+                else {"count": 0, "duration": 0.0, "filesize": 0.0}
+            )
+            page_rows = rows if per_page < 0 else rows[(page - 1) * per_page : page * per_page]
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "model_id": RecommendationModelStore(connection).current_model_id(),
+                "affinities": {
+                    row["scene_id"]: {"appeal": row["appeal"], "confidence": row["confidence"]}
+                    for row in page_rows
+                    if row["appeal"] is not None
+                },
+                "scene_ids": [row["scene_id"] for row in page_rows],
+                **metadata,
+            }
         if operation == "get_inspector_entity":
             return api.inspector(
                 str(args.get("entity_type") or ""),

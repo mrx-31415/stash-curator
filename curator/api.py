@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import operator
 import sqlite3
 import time
 from collections import defaultdict
@@ -500,6 +501,88 @@ class CuratorAPI:
                 )
                 for row in performers
                 if row[0] in learned or row[1] or row[2] is not None or row[0] in estimates
+            },
+        }
+
+    def scene_affinity_rows(
+        self,
+        scene_ids: object,
+        *,
+        sort: bool = False,
+        direction: str = "DESC",
+        criterion: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        if not isinstance(scene_ids, list) or any(
+            not isinstance(item, str) or not item for item in scene_ids
+        ):
+            raise ValueError("scene_ids must be a list of strings")
+        comparisons = {
+            "GREATER_THAN": operator.gt,
+            "LESS_THAN": operator.lt,
+            "EQUALS": operator.eq,
+            "NOT_EQUALS": operator.ne,
+        }
+        modifier, threshold = "", 0.0
+        if criterion is not None:
+            modifier = criterion.get("modifier", "")
+            if modifier not in {*comparisons, "IS_NULL", "NOT_NULL"}:
+                raise ValueError("unsupported Curator Appeal comparison")
+            if modifier not in {"IS_NULL", "NOT_NULL"}:
+                value = criterion.get("value")
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                ):
+                    raise ValueError("enter a valid Curator Appeal value")
+                threshold = value
+        if sort and direction not in {"ASC", "DESC"}:
+            raise ValueError("direction must be ASC or DESC")
+        query = (
+            "SELECT i.value AS scene_id, s.appeal, s.confidence FROM json_each(?) i "
+            "LEFT JOIN model_scene_score s ON s.model_id=? AND s.scene_id=i.value"
+        )
+        params: list[object] = [json.dumps(scene_ids), model_id]
+        if sort or criterion is not None:
+            query = "SELECT scene_id, appeal, confidence FROM model_scene_score WHERE model_id=?"
+            params = [model_id]
+        scores = {row["scene_id"]: dict(row) for row in self.connection.execute(query, params)}
+        selected = []
+        for scene_id in scene_ids:
+            row = scores.get(scene_id, {"scene_id": scene_id, "appeal": None, "confidence": None})
+            known = row["appeal"] is not None
+            if (
+                not modifier
+                or (modifier == "IS_NULL" and not known)
+                or (modifier == "NOT_NULL" and known)
+                or (
+                    modifier in comparisons
+                    and known
+                    and comparisons[modifier](row["appeal"], threshold)
+                )
+            ):
+                selected.append(row)
+        if sort:
+            selected.sort(
+                key=lambda row: (
+                    row["appeal"] is None,
+                    (row["appeal"] or 0) * (1 if direction == "ASC" else -1),
+                )
+            )
+        return selected
+
+    def scene_affinities(self, scene_ids: object) -> dict[str, object]:
+        rows = self.scene_affinity_rows(scene_ids)
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": RecommendationModelStore(self.connection).current_model_id(),
+            "affinities": {
+                row["scene_id"]: {"appeal": row["appeal"], "confidence": row["confidence"]}
+                for row in rows
+                if row["appeal"] is not None
             },
         }
 

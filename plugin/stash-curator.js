@@ -6436,7 +6436,7 @@
   });
   // Circular gauge around the affinity value (replaces the flat bar). The ring
   // fill tracks |affinity| and the value is tinted by sign.
-  function CuratorAffinityGauge({ value, detail, confidenceLabel }) {
+  function CuratorAffinityGauge({ value, detail, confidenceLabel, label = "affinity" }) {
     const radius = 15;
     const circumference = 2 * Math.PI * radius;
     const magnitude = value === null ? 0 : Math.min(1, Math.abs(value));
@@ -6444,7 +6444,7 @@
     const sign = value === null || value === 0 ? "neutral" : value < 0 ? "negative" : "positive";
     const valueLabel = value === null ? "—" : formatAppealValue(value);
     const color = sign === "positive" ? "#5cc19c" : sign === "negative" ? "#e0645c" : "#adb5bd";
-    const description = `Curator affinity ${valueLabel}${detail ? `. ${detail}` : ""}`;
+    const description = `Curator ${label} ${valueLabel}${detail ? `. ${detail}` : ""}`;
     return React.createElement("span", { className: `curator-affinity-gauge curator-affinity-${sign}`, title: description, "aria-label": description, tabIndex: detail ? 0 : undefined },
       React.createElement("svg", { className: "curator-affinity-gauge-ring", viewBox: "0 0 36 36", "aria-hidden": "true" },
         React.createElement("circle", { cx: 18, cy: 18, r: radius, fill: "none", stroke: "rgba(127,127,127,0.25)", strokeWidth: 3 }),
@@ -6457,6 +6457,7 @@
     );
   }
   function CuratorContextControls({ type, id, label, details, className = "" }) {
+    if (type === "scene") return React.createElement(CuratorSceneAffinityPill, { id, label, score: details?.score, className: "curator-scene-page-pill" });
     const raw = type === "scene" ? details?.score?.appeal : details?.affinity;
     const noEvidence = type === "performer" && details !== null && details !== undefined && raw == null;
     const value = typeof raw === "number" ? raw : noEvidence ? 0 : null;
@@ -6498,13 +6499,13 @@
   const PERFORMER_AFFINITY_SORT = "curator_affinity";
   let performerSortIds = null;
   let performerSortInstalled = false;
-  function configurePerformerAffinityFilter(filter) {
+  function configureAffinityFilter(filter, type = PERFORMER_AFFINITY_SORT) {
     const options = filter.options.criterionOptions;
-    let option = options.find((item) => item.type === PERFORMER_AFFINITY_SORT);
+    let option = options.find((item) => item.type === type);
     if (!option) {
-      const textOption = options.find((item) => item.type === "name");
+      const textOption = options.find((item) => item.type === "name" || item.type === "title");
       option = new textOption.constructor({
-        type: PERFORMER_AFFINITY_SORT, messageID: PERFORMER_AFFINITY_SORT,
+        type, messageID: type,
         inputType: "number", defaultModifier: "GREATER_THAN",
         modifierOptions: ["GREATER_THAN", "LESS_THAN", "EQUALS", "NOT_EQUALS", "IS_NULL", "NOT_NULL"],
       });
@@ -6522,7 +6523,7 @@
       options.push(option);
     }
     filter.criteria = filter.criteria.map((criterion) => {
-      if (criterion.criterionOption.type !== PERFORMER_AFFINITY_SORT || criterion.criterionOption.messageID === PERFORMER_AFFINITY_SORT) return criterion;
+      if (criterion.criterionOption.type !== type || criterion.criterionOption.messageID === type) return criterion;
       const restored = option.makeCriterion();
       restored.fromDecodedParams(criterion.toQueryParams());
       return restored;
@@ -6615,14 +6616,14 @@
     installPerformerAffinitySort();
     const existingHook = props.filterHook;
     return [{ ...props, filterHook: (filter) => {
-      configurePerformerAffinityFilter(filter);
+      configureAffinityFilter(filter);
       return existingHook ? existingHook(filter) : filter;
     } }];
   });
   function addPerformerAffinitySortOption(element) {
     if (!React.isValidElement(element)) return;
     const filter = element.props.filter;
-    if (filter?.options?.criterionOptions) configurePerformerAffinityFilter(filter);
+    if (filter?.options?.criterionOptions) configureAffinityFilter(filter);
     if (/^\/performers\/?$/.test(window.location.pathname) && filter?.options?.sortByOptions && !filter.options.sortByOptions.some((option) => option.value === PERFORMER_AFFINITY_SORT)) {
       filter.options = { ...filter.options, sortByOptions: [...filter.options.sortByOptions,
         { value: PERFORMER_AFFINITY_SORT, messageID: PERFORMER_AFFINITY_SORT }] };
@@ -6639,6 +6640,122 @@
     const result = args[args.length - 1];
     addPerformerAffinitySortOption(result);
     return React.createElement(CuratorPerformerSortLocale, null, result);
+  });
+  const SCENE_AFFINITY_SORT = "curator_appeal";
+  let sceneSortInstalled = false;
+  async function affinitySortedScenes(client, request) {
+    const variables = request.variables;
+    const affinitySort = variables.filter?.sort === SCENE_AFFINITY_SORT;
+    const { [SCENE_AFFINITY_SORT]: savedCriterion, ...sceneFilter } = variables.scene_filter || {};
+    let criterion = savedCriterion;
+    // A cold playlist URL can be decoded before the list registers its criterion.
+    if (criterion && criterion.modifier !== "IS_NULL" && criterion.modifier !== "NOT_NULL") {
+      const value = typeof criterion.value === "string" && criterion.value.trim() !== "" ? Number(criterion.value) : criterion.value;
+      if (!Number.isFinite(value)) throw new Error("Enter a valid Curator Appeal value.");
+      criterion = { ...criterion, value };
+    }
+    const details = await operation({
+      operation: "get_scene_affinity_page", scene_ids: variables.scene_ids,
+      filter: { ...variables.filter, ...(affinitySort ? { sort: "title", direction: "ASC" } : {}) },
+      scene_filter: sceneFilter, criterion, sort: affinitySort,
+      direction: variables.filter?.direction || "DESC", page: variables.filter?.page ?? 1,
+      per_page: variables.filter?.per_page ?? 40,
+    }, 120000);
+    const metadata = { __typename: "FindScenesResultType", count: details.count, duration: details.duration, filesize: details.filesize };
+    if (!details.scene_ids.length) return { data: { findScenes: { ...metadata, scenes: [] } } };
+    const result = await client.query({
+      query: request.query, context: request.getContext(), fetchPolicy: "no-cache",
+      variables: { ...variables, scene_ids: details.scene_ids.map(Number), scene_filter: null,
+        filter: { ...variables.filter, page: 1, per_page: details.scene_ids.length, sort: "title" } },
+    });
+    const scenes = new Map(result.data.findScenes.scenes.map((scene) => [String(scene.id), scene]));
+    return { ...result, data: { ...result.data, findScenes: { ...result.data.findScenes, ...metadata,
+      scenes: details.scene_ids.map((id) => scenes.get(id)).filter(Boolean) } } };
+  }
+  function installSceneAffinitySort() {
+    if (sceneSortInstalled) return;
+    const client = Api.utils.StashService.getClient();
+    const { ApolloLink, Observable } = libraries.Apollo;
+    const adapter = new ApolloLink((request, forward) => {
+      if (request.operationName !== "FindScenes" || (request.variables.filter?.sort !== SCENE_AFFINITY_SORT && !request.variables.scene_filter?.[SCENE_AFFINITY_SORT])) return forward(request);
+      return new Observable((observer) => {
+        let active = true;
+        affinitySortedScenes(client, request).then(
+          (result) => { if (active) { observer.next(result); observer.complete(); } },
+          (error) => { if (active) observer.error(error); }
+        );
+        return () => { active = false; };
+      });
+    });
+    client.setLink(adapter.concat(client.link));
+    sceneSortInstalled = true;
+  }
+  installSceneAffinitySort();
+  Api.patch.before("FilteredSceneList", function (props) {
+    installSceneAffinitySort();
+    const existingHook = props.filterHook;
+    return [{ ...props, filterHook: (filter) => {
+      configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
+      return existingHook ? existingHook(filter) : filter;
+    } }];
+  });
+  function addSceneAffinitySortOption(element) {
+    if (!React.isValidElement(element)) return;
+    const filter = element.props.filter;
+    if (filter?.options?.criterionOptions) configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
+    if (filter?.options?.sortByOptions && !filter.options.sortByOptions.some((option) => option.value === SCENE_AFFINITY_SORT)) {
+      filter.options = { ...filter.options, sortByOptions: [...filter.options.sortByOptions,
+        { value: SCENE_AFFINITY_SORT, messageID: SCENE_AFFINITY_SORT }] };
+    }
+    React.Children.forEach(element.props.children, addSceneAffinitySortOption);
+  }
+  function CuratorSceneSortLocale({ children }) {
+    const intl = libraries.Intl.useIntl();
+    return React.createElement(libraries.Intl.IntlProvider, {
+      ...intl, messages: { ...intl.messages, [SCENE_AFFINITY_SORT]: "Curator Appeal" },
+    }, children);
+  }
+  Api.patch.after("FilteredSceneList", function (props, ...args) {
+    const result = args[args.length - 1];
+    addSceneAffinitySortOption(result);
+    return React.createElement(CuratorSceneSortLocale, null, result);
+  });
+  const SceneAffinityContext = React.createContext(null);
+  function CuratorSceneAffinityCards({ ids, children }) {
+    const [details, setDetails] = React.useState(null);
+    React.useEffect(() => {
+      let active = true;
+      setDetails(null);
+      operation({ operation: "get_scene_affinities", scene_ids: JSON.parse(ids) })
+        .then((data) => { if (active) setDetails(data.affinities); })
+        .catch(() => { if (active) setDetails(null); });
+      return () => { active = false; };
+    }, [ids]);
+    return React.createElement(SceneAffinityContext.Provider, { value: details }, children);
+  }
+  Api.patch.after("SceneList", function (props, ...args) {
+    const result = args[args.length - 1];
+    return React.createElement(CuratorSceneAffinityCards, { ids: JSON.stringify(props.scenes.map((scene) => String(scene.id))) }, result);
+  });
+  function CuratorSceneAffinityPill({ id, label, score: providedScore, className = "curator-scene-card-badge" }) {
+    const details = React.useContext(SceneAffinityContext);
+    if (!details && providedScore === undefined) return null;
+    const score = providedScore === undefined ? details[String(id)] : providedScore;
+    const confidenceLabel = score ? `Confidence ${Math.round(clamp01(score.confidence) * 100)}%` : "No estimate";
+    const query = new URLSearchParams({ view: "similar", type: "scene", id: String(id), label: label || `Scene ${id}` });
+    return React.createElement("div", { className: `curator-context-group curator-context-group-scene ${className}`, role: "group", "aria-label": "Curator scene affinity and Similar", onClick: (event) => event.stopPropagation() },
+      React.createElement("span", { className: "curator-context-brand", title: "Curator Appeal", "aria-hidden": true }, React.createElement(FontAwesomeIcon, { icon: faCompass })),
+      React.createElement(CuratorAffinityGauge, { value: score?.appeal ?? null, label: "Appeal", confidenceLabel,
+        detail: score ? `Long-term scene Appeal on a -1 to +1 scale. ${confidenceLabel}. Current Fit and lane ranking are separate.` : "No published estimate for this scene." }),
+      React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: "Find similar scenes with Curator", "aria-label": "Find similar scenes with Curator" }, React.createElement(FontAwesomeIcon, { icon: faClone }))
+    );
+  }
+  Api.patch.after("SceneCard", function (props, ...args) {
+    const result = args[args.length - 1];
+    if (props.curatorAppeal !== undefined || props.scene?.id == null || !React.isValidElement(result)) return result;
+    return React.cloneElement(result, { overlays: React.createElement(React.Fragment, null,
+      result.props.overlays, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title })
+    ) });
   });
   function CuratorPerformerCardBadge({ performer }) {
     const [details, setDetails] = React.useState(null);

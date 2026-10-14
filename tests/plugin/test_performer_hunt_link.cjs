@@ -84,6 +84,7 @@ let state;
 Object.assign(context, {
   faClone: "clone",
   faCompass: "compass",
+  CuratorSceneAffinityPill() {},
   ReactDOM: { createPortal: (element, host) => ({ element, host }) },
   formatAppealValue: (value) => value.toFixed(2),
   clamp01: (value) => Math.max(0, Math.min(1, value)),
@@ -96,7 +97,8 @@ context.Api.patch.after = (name, callback) => {
   assert.ok(["PerformerCard", "FilteredPerformerList"].includes(name));
   if (name === "PerformerCard") cardPatch = callback;
 };
-vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
+vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  const SCENE_AFFINITY_SORT ='))
+  + source.slice(source.indexOf("  function CuratorPerformerCardBadge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
 function pageControls(type, details) {
   const host = {};
   state = [host, details];
@@ -147,11 +149,9 @@ assert.equal(neutral.props.confidenceLabel, "Confidence 70%", "learned neutral p
 assert.match(pageControls("performer", { affinity: -0.3, confidence: 0 }).element.props.children[1].props.detail, /Confidence 0%/);
 assert.match(pageControls("performer", { affinity: 0.2 }).element.props.children[1].props.detail, /Confidence unavailable/);
 const sceneControls = pageControls("scene", { score: { appeal: -0.4 } }).element;
-assert.equal(sceneControls.props.className, "curator-context-group");
-assert.equal(sceneControls.props.children[0], false, "scene pages must not gain a Curator brand marker");
-assert.equal(sceneControls.props.children[1], false, "scene pages must not gain a leading performer score");
-assert.equal(sceneControls.props.children[3], false, "scene pages must not gain a performer Hunt action");
-assert.equal(sceneControls.props.children[4].props.value, -0.4);
+assert.equal(sceneControls.type, context.CuratorSceneAffinityPill);
+assert.equal(sceneControls.props.className, "curator-scene-page-pill");
+assert.equal(sceneControls.props.score.appeal, -0.4);
 state = [null, null];
 assert.equal(context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" }), null);
 const effects = [];
