@@ -642,6 +642,62 @@ def test_inspector_performer_byte_identical(
     assert_slice4_identical(binary, raw, slice4_sidecar)
 
 
+def test_inspector_performer_specific_evidence(
+    binary: Path, stub_stash: str, slice4_sidecar: Path
+) -> None:
+    feature_id = FeatureBuilder._feature_id(
+        FEATURE_VERSION, "scene", "performer_identity", "performer:p1"
+    )
+    with sqlite3.connect(slice4_sidecar) as connection:
+        for scene_id, outcome, weight in [("s1", -0.4, 2.0), ("s2", 0.6, 1.0), ("s3", 0.0, 0.0)]:
+            connection.execute(
+                "INSERT INTO entity_feature VALUES (?, 'scene', ?, ?, 1, 1)",
+                (FEATURE_VERSION, scene_id, feature_id),
+            )
+            connection.execute(
+                "UPDATE model_scene_score SET components_json=? WHERE scene_id=?",
+                (
+                    json.dumps(
+                        {
+                            "direct": {
+                                "learning_outcome": outcome,
+                                "learning_evidence": weight,
+                                "signals": ["thumb_down" if outcome < 0 else "thumb_up"],
+                            }
+                        }
+                    ),
+                    scene_id,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO model_performer_edge VALUES (?, 'p1', 0, 'p2', 0.8, -0.4, 0.7)",
+            (MODEL_ID,),
+        )
+    raw = payload(
+        "get_inspector_entity",
+        slice4_sidecar,
+        stub_stash,
+        entity_type="performer",
+        entity_id="p1",
+        include_similar=False,
+        include_evidence=True,
+    )
+    assert_slice4_identical(binary, raw, slice4_sidecar)
+    with sqlite3.connect(slice4_sidecar) as connection:
+        connection.row_factory = sqlite3.Row
+        result = CuratorAPI(connection).inspector(
+            "performer", "p1", include_similar=False, include_evidence=True
+        )
+        evidence = result["evidence"]
+        assert isinstance(evidence, dict)
+        assert [scene["scene_id"] for scene in evidence["scenes"]] == ["s1", "s2"]
+        assert evidence["scenes"][0]["direct"]["learning_outcome"] == -0.4
+        assert evidence["performers"][0]["performer_id"] == "p2"
+        assert "evidence" not in CuratorAPI(connection).inspector(
+            "performer", "p1", include_similar=False
+        )
+
+
 @pytest.mark.parametrize(
     "performer,estimate,estimate_confidence,expected,confidence",
     [

@@ -6457,7 +6457,7 @@
     );
   }
   function CuratorContextControls({ type, id, label, details, className = "" }) {
-    if (type === "scene") return React.createElement(CuratorSceneAffinityPill, { id, label, score: details?.score, className: "curator-scene-page-pill" });
+    if (type === "scene") return React.createElement(CuratorSceneAffinityPill, { id, label, score: details?.score, className: className || "curator-scene-page-pill" });
     const raw = type === "scene" ? details?.score?.appeal : details?.affinity;
     const noEvidence = type === "performer" && details !== null && details !== undefined && raw == null;
     const value = typeof raw === "number" ? raw : noEvidence ? 0 : null;
@@ -6474,19 +6474,153 @@
         type !== "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
     );
   }
-  function CuratorContextLink({ type, id, label, target }) {
-    const [host, setHost] = React.useState(null);
+  function CuratorContextLink({ type, id, label, scene }) {
     const [details, setDetails] = React.useState(null);
-    React.useEffect(() => { setHost(document.querySelector(target)); }, [target]);
+    const [error, setError] = React.useState(false);
     React.useEffect(() => {
       let active = true;
       setDetails(null);
-      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id), include_similar: false })
+      setError(false);
+      operation({ operation: "get_inspector_entity", entity_type: type, entity_id: String(id), include_similar: false, include_evidence: type === "performer" })
         .then((data) => { if (active) setDetails(data); })
-        .catch(() => { if (active) setDetails(null); });
+        .catch(() => { if (active) setError(true); });
       return () => { active = false; };
     }, [type, id]);
-    return host ? ReactDOM.createPortal(React.createElement(CuratorContextControls, { type, id, label, details }), host) : null;
+    return React.createElement(CuratorEntityPanel, { type, id, label, details, error, scene });
+  }
+  function CuratorEntityPanel({ type, id, label, details, error, scene }) {
+    const [host, setHost] = React.useState(null);
+    React.useEffect(() => {
+      const anchor = document.querySelector(type === "scene" ? ".scene-tabs .scene-toolbar" : "#performer-page .performer-head .quality-group");
+      const page = document.querySelector(type === "scene" ? "#scene-page" : "#performer-page");
+      if (!anchor && !page) return;
+      const container = document.createElement("div");
+      container.className = "curator-entity-panel-host";
+      if (anchor) anchor.after(container);
+      else page.append(container);
+      setHost(container);
+      return () => { container.remove(); };
+    }, [type, id]);
+    return host ? ReactDOM.createPortal(React.createElement(CuratorEntityPanelContent, { type, id, label, details, error, scene }), host) : null;
+  }
+  function CuratorEntityPanelContent({ type, id, label, details, error, scene }) {
+    const performer = type === "performer";
+    const score = details?.score;
+    const contributions = details?.affinity_details;
+    const confidence = performer ? details?.confidence : score?.confidence;
+    const value = performer ? details?.affinity : score?.appeal;
+    const tiles = performer ? [
+      ["Affinity", value, "Combined performer preference; a signed score, not a percentage."],
+      ["Scene evidence", contributions?.learned, "Learned from their scenes, weighted by confidence."],
+      ["Favorite & rating", contributions?.prior, "Your explicit performer preferences."],
+      ["Similar performers", contributions?.similarity, "Inferred from performers with similar profiles."],
+    ] : [
+      ["Appeal", value, "Long-term preference on a -1 to +1 scale."],
+      ["Current Fit", score?.current_fit, "Suitability now, including cooldown and recent repetition."],
+      ["Direct history", score?.direct_confidence > 0 ? score.direct_appeal : null, score?.direct_confidence > 0 ? "Preference evidence from this scene's own history." : "No direct history evidence yet."],
+    ];
+    return React.createElement("details", { className: "curator-entity-panel", "aria-label": "Curator affinity details" },
+      React.createElement("summary", { className: "curator-entity-summary" },
+        React.createElement(CuratorContextControls, { type, id, label, details, className: "curator-entity-actions" }),
+        (error || !details) && React.createElement("small", null, error ? "Unavailable" : "Loading…")
+      ),
+      error ? React.createElement("p", { role: "alert" }, "Curator details could not be loaded. Check that a recommendation model is available, then reload this page.")
+        : !details ? React.createElement("p", { role: "status" }, "Loading Curator details…")
+        : React.createElement(React.Fragment, null,
+          React.createElement("div", { className: "curator-entity-tiles" },
+            ...tiles.map(([label, number, description]) => React.createElement("div", { key: label, className: "curator-entity-tile" },
+              React.createElement("span", null, label),
+              React.createElement("strong", { className: Number.isFinite(number) ? number > 0 ? "curator-entity-positive" : number < 0 ? "curator-entity-negative" : "" : "" }, Number.isFinite(number) ? formatAppealValue(number) : "—"),
+              React.createElement("small", null, description)
+            )),
+            React.createElement("div", { className: "curator-entity-tile" }, React.createElement("span", null, "Confidence"), React.createElement("strong", null, Number.isFinite(confidence) ? `${Math.round(clamp01(confidence) * 100)}%` : "—"), React.createElement("small", null, "Strength of evidence, not a probability of enjoyment."))
+          ),
+          value == null && React.createElement("p", null, "No preference evidence yet. This is different from a learned neutral preference."),
+          performer ? React.createElement(CuratorPerformerSpecifics, { details }) : React.createElement(CuratorSceneSpecifics, { details, scene }),
+          !performer && details.explanation && React.createElement("details", { className: "curator-entity-evidence" }, React.createElement("summary", null, "Why this score?"), React.createElement(ExplanationView, { explanation: details.explanation })),
+          !performer && score?.neighbors?.length > 0 && React.createElement("details", { className: "curator-entity-evidence" },
+            React.createElement("summary", null, "Scenes behind this estimate"),
+            React.createElement(CuratorSceneEvidence, { neighbors: score.neighbors })
+          )
+        )
+    );
+  }
+  function curatorSignalLabels(signals) {
+    const labels = { ...FEEDBACK_LABELS, scene_rating: "Stash scene rating", curation_rating: "Curate rating", historical_play: "Imported viewing history", viewing: "Viewing history", viewing_session: "Tracked viewing session" };
+    return [...new Set(signals || [])].map((signal) => labels[signal] || signal.replaceAll("_", " ")).join(", ") || "Signal types unavailable";
+  }
+  function CuratorPerformerSpecifics({ details }) {
+    const profile = details.profile || {};
+    const evidence = details.evidence;
+    return React.createElement("div", { className: "curator-entity-specifics" },
+      React.createElement("h4", null, "What influenced this?"),
+      React.createElement("p", null, `Favorite: ${profile.favorite ? "yes" : "no"}. Stash rating: ${profile.rating100 == null ? "unrated" : `${profile.rating100}/100`}.`),
+      React.createElement("h5", null, "Similar performers used by the model"),
+      evidence?.performers?.length ? React.createElement("ul", null, evidence.performers.map((match) => React.createElement("li", { key: match.performer_id },
+        React.createElement(NavLink, { to: `/performers/${match.performer_id}` }, match.name || `Performer ${match.performer_id}`),
+        ` · similarity ${Number(match.similarity).toFixed(2)} · preference signal ${formatSigned(match.affinity)} · confidence ${Math.round(clamp01(match.confidence) * 100)}%`
+      ))) : React.createElement("p", null, evidence ? "No similar-performer sources in this model." : "Source details are unavailable in the installed backend."),
+      React.createElement("h5", null, "Scenes with learning evidence"),
+      evidence?.scenes?.length ? React.createElement(React.Fragment, null,
+        React.createElement("p", { className: "curator-entity-note" }, "Up to eight scenes with the strongest evidence weight. These are learning inputs, not a list of explicit performer likes or dislikes."),
+        React.createElement("ul", null, evidence.scenes.map((entry) => React.createElement("li", { key: entry.scene_id },
+          React.createElement(NavLink, { to: `/scenes/${entry.scene_id}` }, entry.title || `Scene ${entry.scene_id}`),
+          ` · ${curatorSignalLabels(entry.direct.signals)} · learning signal ${formatSigned(entry.direct.learning_outcome)} · evidence weight ${Number(entry.direct.learning_evidence).toFixed(2)}`
+        )))
+      ) : React.createElement("p", null, evidence ? "No scene learning inputs available in this model." : "Scene evidence details are unavailable in the installed backend.")
+    );
+  }
+  function CuratorSceneSpecifics({ details, scene }) {
+    const components = details.score?.components || {};
+    const identity = components.performer_identity?.performers || [];
+    const similar = components.performer_similarity?.performers || [];
+    const matches = similar.flatMap((entry) => entry.matches || []);
+    const ids = [...new Set([...identity, ...matches].map((entry) => entry.performer_id).filter(Boolean))];
+    const { data, error } = GQL.useFindPerformersQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, performer_ids: ids.map(Number) }, skip: !ids.length });
+    const names = new Map([...(scene?.performers || []), ...(data?.findPerformers?.performers || [])].map((performer) => [String(performer.id), performer.name]));
+    const rows = [];
+    for (const feature of components.content?.top || []) {
+      if (!Number.isFinite(feature.value) || Math.abs(feature.value) < 0.000001) continue;
+      const name = feature.metadata?.tag_name || feature.name;
+      rows.push(React.createElement("li", { key: `content-${feature.feature_id || name}` }, `${name || "Unnamed content feature"}: content signal ${formatSigned(feature.value)}${feature.affinity_metadata?.declared_preference != null ? " (includes your declared preference)" : " (learned)"}.`));
+    }
+    for (const entry of identity) {
+      if (!Number.isFinite(entry.value) || Math.abs(entry.value) < 0.000001) continue;
+      rows.push(React.createElement("li", { key: `performer-${entry.performer_id}` },
+        React.createElement(NavLink, { to: `/performers/${entry.performer_id}` }, names.get(String(entry.performer_id)) || `Performer ${entry.performer_id}`),
+        `: performer signal ${formatSigned(entry.value)} (scene evidence ${formatSigned(entry.learned)}, favorite/rating ${formatSigned(entry.prior)}).`
+      ));
+    }
+    for (const entry of similar) {
+      if (!Number.isFinite(entry.value) || Math.abs(entry.value) < 0.000001) continue;
+      rows.push(React.createElement("li", { key: `similar-${entry.performer_id}` }, `Similar-performer inference ${formatSigned(entry.value)} for ${names.get(String(entry.performer_id)) || `performer ${entry.performer_id}`}: `,
+        ...(entry.matches || []).map((match, index) => React.createElement("span", { key: match.performer_id }, index > 0 ? "; " : "", React.createElement(NavLink, { to: `/performers/${match.performer_id}` }, names.get(String(match.performer_id)) || `Performer ${match.performer_id}`), ` (similarity ${Number(match.similarity).toFixed(2)}, preference ${formatSigned(match.affinity)})`))
+      ));
+    }
+    for (const studio of components.studio?.studios || []) {
+      if (!Number.isFinite(studio.value) || Math.abs(studio.value) < 0.000001) continue;
+      rows.push(React.createElement("li", { key: `studio-${studio.studio_id}` }, React.createElement(NavLink, { to: `/studios/${studio.studio_id}` }, String(scene?.studio?.id) === String(studio.studio_id) ? scene.studio.name : `Studio ${studio.studio_id}`), `: studio signal ${formatSigned(studio.value)}.`));
+    }
+    if (details.score?.direct_confidence > 0) rows.push(React.createElement("li", { key: "direct" }, `This scene's history: ${curatorSignalLabels(components.direct?.signals)}. Direct preference ${formatSigned(details.score.direct_appeal)}, evidence weight ${Number(components.direct?.effective_evidence || 0).toFixed(2)}.`));
+    for (const [key, label] of [["cooldown", "Recent viewing cooldown"], ["satiation", "Recent repetition"], ["not_now", "Not now feedback"]]) {
+      const value = components.fit?.[key];
+      if (Number.isFinite(value) && value > 0) rows.push(React.createElement("li", { key }, `${label}: reduces Current Fit by ${formatAppealValue(value)}.`));
+    }
+    return React.createElement("div", { className: "curator-entity-specifics" }, React.createElement("h4", null, "What influenced this?"),
+      error && React.createElement("p", null, "Performer names could not be loaded; profile links are still available."),
+      rows.length ? React.createElement(React.Fragment, null, React.createElement("ul", null, ...rows), React.createElement("p", { className: "curator-entity-note" }, "These are model inputs. Family weighting and score bounds mean the individual signals do not add directly to Appeal.")) : React.createElement("p", null, "No specific contributing inputs are available in this model."));
+  }
+  function CuratorSceneEvidence({ neighbors }) {
+    const { data, loading, error } = GQL.useFindScenesQuery({ variables: { filter: { per_page: neighbors.length }, scene_ids: neighbors.map((neighbor) => Number(neighbor.scene_id)) } });
+    const scenes = new Map((data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    return React.createElement("div", null,
+      loading && React.createElement("p", { role: "status" }, "Loading scene titles…"),
+      error && React.createElement("p", null, "Scene titles could not be loaded; links are still available."),
+      React.createElement("ul", null, neighbors.map((neighbor) => React.createElement("li", { key: neighbor.scene_id },
+        React.createElement(NavLink, { to: `/scenes/${neighbor.scene_id}` }, scenes.get(String(neighbor.scene_id))?.title || `Scene ${neighbor.scene_id}`),
+        ` · similarity ${Number(neighbor.similarity).toFixed(2)} · history signal ${formatAppealValue(neighbor.outcome)}`
+      )))
+    );
   }
   let performerAffinitiesPending = null;
   function loadPerformerAffinities() {
@@ -6778,10 +6912,10 @@
     ) });
   });
   Api.patch.after("ScenePage", function (props, _, result) {
-    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, target: ".scene-tabs .scene-toolbar .scene-toolbar-group:last-child" }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
+    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, scene: props.scene }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
   });
   Api.patch.after("PerformerPage", function (props, _, result) {
-    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}`, target: "#performer-page .name-icons" }));
+    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}` }));
   });
   Api.Event.addEventListener("stash:location", (event) => {
     attachPlayer(event.detail.data.location.pathname);

@@ -102,6 +102,26 @@ with up to three relevant content tags. Answer only the tags that contributed to
 problem, or choose a scene-specific or metadata explanation; the original thumbs down
 remains independent.
 
+### Affinity on detail pages
+
+Scene and performer pages show one collapsed Curator bar below the ratings and
+O-count controls. The bar keeps affinity or Appeal, confidence, and **Similar**
+visible; performers also have **Performer Hunt**. Click the triangle or use the
+keyboard to expand the details. The bar stays in place when expanded.
+
+Performer details separate scene evidence, favorite/rating, and similar-performer
+inference. They name the similar performers used by the published model and link
+to up to eight scenes with the strongest learning evidence. Those scenes are model
+inputs, not necessarily explicit performer likes or dislikes.
+
+Scene details separate long-term Appeal from Current Fit, show direct history, and
+name contributing content features, performers, studios, and fit adjustments.
+Expand **Why this score?** for the explanation or **Scenes behind this estimate**
+for related-scene evidence when available. Individual input signals do not add
+directly to Appeal because the model applies family weights and score bounds.
+Missing evidence is distinct from a learned neutral preference; confidence describes
+evidence strength, not the probability of enjoyment.
+
 ## Curate
 
 Curate brings together Pair picks, Tag sentiment, and Impact.
@@ -229,7 +249,7 @@ outside the library. Saved candidates appear in **Expand → Shortlist**.
   <figcaption>Similar results from the library for a selected scene.</figcaption>
 </figure>
 
-Open Similar from Curator or the compass action on a Stash scene or performer.
+Open Similar from Curator or the **Similar** action on a Stash scene or performer.
 Library results use content overlap and preference-aware performer profiles. Switch
 to StashDB only when you want external candidates; local and remote results remain
 separate and the reference entity stays visible.
@@ -252,10 +272,8 @@ missing because local scenes without StashDB identities cannot be matched. Queri
 follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
 result. Include and exclude tag filters apply to the fetched result.
 
-Performer pages show Curator's compass icon and your affinity score beside the
-name, followed by a divider and the **Similar** and **Performer Hunt** buttons.
-The score's tooltip explains the affinity scale and shows model confidence when
-available.
+Performer pages keep **Similar** and **Performer Hunt** in the collapsed
+[Curator affinity bar](#affinity-on-detail-pages), alongside the score and confidence.
 
 The film action on a StashDB Similar performer card opens the same hunt for that
 *external* performer directly, so its full catalog is fetched from StashDB instead of

@@ -1112,6 +1112,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
                 include_similar=bool(args.get("include_similar", True)),
+                include_evidence=bool(args.get("include_evidence", False)),
             )
         if operation == "get_similar":
             config = api.config()["config"]
