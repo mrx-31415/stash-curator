@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/mrx-31415/stash-curator/compare/v0.37.0...v0.37.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* clarify tag sentiment sliders on scene cards ([#351](https://github.com/mrx-31415/stash-curator/issues/351)) ([7111c07](https://github.com/mrx-31415/stash-curator/commit/7111c07cde5e832cd4a9d491a2784af7a341b99c))
+
 ## [0.37.0](https://github.com/mrx-31415/stash-curator/compare/v0.36.0...v0.37.0) (2026-10-16)
 
 
