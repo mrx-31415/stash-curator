@@ -5945,7 +5945,7 @@
 
     const laneOption = NAV_ITEMS.find((option) => option.value === lane);
 
-    const ids = slate?.items.map((item) => item.scene_id) || [];
+    const ids = laneByValue.has(lane) ? slate?.items.map((item) => item.scene_id) || [] : [];
     const scenesQuery = GQL.useFindScenesQuery({
       variables: {
         filter: { per_page: Math.max(1, ids.length) },
@@ -6187,7 +6187,7 @@
       // mounts inside ManagePanel rather than as its own top-level branch.
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods, onConfigSaved: applyDisplayConfig }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
-      scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
+      laneByValue.has(lane) && scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
       laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
