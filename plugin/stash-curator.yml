@@ -18,6 +18,10 @@ ui:
     - stash-curator.css
 
 settings:
+  detailPageControls:
+    displayName: Detail page controls
+    description: Large (default), small, or off. Choose the layout under Curator → Manage → Settings → Page settings, or enter large, small, or off here. Refresh after changing this in Stash's plugin settings.
+    type: STRING
   hideCardRatings:
     displayName: Hide card ratings and confidence
     description: Hide Curator's badges on Stash scene and performer cards. Off by default. Refresh the browser after changing this in Stash's plugin settings.

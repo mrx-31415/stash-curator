@@ -3194,6 +3194,31 @@
 .curator-entity-summary .curator-context-button-similar { margin-left: auto; }
 .curator-entity-summary .curator-context-group-scene .curator-affinity-gauge-ring { display: none; }
 .curator-entity-panel-host { min-width: 0; width: 100%; }
+.curator-entity-panel-host.curator-entity-panel-inline {
+  display: inline-flex;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+  width: auto;
+}
+body[data-curator-detail-page-controls="small"] #performer-page .performer-head .quality-group {
+  width: 100%;
+}
+#performer-page .quality-group > .curator-entity-panel-inline {
+  margin-left: auto;
+}
+body[data-curator-detail-page-controls="small"] .curator-entity-panel:not([open]) {
+  border-radius: 999px;
+  margin: 0;
+  max-width: 100%;
+  padding: 0.15rem 0.4rem;
+  width: max-content;
+}
+body[data-curator-detail-page-controls="small"] .curator-entity-panel:not([open]) .curator-affinity-confidence {
+  display: none;
+}
+body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
+  display: none;
+}
 .curator-entity-specifics { border-top: 1px solid var(--curator-border); margin-top: 0.8rem; padding-top: 0.8rem; }
 .curator-entity-specifics h4 { font-size: 1rem; }
 .curator-entity-specifics h5 { font-size: 0.9rem; margin-top: 0.9rem; }
