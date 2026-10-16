@@ -4,8 +4,17 @@ const path = require("node:path");
 const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../../plugin/stash-curator.js"), "utf8");
 let states, effects, request, updates;
-const container = { remove: () => { container.removed = true; } };
-let inserted, position;
+let inserted, position, panelOpen = false, onToggle, onSetting, observerDisconnected;
+const inlineClasses = new Set();
+const container = {
+  remove: () => { container.removed = true; },
+  querySelector: () => ({ open: panelOpen }),
+  classList: { toggle: (name, enabled) => enabled ? inlineClasses.add(name) : inlineClasses.delete(name) },
+  addEventListener: (name, callback) => { assert.equal(name, "toggle"); onToggle = callback; },
+  removeEventListener: (name, callback) => { assert.equal(callback, onToggle); onToggle = null; },
+};
+const toolbar = { append: (node) => { inserted = node; position = "toolbar"; } };
+const anchor = { ...toolbar, querySelector: () => toolbar, after: (node) => { inserted = node; position = "after-ratings"; } };
 const context = {
   React: {
     Fragment: "fragment",
@@ -14,7 +23,15 @@ const context = {
     useEffect: (effect) => effects.push(effect),
   },
   ReactDOM: { createPortal: (element, host) => ({ element, host }) },
-  document: { querySelector: (selector) => selector.includes(".scene-toolbar") || selector.includes(".quality-group") ? { after: (node) => { inserted = node; position = "after-ratings"; } } : null, createElement: () => container },
+  document: { body: { dataset: { curatorDetailPageControls: "large" } }, querySelector: (selector) => selector.includes(".scene-toolbar") || selector.includes(".quality-group") ? anchor : null, createElement: () => container },
+  MutationObserver: class {
+    constructor(callback) { onSetting = callback; observerDisconnected = false; }
+    observe(target, options) {
+      assert.equal(target, context.document.body);
+      assert.equal(options.attributeFilter[0], "data-curator-detail-page-controls");
+    }
+    disconnect() { observerDisconnected = true; }
+  },
   operation: (args) => { request = args; return context.pending; },
   CuratorContextControls() {}, CuratorAffinityGauge() {}, ExplanationView() {}, FontAwesomeIcon: "icon", faCompass: "compass", NavLink: "link",
   clamp01: (value) => Math.max(0, Math.min(1, value)),
@@ -76,12 +93,24 @@ assert.doesNotMatch(text(specificScene), /Recent repetition/);
 
 (async () => {
   for (const type of ["scene", "performer"]) {
+    context.document.body.dataset.curatorDetailPageControls = "large";
     states = [null]; updates = []; effects = [];
     context.CuratorEntityPanel({ type, id: "12" });
     const cleanup = effects[0]();
     assert.equal(inserted, container);
     assert.equal(position, "after-ratings");
+    context.document.body.dataset.curatorDetailPageControls = "small"; onSetting();
+    assert.equal(position, "toolbar", "Small starts inside the existing toolbar");
+    assert.ok(inlineClasses.has("curator-entity-panel-inline"));
+    panelOpen = true; onToggle();
+    assert.equal(position, "after-ratings", "expanded details sit below the toolbar");
+    panelOpen = false; onToggle();
+    assert.equal(position, "toolbar", "collapse returns to the original row");
+    context.document.body.dataset.curatorDetailPageControls = "off"; onSetting();
+    assert.equal(position, "after-ratings");
+    assert.ok(!inlineClasses.has("curator-entity-panel-inline"));
     cleanup(); assert.equal(container.removed, true);
+    assert.equal(onToggle, null); assert.equal(observerDisconnected, true);
   }
   let resolve;
   context.pending = new Promise((done) => { resolve = done; });

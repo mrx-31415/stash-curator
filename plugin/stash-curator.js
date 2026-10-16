@@ -950,6 +950,7 @@
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
     document.body.classList.toggle("curator-hide-card-badges", values.hideCardRatings === true);
+    document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(values.detailPageControls) ? values.detailPageControls : "large";
     return payload.data.configurePlugin;
   }
 
@@ -972,6 +973,7 @@
     }
     const settings = payload.data.configuration.plugins["stash-curator"] || {};
     document.body.classList.toggle("curator-hide-card-badges", settings.hideCardRatings === true);
+    document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(settings.detailPageControls) ? settings.detailPageControls : "large";
     return settings;
   }
 
@@ -5346,6 +5348,7 @@
     {
       title: "Page settings",
       fields: [
+        { key: "detailPageControls", type: "SELECT", default: "large", options: [{ value: "large", label: "Large" }, { value: "small", label: "Small" }, { value: "off", label: "Off" }], label: "Detail page controls", description: "Curator's expandable bar on scene and performer pages: Large (default), Small for compact icons and score, or Off to hide it." },
         { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
@@ -6472,10 +6475,24 @@
       if (!anchor && !page) return;
       const container = document.createElement("div");
       container.className = "curator-entity-panel-host";
-      if (anchor) anchor.after(container);
-      else page.append(container);
+      const toolbarGroup = type === "scene" ? anchor?.querySelector(".scene-toolbar-group:last-child") || anchor : anchor;
+      function position() {
+        const inline = toolbarGroup && document.body.dataset.curatorDetailPageControls === "small" && !container.querySelector(".curator-entity-panel")?.open;
+        container.classList.toggle("curator-entity-panel-inline", !!inline);
+        if (inline) toolbarGroup.append(container);
+        else if (anchor) anchor.after(container);
+        else page.append(container);
+      }
+      position();
+      const observer = new MutationObserver(position);
+      observer.observe(document.body, { attributes: true, attributeFilter: ["data-curator-detail-page-controls"] });
+      container.addEventListener("toggle", position, true);
       setHost(container);
-      return () => { container.remove(); };
+      return () => {
+        observer.disconnect();
+        container.removeEventListener("toggle", position, true);
+        container.remove();
+      };
     }, [type, id]);
     return host ? ReactDOM.createPortal(React.createElement(CuratorEntityPanelContent, { type, id, label, details, error, scene }), host) : null;
   }

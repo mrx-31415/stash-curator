@@ -896,7 +896,7 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const classes = new Set();
 let settings = {}, fail = false;
 const context = {
-  document: { body: { classList: { toggle(name, hidden) {
+  document: { body: { dataset: {}, classList: { toggle(name, hidden) {
     assert.equal(name, 'curator-hide-card-badges');
     if (hidden) classes.add(name); else classes.delete(name);
   } } } },
@@ -915,6 +915,14 @@ vm.runInContext(source.slice(source.indexOf('  async function configurePlugin(')
 (async () => {
   await context.getPluginSettings();
   assert.equal(classes.size, 0, 'badges remain visible by default');
+  assert.equal(context.document.body.dataset.curatorDetailPageControls, 'large');
+  for (const size of ['small', 'off', 'large', 'invalid']) {
+    const expected = ['small', 'off'].includes(size) ? size : 'large';
+    await context.configurePlugin({ detailPageControls: size });
+    assert.equal(context.document.body.dataset.curatorDetailPageControls, expected);
+    await context.getPluginSettings();
+    assert.equal(context.document.body.dataset.curatorDetailPageControls, expected);
+  }
   await context.configurePlugin({ pageSize: 42, hideCardRatings: true });
   assert.equal(classes.size, 1, 'hiding applies immediately after save');
   classes.clear();

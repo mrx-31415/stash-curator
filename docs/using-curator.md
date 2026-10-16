@@ -114,6 +114,11 @@ O-count controls. The bar keeps affinity or Appeal, confidence, and **Similar**
 visible; performers also have **Performer Hunt**. Click the triangle or use the
 keyboard to expand the details. The bar stays in place when expanded.
 
+Under **Manage → Settings → Page settings → Detail page controls**, choose
+**Large** (default) for the full-width bar, **Small** for compact icons and a score
+inside the existing toolbar, or **Off** to hide these page controls. In Small mode,
+expanding moves the details below the toolbar; collapsing returns the icons to it.
+
 Performer details separate scene evidence, favorite/rating, and similar-performer
 inference. They name the similar performers used by the published model and link
 to up to eight scenes with the strongest learning evidence. Those scenes are model
