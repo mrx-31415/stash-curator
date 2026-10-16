@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/mrx-31415/stash-curator/compare/v0.37.1...v0.38.0) (2026-10-16)
+
+
+### Features
+
+* retire description-term recommendations and ratings ([#353](https://github.com/mrx-31415/stash-curator/issues/353)) ([d596868](https://github.com/mrx-31415/stash-curator/commit/d59686848f87170b98751e410263e39bc4715f0f))
+
 ## [0.37.1](https://github.com/mrx-31415/stash-curator/compare/v0.37.0...v0.37.1) (2026-10-16)
 
 
