@@ -198,20 +198,46 @@ func refreshPendingLocalSceneMatches(db dbx, base string, headers map[string]str
 			ids.arr = append(ids.arr, jvStr(item.id))
 		}
 		data, err := graphqlQuery(base, headers, localMatchIDsQuery, jvObj(jvKey("ids", ids)))
-		if err != nil {
-			return err
-		}
-		items := data.get("findScenes").get("scenes")
-		if items.kind != jArr {
-			return fmt.Errorf("Stash did not return changed local scene matches")
-		}
 		byID := map[string]jVal{}
-		for _, scene := range items.arr {
-			id := pythonStrOrEmpty(scene.get("id"))
-			if id == "" {
-				return fmt.Errorf("local scene match is missing an id")
+		if err != nil {
+			if !strings.Contains(err.Error(), "scene with id ") || !strings.Contains(err.Error(), " not found") {
+				return err
 			}
-			byID[id] = scene
+			// Stash rejects the whole ID batch if a queued scene was deleted; singular lookups return null.
+			declarations, fields := make([]string, len(batch)), make([]string, len(batch))
+			variables := jvObj()
+			for index, item := range batch {
+				key := fmt.Sprintf("s%d", index)
+				declarations[index] = "$" + key + ": ID!"
+				fields[index] = fmt.Sprintf("%s: findScene(id: $%s) {%s}", key, key, localMatchFields)
+				variables.set(key, jvStr(item.id))
+			}
+			query := "query CuratorLocalSceneMatchesByIds(" + strings.Join(declarations, ", ") + ") { " + strings.Join(fields, " ") + " }"
+			data, err = graphqlQuery(base, headers, query, variables)
+			if err != nil {
+				return err
+			}
+			for index, item := range batch {
+				key := fmt.Sprintf("s%d", index)
+				if !data.has(key) {
+					return fmt.Errorf("Stash did not return changed local scene matches")
+				}
+				if scene := data.get(key); scene.kind != jNull {
+					byID[item.id] = scene
+				}
+			}
+		} else {
+			items := data.get("findScenes").get("scenes")
+			if items.kind != jArr {
+				return fmt.Errorf("Stash did not return changed local scene matches")
+			}
+			for _, scene := range items.arr {
+				id := pythonStrOrEmpty(scene.get("id"))
+				if id == "" {
+					return fmt.Errorf("local scene match is missing an id")
+				}
+				byID[id] = scene
+			}
 		}
 		if err := withTxn(db, func(conn *sql.Conn) error {
 			for _, item := range batch {
