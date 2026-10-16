@@ -6877,12 +6877,13 @@
       React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: "Find similar scenes with Curator", "aria-label": "Find similar scenes with Curator" }, React.createElement(FontAwesomeIcon, { icon: faClone }))
     );
   }
-  Api.patch.after("SceneCard", function (props, ...args) {
-    const result = args[args.length - 1];
-    if (props.curatorAppeal !== undefined || props.scene?.id == null || !React.isValidElement(result)) return result;
-    return React.cloneElement(result, { overlays: React.createElement(React.Fragment, null,
-      result.props.overlays, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title })
-    ) });
+  Api.patch.after("SceneCard.Overlays", function (props, _, ...overlays) {
+    // Stash spreads theme replacement arrays into hook arguments, including empty arrays.
+    const result = overlays.length === 1 ? overlays[0] : overlays;
+    if (props.curatorAppeal !== undefined || props.scene?.id == null) return result;
+    return React.createElement(React.Fragment, null,
+      result, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title })
+    );
   });
   function CuratorPerformerCardBadge({ performer }) {
     const [details, setDetails] = React.useState(null);
