@@ -879,6 +879,70 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
         assert f'key: "{key}", type: "{field_type}", label: "{label}"' in source
 
 
+def test_card_badge_visibility_loads_and_saves_without_changing_on_failure() -> None:
+    root = Path(__file__).parents[2]
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the card badge setting check")
+    subprocess.run(
+        [
+            node,
+            "-e",
+            r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const classes = new Set();
+let settings = {}, fail = false;
+const context = {
+  document: { body: { classList: { toggle(name, hidden) {
+    assert.equal(name, 'curator-hide-card-badges');
+    if (hidden) classes.add(name); else classes.delete(name);
+  } } } },
+  fetch: async (_, options) => {
+    const request = JSON.parse(options.body);
+    if (fail) return { ok: false, json: async () => ({ errors: [{ message: 'save failed' }] }) };
+    if (request.variables) settings = request.variables.input;
+    return { ok: true, json: async () => ({ data: {
+      configurePlugin: true, configuration: { plugins: { 'stash-curator': settings } },
+    } }) };
+  },
+};
+vm.createContext(context);
+vm.runInContext(source.slice(source.indexOf('  async function configurePlugin('),
+  source.indexOf('  function formatTimeAgo(')), context);
+(async () => {
+  await context.getPluginSettings();
+  assert.equal(classes.size, 0, 'badges remain visible by default');
+  await context.configurePlugin({ pageSize: 42, hideCardRatings: true });
+  assert.equal(classes.size, 1, 'hiding applies immediately after save');
+  classes.clear();
+  assert.equal((await context.getPluginSettings()).pageSize, 42);
+  assert.equal(classes.size, 1, 'a fresh page restores the saved setting');
+  await context.configurePlugin({ ...settings, hideCardRatings: false });
+  assert.equal(classes.size, 0, 'badges can be shown again');
+  fail = true;
+  await assert.rejects(context.configurePlugin({ hideCardRatings: true }), /save failed/);
+  assert.equal(classes.size, 0, 'failed saves preserve the current display');
+  const css = fs.readFileSync(process.argv[2], 'utf8');
+  const selector = String.raw`\.curator-hide-card-badges \.performer-card `
+    + String.raw`\.curator-performer-card-badge,\s*`
+    + String.raw`\.curator-hide-card-badges \.scene-card `
+    + String.raw`\.curator-scene-card-badge\s*\{\s*display: none;`;
+  assert.match(css, new RegExp(selector));
+  assert.ok(source.includes('getPluginSettings().catch('), 'load settings when Stash starts');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+""",
+            str(root / "plugin" / "stash-curator.js"),
+            str(root / "plugin" / "stash-curator.css"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_header_controls_work_without_hover_and_settings_switches_have_labels() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
     controls = source.split("  function CuratorControls(", 1)[1].split(

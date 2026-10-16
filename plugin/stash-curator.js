@@ -950,6 +950,7 @@
     if (!response.ok || payload.errors) {
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
+    document.body.classList.toggle("curator-hide-card-badges", values.hideCardRatings === true);
     return payload.data.configurePlugin;
   }
 
@@ -970,7 +971,9 @@
     if (!response.ok || payload.errors) {
       throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
     }
-    return payload.data.configuration.plugins["stash-curator"] || {};
+    const settings = payload.data.configuration.plugins["stash-curator"] || {};
+    document.body.classList.toggle("curator-hide-card-badges", settings.hideCardRatings === true);
+    return settings;
   }
 
   function formatTimeAgo(ms) {
@@ -5371,6 +5374,7 @@
     {
       title: "Page settings",
       fields: [
+        { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
       ],
@@ -6921,6 +6925,7 @@
     attachPlayer(event.detail.data.location.pathname);
     flushQueue();
   });
+  getPluginSettings().catch((error) => console.warn("Curator could not load card display settings:", error.message));
   window.addEventListener("online", flushQueue);
   window.addEventListener("online", flushTagPreferenceQueue);
   window.addEventListener("pagehide", () => finishTracker(false));

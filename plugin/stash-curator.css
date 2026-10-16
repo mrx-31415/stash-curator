@@ -3242,6 +3242,11 @@
 :is(.curator-context-group-performer, .curator-context-group-scene) .curator-context-button:hover {
   background: var(--curator-wash-raised) !important;
 }
+.curator-hide-card-badges .performer-card .curator-performer-card-badge,
+.curator-hide-card-badges .scene-card .curator-scene-card-badge {
+  display: none;
+}
+
 .performer-card .curator-performer-card-badge,
 .scene-card .curator-scene-card-badge {
   bottom: 0.45rem;
