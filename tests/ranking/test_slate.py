@@ -1169,10 +1169,8 @@ def test_available_count_batched_blocked_tag_probe_excludes_scenes(tmp_path: Pat
     assert builder.available_count("model", "best_bets") == first - 1
 
 
-def test_available_count_blocked_term_probe_excludes_scenes(tmp_path: Path) -> None:
-    """Blocking a description term hard-excludes every scene whose built
-    entity_feature rows carry it — the term->scene mapping comes from the
-    published model's desc features, not a scene_tag join."""
+def test_available_count_ignores_legacy_description_term_blocks(tmp_path: Path) -> None:
+    """Stored term answers no longer exclude recommendation candidates."""
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
     builder = SlateBuilder(connection)
@@ -1211,7 +1209,7 @@ def test_available_count_blocked_term_probe_excludes_scenes(tmp_path: Path) -> N
         """
     )
     connection.commit()
-    assert builder.available_count("model", "best_bets") == first - 1
+    assert builder.available_count("model", "best_bets") == first
 
 
 def test_available_count_probes_are_batched_not_per_scene(tmp_path: Path) -> None:

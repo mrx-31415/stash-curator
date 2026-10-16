@@ -912,10 +912,6 @@ class CuratorAPI:
         inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
-    def submit_term_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
-        inserted = InteractionStore(self.connection).submit_term_preferences(entries)
-        return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
-
     def get_scene_tag_choices(self, scene_id: str) -> dict[str, object]:
         if not scene_id:
             raise ValueError("scene_id is required")
@@ -944,41 +940,6 @@ class CuratorAPI:
                     "direct_blocked": bool(row["direct_blocked"]),
                 }
             )
-        return {"schema_version": API_SCHEMA_VERSION, "items": items}
-
-    def get_scene_description_tokens(self, scene_id: str) -> dict[str, object]:
-        if not scene_id:
-            raise ValueError("scene_id is required")
-        feature_version = FeatureStore(self.connection).current_version()
-        direct: dict[str, tuple[float | None, bool]] = {}
-        for row in self.connection.execute(
-            "SELECT term, value, blocked FROM direct_term_preference"
-        ):
-            direct[str(row["term"])] = (float(row["value"]), bool(row["blocked"]))
-        items: list[dict[str, object]] = []
-        if feature_version is not None:
-            for row in self.connection.execute(
-                """
-                SELECT fd.name, fd.metadata_json
-                FROM entity_feature ef
-                JOIN feature_definition fd ON fd.feature_id=ef.feature_id
-                WHERE ef.feature_version=? AND ef.entity_type='scene' AND ef.entity_id=?
-                  AND fd.family='content' AND fd.name LIKE 'desc:%'
-                ORDER BY fd.name
-                """,
-                (feature_version, scene_id),
-            ):
-                term = str(row["name"])[len("desc:") :]
-                metadata = json.loads(str(row["metadata_json"] or "{}"))
-                direct_value, direct_blocked = direct.get(term, (None, False))
-                items.append(
-                    {
-                        "term": term,
-                        "document_frequency": int(metadata.get("document_frequency", 0)),
-                        "direct_value": direct_value,
-                        "direct_blocked": direct_blocked,
-                    }
-                )
         return {"schema_version": API_SCHEMA_VERSION, "items": items}
 
     def taste_profile(self) -> dict[str, object]:

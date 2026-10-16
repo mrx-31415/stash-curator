@@ -252,7 +252,7 @@ def _classification_payload(
 def _confirmed_tag_candidates(contributions: list[dict[str, object]]) -> list[dict[str, object]]:
     """Content-family contributions restricted to StashDB-confirmed tags.
 
-    Description terms and unconfirmed tags cannot be named as a Stretch taste
+    Unconfirmed tags cannot be named as a Stretch taste
     dimension — see docs/workpackage-lane-redesign.md ("Facets, not tags").
     """
     candidates = []
@@ -1192,40 +1192,6 @@ class PreferenceModelBuilder:
             "SELECT tag_id, value FROM direct_tag_preference ORDER BY tag_id"
         ):
             direct_feature_id = tag_features.get(str(row["tag_id"]))
-            if direct_feature_id is None:
-                continue
-            learned = result.get(
-                direct_feature_id,
-                _Affinity(direct_feature_id, 0.0, 0.0, 0.0, 0, {}),
-            )
-            direct_support = 8.0
-            direct_value = float(row["value"])
-            result[direct_feature_id] = _Affinity(
-                direct_feature_id,
-                _clamp(
-                    (learned.affinity * learned.support + direct_value * direct_support)
-                    / (learned.support + direct_support)
-                ),
-                max(learned.confidence, 0.9),
-                learned.support + direct_support,
-                learned.scene_count,
-                {
-                    **learned.contexts,
-                    "declared_preference": direct_value,
-                    "learned_affinity": learned.affinity,
-                    "learned_confidence": learned.confidence,
-                },
-            )
-        term_features = {
-            feature.name.removeprefix("desc:"): feature.feature_id
-            for features in scene_features.values()
-            for feature in features
-            if feature.family == "content" and feature.name.startswith("desc:")
-        }
-        for row in self.connection.execute(
-            "SELECT term, value FROM direct_term_preference ORDER BY term"
-        ):
-            direct_feature_id = term_features.get(str(row["term"]))
             if direct_feature_id is None:
                 continue
             learned = result.get(

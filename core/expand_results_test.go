@@ -125,8 +125,11 @@ VALUES ('block','description',-1,1,1000)`); err != nil {
 VALUES ('description','block',-1,1,1000)`); err != nil {
 		t.Fatal(err)
 	}
-	if got := serve(1, "match", nil, links).get("total").asString(); got != "0" {
-		t.Fatalf("blocked term reused stale ordering: total %s", got)
+	if got := serve(1, "match", nil, links).get("total").asString(); got != "11" {
+		t.Fatalf("legacy term answer filtered candidates: total %s", got)
+	}
+	if got := serve(1, "newest", nil, links).get("total").asString(); got != "11" {
+		t.Fatalf("legacy term answer filtered a new ordering: total %s", got)
 	}
 }
 

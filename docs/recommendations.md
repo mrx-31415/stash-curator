@@ -13,17 +13,23 @@ assumed to be disliked.
 ## What teaches Curator
 
 Curator uses Stash ratings and viewing history, playback captured in the browser,
-scene feedback, pair picks, and direct tag or description-term preferences.
+scene feedback, pair picks, and direct tag preferences.
 Performer ratings and favorites, and studio favorites, provide additional hints.
-Tags, description terms, performers, and studios connect those signals to other
+Tags, performers, and studios connect those signals to other
 scenes. Better metadata and a few deliberate answers give it more useful evidence;
 you do not need to rate the whole library.
 
-Pair picks express a relative preference between two scenes. Tag and term ratings
+Pair picks express a relative preference between two scenes. Tag ratings
 express a preference for that feature. **Strong dislike** lowers preference;
 **Never** is a hard exclusion for matching content. **Clear answer** removes the
 direct preference or block. These are separate from **Never show**, which suppresses
 one scene.
+
+Scene descriptions are display metadata, not recommendation signals. Description
+term extraction and ratings have been retired; saved term answers are preserved
+but no longer affect scores or exclusions. Scenes with sparse tags can still use
+performer, studio, and viewing evidence. After updating, rebuild the model and
+refresh Expand to replace previously computed scores.
 
 ## Understand the scores
 

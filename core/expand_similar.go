@@ -215,7 +215,7 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 				}
 			}
 			if !expandSceneMatches(payload, includeTags, excludeTags, performerNames, studioNames,
-				"", "", includeGroups, excludeGroups, nil, nil) {
+				"", "", includeGroups, excludeGroups, nil) {
 				continue
 			}
 			if favoriteOnly {
@@ -479,6 +479,7 @@ func whyForShared(tags jVal, shared map[string]bool, exactPerformer bool, perfor
 
 // profileMatchFull mirrors ExpandService._profile_match, also returning the
 // per-block similarities and weights for the why attributes.
+//
 //go:noinline
 func profileMatchFull(left, right *performerProfile, weights map[string]float64) (float64, float64, map[string]float64, map[string]float64) {
 	total, sims, used := performerSimilarity(left, right, weights)
@@ -725,10 +726,6 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	if err != nil {
 		return jvNull(), err
 	}
-	blockedTerms, err := service.blockedTermSet()
-	if err != nil {
-		return jvNull(), err
-	}
 	filtered := make([]jVal, 0, len(rawItems))
 	for _, item := range rawItems {
 		if gender != "" && !payloadMatchesGender(item.get("payload"), entityType, gender) {
@@ -740,7 +737,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		sceneFiltered := make([]jVal, 0, len(filtered))
 		for _, item := range filtered {
 			if expandSceneMatches(item.get("payload"), nil, nil, nil, nil, "", "",
-				nil, nil, blockedGroups, blockedTerms) {
+				nil, nil, blockedGroups) {
 				sceneFiltered = append(sceneFiltered, item)
 			}
 		}

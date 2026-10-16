@@ -93,11 +93,10 @@ its current metadata from training.
 
 To correct a tag belief directly, use [Curate → Tag sentiment](#tag-sentiment).
 
-The **Rate tags & terms** action on recommendation and Library Similar cards also
-lets you rate the scene's tags and description terms used by the model. The same
-sentiment controls, including **Never** and **Clear**, apply to both.
+The **Rate tags** action on recommendation and Library Similar cards lets you
+rate the scene's tags with the sentiment controls, including **Never** and **Clear**.
 Card rating actions open a wider slider panel, with one aligned label header and
-one compact row per tag or term. Each row shows the current answer and **Clear**.
+one compact row per tag. Each row shows the current answer and **Clear**.
 The panel shows the full list and scrolls with the page, with **Collapse** at the bottom.
 On phones, shorter sliders show just the two end labels; the current answer stays
 visible on the right. Long tag names are shortened to keep each rating on one row.
@@ -244,8 +243,8 @@ StashDB Similar. StashDB-only tags do not need to exist in your library; names a
 aliases filter remote results. Refresh Expand's cache to update that catalog.
 If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
 it sends only the scene you select. Use
-**Rate tags & terms** to rate tags that map exactly to local tags and description
-terms known to the model. This does not create scene-level feedback for media
+**Rate tags** to rate tags that map exactly to local tags.
+This does not create scene-level feedback for media
 outside the library. Saved candidates appear in **Expand → Shortlist**.
 
 ### Similar

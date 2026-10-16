@@ -36,7 +36,7 @@ def binary() -> Path:
 
 def make_feature_sidecar(path: Path) -> None:
     """The model-builder synthetic library plus scene details (for the
-    description-term features) and a small taxonomy snapshot (for the
+    description metadata) and a small taxonomy snapshot (for the
     tag-role resolution path)."""
     connection = _database(path)
     try:
@@ -81,10 +81,7 @@ def make_feature_sidecar(path: Path) -> None:
             "INSERT INTO application_meta(key, value)"
             " VALUES ('taxonomy_snapshot_id', 'tax-feature')"
         )
-        # Direct term preferences exercise the affinity blend in the model
-        # build: terms the feature builder emits (romantic/intense/adventure
-        # qualify from the seeded descriptions) get declared evidence blended
-        # with learned affinity, byte-identically in both implementations.
+        # Legacy answers remain stored but do not participate in model building.
         connection.executemany(
             """
             INSERT INTO direct_term_preference_history(

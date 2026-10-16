@@ -26,6 +26,12 @@ resident RPC conversion is off the table (disproven — no residency in Stash's
 
 ## Current state
 
+Description-term extraction, ratings, scoring, and exclusions have been retired.
+The historical #94/#95 delivery notes below describe the old implementation.
+Stored term answers and applied migrations are preserved. A new feature
+fingerprint retires description-bearing artifacts on the next model update;
+refresh Expand to replace its previously cached scores.
+
 Curator is a working preview for Stash v0.31 with Python 3.12+. Public product,
 architecture, privacy, and contributor guidance now lives in the main `docs/` pages.
 

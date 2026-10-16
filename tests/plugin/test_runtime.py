@@ -691,12 +691,12 @@ def test_external_scene_cards_can_rate_matching_local_tags() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert 'operation: "get_external_tag_choices"' in source
-    assert '"Rate tags & terms"' in source
+    assert '"Rate tags"' in source
     assert '"No matching local tags."' in source
     assert "submitTagPreference(tag.tag_id, {value, blocked});" in source
 
 
-def test_recommendation_and_similar_cards_can_rate_local_tags_and_terms() -> None:
+def test_recommendation_and_similar_cards_can_rate_local_tags() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert "function LocalRatingPanel" in source
@@ -704,9 +704,9 @@ def test_recommendation_and_similar_cards_can_rate_local_tags_and_terms() -> Non
     assert "React.createElement(LocalRatingPanel, { sceneId: item.scene_id })" in source
     assert "React.createElement(LocalRatingPanel, { sceneId: item.entity_id })" in source
     assert "submitTagPreference(row.tag_id, {value, blocked});" in source
-    assert "submitTermPreference(row.term, {value, blocked});" in source
-    assert "TERM_PREFERENCE_QUEUE_KEY" in source
-    assert "localStorage.setItem(TERM_PREFERENCE_QUEUE_KEY" in source
+    assert "submitTermPreference" not in source
+    assert "TERM_PREFERENCE_QUEUE_KEY" not in source
+    assert "localStorage.setItem(TERM_PREFERENCE_QUEUE_KEY" not in source
 
 
 def test_curator_external_components_are_public_and_patchable() -> None:
@@ -1602,7 +1602,7 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "Querying StashDB" not in source
     assert 'className: "curator-loading", role: "status"' in source
     assert 'className: "curator-progress"' not in source
-    assert '"Rate tags & terms"' in source
+    assert '"Rate tags"' in source
     assert "RatingSection" in source
     assert "Collapse matching local tag ratings" in source
     assert "compact: true" in source
@@ -1861,12 +1861,12 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
 
     # ── external card tag rating states ──
     assert '"Matching local tags…"' in source
-    assert '"Rate tags & terms"' in source
-    assert '"Description terms"' in source
-    assert '"No description terms in the model."' in source
-    assert "TERM_PREFERENCE_QUEUE_KEY" in source
-    assert 'operation: "get_scene_description_tokens"' in source
-    assert 'operation: "submit_term_preferences"' in source
+    assert '"Rate tags"' in source
+    assert '"Description terms"' not in source
+    assert '"No description terms in the model."' not in source
+    assert "TERM_PREFERENCE_QUEUE_KEY" not in source
+    assert 'operation: "get_scene_description_tokens"' not in source
+    assert 'operation: "submit_term_preferences"' not in source
     assert '"Configure Whisparr in plugin settings"' in source
     assert '"Retry sending to Whisparr"' in source
     assert '"Send to Whisparr"' in source

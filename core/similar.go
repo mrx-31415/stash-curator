@@ -454,7 +454,6 @@ func (s *similarityService) scenes(sceneID string, count int64, gender string,
 		excluded        []map[string]bool
 		favorites       map[string]bool
 		blockedScenes   map[string]bool
-		blockedTerms    []string
 	}
 	var loads similarReads
 	var readWG sync.WaitGroup
@@ -526,11 +525,6 @@ func (s *similarityService) scenes(sceneID string, count int64, gender string,
 		loads.blockedScenes, err = loadBlockedScenes(s.read)
 		return err
 	})
-	runLoad(func() error {
-		var err error
-		loads.blockedTerms, err = loadBlockedTerms(s.read)
-		return err
-	})
 	readWG.Wait()
 	if readErr != nil {
 		return nil, readErr
@@ -580,34 +574,6 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 		var err error
 		sceneTags, err = sceneTagNames(s.read, filterNames)
 		if err != nil {
-			return nil, err
-		}
-	}
-	if len(loads.blockedTerms) > 0 {
-		placeholders := inClause(len(loads.blockedTerms))
-		args := make([]any, 0, len(loads.blockedTerms)+1)
-		args = append(args, s.featureVersion)
-		for _, term := range loads.blockedTerms {
-			args = append(args, "desc:"+term)
-		}
-		rows, err := s.db.Query(`SELECT DISTINCT ef.entity_id FROM entity_feature ef
-WHERE ef.feature_version=? AND ef.entity_type='scene'
-  AND ef.feature_id IN (
-    SELECT feature_id FROM feature_definition
-    WHERE family='content' AND name IN (`+placeholders+`))`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var blockedSceneID string
-			if err := rows.Scan(&blockedSceneID); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			loads.blockedScenes[blockedSceneID] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
 			return nil, err
 		}
 	}
@@ -758,7 +724,7 @@ WHERE ef.feature_version=? AND ef.entity_type='scene'
 		results = append(results, &similarityResult{
 			entityID: candidateID, similarity: similarity, appeal: appeal,
 			rankScore: rankScore, relationships: relationships, details: details,
-			appealRaw: candidateAppeal,
+			appealRaw:   candidateAppeal,
 			explanation: similarExplanation(similarity, contentValue, performerValue, structure, sameStudio, candidateAppeal, relationships),
 		})
 	}
@@ -952,29 +918,6 @@ func loadBlockedScenes(db dbx) (map[string]bool, error) {
 		blockedScenes[sceneID] = true
 	}
 	return blockedScenes, rows.Err()
-}
-
-// loadBlockedTerms mirrors the blocked-term preference read of
-// SimilarityService.scenes.
-func loadBlockedTerms(db dbx) ([]string, error) {
-	rows, err := db.Query(`SELECT term FROM direct_term_preference WHERE blocked=1`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var blockedTerms []string
-	for rows.Next() {
-		var term string
-		if err := rows.Scan(&term); err != nil {
-			return nil, err
-		}
-		blockedTerms = append(blockedTerms, term)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sort.Strings(blockedTerms)
-	return blockedTerms, nil
 }
 
 // scenePerformers mirrors SimilarityService._scene_performers.
