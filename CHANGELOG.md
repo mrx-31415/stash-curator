@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/mrx-31415/stash-curator/compare/v0.36.0...v0.37.0) (2026-10-16)
+
+
+### Features
+
+* allow hiding card ratings and confidence ([#349](https://github.com/mrx-31415/stash-curator/issues/349)) ([35f29ee](https://github.com/mrx-31415/stash-curator/commit/35f29eea4f289b2cb4bc142b7895fe441778a1c7))
+
 ## [0.36.0](https://github.com/mrx-31415/stash-curator/compare/v0.35.0...v0.36.0) (2026-10-14)
 
 
