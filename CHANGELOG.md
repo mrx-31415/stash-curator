@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.1](https://github.com/mrx-31415/stash-curator/compare/v0.38.0...v0.38.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* skip stale scene queries outside recommendation lanes ([#355](https://github.com/mrx-31415/stash-curator/issues/355)) ([f05fdb9](https://github.com/mrx-31415/stash-curator/commit/f05fdb90eec26a9b0491cfa704faa6c04d105785))
+
 ## [0.38.0](https://github.com/mrx-31415/stash-curator/compare/v0.37.1...v0.38.0) (2026-10-16)
 
 
