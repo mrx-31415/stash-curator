@@ -72,6 +72,11 @@ must be writable by Stash. In Docker, use a path inside the container backed by 
 persistent local volume or bind mount. Changing this setting later opens a different
 database; it does not move your existing Curator data.
 
+To hide Curator's ratings/confidence badges on Stash scene and performer cards,
+enable **Manage → Settings → Page settings → Hide card ratings and confidence**.
+This updates the card display immediately. The same option is available in Stash's
+Curator plugin settings; refresh the browser after changing it there.
+
 ## Build the first model
 
 Open Curator and select **Sync and build recommendations** in the setup checklist.

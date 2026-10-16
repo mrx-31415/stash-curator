@@ -18,6 +18,10 @@ ui:
     - stash-curator.css
 
 settings:
+  hideCardRatings:
+    displayName: Hide card ratings and confidence
+    description: Hide Curator's badges on Stash scene and performer cards. Off by default. Refresh the browser after changing this in Stash's plugin settings.
+    type: BOOLEAN
   profilingEnabled:
     displayName: Enable profiling
     description: Record recent Curator operation timings for the Profiling page.
