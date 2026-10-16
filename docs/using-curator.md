@@ -96,6 +96,12 @@ To correct a tag belief directly, use [Curate → Tag sentiment](#tag-sentiment)
 The **Rate tags & terms** action on recommendation and Library Similar cards also
 lets you rate the scene's tags and description terms used by the model. The same
 sentiment controls, including **Never** and **Clear**, apply to both.
+Card rating actions open a wider slider panel, with one aligned label header and
+one compact row per tag or term. Each row shows the current answer and **Clear**.
+The panel shows the full list and scrolls with the page, with **Collapse** at the bottom.
+On phones, shorter sliders show just the two end labels; the current answer stays
+visible on the right. Long tag names are shortened to keep each rating on one row.
+**Never (block)** excludes matching content; it is stronger than dislike.
 
 After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
 with up to three relevant content tags. Answer only the tags that contributed to the

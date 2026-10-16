@@ -1372,7 +1372,15 @@
     );
   }
 
-  // A single 6-stop control: "Never" is stop 0 on the same track as the 5
+  function SentimentScale() {
+    return React.createElement("div", { className: "curator-sentiment-scale", "aria-hidden": true },
+      ["Never (block)", ...SENTIMENTS.map(([, label]) => label)].map((label, index) =>
+        React.createElement("span", { key: label, className: index === 0 ? "curator-sentiment-scale-never" : undefined, style: { left: `${index * 20}%` } }, label)
+      )
+    );
+  }
+
+  // "Never" is stop 0 on the same track as the 5
   // sentiment levels (not a separate toggle) — set apart visually with its
   // own color, per the #150 design brief. The visible track/stops/thumb are
   // a purely decorative rail; a fully transparent native range input sits
@@ -1383,7 +1391,7 @@
   // model's own continuous estimate, distinct from the user's discrete
   // direct rating), renders as a small differently-colored tick on the same
   // track so the two can be compared at a glance.
-  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null }) {
+  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null, showScale = compact }) {
     const rated = (value !== null && value !== undefined) || blocked;
     const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
     const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
@@ -1413,7 +1421,8 @@
     const hasModelEstimate = inferredValue !== null && inferredValue !== undefined;
     return React.createElement(
       "div",
-      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}${showScale ? " curator-sentiment-labelled" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      showScale && React.createElement(SentimentScale),
       React.createElement(
         "label",
         { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
@@ -1448,7 +1457,7 @@
             onClick: handleClick,
           })
         ),
-        !compact && React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
+        React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
       ),
       React.createElement(Button, { size: "sm", variant: "secondary", className: !rated ? "curator-sentiment-clear-placeholder" : undefined, "aria-label": "Clear answer", title: "Clear answer", onClick: () => onChange({ value: null, blocked: false }) }, compact ? "Clear" : "Clear answer")
     );
@@ -1534,12 +1543,13 @@
       React.createElement(
         "div",
         { key: row.key, className: "curator-external-tag-row" },
-        React.createElement("strong", { className: "curator-external-tag-name" }, row.name),
+        React.createElement("strong", { className: "curator-external-tag-name", title: row.name }, row.name),
         React.createElement(TagSentimentControl, {
           tag: { name: row.name },
           value: row.direct_value,
           blocked: row.direct_blocked,
           compact: true,
+          showScale: false,
           onChange: (value) => onAnswer(row, value),
         })
       )
@@ -1551,9 +1561,25 @@
     return React.createElement(
       "div",
       { className: "curator-rating-section" },
-      React.createElement("strong", { className: "curator-rating-section-title" }, `${title} (${rows.length})`),
+      rows.length > 0 ? React.createElement("div", { className: "curator-rating-scale-header" },
+        React.createElement("strong", { className: "curator-rating-section-title" }, `${title} (${rows.length})`),
+        React.createElement(SentimentScale),
+        React.createElement("span", { className: "curator-rating-section-title" }, "Your rating")
+      ) : React.createElement("strong", { className: "curator-rating-section-title" }, `${title} (0)`),
       React.createElement(RatingRows, { rows, onAnswer, emptyLabel })
     );
+  }
+
+  function RatingPopover({ anchor, onClose, children }) {
+    return React.createElement(libraries.Bootstrap.Overlay, {
+      show: true, target: anchor, placement: "bottom", flip: false,
+      rootClose: true, onHide: onClose,
+      popperConfig: { modifiers: [{ name: "preventOverflow", options: { padding: 8, altAxis: false } }] },
+    }, React.createElement(libraries.Bootstrap.Popover, {
+      id: "curator-rating-popover", className: "curator-rating-popover curator-page", role: "dialog", "aria-label": "Rate tags and terms",
+    }, children, React.createElement("div", { className: "curator-rating-footer" },
+      React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Collapse matching local tag ratings", onClick: onClose }, "Collapse")
+    )));
   }
 
   // LocalRatingPanel is the "Rate tags & terms" expander for local cards
@@ -1563,16 +1589,18 @@
   // so the SFW Switch contract holds.
   function LocalRatingPanel({ sceneId }) {
     const [open, setOpen] = React.useState(false);
+    const [anchor, setAnchor] = React.useState(null);
     const [tagChoices, setTagChoices] = React.useState(null);
     const [termChoices, setTermChoices] = React.useState(null);
     const [loading, setLoading] = React.useState(false);
     const [error, setError] = React.useState("");
     useCuratorActivity(`local-tags-${sceneId}`, loading, "Matching local tags…");
-    async function toggle() {
+    async function toggle(event) {
       if (open) {
         setOpen(false);
         return;
       }
+      setAnchor(event.currentTarget);
       setOpen(true);
       setLoading(true);
       setError("");
@@ -1608,13 +1636,13 @@
         React.createElement(FontAwesomeIcon, { icon: faTag })
       ),
       open && React.createElement(
-        "div",
-        { className: "curator-external-tag-rating" },
+        RatingPopover,
+        { anchor, onClose: () => setOpen(false) },
+        React.createElement("div", { className: "curator-external-tag-rating" },
         React.createElement(
           "div",
           { className: "curator-external-tag-rating-header" },
-          React.createElement("strong", null, "Rate tags & terms"),
-          React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: toggle }, "Collapse")
+          React.createElement("strong", null, "Rate tags & terms")
         ),
         loading && React.createElement("small", { role: "status" }, "Matching local tags…"),
         error && React.createElement("small", { className: "text-danger", role: "status" }, error),
@@ -1623,7 +1651,7 @@
           null,
           React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }),
           React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })
-        )
+        ))
       )
     );
   }
@@ -2420,7 +2448,7 @@
           { key: tag.tag_id, className: "curator-tag-follow-up-item" },
           React.createElement(Button, { size: "sm", variant: selected === tag.tag_id ? "primary" : "secondary", onClick: () => setSelected(selected === tag.tag_id ? null : tag.tag_id) }, tag.name),
           Object.hasOwn(answers, tag.tag_id) && React.createElement("small", null, `Answered: ${answers[tag.tag_id]?.blocked ? "Blocked" : SENTIMENTS.find(([value]) => value === answers[tag.tag_id]?.value)?.[1]}`),
-          selected === tag.tag_id && React.createElement(TagSentimentControl, { tag, value: answers[tag.tag_id]?.value, blocked: answers[tag.tag_id]?.blocked, onChange: (value) => answer(tag, value) })
+          selected === tag.tag_id && React.createElement(TagSentimentControl, { tag, value: answers[tag.tag_id]?.value, blocked: answers[tag.tag_id]?.blocked, compact: true, onChange: (value) => answer(tag, value) })
         )
       ),
       React.createElement(
@@ -2536,6 +2564,7 @@
     const [termChoices, setTermChoices] = React.useState(null);
     const [tagLoading, setTagLoading] = React.useState(false);
     const [tagError, setTagError] = React.useState("");
+    const [ratingAnchor, setRatingAnchor] = React.useState(null);
     useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
     const payload = item.payload;
     if (!payload) return null;
@@ -2583,12 +2612,13 @@
         setWhisparr({ status: "error", message: failure.message });
       }
     }
-    async function rateTags() {
+    async function rateTags(event) {
       if (tagChoices !== null) {
         setTagChoices(null);
         setTermChoices(null);
         return;
       }
+      setRatingAnchor(event.currentTarget);
       setTagLoading(true);
       setTagError("");
       try {
@@ -2623,7 +2653,7 @@
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title))),
       React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : label, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : score.toFixed(2), scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(score), evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
-      kind === "scene" && tagChoices !== null && React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms"), React.createElement(Button, { size: "sm", variant: "link", className: "curator-external-tag-rating-close", "aria-label": "Collapse matching local tag ratings", title: "Collapse matching local tag ratings", onClick: rateTags }, "Collapse")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." })))
+      kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); setTermChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags & terms")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }), React.createElement(RatingSection, { title: "Description terms", rows: termChoices.map((term) => ({ key: term.term, term: term.term, name: term.term, direct_value: term.direct_value, direct_blocked: term.direct_blocked })), onAnswer: answerTerm, emptyLabel: "No description terms in the model." }))))
     );
   });
 
