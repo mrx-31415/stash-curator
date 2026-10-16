@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/mrx-31415/stash-curator/compare/v0.38.2...v0.39.0) (2026-10-16)
+
+
+### Features
+
+* add compact and hidden detail page controls ([#359](https://github.com/mrx-31415/stash-curator/issues/359)) ([f84cdfd](https://github.com/mrx-31415/stash-curator/commit/f84cdfd3926a60fd761ee95c7edf497c2855f98b))
+
 ## [0.38.2](https://github.com/mrx-31415/stash-curator/compare/v0.38.1...v0.38.2) (2026-10-16)
 
 
