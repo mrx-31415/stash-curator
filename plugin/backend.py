@@ -930,13 +930,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.external_tag_choices(tags)
         if operation == "get_scene_tag_choices":
             return api.get_scene_tag_choices(str(args.get("scene_id") or ""))
-        if operation == "get_scene_description_tokens":
-            return api.get_scene_description_tokens(str(args.get("scene_id") or ""))
-        if operation == "submit_term_preferences":
-            entries = args.get("entries")
-            if not isinstance(entries, list):
-                raise ValueError("entries must be a list")
-            return api.submit_term_preferences(entries)
         if operation == "submit_events":
             entries = args.get("entries")
             if not isinstance(entries, list):

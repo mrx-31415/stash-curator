@@ -492,117 +492,12 @@ def test_scene_tag_choices_unclassified_and_unknown(
     assert_slice4_identical(binary, raw, slice4_sidecar)
 
 
-# ── get_scene_description_tokens ────────────────────────────────────────────
-
-
-def test_scene_description_tokens_byte_identical(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
+@pytest.mark.parametrize("operation", ["get_scene_description_tokens", "submit_term_preferences"])
+def test_retired_term_operations_reject_requests_identically(
+    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path, operation: str
 ) -> None:
-    # s1 has desc:archery (df 7, direct 0.5) and desc:cycling (df 9, blocked).
-    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="s1")
+    raw = payload(operation, slice4_sidecar, stub_stash, scene_id="s1", entries=[])
     assert_slice4_identical(binary, raw, slice4_sidecar)
-
-
-def test_scene_description_tokens_empty_and_unknown(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    # s3 has no desc features -> empty items.
-    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="s3")
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="ghost")
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-    raw = payload("get_scene_description_tokens", slice4_sidecar, stub_stash, scene_id="")
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-
-
-# ── submit_term_preferences ─────────────────────────────────────────────────
-
-
-def test_submit_term_preferences_byte_identical(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    raw = payload(
-        "submit_term_preferences",
-        slice4_sidecar,
-        stub_stash,
-        entries=[
-            # overwrite the seeded archery preference
-            {"preference_id": "pref-n1", "term": "archery", "value": -0.5, "occurred_at_ms": 200},
-            # clear a term with no current preference (no-op upsert path)
-            {"preference_id": "pref-n2", "term": "football", "value": None, "occurred_at_ms": 300},
-            # term normalization: "Hockey" -> "hockey", a valid token
-            {"preference_id": "pref-n3", "term": "Hockey", "value": 1.0, "occurred_at_ms": 400},
-        ],
-    )
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-
-
-def test_submit_term_preferences_blocked_byte_identical(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    raw = payload(
-        "submit_term_preferences",
-        slice4_sidecar,
-        stub_stash,
-        entries=[
-            {
-                "preference_id": "pref-n4",
-                "term": "archery",
-                "value": 1.0,
-                "blocked": True,
-                "occurred_at_ms": 250,
-            }
-        ],
-    )
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-
-
-def test_submit_term_preferences_validation_errors(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    # Off-scale value.
-    assert_slice4_identical(
-        binary,
-        payload(
-            "submit_term_preferences",
-            slice4_sidecar,
-            stub_stash,
-            entries=[
-                {"preference_id": "pref-n5", "term": "archery", "value": 0.3, "occurred_at_ms": 100}
-            ],
-        ),
-        slice4_sidecar,
-    )
-    # Non-token term (too short / punctuation).
-    assert_slice4_identical(
-        binary,
-        payload(
-            "submit_term_preferences",
-            slice4_sidecar,
-            stub_stash,
-            entries=[
-                {"preference_id": "pref-n6", "term": "a!", "value": 0.5, "occurred_at_ms": 100}
-            ],
-        ),
-        slice4_sidecar,
-    )
-    # Missing preference_id and negative occurred_at_ms.
-    assert_slice4_identical(
-        binary,
-        payload(
-            "submit_term_preferences",
-            slice4_sidecar,
-            stub_stash,
-            entries=[{"preference_id": "", "term": "archery", "value": 0.5, "occurred_at_ms": -1}],
-        ),
-        slice4_sidecar,
-    )
-    # Non-list entries.
-    assert_slice4_identical(
-        binary,
-        payload("submit_term_preferences", slice4_sidecar, stub_stash, entries="nope"),
-        slice4_sidecar,
-    )
 
 
 # ── get_inspector_entity ────────────────────────────────────────────────────

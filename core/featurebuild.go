@@ -31,40 +31,6 @@ const (
 	oneOffPrior  = 2.0
 )
 
-// Description-term constants mirroring features/builder.py.
-const (
-	descMinDF            = 5
-	descMaxDFFraction    = 0.70
-	descMaxTermsPerScene = 15
-	descBoost            = 3.0
-)
-
-var descTokenRegex = regexp.MustCompile(`[a-zA-Z]{3,}`)
-
-// descStopwords mirrors features/builder.py _DESCRIPTION_STOPWORDS.
-var descStopwords = map[string]bool{
-	"the": true, "a": true, "an": true, "is": true, "are": true, "was": true, "were": true, "be": true,
-	"been": true, "being": true, "have": true, "has": true, "had": true, "do": true, "does": true, "did": true,
-	"will": true, "would": true, "shall": true, "should": true, "may": true, "might": true, "must": true, "can": true,
-	"could": true, "i": true, "me": true, "my": true, "we": true, "our": true, "you": true, "your": true,
-	"he": true, "him": true, "his": true, "she": true, "her": true, "it": true, "its": true, "they": true,
-	"them": true, "their": true, "this": true, "that": true, "these": true, "those": true, "and": true, "but": true,
-	"or": true, "nor": true, "not": true, "so": true, "if": true, "then": true, "else": true, "when": true,
-	"up": true, "down": true, "in": true, "out": true, "on": true, "off": true, "over": true, "under": true,
-	"again": true, "further": true, "once": true, "here": true, "there": true, "all": true, "both": true, "each": true,
-	"few": true, "more": true, "most": true, "other": true, "some": true, "such": true, "no": true, "only": true,
-	"own": true, "same": true, "just": true, "about": true, "after": true, "also": true, "as": true, "at": true,
-	"before": true, "between": true, "by": true, "during": true, "for": true, "from": true, "into": true, "of": true,
-	"than": true, "to": true, "very": true, "with": true, "well": true, "get": true, "got": true, "go": true,
-	"goes": true, "back": true, "still": true, "too": true, "way": true, "even": true, "now": true, "new": true,
-	"see": true, "take": true, "make": true, "like": true, "come": true, "know": true, "want": true, "think": true,
-	"really": true, "much": true, "one": true, "two": true, "who": true, "how": true, "which": true, "what": true,
-	"where": true, "why": true, "herself": true, "himself": true, "itself": true, "themselves": true, "any": true, "anything": true,
-	"everyone": true, "everything": true, "let": true, "scene": true, "watch": true, "enjoy": true, "don": true, "doesn": true,
-	"isn": true, "wasn": true, "weren": true, "aren": true, "couldn": true, "wouldn": true, "shouldn": true, "haven": true,
-	"hasn": true, "hadn": true, "https": true, "http": true, "www": true, "com": true, "org": true, "net": true,
-}
-
 // featureRow mirrors features/builder.py _Feature.
 type featureRow struct {
 	entityType string
@@ -245,6 +211,8 @@ func runModelBuild() {
 // featureSourceFingerprint mirrors FeatureBuilder._source_fingerprint.
 func featureSourceFingerprint(db dbx) (string, error) {
 	digest := sha256.New()
+	// Retire cached feature artifacts that still contain description terms.
+	digest.Write([]byte("tags-only-content-v1\x00"))
 	for _, spec := range []struct {
 		label     string
 		statement string
@@ -453,8 +421,8 @@ func presenceCategory(value string) string {
 
 // sceneFeatures mirrors FeatureBuilder._scene_features.
 // sceneFeatureRows constructs the content-family feature rows for one scene
-// (the FeatureBuilder._scene_features per-scene body): weighted tag +
-// description-term values, normalized, with confidence from document
+// (the FeatureBuilder._scene_features per-scene body): normalized tag values,
+// with confidence from document
 // frequency. Every input is a precomputed read-only map, so the scene pass
 // is row-independent: fixed-chunk parallel processing yields identical rows.
 // featureIgnoredTags reads the runtime ignored_tags from curator_config.
@@ -515,8 +483,7 @@ func featureIgnoredTagIDs(db dbx, ignoredTags []string) (map[string]bool, error)
 }
 
 func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
-	documentFrequency map[string]int64, descByScene map[string][]string,
-	descIDF map[string]float64, descDocumentFrequency map[string]int64, tagNames map[string]string,
+	documentFrequency map[string]int64, tagNames map[string]string,
 	roles map[string]tagRoleResult, total int) []featureRow {
 	weighted := map[string]float64{}
 	for tagID, base := range baseVectors[sceneID] {
@@ -524,23 +491,6 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 		rarity := math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(frequency+1)))
 		shrinkage := float64(frequency) / (float64(frequency) + oneOffPrior)
 		weighted[tagID] = base * rarity * shrinkage
-	}
-	if terms, ok := descByScene[sceneID]; ok {
-		limit := descMaxTermsPerScene
-		if len(terms) < limit {
-			limit = len(terms)
-		}
-		for _, term := range terms[:limit] {
-			idf := descIDF[term]
-			if idf <= 0 {
-				continue
-			}
-			freq := descDocumentFrequency[term]
-			if freq == 0 {
-				freq = 1
-			}
-			weighted["desc:"+term] = descBoost * idf / (float64(freq) + oneOffPrior)
-		}
 	}
 	var normSquared float64
 	for _, value := range weighted {
@@ -553,9 +503,7 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 	var features []featureRow
 	var tagKeys []string
 	for key := range weighted {
-		if !strings.HasPrefix(key, "desc:") {
-			tagKeys = append(tagKeys, key)
-		}
+		tagKeys = append(tagKeys, key)
 	}
 	sort.Strings(tagKeys)
 	for _, tagID := range tagKeys {
@@ -574,29 +522,6 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 				jvKey("document_frequency", jvInt(frequency)),
 				jvKey("role_reason", jvStr(roles[tagID].reason)),
 			),
-		})
-	}
-	var descKeys []string
-	for key := range weighted {
-		if strings.HasPrefix(key, "desc:") {
-			descKeys = append(descKeys, key)
-		}
-	}
-	sort.Strings(descKeys)
-	for _, key := range descKeys {
-		term := strings.TrimPrefix(key, "desc:")
-		frequency := descDocumentFrequency[term]
-		if frequency == 0 {
-			frequency = 1
-		}
-		features = append(features, featureRow{
-			entityType: "scene",
-			entityID:   sceneID,
-			family:     "content",
-			name:       key,
-			value:      weighted[key] / norm,
-			confidence: math.Min(1.0, float64(frequency)/3),
-			metadata:   jvObj(jvKey("document_frequency", jvInt(frequency))),
 		})
 	}
 	return features
@@ -740,53 +665,6 @@ ORDER BY scene_id, tag_id`)
 		return nil, err
 	}
 	total := maxInt(1, len(sceneIDs))
-	descDocumentFrequency := map[string]int64{}
-	descByScene := map[string][]string{}
-	descIDF := map[string]float64{}
-	// The description-term TF-IDF precompute drives the desc: rows of the
-	// content pass; record it as a finer span (no stage key) so the feature
-	// build's description share is visible in the trace.
-	err = rec.stage("", "feature.tfidf", func() error {
-		rows, err := db.Query(`SELECT scene_id, details FROM source_scene WHERE details IS NOT NULL AND details != ''`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var sceneID string
-			var details string
-			if err := rows.Scan(&sceneID, &details); err != nil {
-				rows.Close()
-				return err
-			}
-			var terms []string
-			seen := map[string]bool{}
-			for _, token := range descTokenRegex.FindAllString(details, -1) {
-				token = strings.ToLower(token)
-				if !descStopwords[token] && !seen[token] {
-					seen[token] = true
-					terms = append(terms, token)
-					descDocumentFrequency[token]++
-				}
-			}
-			if len(terms) > 0 {
-				descByScene[sceneID] = terms
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		for term, freq := range descDocumentFrequency {
-			if freq < descMinDF || float64(freq) > float64(total)*descMaxDFFraction {
-				continue
-			}
-			descIDF[term] = math.Min(idfCap, 1+idfStrength*math.Log(float64(total+1)/float64(freq+1)))
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
 	// Each scene's content rows depend only on its own vector and the
 	// precomputed frequency maps, so the pass is row-independent: run it in
 	// fixed chunks (the kernel pattern) with progress ticks emitted in scene
@@ -807,7 +685,7 @@ ORDER BY scene_id, tag_id`)
 		var out []featureRow
 		for _, sceneID := range sceneIDs[start:end] {
 			out = append(out, sceneFeatureRows(sceneID, baseVectors, documentFrequency,
-				descByScene, descIDF, descDocumentFrequency, tagNames, roles, total)...)
+				tagNames, roles, total)...)
 			progressReporter.done()
 		}
 		return out

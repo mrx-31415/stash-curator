@@ -158,10 +158,6 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if err != nil {
 		return jvNull(), err
 	}
-	blockedTerms, err := service.blockedTermSet()
-	if err != nil {
-		return jvNull(), err
-	}
 	var byExternalID, byPhash map[string]string
 	if links.kind == jObj {
 		byExternalID, byPhash = sceneLinkMaps(links)
@@ -174,7 +170,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	encoder := json.NewEncoder(digest)
 	if err := encoder.Encode([]any{entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery, hidePhash,
-		minimumScore, includeGroups, excludeGroups, blockedGroups, blockedTerms, byExternalID, byPhash, revision}); err != nil {
+		minimumScore, includeGroups, excludeGroups, blockedGroups, byExternalID, byPhash, revision}); err != nil {
 		return jvNull(), err
 	}
 	type expandRow struct {
@@ -332,7 +328,7 @@ FROM external_entity WHERE entity_type=? AND pool='candidate' ORDER BY external_
 				}
 				if entityType == "scene" && !expandSceneMatches(payload, includeTags, excludeTags,
 					performerNames, studioNames, performerQuery, studioQuery,
-					includeGroups, excludeGroups, blockedGroups, blockedTerms) {
+					includeGroups, excludeGroups, blockedGroups) {
 					continue
 				}
 				results[i] = render(row, payload)
@@ -582,10 +578,6 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	if err != nil {
 		return jvNull(), err
 	}
-	blockedTerms, err := service.blockedTermSet()
-	if err != nil {
-		return jvNull(), err
-	}
 	shortlisted := map[string]bool{}
 	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type='scene'`)
 	if err != nil {
@@ -605,7 +597,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	items := make([]jVal, 0, len(scenes))
 	for _, scene := range scenes {
 		if !expandSceneMatches(scene.payload, includeTags, excludeTags, nil, nil, "", "",
-			includeGroups, excludeGroups, blockedGroups, blockedTerms) {
+			includeGroups, excludeGroups, blockedGroups) {
 			continue
 		}
 		item := jvObj(

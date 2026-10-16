@@ -121,6 +121,52 @@ def test_fingerprint_table_is_deterministic_and_change_sensitive(tmp_path: Path)
     assert fingerprint() != first
 
 
+def test_descriptions_are_metadata_not_content_features(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.execute("""INSERT INTO direct_term_preference_history(
+        preference_id, term, value, blocked, occurred_at_ms
+    ) VALUES ('legacy-term', 'romantic', -1, 1, 1)""")
+    connection.execute("""INSERT INTO direct_term_preference(
+        term, preference_id, value, blocked, occurred_at_ms
+    ) VALUES ('romantic', 'legacy-term', -1, 1, 1)""")
+    connection.executemany(
+        "INSERT INTO source_scene(scene_id, title, details, source_hash) VALUES (?, ?, ?, ?)",
+        [
+            (f"description-{i}", "Example", "romantic candlelight" if i < 5 else "", str(i))
+            for i in range(10)
+        ],
+    )
+    builder = FeatureBuilder(connection, clock_ms=lambda: 100)
+    first = builder.build()
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM feature_definition WHERE family='content' AND name LIKE 'desc:%'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM feature_definition WHERE family='content' AND name LIKE 'tag:%'"
+        ).fetchone()[0]
+        > 0
+    )
+    connection.execute("UPDATE source_scene SET details='changed description'")
+    second = builder.build()
+    assert second.reused
+    assert second.feature_version == first.feature_version
+    assert tuple(
+        connection.execute(
+            "SELECT value, blocked FROM direct_term_preference WHERE term='romantic'"
+        ).fetchone()
+    ) == (-1, 1)
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM source_scene WHERE details='changed description'"
+        ).fetchone()[0]
+        == 12
+    )
+
+
 def test_feature_build_is_deterministic_versioned_and_explainable(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     progress: list[tuple[int, int]] = []

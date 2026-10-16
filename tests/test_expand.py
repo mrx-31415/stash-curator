@@ -1864,17 +1864,18 @@ def test_unused_local_tag_preference_scores_matching_external_scenes(tmp_path: P
     assert scores["tagged"] < scores["plain"]
 
 
-def test_description_term_preference_ranks_matching_external_scenes(
+def test_legacy_description_preferences_do_not_rank_external_scenes(
     tmp_path: Path,
 ) -> None:
-    """Remote scenes are ranked by description term affinity: with identical
-    tags/performers/studio, the scene whose description carries a positively
-    declared term scores higher, and the explanation names the term."""
+    """Descriptions and saved term answers do not affect remote ranking."""
     connection = _database(tmp_path / "curator.sqlite3")
     model = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
-    InteractionStore(connection).submit_term_preferences(
-        [{"preference_id": "term-good", "term": "romantic", "value": 1, "occurred_at_ms": 10}]
-    )
+    connection.execute("""INSERT INTO direct_term_preference_history(
+        preference_id, term, value, blocked, occurred_at_ms
+    ) VALUES ('term-good', 'romantic', 1, 0, 10)""")
+    connection.execute("""INSERT INTO direct_term_preference(
+        term, preference_id, value, blocked, occurred_at_ms
+    ) VALUES ('romantic', 'term-good', 1, 0, 10)""")
     scenes, _ = ExpandService(connection)._score(
         [
             {
@@ -1897,9 +1898,9 @@ def test_description_term_preference_ranks_matching_external_scenes(
     )
 
     scores = {item["id"]: item["score"] for item in scenes}
-    assert scores["described"] > scores["plain"]
+    assert scores["described"] == scores["plain"]
     why = {item["id"]: item["payload"]["why"] for item in scenes}
-    assert "romantic" in why["described"]
+    assert "romantic" not in why["described"]
     assert "romantic" not in why["plain"]
 
 
@@ -1913,11 +1914,8 @@ class DescribedStashDB(FakeStashDB):
         return result
 
 
-def test_blocked_term_excludes_remote_pool_scenes(tmp_path: Path) -> None:
-    """Blocking a description term removes every remote candidate whose
-    description tokens include it from the Expand results, even when the term
-    is not part of the built model (the remote mapping tokenizes the
-    description; it has no entity_feature join)."""
+def test_remote_pool_ignores_legacy_description_term_blocks(tmp_path: Path) -> None:
+    """Saved term blocks do not filter remote candidates."""
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
     client = DescribedStashDB()
@@ -1946,7 +1944,9 @@ def test_blocked_term_excludes_remote_pool_scenes(tmp_path: Path) -> None:
         """
     )
     connection.commit()
-    assert ExpandService(connection).results("scene")["items"] == []
+    assert [item["id"] for item in ExpandService(connection).results("scene")["items"]] == [
+        "new-external-scene"
+    ]
 
 
 class PerformerSearchStashDB:

@@ -234,10 +234,6 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetExternalTagSearch(pluginDir, payload)
 	case "get_scene_tag_choices":
 		return opGetSceneTagChoices(pluginDir, payload)
-	case "get_scene_description_tokens":
-		return opGetSceneDescriptionTokens(pluginDir, payload)
-	case "submit_term_preferences":
-		return opSubmitTermPreferences(pluginDir, payload)
 	case "get_inspector_entity":
 		return opGetInspectorEntity(pluginDir, payload)
 	case "get_performer_affinities":

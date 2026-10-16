@@ -302,14 +302,8 @@ def test_similarity_annotates_multi_hop_when_reachable(
             assert item.details["multi_hop_reach"] >= REACH_FLOOR
 
 
-def test_similarity_excludes_scenes_carrying_a_blocked_term(tmp_path: Path) -> None:
-    """Blocking a description term removes every local scene whose built
-    entity_feature rows carry it from Similar results (term->scene mapping
-    via the published model's desc features, mirroring the blocked-tag path).
-
-    The model build publishes feature tables into the derived artifact and
-    attaches them as views, so the desc feature is written into the artifact
-    database — the same place the runtime reads it from."""
+def test_similarity_ignores_legacy_description_term_blocks(tmp_path: Path) -> None:
+    """Stored term answers no longer hide scenes from Similar."""
     sidecar = tmp_path / "curator.sqlite3"
     connection = _database(sidecar)
     model = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
@@ -368,8 +362,8 @@ def test_similarity_excludes_scenes_carrying_a_blocked_term(tmp_path: Path) -> N
         after = {item.entity_id for item in SimilarityService(fresh).scenes("old-good", 20)}
     finally:
         fresh.close()
-    assert target not in after
-    assert len(after) == len(before) - 1
+    assert target in after
+    assert after == before
 
 
 def test_core_pagerank_matches_networkx_and_python(tmp_path: Path) -> None:
