@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/mrx-31415/stash-curator/compare/v0.39.0...v0.39.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* preserve scene rating badges with Valkyr cards ([#361](https://github.com/mrx-31415/stash-curator/issues/361)) ([6ad3da1](https://github.com/mrx-31415/stash-curator/commit/6ad3da1be582f5439d59768039196da4b3df73b8))
+
 ## [0.39.0](https://github.com/mrx-31415/stash-curator/compare/v0.38.2...v0.39.0) (2026-10-16)
 
 
