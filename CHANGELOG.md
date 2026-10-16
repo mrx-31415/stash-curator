@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.2](https://github.com/mrx-31415/stash-curator/compare/v0.38.1...v0.38.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* skip deleted scenes in local match refresh ([#357](https://github.com/mrx-31415/stash-curator/issues/357)) ([44fa6bb](https://github.com/mrx-31415/stash-curator/commit/44fa6bbd6ccf75421dc269c8fc430e0a112e347e))
+
 ## [0.38.1](https://github.com/mrx-31415/stash-curator/compare/v0.38.0...v0.38.1) (2026-10-16)
 
 
