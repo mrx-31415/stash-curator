@@ -207,7 +207,12 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	timeout := 30 * time.Second
+	if category == "stashdb" {
+		// External discovery queries can take longer than local Stash requests.
+		timeout = 90 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return jvNull(), fmt.Errorf("Stash request failed: %v", err)

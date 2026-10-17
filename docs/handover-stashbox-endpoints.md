@@ -2,7 +2,8 @@
 
 ## Compatible endpoints
 
-The endpoint setting uses servers already configured in Stash. StashDB remains the
+The endpoint setting uses servers already configured in Stash. Its dropdown shows
+configured names, falling back to the hostname when unnamed. StashDB remains the
 default. Changing the selection invalidates the discovery and local-match caches;
 opening Expand queues preparation and hides candidates from the previous source.
 Successful preparation replaces the rebuildable discovery cache atomically.
@@ -62,5 +63,13 @@ Retry-After seconds or waiting 60 seconds when the header is absent. A terminal
 lookup error stops queued filter lookups.
 
 Initial bulk-ID live probes hit provider rate limits. The bounded revision passes
-the automated gates but still needs a limited live check. The installed plugin was
-restored to the compatible-endpoint build; REST remains on its separate local branch.
+the automated gates and a limited live cold/warm refresh check. The endpoint dropdown
+marks ThePornDB as having limited support and explains the slower refreshes, potentially
+missing thumbnails, and unavailable Whisparr integration. Some primary image URLs
+returned 404 while alternate URLs worked; external cards, thumbnail tiles, and cast
+images now try each distinct available URL on failure. Images remain blank when no
+working URL is available. External GraphQL discovery requests allow 90 seconds;
+local Stash requests retain the 30-second timeout. No automatic retries are added.
+
+The REST adapter has been installed for manual testing. The live check used a
+reduced candidate limit; default-size and sustained workloads are not verified.

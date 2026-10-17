@@ -244,7 +244,9 @@ def _stashdb(payload: dict[str, Any], settings: dict[str, Any] | None = None) ->
             if is_theporndb(endpoint)
             else None,
         )
-    return GraphQLClient(endpoint, api_key=str(box["api_key"]), profile_category="stashdb")
+    return GraphQLClient(
+        endpoint, api_key=str(box["api_key"]), timeout=90.0, profile_category="stashdb"
+    )
 
 
 EXTERNAL_LINKS_CACHE_KEY = "external_links"

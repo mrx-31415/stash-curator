@@ -2492,11 +2492,11 @@
     );
   }
 
-  function FindThumbnail({ image, title, href, kind, external = true }) {
+  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true }) {
     return React.createElement("article", { className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card` },
       React.createElement("div", { className: "curator-external-thumbnail thumbnail-section" },
         React.createElement("a", { className: `${kind}-card-link`, href, "aria-label": title, target: external ? "_blank" : undefined, rel: external ? "noreferrer" : undefined },
-          image ? React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })
+          image ? React.createElement("img", { key: imageKey, className: `${kind}-card-image`, src: image, onError: onImageError, loading: "lazy", alt: "" })
             : React.createElement("div", { className: "curator-card-placeholder" }, title)
         )
       ),
@@ -2539,6 +2539,20 @@
     }
   }
 
+  function externalImageProps(images) {
+    const urls = [...new Set((images || []).map((image) => image.url).filter((url) => typeof url === "string" && url))];
+    return {
+      key: urls.join("\n"),
+      src: urls[0],
+      onError: (event) => {
+        const image = event.currentTarget;
+        const next = urls.indexOf(image.getAttribute("src")) + 1;
+        if (next > 0 && next < urls.length) image.src = urls[next];
+        else image.style.visibility = "hidden";
+      },
+    };
+  }
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -2550,7 +2564,8 @@
     useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
     const payload = item.payload;
     if (!payload) return null;
-    const image = payload.images?.find((value) => value.url)?.url;
+    const imageProps = externalImageProps(payload.images);
+    const image = imageProps.src;
     const href = stashboxEntityURL(payload, kind === "scene" ? "scenes" : "performers", item.id);
     const title = payload.title || payload.name || item.id;
     const localProfile = payload.curator_local ? { to: `/${kind}s/${payload.curator_local.id}`, title: `Open local ${kind} profile` } : { href, target: "_blank", rel: "noreferrer" };
@@ -2558,7 +2573,7 @@
     const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
     const people = gender ? cast.filter((person) => person.gender === gender) : cast;
     const tags = kind === "scene" ? payload.tags || [] : [];
-    if (thumbnails) return React.createElement(FindThumbnail, { image, title, href, kind });
+    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind });
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
       const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
@@ -2579,10 +2594,10 @@
       { className: "card-popovers" },
       metadataPopover("tags", faTag, "Tags", tags.length, tags.map((tag) => React.createElement("span", { key: tag.id, className: "tag-item tag-link badge badge-secondary" }, React.createElement("a", { href: stashboxEntityURL(payload, "tags", tag.id), target: "_blank", rel: "noreferrer" }, tag.name)))),
       metadataPopover("performers", faUser, "Performers", cast.length, React.createElement(React.Fragment, null, people.map((person) => {
-        const performerImage = person.images?.find((value) => value.url)?.url;
+        const performerImage = externalImageProps(person.images);
         const PersonLink = person.curator_local ? NavLink : "a";
         const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: stashboxEntityURL(payload, "performers", person.id, person), target: "_blank", rel: "noreferrer", title: "Open external performer profile" };
-        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage && React.createElement("img", { className: "image-thumbnail", src: performerImage, loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
+        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage.src && React.createElement("img", { ...performerImage, className: "image-thumbnail", loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
       }), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)))
     );
     async function addToWhisparr() {
@@ -2622,7 +2637,7 @@
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title))),
       React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : label, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : score.toFixed(2), scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(score), evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }))))
@@ -5410,7 +5425,7 @@
     {
       title: "Discovery",
       fields: [
-        { key: "stashBoxEndpoint", type: "SELECT", default: "https://stashdb.org/graphql", label: "Stash-box endpoint", description: "Choose a server configured in Stash's Metadata Providers settings. It must provide a StashDB-compatible GraphQL API." },
+        { key: "stashBoxEndpoint", type: "SELECT", default: "https://stashdb.org/graphql", label: "Stash-box endpoint", description: "Choose a server configured in Stash's Metadata Providers settings with a StashDB-compatible GraphQL API. Whisparr integration is available only with stashdb.org. ThePornDB's GraphQL support is limited, so Curator uses more limited REST queries instead: refreshes are slower and some thumbnails may be unavailable." },
         { key: "expandWildcard", configKey: "expand_wildcard", type: "BOOLEAN", label: "Expand popularity wildcard", description: "Include a small trending/popular sample outside preference-derived seeds." },
         { key: "expandGender", configKey: "expand_gender", type: "SELECT", options: SETTINGS_GENDER_OPTIONS, label: "External performer gender", description: "Default Stash-box gender filter for Expand and Similar. Default Female; choose All genders for no filter." },
         { key: "expandHorizonDays", configKey: "expand_horizon_days", type: "NUMBER", label: "Expand recent-release horizon (days)", description: "Recent-release window used by Expand. Default 90." },
@@ -5656,9 +5671,9 @@
             ? config[field.configKey]
             : (rawValue === undefined || rawValue === null || rawValue === "") && field.default !== undefined ? field.default : rawValue;
           if (field.key === "stashBoxEndpoint") {
-            const options = stashBoxes.map((box) => ({ value: box.endpoint, label: box.name ? `${box.name} (${box.endpoint})` : box.endpoint }));
+            const options = stashBoxes.map((box) => ({ value: box.endpoint, label: (box.name || box.endpoint.replace(/^https?:\/\//i, "").split("/")[0]) + (/^https?:\/\/theporndb\.net(?:[:/]|$)/i.test(box.endpoint) ? " (limited support)" : "") }));
             if (!options.some((option) => option.value === value)) {
-              options.unshift({ value, label: stashBoxes.length ? `${value} (not configured)` : "No endpoints configured in Stash", disabled: true });
+              options.unshift({ value, label: stashBoxes.length ? "Selected endpoint (not configured)" : "No endpoints configured in Stash", disabled: true });
             }
             field = { ...field, options };
           }
