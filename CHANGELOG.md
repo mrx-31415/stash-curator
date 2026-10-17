@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/mrx-31415/stash-curator/compare/v0.39.2...v0.40.0) (2026-10-17)
+
+
+### Features
+
+* support configured Stash-box endpoints and limited ThePornDB discovery ([#365](https://github.com/mrx-31415/stash-curator/issues/365)) ([0cd9808](https://github.com/mrx-31415/stash-curator/commit/0cd9808169c6df977bda72b2b4d1a250ab6ea4de))
+
 ## [0.39.2](https://github.com/mrx-31415/stash-curator/compare/v0.39.1...v0.39.2) (2026-10-17)
 
 
