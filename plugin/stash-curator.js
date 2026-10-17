@@ -6463,7 +6463,8 @@
     }));
   });
 
-  Api.patch.after("MainNavBar.MenuItems", function (props, _, result) {
+  Api.patch.after("MainNavBar.MenuItems", function (props, ...args) {
+    const result = args[args.length - 1];
     const children = React.Children.toArray(props.children);
     if (!children.some((child) => child.key === "stash-curator")) {
       children.push(React.createElement(CuratorNavItem, { key: "stash-curator" }));
