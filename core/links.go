@@ -19,12 +19,15 @@ const externalLinksCacheKey = "external_links"
 // json.dumps(sort_keys=True, separators=(",", ":")).
 func externalLinksState(payload jVal) (string, error) {
 	base, headers := stashConnection(payload)
-	data, err := graphqlQuery(base, headers, externalLinksStateQuery, jvNull())
+	data, err := graphqlQuery(base, headers, externalLinksStateQuery,
+		jvObj(jvKey("endpoint", jvStr(stashdbEndpoint))))
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString(`{"performers":`)
+	b.WriteString(`{"endpoint":`)
+	b.WriteString(marshalJSONString(stashdbEndpoint))
+	b.WriteString(`,"performers":`)
 	writeLinksKindState(&b, data, "performers")
 	b.WriteString(`,"scenes":`)
 	writeLinksKindState(&b, data, "scenes")
@@ -113,7 +116,8 @@ type linksPage struct {
 // per-page body.
 func fetchLinksPage(base string, headers map[string]string, page int64) linksPage {
 	data, err := graphqlQuery(base, headers, externalLinksQuery,
-		jvObj(jvKey("page", jvInt(page)), jvKey("perPage", jvInt(500))))
+		jvObj(jvKey("page", jvInt(page)), jvKey("perPage", jvInt(500)),
+			jvKey("endpoint", jvStr(stashdbEndpoint))))
 	if err != nil {
 		return linksPage{page: page, err: err}
 	}

@@ -81,6 +81,108 @@ class OfflineStashDB:
         raise RuntimeError("offline")
 
 
+def test_text_filter_schema_fails_before_candidate_or_model_queries(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    calls = []
+
+    class TextFilterServer:
+        def execute(self, document, variables):
+            calls.append(document)
+            assert "CuratorSceneFilterSchema" in document
+            assert variables == {}
+            return {"__type": {"inputFields": [{"name": "performers", "type": {"name": "String"}}]}}
+
+    service = ExpandService(connection, "https://example.test/graphql")
+    with pytest.raises(RuntimeError, match="expects text instead of StashDB's filter object"):
+        service.refresh(TextFilterServer(), {}, now_ms=REFERENCE_MS)
+    assert len(calls) == 1
+    assert connection.execute("SELECT count(*) FROM external_entity").fetchone()[0] == 0
+    connection.close()
+
+
+def test_shortlist_keeps_same_id_from_different_sources(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    original = ExpandService(connection)
+    other = ExpandService(connection, "https://example.test/graphql")
+    for service, title in [(original, "Original"), (other, "Other")]:
+        service._merge_external(
+            "scene",
+            [
+                {
+                    "id": "shared",
+                    "payload": {"id": "shared", "title": title},
+                    "score": 1,
+                    "sources": [],
+                }
+            ],
+        )
+        service.shortlist("scene", "shared", True)
+    assert original.shortlist_results()["items"][0]["payload"]["title"] == "Original"
+    assert other.shortlist_results()["items"][0]["payload"]["title"] == "Other"
+    other.shortlist("scene", "shared", False)
+    assert other.shortlist_results()["total"] == 0
+    assert original.shortlist_results()["total"] == 1
+    with pytest.raises(ValueError, match="selected endpoint's cache"):
+        original.shortlist("scene", "shared", True)
+    connection.close()
+
+
+def test_endpoint_switch_replaces_candidates_only_after_success(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {
+        "scenes": {},
+        "performers": {"p1": "known-external-performer"},
+        "studios": {"studio-1": "external-studio"},
+    }
+    original = ExpandService(connection)
+    original.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, similar_top_k=0)
+    old_items = original.results("scene")["items"]
+    assert old_items
+    connection.execute(
+        "INSERT INTO external_shortlist"
+        "(entity_type,external_id,payload_json,score,sources_json,added_at_ms) "
+        "SELECT entity_type,external_id,payload_json,score,sources_json,fetched_at_ms "
+        "FROM external_entity WHERE entity_type='scene' LIMIT 1"
+    )
+    saved = connection.execute("SELECT * FROM external_shortlist").fetchall()
+    old_items = original.results("scene")["items"]
+    selected = ExpandService(connection, "https://example.test/graphql")
+    assert selected.results("scene")["ready"] is False
+    for _ in range(2):
+        assert selected.ensure_endpoint({}) is False
+    assert connection.execute("SELECT count(*) FROM curator_job").fetchone()[0] == 1
+    with pytest.raises(RuntimeError, match="offline"):
+        selected.refresh(OfflineStashDB(), links, now_ms=REFERENCE_MS + 1)
+    assert original.results("scene")["items"] == old_items
+    assert selected.results("scene")["ready"] is False
+
+    class OtherServer(FakeStashDB):
+        def execute(self, document, variables):
+            data = super().execute(document, variables)
+            for scene in data.get("queryScenes", {}).get("scenes", []):
+                scene["id"] = "other-" + scene["id"]
+            return data
+
+    client = OtherServer()
+    result = selected.refresh(client, links, now_ms=REFERENCE_MS + 2, similar_top_k=0)
+    assert result["incremental"] is False
+    assert not any("updated_at" in item for item in client.inputs)
+    items = selected.results("scene")["items"]
+    assert items and all(item["id"].startswith("other-") for item in items)
+    assert original.results("scene")["ready"] is False
+    assert selected.ensure_endpoint({}) is True
+    assert connection.execute("SELECT * FROM external_shortlist").fetchall() == saved
+    assert all(item["payload"]["curator_endpoint"] == selected.stashbox_endpoint for item in items)
+    assert selected.shortlist_results()["total"] == 0
+    assert original.shortlist_results()["total"] == 1
+    selected.shortlist("scene", items[0]["id"], True)
+    assert selected.shortlist_results()["total"] == 1
+    assert original.shortlist_results()["total"] == 1
+    assert connection.execute("SELECT count(*) FROM external_shortlist").fetchone()[0] == 2
+    connection.close()
+
+
 class NoChangeStashDB(FakeStashDB):
     """Serve one refresh, then report nothing changed since the watermark."""
 

@@ -93,7 +93,9 @@ def test_network_op_stashdb_unconfigured_error(seeded: None) -> None:
     or crashing."""
     plugin = _plugin_operation_raw("get_performer_hunt", performer_id="missing-performer")
     plugin_text = json.dumps(plugin, separators=(",", ":"))
-    assert "configure StashDB with an API key in Stash settings" in plugin_text
+    assert (
+        "configure the selected Stash-box endpoint with an API key in Stash settings" in plugin_text
+    )
 
 
 def test_installed_plugin_serves_through_the_binary(seeded: None) -> None:

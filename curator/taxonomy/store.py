@@ -37,6 +37,7 @@ def _load_category_roles() -> tuple[str, dict[str, str]]:
 
 
 DEFAULT_CATEGORY_ROLE, STASHDB_CATEGORY_ROLES = _load_category_roles()
+ACTIVE_STASHBOX_ENDPOINT = "https://stashdb.org/graphql"
 PERFORMER_ATTRIBUTE_CATEGORY_IDS = frozenset(
     category_id
     for category_id, role in STASHDB_CATEGORY_ROLES.items()
@@ -324,4 +325,7 @@ def equivalent_tag_names(
 
 
 def _is_stashdb(endpoint: str) -> bool:
-    return (urlparse(endpoint).hostname or "").casefold() == "stashdb.org"
+    return endpoint.rstrip("/").casefold() == ACTIVE_STASHBOX_ENDPOINT.rstrip("/").casefold() or (
+        ACTIVE_STASHBOX_ENDPOINT.casefold() == "https://stashdb.org/graphql"
+        and (urlparse(endpoint).hostname or "").casefold() == "stashdb.org"
+    )

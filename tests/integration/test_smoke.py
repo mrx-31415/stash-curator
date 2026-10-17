@@ -72,8 +72,8 @@ TABS: list[tuple[str, list[str]]] = [
     # The seed runs a sync-and-build and waits for the published model, so the
     # main route shows the ready recommendation UI, not the fresh-install state.
     ("", ["For You", "Best Bets", "Ready"]),
-    ("?view=similar", ["Choose a scene or performer", "Library", "StashDB"]),
-    ("?view=expand", ["Discover scenes and performers on StashDB", "Loading Expand cache"]),
+    ("?view=similar", ["Choose a scene or performer", "Library", "Stash-box"]),
+    ("?view=expand", ["Discover scenes and performers on Stash-box", "Loading Expand cache"]),
     (
         "?view=curate&section=sentiment",
         [
@@ -91,7 +91,7 @@ TABS: list[tuple[str, list[str]]] = [
             "no published model",
         ],
     ),
-    ("?view=hunt", ["Select a local performer linked to StashDB"]),
+    ("?view=hunt", ["Select a local performer linked to Stash-box"]),
     (
         "?view=feedback",
         [

@@ -36,12 +36,13 @@ class _StubWrites(BaseHTTPRequestHandler):
     """Stash stub answering settings and the prune-tag query/mutations."""
 
     tags: ClassVar[list[dict[str, str]]] = []
+    plugin_settings: ClassVar[dict[str, object]] = {}
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode("utf-8")
         if "CuratorPluginSettings" in body:
-            data = {"data": {"configuration": {"plugins": {}}}}
+            data = {"data": {"configuration": {"plugins": {"stash-curator": self.plugin_settings}}}}
         elif "CuratorFindPruneTag" in body:
             data = {"data": {"findTags": {"tags": list(self.tags)}}}
         elif "CuratorCreatePruneTag" in body:
@@ -297,9 +298,20 @@ def test_update_shortlist_bad_type_byte_identical(
     assert_slice3_identical(binary, raw, writes_sidecar)
 
 
-def test_update_shortlist_state_parity(writes_sidecar: Path, binary: Path, stub_stash: str) -> None:
+@pytest.mark.parametrize(
+    "endpoint", ["https://stashdb.org/graphql", "https://example.test/graphql"]
+)
+def test_update_shortlist_state_parity(
+    writes_sidecar: Path,
+    binary: Path,
+    stub_stash: str,
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The shortlist upsert leaves identical external_shortlist rows."""
     import shutil
+
+    monkeypatch.setattr(_StubWrites, "plugin_settings", {"stashBoxEndpoint": endpoint})
 
     run_dir = writes_sidecar.parent / f"{writes_sidecar.stem}-shortlist-state"
     states: list[list[tuple[object, ...]]] = []
@@ -308,6 +320,13 @@ def test_update_shortlist_state_parity(writes_sidecar: Path, binary: Path, stub_
         run_dir.mkdir()
         run_db = run_dir / writes_sidecar.name
         shutil.copy2(writes_sidecar, run_db)
+        if endpoint != "https://stashdb.org/graphql":
+            with sqlite3.connect(run_db) as seed:
+                seed.execute(
+                    "UPDATE external_entity "
+                    "SET payload_json=json_set(payload_json,'$.curator_endpoint',?)",
+                    (endpoint,),
+                )
         result = run_backend(
             runner,
             PLUGIN_DIR,
@@ -334,7 +353,7 @@ def test_update_shortlist_state_parity(writes_sidecar: Path, binary: Path, stub_
         connection = sqlite3.connect(run_db)
         try:
             rows = connection.execute(
-                "SELECT entity_type, external_id, payload_json, score, sources_json"
+                "SELECT entity_type, external_id, payload_json, score, sources_json, endpoint"
                 " FROM external_shortlist ORDER BY entity_type, external_id"
             ).fetchall()
             states.append(rows)

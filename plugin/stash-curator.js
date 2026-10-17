@@ -66,19 +66,19 @@
       value: "expand",
       label: "Expand",
       icon: faGlobe,
-      description: "Discover scenes and performers on StashDB, ranked using your preferences.",
+      description: "Discover scenes and performers on Stash-box, ranked using your preferences.",
     },
     {
       value: "similar",
       label: "Similar",
       icon: faClone,
-      description: "Preference-aware matches from your library or StashDB.",
+      description: "Preference-aware matches from your library or Stash-box.",
     },
     {
       value: "hunt",
       label: "Performer Hunt",
       icon: faCrosshairs,
-      description: "StashDB performers and their scenes, checked against your library.",
+      description: "Stash-box performers and their scenes, checked against your library.",
     },
     {
       value: "feedback",
@@ -167,7 +167,7 @@
     value: "find",
     label: "Find",
     icon: faSearch,
-    description: "Find similar scenes in your library, discover StashDB releases, and browse performer catalogs.",
+    description: "Find similar scenes in your library, discover Stash-box releases, and browse performer catalogs.",
   };
   const FIND_SECTIONS = NAV_ITEMS.filter(
     (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
@@ -975,6 +975,20 @@
     document.body.classList.toggle("curator-hide-card-badges", settings.hideCardRatings === true);
     document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(settings.detailPageControls) ? settings.detailPageControls : "large";
     return settings;
+  }
+
+  async function getStashBoxEndpoints() {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "query CuratorStashBoxes { configuration { general { stashBoxes { name endpoint } } } }" }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors) {
+      throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    }
+    return payload.data.configuration.general.stashBoxes;
   }
 
   function formatTimeAgo(ms) {
@@ -2464,7 +2478,7 @@
     );
   }
 
-  // The "external" action-set variant (StashDB/Whisparr/shortlist), sibling
+  // The "external" action-set variant (Stash-box/Whisparr/shortlist), sibling
   // to Feedback's "local" variant (thumbs up/down + More menu).
   function ExternalActions({ item, kind, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
     return React.createElement(
@@ -2473,16 +2487,16 @@
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags", "aria-label": "Rate tags", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
-      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Configure Whisparr in plugin settings" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr is not configured" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
       whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
   }
 
-  function FindThumbnail({ image, title, href, kind, external = true }) {
+  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true }) {
     return React.createElement("article", { className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card` },
       React.createElement("div", { className: "curator-external-thumbnail thumbnail-section" },
         React.createElement("a", { className: `${kind}-card-link`, href, "aria-label": title, target: external ? "_blank" : undefined, rel: external ? "noreferrer" : undefined },
-          image ? React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })
+          image ? React.createElement("img", { key: imageKey, className: `${kind}-card-image`, src: image, onError: onImageError, loading: "lazy", alt: "" })
             : React.createElement("div", { className: "curator-card-placeholder" }, title)
         )
       ),
@@ -2511,6 +2525,34 @@
     return [{ ...props, content }, ...args];
   });
 
+  function stashboxEntityURL(payload, kind, id, entity = payload) {
+    try {
+      const url = new URL(payload.curator_endpoint || "https://stashdb.org/graphql");
+      if (!["https:", "http:"].includes(url.protocol)) return undefined;
+      if (url.hostname === "theporndb.net" && kind === "performers" && entity.curator_site_performer) kind = "performer-sites";
+      url.pathname = `${url.pathname.replace(/\/graphql\/?$/i, "").replace(/\/$/, "")}/${kind}/${encodeURIComponent(id)}`;
+      url.search = "";
+      url.hash = "";
+      return url.href;
+    } catch (_) {
+      return undefined;
+    }
+  }
+
+  function externalImageProps(images) {
+    const urls = [...new Set((images || []).map((image) => image.url).filter((url) => typeof url === "string" && url))];
+    return {
+      key: urls.join("\n"),
+      src: urls[0],
+      onError: (event) => {
+        const image = event.currentTarget;
+        const next = urls.indexOf(image.getAttribute("src")) + 1;
+        if (next > 0 && next < urls.length) image.src = urls[next];
+        else image.style.visibility = "hidden";
+      },
+    };
+  }
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -2522,15 +2564,16 @@
     useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
     const payload = item.payload;
     if (!payload) return null;
-    const image = payload.images?.find((value) => value.url)?.url;
-    const href = `https://stashdb.org/${kind === "scene" ? "scenes" : "performers"}/${item.id}`;
+    const imageProps = externalImageProps(payload.images);
+    const image = imageProps.src;
+    const href = stashboxEntityURL(payload, kind === "scene" ? "scenes" : "performers", item.id);
     const title = payload.title || payload.name || item.id;
     const localProfile = payload.curator_local ? { to: `/${kind}s/${payload.curator_local.id}`, title: `Open local ${kind} profile` } : { href, target: "_blank", rel: "noreferrer" };
     const TitleLink = localProfile.to ? NavLink : "a";
     const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
     const people = gender ? cast.filter((person) => person.gender === gender) : cast;
     const tags = kind === "scene" ? payload.tags || [] : [];
-    if (thumbnails) return React.createElement(FindThumbnail, { image, title, href, kind });
+    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind });
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
       const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
@@ -2549,12 +2592,12 @@
     const metadataControls = kind === "scene" && React.createElement(
       ButtonGroup,
       { className: "card-popovers" },
-      metadataPopover("tags", faTag, "Tags", tags.length, tags.map((tag) => React.createElement("span", { key: tag.id, className: "tag-item tag-link badge badge-secondary" }, React.createElement("a", { href: `https://stashdb.org/tags/${tag.id}`, target: "_blank", rel: "noreferrer" }, tag.name)))),
+      metadataPopover("tags", faTag, "Tags", tags.length, tags.map((tag) => React.createElement("span", { key: tag.id, className: "tag-item tag-link badge badge-secondary" }, React.createElement("a", { href: stashboxEntityURL(payload, "tags", tag.id), target: "_blank", rel: "noreferrer" }, tag.name)))),
       metadataPopover("performers", faUser, "Performers", cast.length, React.createElement(React.Fragment, null, people.map((person) => {
-        const performerImage = person.images?.find((value) => value.url)?.url;
+        const performerImage = externalImageProps(person.images);
         const PersonLink = person.curator_local ? NavLink : "a";
-        const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: `https://stashdb.org/performers/${person.id}`, target: "_blank", rel: "noreferrer", title: "Open StashDB performer profile" };
-        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage && React.createElement("img", { className: "image-thumbnail", src: performerImage, loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
+        const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: stashboxEntityURL(payload, "performers", person.id, person), target: "_blank", rel: "noreferrer", title: "Open external performer profile" };
+        return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage.src && React.createElement("img", { ...performerImage, className: "image-thumbnail", loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
       }), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)))
     );
     async function addToWhisparr() {
@@ -2594,7 +2637,7 @@
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { className: `${kind}-card-image`, src: image, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title))),
       React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : label, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : score.toFixed(2), scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(score), evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }))))
@@ -3502,8 +3545,8 @@
     const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query || disabled });
     const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query || disabled });
     const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query || disabled });
-    // Remote tag search reuses the cached StashDB catalog; performer search
-    // queries StashDB directly. Local completions render immediately.
+    // Remote tag search reuses the cached Stash-box catalog; performer search
+    // queries Stash-box directly. Local completions render immediately.
     React.useEffect(() => {
       setRemoteResults([]);
       setRemoteError("");
@@ -3514,8 +3557,8 @@
       const timer = setTimeout(() => {
         const request = kind === "tag" ? { operation: "get_external_tag_search", query } : { operation: "get_stashdb_performer_search", query, limit: 8 };
         operation(request).then(
-          (result) => { if (active) { setRemoteResults(result.items || []); setRemoteError(result.ready === false ? "Refresh Expand cache to load StashDB tags." : ""); } },
-          (failure) => { if (active && kind === "tag") setRemoteError(failure.message || "StashDB tag search unavailable."); }
+          (result) => { if (active) { setRemoteResults(result.items || []); setRemoteError(result.ready === false ? "Refresh Expand cache to load Stash-box tags." : ""); } },
+          (failure) => { if (active && kind === "tag") setRemoteError(failure.message || "Stash-box tag search unavailable."); }
         );
       }, 300);
       return () => { active = false; clearTimeout(timer); };
@@ -3567,7 +3610,7 @@
       { className: "curator-token-filter" },
       React.createElement("span", null, label),
       React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && options.length > 0) { event.preventDefault(); add(options[0]); } }, placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
-      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, React.createElement("span", { className: "curator-token-option-name" }, optionText(item)), searchBoth && React.createElement("span", { className: "curator-token-source-badge" }, item.source === "remote" ? "StashDB" : "Library")))),
+      query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, React.createElement("span", { className: "curator-token-option-name" }, optionText(item)), searchBoth && React.createElement("span", { className: "curator-token-source-badge" }, item.source === "remote" ? "Stash-box" : "Library")))),
       remoteError && React.createElement("span", { role: "status" }, remoteError)
     );
   }
@@ -3639,7 +3682,7 @@
     const showScene = !sceneGated || entityType === "scene";
     const remoteTags = variant === "expand" || variant === "hunt" || (variant === "similar" && source === "stashdb");
     // Recommendations narrows a lane's already-classified local scenes: no
-    // StashDB-only concept (hide-phash), similarity score (minimum match),
+    // Stash-box-only concept (hide-phash), similarity score (minimum match),
     // or the "boost favorited performers" ranking knob (favorite-only) — all
     // three are about ranking a candidate against a source entity or a
     // remote catalog, not about narrowing a pre-picked set.
@@ -3939,7 +3982,7 @@
           { className: "btn-group", role: "group", "aria-label": "Similarity type" },
           ["scene", "performer"].map((value) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => switchType(value) }, value === "scene" ? "Scenes" : "Performers"))
         ),
-        React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "StashDB", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
+        React.createElement("div", { className: "btn-group curator-similar-source-tabs", role: "group", "aria-label": "Similarity source" }, [["library", "Library", faDatabase], ["stashdb", "Stash-box", faCompass]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: source === value ? "primary" : "secondary", onClick: () => switchSource(value) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         React.createElement(
           "form",
           { onSubmit: (event) => (event.preventDefault(), updateUrl((s) => ({ ...s, selected: null })), setResult(null), setSearch(query.trim())) },
@@ -4316,20 +4359,20 @@
         entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
         entityType !== "shortlist" && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
-        React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from StashDB." : "Refresh the bounded StashDB candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
+        React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from Stash-box." : "Refresh the bounded Stash-box candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
       ),
       entityType === "hunt" && React.createElement(
         "div",
         { className: "curator-hunt-controls" },
-        // Issue #218: the picker searches both local performers and StashDB
-        // performers. Local completions render immediately and StashDB results
+        // Issue #218: the picker searches both local performers and Stash-box
+        // performers. Local completions render immediately and Stash-box results
         // fill in as they arrive; each dropdown option is tagged by source.
-        React.createElement(FilterTokens, { kind: "performer", searchBoth: true, label: huntPerformer?.external ? "External performer on StashDB" : huntPerformer ? "Local performer with a StashDB link" : "Search library or StashDB performers", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external) }),
+        React.createElement(FilterTokens, { kind: "performer", searchBoth: true, label: huntPerformer?.external ? "External performer on Stash-box" : huntPerformer ? "Local performer with a Stash-box link" : "Search library or Stash-box performers", values: huntPerformer ? [huntPerformer] : [], onChange: selectHuntPerformer, disabled: Boolean(huntPerformer?.external) }),
         data?.ready && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Performer Hunt view" }, [["all", `All ${huntCounts.all}`], ["linked", `In library ${huntCounts.linked}`], ["unlinked", `Not linked locally ${huntCounts.unlinked}`]].map(([value, label]) => React.createElement(Button, { key: value, size: "sm", variant: huntView === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, page: 1, huntView: value })) }, label))),
         data?.ready && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: huntSort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, huntSort: event.target.value })), "aria-label": "Sort Performer Hunt results" }, React.createElement("option", { value: "date" }, "Release date"), React.createElement("option", { value: "score" }, "Preference score")))
       ),
-      entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} StashDB scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
+      entityType === "hunt" && data?.truncated && React.createElement("div", { className: "alert alert-warning" }, `Showing the first ${data.fetched_count.toLocaleString()} of ${data.stashdb_total.toLocaleString()} Stash-box scenes; the safety cap is ${data.limit.toLocaleString()}. Counts below apply to the fetched scenes.`),
       entityType === "hunt" && filtersOpen && React.createElement(FilterBar, {
         variant: "hunt",
         entityType,
@@ -4353,10 +4396,10 @@
       }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       message && React.createElement("p", { role: "status" }, message),
-      entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to StashDB."),
+      entityType === "hunt" && !huntPerformer && React.createElement("div", { className: "alert alert-info" }, "Select a local performer linked to Stash-box."),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
-      data?.initializing && !error && React.createElement("div", { className: "alert alert-info", role: "status" }, "Checking your library for scenes you already own. Candidates will appear automatically when this finishes. Progress is available in Manage → Tasks."),
-      data && !data.ready && !data.initializing && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — StashDB candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
+      data?.initializing && !error && React.createElement("div", { className: "alert alert-info", role: "status" }, data.initializing_reason === "endpoint" ? "Preparing candidates from the selected Stash-box endpoint. Results will appear automatically when this finishes. Progress is available in Manage → Tasks." : "Checking your library for scenes you already own. Candidates will appear automatically when this finishes. Progress is available in Manage → Tasks."),
+      data && !data.ready && !data.initializing && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — Stash-box candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
       pager,
       data?.ready && (endless
@@ -4751,7 +4794,7 @@
     const stages = description.includes("local scene matches")
       ? [[0.7, "Checking your library"], [0.99, "Saving library matches"]]
       : description.includes("expand")
-        ? [[0.04, "Checking your library"], [0.98, "Collecting StashDB candidates"], [0.99, "Finishing"]]
+        ? [[0.04, "Checking your library"], [0.98, "Collecting Stash-box candidates"], [0.99, "Finishing"]]
       : description.includes("sync")
       ? [
           [0.03, "Synchronizing library metadata"],
@@ -4902,7 +4945,7 @@
       }
       if (job.job_type === "backup") return "Backup created";
       if (job.job_type === "compact") return "Compaction finished";
-      if (job.job_type === "expand-refresh") return "StashDB candidates refreshed";
+      if (job.job_type === "expand-refresh") return "Stash-box candidates refreshed";
       if (job.job_type === "local-matches") return "Library check finished";
       if (job.job_type === "sync-plays") return "Play history synced";
       return scenes || "Done";
@@ -5130,7 +5173,7 @@
         React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.sidecar_ready ? faCheckCircle : faWrench }), ` Sidecar and migrations: ${health.sidecar_ready ? `ready (schema ${health.database_schema})` : "needs attention"}`),
         React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.sync_ready ? faCheckCircle : faClock }), ` Library sync: ${health.sync_ready ? "complete" : activeJob ? "running" : "not started"}`),
         React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.ready ? faCheckCircle : faClock }), ` Recommendation model: ${health.model_rebuilding ? "building" : "not built"}`),
-        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.stashdb_available ? faCheckCircle : faGlobe }), ` StashDB: ${health.stashdb_available ? "available" : "optional — not configured"}`)
+        React.createElement("li", null, React.createElement(FontAwesomeIcon, { icon: health.stashdb_available ? faCheckCircle : faGlobe }), ` Stash-box: ${health.stashdb_available ? "available" : "optional — not configured"}`)
       ),
       lastError && React.createElement("div", { className: "alert alert-danger" }, React.createElement("strong", null, "Initial sync failed: "), lastError.error, " Open Tasks for the full log, correct the problem, then retry."),
       React.createElement(
@@ -5368,7 +5411,7 @@
     {
       title: "Scheduling",
       fields: [
-        { key: "scheduleExpandRefreshEnabled", configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", label: "Scheduled Expand refresh", description: "Refresh the StashDB candidate cache so Expand and Performer Hunt stay current. Off by default; keeps the background worker resident while on." },
+        { key: "scheduleExpandRefreshEnabled", configKey: "schedule_expand_refresh_enabled", type: "BOOLEAN", label: "Scheduled Expand refresh", description: "Refresh the Stash-box candidate cache so Expand and Performer Hunt stay current. Off by default; keeps the background worker resident while on." },
         { key: "scheduleExpandRefreshIntervalHours", configKey: "schedule_expand_refresh_interval_hours", type: "NUMBER", label: "Expand refresh interval (hours)", description: "How often the scheduled Expand refresh runs. Default 24." },
         { key: "scheduleExpandRefreshAtHour", configKey: "schedule_expand_refresh_at_hour", type: "NUMBER", optional: true, label: "Expand refresh hour of day", description: "Run at this hour (0-23, local time). Leave empty to run relative to when the schedule was enabled. Default 4 (04:00)." },
         { key: "scheduleSyncBuildEnabled", configKey: "schedule_sync_build_enabled", type: "BOOLEAN", label: "Scheduled sync and build", description: "Run a full sync and recommendation build on a schedule. Off by default." },
@@ -5382,10 +5425,11 @@
     {
       title: "Discovery",
       fields: [
+        { key: "stashBoxEndpoint", type: "SELECT", default: "https://stashdb.org/graphql", label: "Stash-box endpoint", description: "Choose a server configured in Stash's Metadata Providers settings with a StashDB-compatible GraphQL API. Whisparr integration is available only with stashdb.org. ThePornDB's GraphQL support is limited, so Curator uses more limited REST queries instead: refreshes are slower and some thumbnails may be unavailable." },
         { key: "expandWildcard", configKey: "expand_wildcard", type: "BOOLEAN", label: "Expand popularity wildcard", description: "Include a small trending/popular sample outside preference-derived seeds." },
-        { key: "expandGender", configKey: "expand_gender", type: "SELECT", options: SETTINGS_GENDER_OPTIONS, label: "External performer gender", description: "Default StashDB gender filter for Expand and Similar. Default Female; choose All genders for no filter." },
+        { key: "expandGender", configKey: "expand_gender", type: "SELECT", options: SETTINGS_GENDER_OPTIONS, label: "External performer gender", description: "Default Stash-box gender filter for Expand and Similar. Default Female; choose All genders for no filter." },
         { key: "expandHorizonDays", configKey: "expand_horizon_days", type: "NUMBER", label: "Expand recent-release horizon (days)", description: "Recent-release window used by Expand. Default 90." },
-        { key: "expandCandidateLimit", configKey: "expand_candidate_limit", type: "NUMBER", label: "Expand candidate limit", description: "Maximum StashDB scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh." },
+        { key: "expandCandidateLimit", configKey: "expand_candidate_limit", type: "NUMBER", label: "Expand candidate limit", description: "Maximum Stash-box scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh." },
         { key: "expandSimilarSeedTopK", configKey: "expand_similar_seed_top_k", type: "NUMBER", label: "Expand similar-performer seed top-K", description: "Chase look-alikes for the K strongest favourite performers into the Expand seed set. 0 disables. Default 20." },
         { key: "expandSimilarSeedPerFavorite", configKey: "expand_similar_seed_per_favorite", type: "NUMBER", label: "Expand similar-performer seeds per favourite", description: "How many closest look-alikes per favourite are added as Expand seeds. 0 disables. Default 5." },
       ],
@@ -5461,7 +5505,7 @@
       control = React.createElement(
         "select",
         { id: inputId, className: "form-control form-control-sm curator-settings-control", value: value ?? "", disabled: saving, onChange: (event) => onSave(event.target.value) },
-        field.options.map((option) => React.createElement("option", { key: option.value, value: option.value }, option.label))
+        field.options.map((option) => React.createElement("option", { key: option.value, value: option.value, disabled: option.disabled }, option.label))
       );
     } else {
       control = React.createElement("input", {
@@ -5500,15 +5544,17 @@
     const [editingMoodID, setEditingMoodID] = React.useState("");
     const [newMoodName, setNewMoodName] = React.useState("");
     const [togetherSaving, setTogetherSaving] = React.useState(false);
+    const [stashBoxes, setStashBoxes] = React.useState([]);
     const togetherSaveInFlight = React.useRef(false);
     useCuratorActivity("settings", loading, "Loading settings…");
     React.useEffect(() => {
       let cancelled = false;
-      Promise.all([operation({ operation: "get_config" }), getPluginSettings()])
-        .then(([configData, settingsData]) => {
+      Promise.all([operation({ operation: "get_config" }), getPluginSettings(), getStashBoxEndpoints()])
+        .then(([configData, settingsData, boxes]) => {
           if (cancelled) return;
           setConfig(configData.config);
           setRaw(settingsData);
+          setStashBoxes(boxes);
         })
         .catch((failure) => { if (!cancelled) setError(failure.message); })
         .finally(() => { if (!cancelled) setLoading(false); });
@@ -5541,6 +5587,7 @@
         // (config.go's set() deletes before writing), so a single-key payload
         // would wipe every other setting. Send the full map we already hold.
         await configurePlugin({ ...raw, [field.key]: value });
+        if (field.key === "stashBoxEndpoint") clearEndlessCache();
         if (field.configKey) {
           const data = await operation({ operation: "get_config" });
           cachedConfigUpdatedAtMs = data.updated_at_ms;
@@ -5623,6 +5670,13 @@
           const value = field.configKey
             ? config[field.configKey]
             : (rawValue === undefined || rawValue === null || rawValue === "") && field.default !== undefined ? field.default : rawValue;
+          if (field.key === "stashBoxEndpoint") {
+            const options = stashBoxes.map((box) => ({ value: box.endpoint, label: (box.name || box.endpoint.replace(/^https?:\/\//i, "").split("/")[0]) + (/^https?:\/\/theporndb\.net(?:[:/]|$)/i.test(box.endpoint) ? " (limited support)" : "") }));
+            if (!options.some((option) => option.value === value)) {
+              options.unshift({ value, label: stashBoxes.length ? "Selected endpoint (not configured)" : "No endpoints configured in Stash", disabled: true });
+            }
+            field = { ...field, options };
+          }
           return React.createElement(SettingsField, {
             key: field.key,
             field,

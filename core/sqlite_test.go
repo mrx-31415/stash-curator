@@ -41,7 +41,7 @@ func TestOpenReadonlyPragmasApplied(t *testing.T) {
 		`SELECT max(version) FROM schema_migration`).Scan(&latest); err != nil {
 		t.Fatal(err)
 	}
-	if latest != 41 {
-		t.Fatalf("latest migration=%d, want 41", latest)
+	if latest != 42 {
+		t.Fatalf("latest migration=%d, want 42", latest)
 	}
 }

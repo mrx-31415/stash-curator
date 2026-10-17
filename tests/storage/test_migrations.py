@@ -5,6 +5,26 @@ import pytest
 from curator.storage import MigrationError, MigrationRunner, connect_database
 
 
+def test_shortlist_endpoint_migration_preserves_saved_rows(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    runner = MigrationRunner(connection)
+    original = runner.migrations
+    runner.migrations = [migration for migration in original if migration.version < 42]
+    runner.migrate(applied_at_ms=1)
+    connection.execute("INSERT INTO external_shortlist VALUES ('scene','saved','{}',0.75,'[]',100)")
+    connection.commit()
+    runner.migrations = original
+    runner.migrate(applied_at_ms=2)
+    row = connection.execute("SELECT * FROM external_shortlist").fetchone()
+    assert tuple(row) == ("scene", "saved", "{}", 0.75, "[]", 100, "https://stashdb.org/graphql")
+    connection.execute(
+        "INSERT INTO external_shortlist VALUES "
+        "('scene','saved','{}',0.5,'[]',200,'https://example.test/graphql')"
+    )
+    assert connection.execute("SELECT count(*) FROM external_shortlist").fetchone()[0] == 2
+    connection.close()
+
+
 def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> None:
     connection = connect_database(tmp_path / "curator.sqlite3")
     try:
@@ -53,10 +73,11 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             39,
             40,
             41,
+            42,
         )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 41
+        assert after.current_version == 42
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -348,7 +369,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 41
+        assert MigrationRunner(reader).status().current_version == 42
     finally:
         writer.rollback()
         reader.close()
@@ -374,7 +395,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 41
+        assert second_runner.migrate(applied_at_ms=2).current_version == 42
     finally:
         second.close()
         first.close()

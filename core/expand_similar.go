@@ -71,7 +71,7 @@ func (s *expandService) similar(entityType, entityID string, count int64, candid
 		return jvNull(), errors.New("minimum_similarity must be between 0 and 1")
 	}
 	shortlisted := map[string]bool{}
-	shortRows, err := s.db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type=?`, entityType)
+	shortRows, err := s.db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type=? AND endpoint=lower(?)`, entityType, stashdbEndpoint)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -173,7 +173,9 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 				targets = append(targets, profile)
 			}
 		}
-		entityRows, err := s.db.Query(`SELECT * FROM external_entity WHERE entity_type='scene'`)
+		entityRows, err := s.db.Query(`SELECT * FROM external_entity WHERE entity_type='scene'
+AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?)`, stashdbEndpoint)
 		if err != nil {
 			return jvNull(), err
 		}
@@ -349,7 +351,9 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 			birthdateVal = jvStr(birthdate.String)
 		}
 		target = expandWithAge(target, birthdateVal)
-		entityRows, err := s.db.Query(`SELECT * FROM external_entity WHERE entity_type='performer'`)
+		entityRows, err := s.db.Query(`SELECT * FROM external_entity WHERE entity_type='performer'
+AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?)`, stashdbEndpoint)
 		if err != nil {
 			return jvNull(), err
 		}

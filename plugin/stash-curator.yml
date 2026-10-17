@@ -1,5 +1,5 @@
 name: Stash Curator
-description: Local recommendations and StashDB discovery — curated to your taste.
+description: Local recommendations and Stash-box discovery — curated to your taste.
 # version is injected from pyproject.toml by scripts/build_plugin.py at build time.
 version: 0.1.0
 url: https://github.com/mrx-31415/stash-curator
@@ -80,8 +80,12 @@ settings:
     type: BOOLEAN
   scheduleExpandRefreshEnabled:
     displayName: Scheduled Expand refresh
-    description: Refresh the StashDB candidate cache on a schedule so Expand and Performer Hunt stay current. Off by default.
+    description: Refresh the Stash-box candidate cache on a schedule so Expand and Performer Hunt stay current. Off by default.
     type: BOOLEAN
+  stashBoxEndpoint:
+    displayName: Stash-box endpoint
+    description: GraphQL endpoint compatible with StashDB, configured in Stash with its API key. Leave empty to use StashDB.
+    type: STRING
   scheduleExpandRefreshIntervalHours:
     displayName: Expand refresh interval (hours)
     description: How often the scheduled Expand refresh runs. Default 24 (daily).
@@ -128,7 +132,7 @@ settings:
     type: NUMBER
   expandGender:
     displayName: External performer gender
-    description: Default StashDB gender filter for Expand and Similar. Default FEMALE; leave empty for all.
+    description: Default Stash-box gender filter for Expand and Similar. Default FEMALE; leave empty for all.
     type: STRING
   expandWildcard:
     displayName: Expand popularity wildcard
@@ -136,7 +140,7 @@ settings:
     type: BOOLEAN
   expandCandidateLimit:
     displayName: Expand candidate limit
-    description: Maximum number of StashDB scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh.
+    description: Maximum number of Stash-box scenes fetched per Expand refresh, split across seed sources. Default 1000; raise to reduce fetch truncation at the cost of a slower refresh.
     type: NUMBER
   expandSimilarSeedTopK:
     displayName: Expand similar-performer seed top-K
@@ -212,7 +216,7 @@ tasks:
     execArgs:
       - vacuum
   - name: Refresh Expand cache
-    description: Refresh promising StashDB scenes and performers without affecting library sync.
+    description: Refresh promising Stash-box scenes and performers without affecting library sync.
     execArgs:
       - expand-refresh
   - name: Force rebuild Expand cache

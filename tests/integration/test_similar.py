@@ -99,8 +99,8 @@ def test_similar_stashdb_never_crashes(
     # Library similarity runs the backend before the grid renders.
     page.wait_for_timeout(8000)
 
-    # Switch to the StashDB source; this reloads similarity against the remote pool.
-    page.get_by_role("button", name="StashDB").click()
+    # Switch to the Stash-box source; this reloads similarity against the remote pool.
+    page.get_by_role("button", name="Stash-box").click()
     page.wait_for_timeout(10000)
 
     _assert_panel_survived(page, f"similar {entity_type} StashDB")

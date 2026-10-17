@@ -34,29 +34,29 @@ query CuratorStashBoxes {
 }
 `
 const externalLinksStateQuery = `
-query CuratorExternalLinksState {
+query CuratorExternalLinksState($endpoint: String!) {
   scenes: findScenes(
-    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    scene_filter: {stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count scenes { updated_at } }
   performers: findPerformers(
     performer_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count performers { updated_at } }
   studios: findStudios(
     studio_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count studios { updated_at } }
 }
 `
 const externalLinksQuery = `
-query CuratorExternalLinks($page: Int!, $perPage: Int!) {
+query CuratorExternalLinks($page: Int!, $perPage: Int!, $endpoint: String!) {
   scenes: findScenes(
-    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    scene_filter: {stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) {
     count
@@ -67,13 +67,13 @@ query CuratorExternalLinks($page: Int!, $perPage: Int!) {
   }
   performers: findPerformers(
     performer_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) { count performers { id stash_ids { endpoint stash_id } } }
   studios: findStudios(
     studio_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) { count studios { id stash_ids { endpoint stash_id } } }
@@ -207,7 +207,12 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	timeout := 30 * time.Second
+	if category == "stashdb" {
+		// External discovery queries can take longer than local Stash requests.
+		timeout = 90 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
@@ -268,13 +273,16 @@ func stashdbClient(payload jVal) (string, string, error) {
 			return url, box.get("api_key").asString(), nil
 		}
 	}
-	return "", "", errors.New("configure StashDB with an API key in Stash settings")
+	return "", "", errors.New("configure the selected Stash-box endpoint with an API key in Stash settings")
 }
 
 // stashdbQuery executes one StashDB query with the ApiKey header, recording
 // a "stashdb" span, mirroring GraphQLClient(endpoint, api_key=...,
 // profile_category="stashdb").execute.
 func stashdbQuery(baseURL, apiKey, query string, variables jVal) (jVal, error) {
+	if isThePornDB(stashdbEndpoint) {
+		return thePornDBQuery(baseURL, apiKey, query, variables)
+	}
 	headers := map[string]string{"ApiKey": apiKey}
 	return graphqlQueryCat(baseURL, headers, query, variables, "stashdb")
 }

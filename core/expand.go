@@ -781,7 +781,9 @@ ON CONFLICT(entity_type, external_id) DO UPDATE SET
   payload_json=excluded.payload_json, score=excluded.score,
   sources_json=excluded.sources_json, fetched_at_ms=excluded.fetched_at_ms,
   pool=CASE WHEN pool='candidate' THEN 'candidate' ELSE excluded.pool END`
-	for _, item := range items {
+	for i := range items {
+		items[i].payload = externalPayload(items[i].payload)
+		item := items[i]
 		sourcesJSON := "[]"
 		if len(item.sources) > 0 {
 			arr := jvArr()

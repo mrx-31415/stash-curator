@@ -142,7 +142,7 @@ WHERE snapshot_id=? AND external_tag_id IN (`+placeholders+`)`, args...)
 			if hasSnapshot {
 				external := make([]string, 0)
 				rows, err := db.Query(`SELECT external_tag_id FROM tag_taxonomy_match
-WHERE snapshot_id=? AND local_tag_id IN (`+placeholders+`)`, append([]any{snapshotID}, args...)...)
+WHERE snapshot_id=? AND external_tag_id IS NOT NULL AND local_tag_id IN (`+placeholders+`)`, append([]any{snapshotID}, args...)...)
 				if err != nil {
 					return nil, err
 				}

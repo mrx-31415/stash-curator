@@ -215,11 +215,12 @@ func getShortlistBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), fmt.Errorf("invalid shortlist page")
 	}
 	var total int64
-	if err := db.QueryRow(`SELECT count(*) FROM external_shortlist`).Scan(&total); err != nil {
+	const sourceFilter = `endpoint=lower(?)`
+	if err := db.QueryRow(`SELECT count(*) FROM external_shortlist WHERE `+sourceFilter, stashdbEndpoint).Scan(&total); err != nil {
 		return jvNull(), err
 	}
-	rows, err := db.Query(`SELECT * FROM external_shortlist ORDER BY added_at_ms DESC LIMIT ? OFFSET ?`,
-		count, (page-1)*count)
+	rows, err := db.Query(`SELECT * FROM external_shortlist WHERE `+sourceFilter+` ORDER BY added_at_ms DESC LIMIT ? OFFSET ?`,
+		stashdbEndpoint, count, (page-1)*count)
 	if err != nil {
 		return jvNull(), err
 	}

@@ -158,6 +158,9 @@ func opSendWhisparr(pluginDir string, payload jVal) (jVal, error) {
 }
 
 func sendWhisparrBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	if !whisparrSupportsEndpoint(settings) {
+		return jvNull(), errors.New("Whisparr is only available when the StashDB endpoint is selected")
+	}
 	db, err := openSidecar(pluginDir, payload, settings, false)
 	if err != nil {
 		return jvNull(), err
@@ -168,7 +171,7 @@ func sendWhisparrBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	var payloadJSON string
 	err = db.QueryRow(`
 SELECT payload_json FROM external_shortlist
-WHERE entity_type='scene' AND external_id=?
+WHERE entity_type='scene' AND external_id=? AND endpoint='https://stashdb.org/graphql'
 UNION ALL
 SELECT payload_json FROM external_entity
 WHERE entity_type='scene' AND external_id=? LIMIT 1`,
@@ -182,6 +185,9 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 	scenePayload, err := parseJSON([]byte(payloadJSON))
 	if err != nil {
 		return jvNull(), err
+	}
+	if source := scenePayload.get("curator_endpoint"); source.truthy() && !strings.EqualFold(strings.TrimRight(source.asString(), "/"), "https://stashdb.org/graphql") {
+		return jvNull(), errors.New("Whisparr only accepts scenes from StashDB")
 	}
 	url := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrUrl")))
 	key := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrApiKey")))
