@@ -2525,10 +2525,11 @@
     return [{ ...props, content }, ...args];
   });
 
-  function stashboxEntityURL(payload, kind, id) {
+  function stashboxEntityURL(payload, kind, id, entity = payload) {
     try {
       const url = new URL(payload.curator_endpoint || "https://stashdb.org/graphql");
       if (!["https:", "http:"].includes(url.protocol)) return undefined;
+      if (url.hostname === "theporndb.net" && kind === "performers" && entity.curator_site_performer) kind = "performer-sites";
       url.pathname = `${url.pathname.replace(/\/graphql\/?$/i, "").replace(/\/$/, "")}/${kind}/${encodeURIComponent(id)}`;
       url.search = "";
       url.hash = "";
@@ -2580,7 +2581,7 @@
       metadataPopover("performers", faUser, "Performers", cast.length, React.createElement(React.Fragment, null, people.map((person) => {
         const performerImage = person.images?.find((value) => value.url)?.url;
         const PersonLink = person.curator_local ? NavLink : "a";
-        const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: stashboxEntityURL(payload, "performers", person.id), target: "_blank", rel: "noreferrer", title: "Open external performer profile" };
+        const link = person.curator_local ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" } : { href: stashboxEntityURL(payload, "performers", person.id, person), target: "_blank", rel: "noreferrer", title: "Open external performer profile" };
         return React.createElement("div", { key: person.id, className: "performer-tag-container row" }, React.createElement("div", { className: "curator-performer-image-actions" }, React.createElement(PersonLink, { className: "performer-tag col m-auto zoom-2", ...link }, performerImage && React.createElement("img", { className: "image-thumbnail", src: performerImage, loading: "lazy", alt: person.name || "" })), React.createElement(PerformerHuntLink, { performer: person, external: true })), React.createElement(PersonLink, { className: "tag-item tag-link badge badge-secondary d-block", ...link }, person.name));
       }), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)))
     );

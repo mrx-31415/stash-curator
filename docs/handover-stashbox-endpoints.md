@@ -16,27 +16,36 @@ filters, pagination and trending/popularity queries. JAVStash's live public sche
 matches the relevant contract; authenticated discovery still needs verification.
 The original request is [forum post 23](https://discourse.stashapp.cc/t/stash-curator/17689/23).
 
-## Next commit: ThePornDB REST support
+## Separate commit: ThePornDB REST support
 
 The configured ThePornDB Stash-box endpoint was tested. Its GraphQL searchScene and
 findScene operations work, but queryScenes returned a null scene list in the tested
 discovery requests. Filters use strings rather than Stash-box criterion objects,
-and queryTagCategories is absent. The current implementation reports an unsupported
+and queryTagCategories is absent. The compatible-endpoint commit reports an unsupported
 discovery schema before constructing large filter requests.
 
 Read-only REST probes succeeded with the existing provider key as a Bearer token.
 Scene listing and pagination worked; a nonexistent performer filter returned no
 scenes. A sampled scene UUID was shared between REST and GraphQL.
 
-Use the [official API specification](https://api.theporndb.net/specs?openapi.json).
-The next implementation needs to:
+The separate REST adapter translates the existing discovery queries and normalizes
+responses for the existing scorer. Its native implementation is `core/theporndb.go`;
+the Python oracle is `curator/theporndb.py`. The configured key is reused as a Bearer
+token for `https://api.theporndb.net`; it is never sent to the browser.
 
-- Translate discovery filters and pagination into REST requests.
-- Normalize scenes, images, hashes and performer attributes for the existing scorer.
-- Distinguish UUIDs from the numeric scene, performer, site and tag IDs used in filters.
-- Handle missing tag categories without importing another provider's taxonomy.
-- Verify owned-scene matching, links, shortlists, result limits and missing attributes.
-- Keep Whisparr disabled for ThePornDB.
+REST scenes, parent performers, sites and tags share GraphQL UUIDs. Scene filters
+require numeric parent-performer, site and tag IDs. Site performer profiles resolve
+to their parent UUID when linked. Unlinked profiles retain their own UUID and website
+route, but have no supported scene filter and return no Performer Hunt results.
+Unknown filter IDs never result in an unfiltered request.
 
-Prefer adapting retrieval and normalization to the existing scoring flow. REST
-support is not included in the compatible-endpoint change.
+Virtual pages preserve the callers' limits over the REST API's 100-row page cap.
+There is no trustworthy updated-at filter; refresh falls back to the complete
+configured discovery window. Taxonomy is a flat tag list with no provider categories.
+Relevance and profile-similarity retrieval feed the existing scorer; the latter is
+not a co-star query. Whisparr remains disabled for this provider.
+
+The [official API specification](https://api.theporndb.net/specs?openapi.json) differs
+from live validation: sort values use lowercase (`asc_name`, `most_relevant`), while
+gender and ethnicity use title case (`Female`, `Caucasian`). Synthetic shared fixtures
+cover normalization, filters, pagination and complete backend operation parity.

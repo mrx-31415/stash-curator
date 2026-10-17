@@ -93,6 +93,7 @@ from curator.storage import (  # noqa: E402
 from curator.sync import SyncService  # noqa: E402
 from curator.sync.repository import SyncRepository  # noqa: E402
 from curator.taxonomy import store as taxonomy_store  # noqa: E402
+from curator.theporndb import ThePornDBClient, is_theporndb  # noqa: E402
 from curator.whisparr import WhisparrClient  # noqa: E402
 
 SCHEMA_VERSION = 2
@@ -235,6 +236,8 @@ def _stashdb(payload: dict[str, Any], settings: dict[str, Any] | None = None) ->
             "configure the selected Stash-box endpoint with an API key in Stash settings"
         )
     endpoint = str(os.environ.get("CURATOR_STASHDB_ENDPOINT") or box["endpoint"])
+    if is_theporndb(selected):
+        return ThePornDBClient(endpoint, str(box["api_key"]))
     return GraphQLClient(endpoint, api_key=str(box["api_key"]), profile_category="stashdb")
 
 

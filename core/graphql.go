@@ -275,6 +275,9 @@ func stashdbClient(payload jVal) (string, string, error) {
 // a "stashdb" span, mirroring GraphQLClient(endpoint, api_key=...,
 // profile_category="stashdb").execute.
 func stashdbQuery(baseURL, apiKey, query string, variables jVal) (jVal, error) {
+	if isThePornDB(stashdbEndpoint) {
+		return thePornDBQuery(baseURL, apiKey, query, variables)
+	}
 	headers := map[string]string{"ApiKey": apiKey}
 	return graphqlQueryCat(baseURL, headers, query, variables, "stashdb")
 }

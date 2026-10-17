@@ -1,0 +1,24 @@
+{
+  "performer": {
+    "id": "parent-performer", "_id": 42, "name": "Example Performer",
+    "aliases": ["Example Alias"], "disambiguation": "Example", "image": "https://example.test/performer.jpg",
+    "extras": {
+      "gender": "Female", "ethnicity": "Caucasian", "birthday": "1980-02-03",
+      "height": "160cm", "eye_colour": "Blue", "hair_colour": "Brown",
+      "measurements": "34DD-24-36", "cupsize": "34DD", "fake_boobs": false,
+      "tattoos": "Left arm", "piercings": "None"
+    }
+  },
+  "site_performer": {
+    "id": "site-performer", "_id": 900, "name": "Example Performer",
+    "extra": {"gender": null, "height": null}, "parent": null
+  },
+  "site": {"id": 9, "uuid": "studio-uuid", "name": "Example Studio"},
+  "tags": [{"id": 7, "uuid": "tag-uuid", "name": "Example Tag"}],
+  "scene": {
+    "id": "scene-uuid", "title": "Example Scene", "date": "2099-01-01",
+    "description": "A synthetic scene.", "duration": 600,
+    "image": "https://example.test/scene.jpg", "performers": [], "site": null, "tags": [],
+    "hashes": [{"type": "phash", "hash": "0123456789abcdef", "duration": 600}]
+  }
+}

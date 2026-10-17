@@ -17,6 +17,9 @@ test("external links use their saved source and preserve legacy StashDB links", 
   assert.equal(context.stashboxEntityURL({ curator_endpoint: "https://javstash.org/graphql" }, "performers", "three"), "https://javstash.org/performers/three");
   assert.equal(context.stashboxEntityURL({ curator_endpoint: "https://example.test/box/graphql" }, "scenes", "a/b"), "https://example.test/box/scenes/a%2Fb");
   assert.equal(context.stashboxEntityURL({ curator_endpoint: "javascript:alert(1)" }, "scenes", "one"), undefined);
+  const tpdb = { curator_endpoint: "https://theporndb.net/graphql" };
+  assert.equal(context.stashboxEntityURL(tpdb, "performers", "parent"), "https://theporndb.net/performers/parent");
+  assert.equal(context.stashboxEntityURL(tpdb, "performers", "site", { curator_site_performer: true }), "https://theporndb.net/performer-sites/site");
 });
 function nodes(node) {
   return node && typeof node === "object" ? [node, ...(node.children || []).flat(Infinity).flatMap(nodes)] : [];

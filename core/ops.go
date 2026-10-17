@@ -630,6 +630,9 @@ func stashdbConfigured(boxes jVal) bool {
 
 func configureStashbox(settings jVal) {
 	stashdbEndpoint = selectedStashboxEndpoint(settings)
+	tpdbSession.Lock()
+	tpdbSession.client = nil
+	tpdbSession.Unlock()
 }
 
 func selectedStashboxEndpoint(settings jVal) string {

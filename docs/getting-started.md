@@ -125,7 +125,8 @@ Curator's **Manage → Settings**. Useful early choices are:
 
 For optional external discovery, configure a stash-box in Stash with its endpoint and
 API key. Curator uses StashDB (`https://stashdb.org/graphql`) by default. A different
-endpoint must provide a GraphQL API compatible with StashDB's queries. To use a
+endpoint must provide a GraphQL API compatible with StashDB's queries, or be
+ThePornDB (`https://theporndb.net/graphql`). To use a
 different configured stash-box, select it from the dropdown under **Manage → Settings →
 Discovery → Stash-box endpoint**. Run **Refresh Expand cache** under **Manage → Tasks** to
 populate discovery results. Expand uses a recent-release window (90 days by default),
@@ -137,11 +138,16 @@ the selected server. Previous-server candidates stay hidden during preparation;
 saved shortlist entries are preserved and shown when their source is selected.
 Existing shortlist entries belong to StashDB. Progress appears under **Manage → Tasks**.
 
-Some providers expose only partial Stash-box compatibility. ThePornDB's GraphQL
-interface is not supported for Expand yet; its discovery queries and taxonomy differ
-from Stash-box. ThePornDB REST support is planned separately. FansDB's discovery
-queries have been checked live; JAVStash's schema is compatible, but authenticated
-discovery results have not yet been verified.
+ThePornDB discovery uses its REST API with the API key already configured in Stash.
+Expand, Performer Hunt and external similarity use the same Curator scorer. Refreshes
+fetch the complete configured discovery window because the provider has no reliable
+modification-date filter. Tags have no provider categories; local taxonomy rules still
+apply. Performer discovery uses the provider's relevance and profile-similarity pools.
+Site-specific performer profiles without a parent profile cannot be used for Performer
+Hunt; the provider cannot filter scenes by those IDs.
+
+FansDB's discovery queries have been checked live; JAVStash's schema is compatible,
+but authenticated discovery results have not yet been verified.
 
 Whisparr v3 is also optional. Configure its URL and API key only if you want the
 explicit **Send to Whisparr** action on external scene cards. Curator sends an item
