@@ -57,6 +57,7 @@ func marshalJSONString(s string) string {
 
 func runBackend(pluginDir, mode string) {
 	pluginDir = resolvePluginDir(pluginDir)
+	tpdbCachePath = filepath.Join(pluginDir, "data", "theporndb-identities.json")
 	if mode == "daemon" {
 		// Worker mode is not a Stash request: no stdin protocol, no output.
 		// The daemon exits on its own after an idle period.

@@ -49,3 +49,18 @@ The [official API specification](https://api.theporndb.net/specs?openapi.json) d
 from live validation: sort values use lowercase (`asc_name`, `most_relevant`), while
 gender and ethnicity use title case (`Female`, `Caucasian`). Synthetic shared fixtures
 cover normalization, filters, pagination and complete backend operation parity.
+
+Identity lookups run concurrently and share in-flight results for duplicate IDs.
+Discovery starts with the top 16 library performers, chases at most four favorites
+with four additions each, and caps the final performer seeds at 32 and studio seeds
+at eight. Numeric identity mappings persist for seven days; the tag list for 30 days,
+in `data/theporndb-identities.json`. The cache contains no API keys or full profiles.
+Search and scene responses also populate these mappings, avoiding redundant lookups.
+Each operation starts REST requests at most once per second, shares a four-request
+limit and a cooldown after HTTP 429. Requests retry up to three times, respecting
+Retry-After seconds or waiting 60 seconds when the header is absent. A terminal
+lookup error stops queued filter lookups.
+
+Initial bulk-ID live probes hit provider rate limits. The bounded revision passes
+the automated gates but still needs a limited live check. The installed plugin was
+restored to the compatible-endpoint build; REST remains on its separate local branch.

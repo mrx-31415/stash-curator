@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+from threading import Barrier, Lock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from curator.expand import PERFORMERS, SCENES
+from curator.expand import PERFORMERS, SCENES, ExpandService
 from curator.graphql import GraphQLError
 from curator.taxonomy.stashdb import StashDBTaxonomyClient
 from curator.theporndb import ThePornDBClient, _measurement, _performer, _scene
@@ -121,6 +122,25 @@ def test_filters_and_virtual_pages_do_not_drop_constraints() -> None:
         client.mutate("mutation { write }")
 
 
+def test_filter_resolves_distinct_ids_concurrently_and_shares_duplicates() -> None:
+    barrier, lock = Barrier(2, timeout=2), Lock()
+    calls = []
+
+    def transport(url, headers, timeout):
+        with lock:
+            calls.append(url)
+        barrier.wait()
+        return 200, json.dumps({"data": fixture()["performer"]}).encode()
+
+    client = ThePornDBClient("https://theporndb.net/graphql", "key", rest_transport=transport)
+    params = {}
+    assert client._scene_filter(
+        params, "performers", {"modifier": "INCLUDES", "value": ["one", "two", "one"]}
+    )
+    assert len(calls) == 2
+    assert params["performers[42]"] == "Example Performer"
+
+
 def test_flat_taxonomy_and_similar_performer_pool() -> None:
     data = fixture()
     requests = []
@@ -169,9 +189,139 @@ def test_flat_taxonomy_and_similar_performer_pool() -> None:
         (200, b'{"data":[{}],"meta":{"total":1}}'),
     ],
 )
-def test_bad_responses_fail_clearly(response) -> None:
+def test_bad_responses_fail_clearly(response, monkeypatch) -> None:
+    monkeypatch.setattr("curator.theporndb.time.sleep", lambda _: None)
     client = ThePornDBClient(
         "https://theporndb.net/graphql", "key", rest_transport=lambda *_: response
     )
     with pytest.raises(GraphQLError, match="ThePornDB"):
         client.execute(SCENES, {"input": {"page": 1, "per_page": 1}})
+
+
+def test_rate_limit_retries_use_provider_delay_and_are_bounded(monkeypatch) -> None:
+    sleeps, calls = [], []
+    monkeypatch.setattr("curator.theporndb.time.sleep", sleeps.append)
+    monkeypatch.setattr("curator.theporndb.time.monotonic", lambda: 0)
+
+    def transport(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            return 429, b"{}", {"Retry-After": "2"}
+        return 200, b'{"data":[],"meta":{"total":0}}'
+
+    client = ThePornDBClient("https://theporndb.net/graphql", "key", rest_transport=transport)
+    assert client.execute(SCENES, {"input": {}})["queryScenes"]["count"] == 0
+    assert len(calls) == 2
+    assert sleeps == [2]
+
+
+def test_identity_and_tag_cache_avoids_repeat_requests_and_expires(tmp_path) -> None:
+    data, calls = fixture(), []
+
+    def transport(url, *_):
+        path = urlparse(url).path
+        calls.append(path)
+        if path == "/performers/parent-performer":
+            response = {"data": data["performer"]}
+        elif path == "/sites/studio-uuid":
+            response = {"data": data["site"]}
+        elif path == "/tags":
+            response = {"data": data["tags"], "meta": {"total": 1, "current_page": 1}}
+        else:
+            response = {"data": [], "meta": {"total": 0}}
+        return 200, json.dumps(response).encode()
+
+    path = tmp_path / "theporndb.json"
+    query = {
+        source: {"modifier": "INCLUDES", "value": [identifier]}
+        for source, identifier in [
+            ("performers", "parent-performer"),
+            ("studios", "studio-uuid"),
+            ("tags", "tag-uuid"),
+        ]
+    }
+    for expected in (4, 1):
+        calls.clear()
+        client = ThePornDBClient(
+            "https://theporndb.net/graphql", "secret-key", rest_transport=transport, cache_path=path
+        )
+        client.execute(SCENES, {"input": query})
+        assert len(calls) == expected
+    assert "secret-key" not in path.read_text()
+    assert "birthday" not in path.read_text()
+    cache = json.loads(path.read_text())
+    for entry in cache["identities"].values():
+        entry["checked_at_ms"] = 0
+    cache["tags_checked_at_ms"] = 0
+    path.write_text(json.dumps(cache))
+    calls.clear()
+    ThePornDBClient(
+        "https://theporndb.net/graphql", "secret-key", rest_transport=transport, cache_path=path
+    ).execute(SCENES, {"input": query})
+    assert len(calls) == 4
+
+
+def test_discovery_bounds_seed_lookups_on_large_libraries(monkeypatch) -> None:
+    class Connection:
+        def execute(self, sql, *_):
+            if "SELECT scene_id FROM model_scene_score" in sql:
+                return [("scene",)]
+            if "SELECT DISTINCT studio_id" in sql:
+                return [(f"studio-{i:03}",) for i in range(100)]
+            return []
+
+    service = ExpandService(Connection(), "https://theporndb.net/graphql")
+    monkeypatch.setattr(
+        service,
+        "_performer_evidence",
+        lambda *_: {f"p-{i:03}": {"strength": 200 - i} for i in range(200)},
+    )
+    monkeypatch.setattr(service, "_external_tag_ids", lambda *_: {})
+
+    def chase(client, performers, evidence, model, version, links, top_k, per_favorite, *_):
+        assert len(performers) == 16
+        assert (top_k, per_favorite) == (4, 4)
+        return [*performers, *(f"extra-{i}" for i in range(100))]
+
+    monkeypatch.setattr(service, "_expand_similar_performers", chase)
+    seeds = service._seeds(
+        object(),
+        "model",
+        "features",
+        {"studios": {f"studio-{i:03}": f"external-{i}" for i in range(100)}},
+    )
+    assert len(seeds["performers"]) == 32
+    assert len(seeds["studios"]) == 8
+
+
+def test_reuses_ids_already_returned_in_performer_search() -> None:
+    data, calls = fixture(), []
+
+    def transport(url, *_):
+        path = urlparse(url).path
+        calls.append(path)
+        assert path in {"/performers", "/scenes"}
+        rows = [data["performer"]] if path == "/performers" else []
+        return 200, json.dumps({"data": rows, "meta": {"total": len(rows)}}).encode()
+
+    client = ThePornDBClient("https://theporndb.net/graphql", "key", rest_transport=transport)
+    client._query("CuratorPerformerSearch", {"input": {"names": "Example"}})
+    client.execute(
+        SCENES, {"input": {"performers": {"modifier": "INCLUDES", "value": ["parent-performer"]}}}
+    )
+    assert calls == ["/performers", "/scenes"]
+
+
+def test_request_starts_are_paced(monkeypatch) -> None:
+    sleeps = []
+    monkeypatch.setattr("curator.theporndb.time.sleep", sleeps.append)
+    monkeypatch.setattr("curator.theporndb.time.monotonic", lambda: 0)
+    client = ThePornDBClient(
+        "https://theporndb.net/graphql",
+        "key",
+        rest_transport=lambda *_: (200, b'{"data":[],"meta":{"total":0}}'),
+    )
+    client._request_interval = 1
+    client.execute(SCENES)
+    client.execute(SCENES)
+    assert sleeps == [1]

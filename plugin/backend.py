@@ -237,7 +237,13 @@ def _stashdb(payload: dict[str, Any], settings: dict[str, Any] | None = None) ->
         )
     endpoint = str(os.environ.get("CURATOR_STASHDB_ENDPOINT") or box["endpoint"])
     if is_theporndb(selected):
-        return ThePornDBClient(endpoint, str(box["api_key"]))
+        return ThePornDBClient(
+            endpoint,
+            str(box["api_key"]),
+            cache_path=PLUGIN_DIR / "data" / "theporndb-identities.json"
+            if is_theporndb(endpoint)
+            else None,
+        )
     return GraphQLClient(endpoint, api_key=str(box["api_key"]), profile_category="stashdb")
 
 

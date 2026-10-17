@@ -402,8 +402,15 @@ ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
 			basePerformers = append(basePerformers, externalID)
 		}
 	}
+	if isThePornDB(stashdbEndpoint) {
+		basePerformers = basePerformers[:min(16, len(basePerformers))]
+		similarTopK, similarPerFavorite = min(4, similarTopK), min(4, similarPerFavorite)
+	}
 	expandedPerformers := expandSimilarPerformers(s, clientURL, apiKey, basePerformers, evidence,
 		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity, timings)
+	if isThePornDB(stashdbEndpoint) {
+		expandedPerformers = expandedPerformers[:min(32, len(expandedPerformers))]
+	}
 	performers := jvArr()
 	for _, externalID := range expandedPerformers {
 		performers.arr = append(performers.arr, jvStr(externalID))
@@ -467,6 +474,9 @@ SELECT scene_id FROM source_scene ORDER BY play_count DESC, updated_at DESC LIMI
 	sort.Strings(sortedStudios)
 	if len(sortedStudios) > 60 {
 		sortedStudios = sortedStudios[:60]
+	}
+	if isThePornDB(stashdbEndpoint) {
+		sortedStudios = sortedStudios[:min(8, len(sortedStudios))]
 	}
 	studiosArr := jvArr()
 	for _, id := range sortedStudios {

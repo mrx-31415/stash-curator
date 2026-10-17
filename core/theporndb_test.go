@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func tpdbFixture(t *testing.T) jVal {
@@ -20,6 +25,127 @@ func tpdbFixture(t *testing.T) jVal {
 		t.Fatal(err)
 	}
 	return fixture
+}
+
+func TestThePornDBFilterResolvesDistinctIDsConcurrentlyAndSharesDuplicates(t *testing.T) {
+	started, release := make(chan struct{}, 4), make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		started <- struct{}{}
+		<-release
+		fmt.Fprint(w, `{"data":{"id":"parent","_id":42,"name":"Example"}}`)
+	}))
+	defer server.Close()
+	defer close(release)
+	client := newTPDBClient(server.URL, "test-key")
+	done := make(chan error, 1)
+	go func() {
+		ok, err := client.sceneFilter(url.Values{}, "performers", jvObj(
+			jvKey("modifier", jvStr("INCLUDES")),
+			jvKey("value", jvArr(jvStr("one"), jvStr("two"), jvStr("one"))),
+		))
+		if !ok && err == nil {
+			err = fmt.Errorf("filter unexpectedly empty")
+		}
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("unrelated identities were serialized behind one network request")
+		}
+	}
+	// Unblock both owners while the duplicate waits on the same cached result.
+	release <- struct{}{}
+	release <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil || calls.Load() != 2 {
+			t.Fatalf("identity lookup failed or duplicated: calls=%d err=%v", calls.Load(), err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("duplicate identity started another network request")
+	}
+}
+
+func TestThePornDBRateLimitRetriesAreBounded(t *testing.T) {
+	var calls atomic.Int32
+	var recoverAfterFirst atomic.Bool
+	recoverAfterFirst.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 || !recoverAfterFirst.Load() {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, `{"data":[],"meta":{"total":0}}`)
+	}))
+	defer server.Close()
+	client := newTPDBClient(server.URL, "test-key")
+	if _, _, err := client.list("/scenes", nil, 1, 1); err != nil || calls.Load() != 2 {
+		t.Fatalf("rate-limit recovery failed: calls=%d err=%v", calls.Load(), err)
+	}
+	recoverAfterFirst.Store(false)
+	calls.Store(0)
+	if _, _, err := client.list("/scenes", nil, 1, 1); err == nil || calls.Load() != 4 {
+		t.Fatalf("unbounded rate-limit retries: calls=%d err=%v", calls.Load(), err)
+	}
+}
+
+func TestThePornDBIdentityCacheAvoidsRepeatLookups(t *testing.T) {
+	fixture := tpdbFixture(t)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path == "/tags" {
+			fmt.Fprintf(w, `{"data":%s,"meta":{"total":1,"current_page":1}}`, fixture.get("tags").marshalCompact())
+		} else {
+			fmt.Fprintf(w, `{"data":%s}`, fixture.get("performer").marshalCompact())
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "identities.json")
+	for range 2 {
+		client := newTPDBClient(server.URL, "secret-key")
+		client.cachePath = path
+		client.loadCache()
+		if _, err := client.detail("performers", "parent-performer"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.tagCatalog(); err != nil {
+			t.Fatal(err)
+		}
+		client.saveCache()
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("warm cache repeated API lookups: %d calls", calls.Load())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(raw), "secret-key") || strings.Contains(string(raw), "birthday") {
+		t.Fatalf("cache saved credentials or extra profile data: %v", err)
+	}
+}
+
+func TestThePornDBPacesRequestStarts(t *testing.T) {
+	starts := make(chan time.Time, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		starts <- time.Now()
+		fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer server.Close()
+	client := newTPDBClient(server.URL, "test-key")
+	client.requestInterval = 50 * time.Millisecond
+	for range 2 {
+		if _, err := client.get("/scenes", nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := <-starts, <-starts
+	if second.Sub(first) < 40*time.Millisecond {
+		t.Fatal("request starts exceeded the configured pace")
+	}
 }
 
 func TestThePornDBNormalization(t *testing.T) {

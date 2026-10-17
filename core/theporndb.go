@@ -5,7 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,14 +27,29 @@ var tpdbSession struct {
 	endpoint, key string
 }
 
+var tpdbCachePath string
+
 type tpdbClient struct {
-	base, key string
-	http      *http.Client
-	requests  chan struct{}
-	mu        sync.Mutex
-	details   map[string]jVal
-	tags      []jVal
-	tagsReady bool
+	base, key       string
+	http            *http.Client
+	requests        chan struct{}
+	mu              sync.Mutex
+	details         map[string]*tpdbDetail
+	tags            []jVal
+	tagsReady       bool
+	rateMu          sync.Mutex
+	retryAfter      time.Time
+	nextRequest     time.Time
+	requestInterval time.Duration
+	cachePath       string
+	tagsCheckedAt   int64
+}
+
+type tpdbDetail struct {
+	ready     chan struct{}
+	value     jVal
+	err       error
+	checkedAt int64
 }
 
 func newTPDBClient(endpoint, key string) *tpdbClient {
@@ -39,8 +57,117 @@ func newTPDBClient(endpoint, key string) *tpdbClient {
 	if isThePornDB(endpoint) {
 		base = "https://api.theporndb.net"
 	}
-	return &tpdbClient{base: base, key: key, http: &http.Client{Timeout: 30 * time.Second},
-		requests: make(chan struct{}, 4), details: map[string]jVal{}}
+	client := &tpdbClient{base: base, key: key, http: &http.Client{Timeout: 30 * time.Second},
+		requests: make(chan struct{}, 4), details: map[string]*tpdbDetail{}}
+	if isThePornDB(endpoint) {
+		client.cachePath, client.requestInterval = tpdbCachePath, time.Second
+		client.loadCache()
+	}
+	return client
+}
+
+func (c *tpdbClient) loadCache() {
+	if c.cachePath == "" {
+		return
+	}
+	raw, err := os.ReadFile(c.cachePath)
+	if err != nil {
+		return
+	}
+	cache, err := parseJSON(raw)
+	if err != nil || pythonInt(cache.get("version")) != 1 {
+		return
+	}
+	now := time.Now().UnixMilli()
+	for _, pair := range cache.get("identities").obj {
+		checked := pythonInt(pair.val.get("checked_at_ms"))
+		if checked > 0 && checked <= now && now-checked < 7*86_400_000 && pair.val.get("value").kind == jObj {
+			entry := &tpdbDetail{ready: make(chan struct{}), value: pair.val.get("value"), checkedAt: checked}
+			close(entry.ready)
+			c.details[pair.key] = entry
+		}
+	}
+	checked := pythonInt(cache.get("tags_checked_at_ms"))
+	if checked > 0 && checked <= now && now-checked < 30*86_400_000 && cache.get("tags").kind == jArr {
+		c.tags, c.tagsReady, c.tagsCheckedAt = cache.get("tags").arr, true, checked
+	}
+}
+
+func tpdbIdentity(raw jVal) jVal {
+	value := jvObj()
+	for _, field := range []string{"id", "_id", "uuid", "name"} {
+		if raw.has(field) {
+			value.set(field, raw.get(field))
+		}
+	}
+	if raw.get("parent").kind == jObj {
+		value.set("parent", tpdbIdentity(raw.get("parent")))
+	}
+	return value
+}
+
+func (c *tpdbClient) rememberIdentity(resource string, row jVal) {
+	id, numeric := row.get("id"), row.get("_id")
+	if resource == "sites" {
+		id, numeric = row.get("uuid"), row.get("id")
+	}
+	if !id.truthy() || !numeric.truthy() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := resource + "/" + id.asString()
+	if previous, exists := c.details[key]; exists {
+		select {
+		case <-previous.ready:
+		default:
+			return
+		}
+	}
+	entry := &tpdbDetail{ready: make(chan struct{}), value: tpdbIdentity(row), checkedAt: time.Now().UnixMilli()}
+	close(entry.ready)
+	c.details[key] = entry
+}
+
+func (c *tpdbClient) saveCache() {
+	if c.cachePath == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	keys := make([]string, 0, len(c.details))
+	for key, entry := range c.details {
+		select {
+		case <-entry.ready:
+			if entry.err == nil && entry.value.kind == jObj {
+				keys = append(keys, key)
+			}
+		default:
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return c.details[keys[i]].checkedAt > c.details[keys[j]].checkedAt })
+	identities := jvObj()
+	for _, key := range keys[:min(1000, len(keys))] {
+		entry := c.details[key]
+		identities.set(key, jvObj(jvKey("checked_at_ms", jvInt(entry.checkedAt)), jvKey("value", tpdbIdentity(entry.value))))
+	}
+	cache := jvObj(jvKey("version", jvInt(1)), jvKey("identities", identities),
+		jvKey("tags_checked_at_ms", jvInt(c.tagsCheckedAt)), jvKey("tags", jvArr(c.tags...)))
+	if err := os.MkdirAll(filepath.Dir(c.cachePath), 0o700); err != nil {
+		return
+	}
+	file, err := os.CreateTemp(filepath.Dir(c.cachePath), ".theporndb-*.tmp")
+	if err != nil {
+		return
+	}
+	defer os.Remove(file.Name())
+	_, err = file.WriteString(cache.marshalCompact())
+	closeErr := file.Close()
+	if err == nil && closeErr == nil {
+		if err := os.Rename(file.Name(), c.cachePath); err != nil {
+			infoLog("ThePornDB identity cache could not be saved")
+		}
+	}
 }
 
 func thePornDBQuery(endpoint, key, document string, variables jVal) (jVal, error) {
@@ -51,6 +178,7 @@ func thePornDBQuery(endpoint, key, document string, variables jVal) (jVal, error
 	}
 	client := tpdbSession.client
 	tpdbSession.Unlock()
+	defer client.saveCache()
 	started := time.Now().UnixNano()
 	defer func() {
 		if trace := currentTrace(); trace != nil {
@@ -73,26 +201,53 @@ func (c *tpdbClient) get(path string, params url.Values, missingOK bool) (jVal, 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.key)
 	req.Header.Set("Accept", "application/json")
-	response, err := c.http.Do(req)
-	if err != nil {
-		return jvNull(), fmt.Errorf("ThePornDB request failed: %w", err)
+	for attempt := 0; ; attempt++ {
+		c.rateMu.Lock()
+		start := time.Now()
+		if c.retryAfter.After(start) {
+			start = c.retryAfter
+		}
+		if c.nextRequest.After(start) {
+			start = c.nextRequest
+		}
+		c.nextRequest = start.Add(c.requestInterval)
+		delay := time.Until(start)
+		c.rateMu.Unlock()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		response, err := c.http.Do(req)
+		if err != nil {
+			return jvNull(), fmt.Errorf("ThePornDB request failed: %w", err)
+		}
+		if response.StatusCode == http.StatusTooManyRequests && attempt < 3 {
+			seconds, err := strconv.Atoi(response.Header.Get("Retry-After"))
+			if err != nil || seconds < 0 {
+				seconds = 60
+			}
+			response.Body.Close()
+			c.rateMu.Lock()
+			c.retryAfter = time.Now().Add(time.Duration(seconds) * time.Second)
+			c.rateMu.Unlock()
+			continue
+		}
+		defer response.Body.Close()
+		if missingOK && response.StatusCode == http.StatusNotFound {
+			return jvNull(), nil
+		}
+		if response.StatusCode != http.StatusOK {
+			return jvNull(), fmt.Errorf("ThePornDB request failed (HTTP %d)", response.StatusCode)
+		}
+		raw, err := io.ReadAll(response.Body)
+		if err != nil {
+			return jvNull(), fmt.Errorf("ThePornDB response failed: %w", err)
+		}
+		result, err := parseJSON(raw)
+		if err != nil || result.kind != jObj || !result.has("data") {
+			return jvNull(), fmt.Errorf("ThePornDB returned an invalid response")
+		}
+		return result, nil
 	}
-	defer response.Body.Close()
-	if missingOK && response.StatusCode == http.StatusNotFound {
-		return jvNull(), nil
-	}
-	if response.StatusCode != http.StatusOK {
-		return jvNull(), fmt.Errorf("ThePornDB request failed (HTTP %d)", response.StatusCode)
-	}
-	raw, err := io.ReadAll(response.Body)
-	if err != nil {
-		return jvNull(), fmt.Errorf("ThePornDB response failed: %w", err)
-	}
-	result, err := parseJSON(raw)
-	if err != nil || result.kind != jObj || !result.has("data") {
-		return jvNull(), fmt.Errorf("ThePornDB returned an invalid response")
-	}
-	return result, nil
 }
 
 // Virtual pages preserve the caller's page size across the REST API's 100-row cap.
@@ -123,6 +278,15 @@ func (c *tpdbClient) list(path string, params url.Values, page, size int64) (int
 			if row.kind != jObj || !row.get("id").truthy() {
 				return 0, nil, fmt.Errorf("ThePornDB returned an invalid list identity")
 			}
+			if strings.HasPrefix(path, "/performers") {
+				c.rememberIdentity("performers", row)
+			} else if path == "/scenes" {
+				c.rememberIdentity("sites", row.get("site"))
+				for _, person := range row.get("performers").arr {
+					c.rememberIdentity("performer-sites", person)
+					c.rememberIdentity("performers", person.get("parent"))
+				}
+			}
 		}
 		if result.get("meta").kind != jObj {
 			// Similar-performer responses are unpaginated.
@@ -149,21 +313,23 @@ func (c *tpdbClient) list(path string, params url.Values, page, size int64) (int
 
 func (c *tpdbClient) detail(resource, id string) (jVal, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	cacheKey := resource + "/" + id
-	if value, ok := c.details[cacheKey]; ok {
-		return value, nil
+	if entry, ok := c.details[cacheKey]; ok {
+		c.mu.Unlock()
+		<-entry.ready
+		return entry.value, entry.err
 	}
+	entry := &tpdbDetail{ready: make(chan struct{})}
+	c.details[cacheKey] = entry
+	c.mu.Unlock()
 	result, err := c.get("/"+resource+"/"+url.PathEscape(id), nil, true)
-	if err != nil {
-		return jvNull(), err
-	}
 	value := result.get("data")
-	if value.kind != jObj && value.kind != jNull {
-		return jvNull(), fmt.Errorf("ThePornDB returned an invalid identity")
+	if err == nil && value.kind != jObj && value.kind != jNull {
+		err = fmt.Errorf("ThePornDB returned an invalid identity")
 	}
-	c.details[cacheKey] = value
-	return value, nil
+	entry.value, entry.err, entry.checkedAt = value, err, time.Now().UnixMilli()
+	close(entry.ready)
+	return value, err
 }
 
 func (c *tpdbClient) tagCatalog() ([]jVal, error) {
@@ -184,16 +350,24 @@ func (c *tpdbClient) tagCatalog() ([]jVal, error) {
 		}
 	}
 	c.tags, c.tagsReady = tags, true
+	c.tagsCheckedAt = time.Now().UnixMilli()
 	return tags, nil
 }
 
 func (c *tpdbClient) parentPerformer(id string) (jVal, error) {
+	c.mu.Lock()
+	site, knownSite := c.details["performer-sites/"+id]
+	c.mu.Unlock()
+	if knownSite {
+		<-site.ready
+		return site.value.get("parent"), site.err
+	}
 	performer, err := c.detail("performers", id)
 	if err != nil || performer.kind == jObj {
 		return performer, err
 	}
-	site, err := c.detail("performer-sites", id)
-	return site.get("parent"), err
+	profile, err := c.detail("performer-sites", id)
+	return profile.get("parent"), err
 }
 
 func (c *tpdbClient) sceneFilter(params url.Values, source string, criterion jVal) (bool, error) {
@@ -201,31 +375,67 @@ func (c *tpdbClient) sceneFilter(params url.Values, source string, criterion jVa
 	if modifier != "INCLUDES" && modifier != "INCLUDES_ALL" {
 		return false, fmt.Errorf("unsupported ThePornDB %s filter modifier", source)
 	}
-	count := 0
-	for _, id := range criterion.get("value").arr {
-		var row jVal
-		var err error
-		field, numeric := source, "_id"
-		switch source {
-		case "performers":
-			row, err = c.parentPerformer(id.asString())
-		case "studios":
-			row, err = c.detail("sites", id.asString())
-			field, numeric = "sites", "id"
-		case "tags":
-			var tags []jVal
-			tags, err = c.tagCatalog()
-			for _, tag := range tags {
-				if tag.get("uuid").asString() == id.asString() {
-					row = tag
-					break
+	field, numeric := source, "_id"
+	if source == "studios" {
+		field, numeric = "sites", "id"
+	} else if source == "tags" {
+		numeric = "id"
+	}
+	ids := criterion.get("value").arr
+	rows, errors := make([]jVal, len(ids)), make([]error, len(ids))
+	work := make(chan int)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	var wg sync.WaitGroup
+	for range min(4, len(ids)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range work {
+				select {
+				case <-stop:
+					continue
+				default:
+				}
+				id := ids[index].asString()
+				switch source {
+				case "performers":
+					rows[index], errors[index] = c.parentPerformer(id)
+				case "studios":
+					rows[index], errors[index] = c.detail("sites", id)
+				case "tags":
+					var tags []jVal
+					tags, errors[index] = c.tagCatalog()
+					for _, tag := range tags {
+						if tag.get("uuid").asString() == id {
+							rows[index] = tag
+							break
+						}
+					}
+				}
+				if errors[index] != nil {
+					stopOnce.Do(func() { close(stop) })
 				}
 			}
-			numeric = "id"
+		}()
+	}
+queue:
+	for index := range ids {
+		select {
+		case work <- index:
+		case <-stop:
+			break queue
 		}
+	}
+	close(work)
+	wg.Wait()
+	for _, err := range errors {
 		if err != nil {
 			return false, err
 		}
+	}
+	count := 0
+	for _, row := range rows {
 		if row.kind != jObj || !row.get(numeric).truthy() {
 			if modifier == "INCLUDES_ALL" {
 				return false, nil

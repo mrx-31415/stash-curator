@@ -145,6 +145,11 @@ modification-date filter. Tags have no provider categories; local taxonomy rules
 apply. Performer discovery uses the provider's relevance and profile-similarity pools.
 Site-specific performer profiles without a parent profile cannot be used for Performer
 Hunt; the provider cannot filter scenes by those IDs.
+ThePornDB discovery uses up to 32 performer seeds and eight studio seeds. ID mappings
+are cached for seven days and its tag catalog for 30 days. Each operation starts
+requests at most once per second, shares a four-request limit, and pauses after
+provider rate limits. Performer Hunt remains available for linked performers outside
+the discovery seed pool.
 
 FansDB's discovery queries have been checked live; JAVStash's schema is compatible,
 but authenticated discovery results have not yet been verified.

@@ -37,6 +37,7 @@ from curator.taxonomy import (
     TaxonomyStore,
     equivalent_tag_names,
 )
+from curator.theporndb import is_theporndb
 
 STASHDB = "https://stashdb.org/graphql"
 PERFORMER_HUNT_LIMIT = 1_000
@@ -1860,6 +1861,12 @@ class ExpandService:
         # reaches the seed set through evidence alone (that only sees local performers).
         # Chase the strongest favorites into StashDB and pull their closest look-alikes so
         # the pool reaches scenes by performers the model has affinity for but has not seen.
+        if is_theporndb(self.stashbox_endpoint):
+            performers = performers[:16]
+            similar_top_k, similar_per_favorite = (
+                min(4, similar_top_k),
+                min(4, similar_per_favorite),
+            )
         if client is not None and similar_top_k > 0 and similar_per_favorite > 0 and performers:
             performers = self._expand_similar_performers(
                 client,
@@ -1923,8 +1930,8 @@ class ExpandService:
             :50
         ]
         return {
-            "performers": performers,
-            "studios": sorted(studios)[:60],
+            "performers": performers[:32] if is_theporndb(self.stashbox_endpoint) else performers,
+            "studios": sorted(studios)[: 8 if is_theporndb(self.stashbox_endpoint) else 60],
             "tags": tags,
         }
 

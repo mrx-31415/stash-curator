@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from curator.features.measurements import CUP_ALIASES, parse_measurements, presence_category
@@ -26,23 +31,29 @@ def is_theporndb(endpoint: str) -> bool:
     return (urllib.parse.urlparse(endpoint).hostname or "").casefold() == "theporndb.net"
 
 
-RestTransport = Callable[[str, Mapping[str, str], float], tuple[int, bytes]]
+RestResponse = tuple[int, bytes] | tuple[int, bytes, Mapping[str, str]]
+RestTransport = Callable[[str, Mapping[str, str], float], RestResponse]
 
 
-def _transport(url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:
+def _transport(url: str, headers: Mapping[str, str], timeout: float) -> RestResponse:
     request = urllib.request.Request(url, headers=dict(headers), method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
-        return error.code, error.read()
+        return error.code, error.read(), dict(error.headers)
     except (urllib.error.URLError, TimeoutError) as error:
         raise GraphQLError(f"ThePornDB request failed: {error}") from error
 
 
 class ThePornDBClient(GraphQLClient):
     def __init__(
-        self, endpoint: str, api_key: str, *, rest_transport: RestTransport = _transport
+        self,
+        endpoint: str,
+        api_key: str,
+        *,
+        rest_transport: RestTransport = _transport,
+        cache_path: Path | None = None,
     ) -> None:
         super().__init__(endpoint, profile_category="stashdb")
         self.base = (
@@ -54,15 +65,109 @@ class ThePornDBClient(GraphQLClient):
         self.rest_transport = rest_transport
         self._requests = threading.BoundedSemaphore(4)
         self._lock = threading.Lock()
-        self._details: dict[str, JsonObject | None] = {}
+        self._details: dict[str, Future[JsonObject | None]] = {}
+        self._checked_at: dict[str, int] = {}
         self._tags: list[JsonObject] | None = None
+        self._tags_checked_at = 0
+        self._rate_lock = threading.Lock()
+        self._retry_after = 0.0
+        self._next_request = 0.0
+        self._request_interval = (
+            1.0 if rest_transport is _transport and is_theporndb(endpoint) else 0.0
+        )
+        self.cache_path = cache_path
+        self._load_cache()
+
+    def _load_cache(self) -> None:
+        if self.cache_path is None:
+            return
+        try:
+            cache = json.loads(self.cache_path.read_bytes())
+            if not isinstance(cache, dict) or cache.get("version") != 1:
+                return
+            now = int(time.time() * 1000)
+            for key, entry in cache.get("identities", {}).items():
+                checked = entry["checked_at_ms"]
+                if (
+                    0 < checked <= now
+                    and now - checked < 7 * 86_400_000
+                    and isinstance(entry["value"], dict)
+                ):
+                    pending: Future[JsonObject | None] = Future()
+                    pending.set_result(entry["value"])
+                    self._details[key], self._checked_at[key] = pending, checked
+            checked = cache.get("tags_checked_at_ms", 0)
+            if (
+                0 < checked <= now
+                and now - checked < 30 * 86_400_000
+                and isinstance(cache.get("tags"), list)
+            ):
+                self._tags, self._tags_checked_at = cache["tags"], checked
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return
+
+    def _save_cache(self) -> None:
+        if self.cache_path is None:
+            return
+        with self._lock:
+            entries = sorted(
+                self._details, key=lambda key: self._checked_at.get(key, 0), reverse=True
+            )
+            cache = {
+                "version": 1,
+                "identities": {
+                    key: {
+                        "checked_at_ms": self._checked_at[key],
+                        "value": _identity(self._details[key].result()),
+                    }
+                    for key in entries[:1000]
+                    if self._details[key].done()
+                    and self._details[key].exception() is None
+                    and isinstance(self._details[key].result(), dict)
+                },
+                "tags_checked_at_ms": self._tags_checked_at,
+                "tags": self._tags or [],
+            }
+            temporary = None
+            try:
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    dir=self.cache_path.parent, delete=False
+                ) as output:
+                    temporary = Path(output.name)
+                    output.write(json.dumps(cache, separators=(",", ":")).encode())
+                os.replace(temporary, self.cache_path)
+            except OSError:
+                pass
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+
+    def _remember_identity(self, resource: str, row: JsonObject | None) -> None:
+        if not row:
+            return
+        identifier, numeric = row.get("id"), row.get("_id")
+        if resource == "sites":
+            identifier, numeric = row.get("uuid"), row.get("id")
+        if not identifier or not numeric:
+            return
+        key = f"{resource}/{identifier}"
+        with self._lock:
+            if key not in self._details or self._details[key].done():
+                pending: Future[JsonObject | None] = Future()
+                pending.set_result(_identity(row))
+                self._details[key] = pending
+                self._checked_at[key] = int(time.time() * 1000)
 
     def execute(self, document: str, variables: Mapping[str, object] | None = None) -> JsonObject:
         if _operation_type(document) != "query":
             raise GraphQLError("Curator's validation client accepts query operations only")
         name = _operation_name(document)
         with span(self.profile_category, name):
-            return self._query(name, dict(variables or {}))
+            try:
+                return self._query(name, dict(variables or {}))
+            finally:
+                self._save_cache()
 
     def mutate(self, document: str, variables: Mapping[str, object] | None = None) -> JsonObject:
         raise GraphQLError("ThePornDB discovery client is read-only")
@@ -74,7 +179,26 @@ class ThePornDBClient(GraphQLClient):
         if params:
             url += "?" + urllib.parse.urlencode(params)
         with self._requests:
-            status, raw = self.rest_transport(url, self.headers, self.timeout)
+            for attempt in range(4):
+                with self._rate_lock:
+                    start = max(time.monotonic(), self._retry_after, self._next_request)
+                    self._next_request = start + self._request_interval
+                    delay = start - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                response = self.rest_transport(url, self.headers, self.timeout)
+                status, raw = response[0], response[1]
+                if status != 429 or attempt == 3:
+                    break
+                headers = response[2] if len(response) == 3 else {}
+                try:
+                    seconds = int(headers.get("Retry-After", headers.get("retry-after", "60")))
+                    if seconds < 0:
+                        seconds = 60
+                except ValueError:
+                    seconds = 60
+                with self._rate_lock:
+                    self._retry_after = time.monotonic() + seconds
         if missing_ok and status == 404:
             return {"data": None}
         if status != 200:
@@ -104,6 +228,15 @@ class ThePornDBClient(GraphQLClient):
                 raise GraphQLError("ThePornDB returned an invalid list")
             if any(not row.get("id") for row in data):
                 raise GraphQLError("ThePornDB returned an invalid list identity")
+            if path.startswith("/performers"):
+                for row in data:
+                    self._remember_identity("performers", row)
+            elif path == "/scenes":
+                for row in data:
+                    self._remember_identity("sites", row.get("site"))
+                    for person in row.get("performers") or []:
+                        self._remember_identity("performer-sites", person)
+                        self._remember_identity("performers", person.get("parent"))
             meta = result.get("meta")
             if not isinstance(meta, dict):
                 return len(data), data[offset : offset + size]
@@ -122,16 +255,33 @@ class ThePornDBClient(GraphQLClient):
     def _detail(self, resource: str, identifier: str) -> JsonObject | None:
         key = f"{resource}/{identifier}"
         with self._lock:
-            if key not in self._details:
+            pending = self._details.get(key)
+            if pending is None:
+                pending = Future()
+                self._details[key] = pending
+                owner = True
+            else:
+                owner = False
+        if owner:
+            try:
                 result = self._get(
                     f"/{resource}/{urllib.parse.quote(identifier, safe='')}", missing_ok=True
                 )
                 if result["data"] is not None and not isinstance(result["data"], dict):
                     raise GraphQLError("ThePornDB returned an invalid identity")
-                self._details[key] = result["data"]
-            return self._details[key]
+                with self._lock:
+                    self._checked_at[key] = int(time.time() * 1000)
+                pending.set_result(result["data"])
+            except Exception as error:
+                pending.set_exception(error)
+        return pending.result()
 
     def _parent_performer(self, identifier: str) -> JsonObject | None:
+        with self._lock:
+            known_site = self._details.get(f"performer-sites/{identifier}")
+        if known_site is not None:
+            site = known_site.result()
+            return site.get("parent") if site else None
         parent = self._detail("performers", identifier)
         if parent is not None:
             return parent
@@ -150,26 +300,41 @@ class ThePornDBClient(GraphQLClient):
                         break
                     page += 1
                 self._tags = tags
+                self._tags_checked_at = int(time.time() * 1000)
             return self._tags
 
     def _scene_filter(self, params: dict[str, str], source: str, criterion: JsonObject) -> bool:
         modifier = criterion.get("modifier")
         if modifier not in {"INCLUDES", "INCLUDES_ALL"}:
             raise GraphQLError(f"unsupported ThePornDB {source} filter modifier")
-        count = 0
-        for identifier in criterion.get("value", []):
-            row = None
-            field, numeric = source, "_id"
+        field, numeric = ("sites", "id") if source == "studios" else (source, "_id")
+        if source == "tags":
+            numeric = "id"
+
+        def resolve(identifier: str) -> JsonObject | None:
             if source == "performers":
-                row = self._parent_performer(str(identifier))
-            elif source == "studios":
-                row = self._detail("sites", str(identifier))
-                field, numeric = "sites", "id"
-            else:
-                row = next(
-                    (tag for tag in self._tag_catalog() if tag.get("uuid") == str(identifier)), None
-                )
-                numeric = "id"
+                return self._parent_performer(str(identifier))
+            if source == "studios":
+                return self._detail("sites", str(identifier))
+            return next(
+                (tag for tag in self._tag_catalog() if tag.get("uuid") == str(identifier)), None
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            stopped = threading.Event()
+
+            def resolve_unless_failed(identifier: str) -> JsonObject | None:
+                if stopped.is_set():
+                    return None
+                try:
+                    return resolve(identifier)
+                except Exception:
+                    stopped.set()
+                    raise
+
+            rows = list(pool.map(resolve_unless_failed, criterion.get("value", [])))
+        count = 0
+        for row in rows:
             if not row or not row.get(numeric):
                 if modifier == "INCLUDES_ALL":
                     return False
@@ -244,6 +409,15 @@ class ThePornDBClient(GraphQLClient):
                     performers = [row for row in performers if row.get(name) == query[name]]
             return {"queryPerformers": {"count": total, "performers": performers}}
         raise GraphQLError(f"unsupported ThePornDB discovery operation: {operation}")
+
+
+def _identity(raw: JsonObject | None) -> JsonObject:
+    if raw is None:
+        return {}
+    value: JsonObject = {key: raw[key] for key in ("id", "_id", "uuid", "name") if key in raw}
+    if isinstance(raw.get("parent"), dict):
+        value["parent"] = _identity(raw["parent"])
+    return value
 
 
 def _images(raw: JsonObject) -> list[JsonObject]:
