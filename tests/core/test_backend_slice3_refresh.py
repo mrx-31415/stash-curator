@@ -75,6 +75,7 @@ class _StubRefresh(BaseHTTPRequestHandler):
     fresh scenes for any filter input."""
 
     plugin_settings: ClassVar[dict[str, object]] = {}
+    scene_filter_type: ClassVar[str] = "MultiIDCriterionInput"
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
@@ -89,7 +90,9 @@ class _StubRefresh(BaseHTTPRequestHandler):
                         "general": {
                             "stashBoxes": [
                                 {
-                                    "endpoint": STASHDB_ENDPOINT,
+                                    "endpoint": self.plugin_settings.get(
+                                        "stashBoxEndpoint", STASHDB_ENDPOINT
+                                    ),
                                     "api_key": "stub-key",
                                     "name": "StashDB",
                                 }
@@ -128,6 +131,18 @@ class _StubRefresh(BaseHTTPRequestHandler):
             }
         elif operation == "CuratorExpandScenes":
             data = {"data": {"queryScenes": {"count": len(FRESH_SCENES), "scenes": FRESH_SCENES}}}
+        elif operation == "CuratorLocalSceneMatches":
+            data = {"data": {"findScenes": {"count": 0, "scenes": []}}}
+        elif operation == "CuratorSceneFilterSchema":
+            data = {
+                "data": {
+                    "__type": {
+                        "inputFields": [
+                            {"name": "performers", "type": {"name": self.scene_filter_type}}
+                        ]
+                    }
+                }
+            }
         else:
             data = {"errors": [{"message": f"no stub for {operation}"}]}
         raw = json.dumps(data, separators=(",", ":")).encode()
@@ -145,6 +160,8 @@ class _StubRefresh(BaseHTTPRequestHandler):
             "CuratorExternalLinksState",
             "CuratorExternalLinks",
             "CuratorExpandScenes",
+            "CuratorLocalSceneMatches",
+            "CuratorSceneFilterSchema",
         ):
             if name in body:
                 return name
@@ -311,11 +328,32 @@ def test_expand_refresh_byte_identical(
     assert_refresh_identical(binary, refresh_sidecar, stub_stash)
 
 
-def test_expand_refresh_state_parity(refresh_sidecar: Path, binary: Path, stub_stash: str) -> None:
+def test_incompatible_scene_filters_fail_clearly_in_both_backends(
+    refresh_sidecar: Path,
+    binary: Path,
+    stub_stash: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        _StubRefresh, "plugin_settings", {"stashBoxEndpoint": "https://example.test/graphql"}
+    )
+    monkeypatch.setattr(_StubRefresh, "scene_filter_type", "String")
+    assert_refresh_identical(binary, refresh_sidecar, stub_stash)
+
+
+@pytest.mark.parametrize("endpoint", [STASHDB_ENDPOINT, "https://example.test/graphql"])
+def test_expand_refresh_state_parity(
+    refresh_sidecar: Path,
+    binary: Path,
+    stub_stash: str,
+    endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The refresh leaves identical external_entity / expand_cache state:
     the fresh scenes merged as candidates, the stale 2024 fixture scenes aged
     out, and the pool rescored against the published model."""
 
+    monkeypatch.setattr(_StubRefresh, "plugin_settings", {"stashBoxEndpoint": endpoint})
     run_dir = refresh_sidecar.parent / f"{refresh_sidecar.stem}-refresh-state"
     worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
     env = dict(os.environ)
@@ -327,6 +365,12 @@ def test_expand_refresh_state_parity(refresh_sidecar: Path, binary: Path, stub_s
             run_dir.mkdir()
             run_db = run_dir / refresh_sidecar.name
             shutil.copy2(refresh_sidecar, run_db)
+            with sqlite3.connect(run_db) as seed:
+                seed.execute(
+                    "INSERT INTO external_entity(entity_type,external_id,payload_json,score,"
+                    "sources_json,fetched_at_ms,pool) VALUES ('scene','previous-server-only',"
+                    '\'{"id":"previous-server-only","release_date":"2099-01-01"}\',0,\'[]\',1,\'candidate\')'
+                )
             derived_src = refresh_sidecar.parent / f"{refresh_sidecar.stem}-derived"
             shutil.copytree(derived_src, run_dir / f"{run_db.stem}-derived")
             if runner is None:
@@ -343,6 +387,25 @@ def test_expand_refresh_state_parity(refresh_sidecar: Path, binary: Path, stub_s
                 )
             connection = sqlite3.connect(run_db)
             try:
+                present = connection.execute(
+                    "SELECT 1 FROM external_entity WHERE external_id='previous-server-only'"
+                ).fetchone()
+                assert bool(present) == (endpoint == STASHDB_ENDPOINT)
+                assert (
+                    connection.execute(
+                        "SELECT value FROM application_meta WHERE key='expand_cache_endpoint'"
+                    ).fetchone()[0]
+                    == endpoint
+                )
+                if endpoint != STASHDB_ENDPOINT:
+                    assert (
+                        connection.execute(
+                            "SELECT count(*) FROM external_entity "
+                            "WHERE json_extract(payload_json, '$.curator_endpoint') IS NOT ?",
+                            (endpoint,),
+                        ).fetchone()[0]
+                        == 0
+                    )
                 states.append(
                     {
                         "external_entity": connection.execute(

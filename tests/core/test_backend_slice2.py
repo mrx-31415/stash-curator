@@ -587,7 +587,8 @@ def make_expand_sidecar(path: Path) -> None:
         for scene in LINKED_SCENES:
             write_scene_match(connection, scene)
         connection.execute(
-            "INSERT INTO application_meta(key,value) VALUES ('local_scene_matches_ready','1')"
+            "INSERT INTO application_meta(key,value) "
+            "VALUES ('local_scene_matches_ready','https://stashdb.org/graphql')"
         )
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
@@ -980,6 +981,35 @@ def test_send_whisparr_not_in_expand_byte_identical(
         assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
     finally:
         _StubExpand.plugin_settings = {}
+
+
+def test_send_whisparr_other_endpoint_rejected_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str, stub_whisparr: str
+) -> None:
+    _StubExpand.plugin_settings = {
+        "stashBoxEndpoint": "https://example.test/graphql",
+        "whisparrUrl": stub_whisparr,
+        "whisparrApiKey": "test-key",
+    }
+    try:
+        raw = payload("send_whisparr", expand_sidecar, stub_stash, external_id="cand-2")
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+    finally:
+        _StubExpand.plugin_settings = {}
+
+
+def test_send_whisparr_saved_other_source_rejected_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    with sqlite3.connect(expand_sidecar) as connection:
+        connection.execute(
+            "UPDATE external_entity "
+            "SET payload_json=json_set(payload_json,'$.curator_endpoint',?) "
+            "WHERE external_id='cand-2'",
+            ("https://example.test/graphql",),
+        )
+    raw = payload("send_whisparr", expand_sidecar, stub_stash, external_id="cand-2")
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
 
 
 # ── read-path write parity ─────────────────────────────────────────────────

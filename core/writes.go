@@ -73,8 +73,8 @@ func updateShortlistBody(pluginDir string, payload, settings jVal) (jVal, error)
 		ctx := context.Background()
 		if !selected {
 			_, err := conn.ExecContext(ctx,
-				`DELETE FROM external_shortlist WHERE entity_type=? AND external_id=?`,
-				entityType, externalID)
+				`DELETE FROM external_shortlist WHERE entity_type=? AND external_id=? AND endpoint=lower(?)`,
+				entityType, externalID, stashdbEndpoint)
 			return err
 		}
 		var payloadJSON, score, sourcesJSON string
@@ -87,14 +87,25 @@ func updateShortlistBody(pluginDir string, payload, settings jVal) (jVal, error)
 		if err != nil {
 			return err
 		}
+		stored, err := parseJSON([]byte(payloadJSON))
+		if err != nil {
+			return err
+		}
+		source := pythonStrOrEmpty(stored.get("curator_endpoint"))
+		if source == "" {
+			source = "https://stashdb.org/graphql"
+		}
+		if !strings.EqualFold(strings.TrimRight(source, "/"), stashdbEndpoint) {
+			return fmt.Errorf("external entity is not in the selected endpoint's cache")
+		}
 		_, err = conn.ExecContext(ctx, `
 INSERT INTO external_shortlist(
-  entity_type, external_id, payload_json, score, sources_json, added_at_ms
-) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(entity_type, external_id) DO UPDATE SET
+  entity_type, external_id, payload_json, score, sources_json, added_at_ms, endpoint
+) VALUES (?, ?, ?, ?, ?, ?, lower(?))
+ON CONFLICT(endpoint, entity_type, external_id) DO UPDATE SET
   payload_json=excluded.payload_json, score=excluded.score,
   sources_json=excluded.sources_json`,
-			entityType, externalID, payloadJSON, score, sourcesJSON, nowMs())
+			entityType, externalID, payloadJSON, score, sourcesJSON, nowMs(), stashdbEndpoint)
 		return err
 	})
 	if err != nil {

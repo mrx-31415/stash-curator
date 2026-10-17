@@ -16,10 +16,10 @@ const localMatchTask = "local-matches"
 func ensureLocalSceneMatches(pluginDir string, payload, settings jVal, db dbx) (bool, error) {
 	var ready string
 	err := db.QueryRow(`SELECT value FROM application_meta WHERE key='local_scene_matches_ready'`).Scan(&ready)
-	if err == nil {
+	if err == nil && strings.EqualFold(strings.TrimRight(ready, "/"), stashdbEndpoint) {
 		return true, nil
 	}
-	if err != sql.ErrNoRows {
+	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
 	var state, failure string
@@ -59,7 +59,7 @@ func writeLocalSceneMatch(conn *sql.Conn, scene jVal) error {
 	}
 	values := map[string]map[string]bool{"stashdb_id": {}, "phash": {}}
 	for _, stashID := range scene.get("stash_ids").arr {
-		if strings.EqualFold(strings.TrimRight(stashID.get("endpoint").asString(), "/"), "https://stashdb.org/graphql") {
+		if strings.EqualFold(strings.TrimRight(stashID.get("endpoint").asString(), "/"), stashdbEndpoint) {
 			if value := pythonStrOrEmpty(stashID.get("stash_id")); value != "" {
 				values["stashdb_id"][value] = true
 			}
@@ -106,10 +106,10 @@ VALUES (?, ?) ON CONFLICT(scene_id) DO UPDATE SET revision=excluded.revision`, i
 func backfillLocalSceneMatches(db dbx, base string, headers map[string]string, progress func(processed, total int)) error {
 	var ready string
 	err := db.QueryRow(`SELECT value FROM application_meta WHERE key='local_scene_matches_ready'`).Scan(&ready)
-	if err == nil {
+	if err == nil && strings.EqualFold(strings.TrimRight(ready, "/"), stashdbEndpoint) {
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
 	var scenes []jVal
@@ -148,10 +148,10 @@ func backfillLocalSceneMatches(db dbx, base string, headers map[string]string, p
 		return withTxn(db, func(conn *sql.Conn) error {
 			var existing string
 			err := conn.QueryRowContext(context.Background(), `SELECT value FROM application_meta WHERE key='local_scene_matches_ready'`).Scan(&existing)
-			if err == nil {
+			if err == nil && strings.EqualFold(strings.TrimRight(existing, "/"), stashdbEndpoint) {
 				return nil
 			}
-			if err != sql.ErrNoRows {
+			if err != nil && err != sql.ErrNoRows {
 				return err
 			}
 			if _, err := conn.ExecContext(context.Background(), `DELETE FROM local_scene_match`); err != nil {
@@ -162,8 +162,8 @@ func backfillLocalSceneMatches(db dbx, base string, headers map[string]string, p
 					return err
 				}
 			}
-			_, err = conn.ExecContext(context.Background(), `INSERT OR IGNORE INTO application_meta(key,value)
-VALUES ('local_scene_matches_ready','1')`)
+			_, err = conn.ExecContext(context.Background(), `INSERT INTO application_meta(key,value)
+VALUES ('local_scene_matches_ready',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stashdbEndpoint)
 			return err
 		})
 	})

@@ -62,6 +62,7 @@ func runTask(pluginDir string, payload jVal, mode string) (jVal, error) {
 // tasks never fall back to inline writes because a resident daemon may still
 // own the sidecar.
 func runTaskBody(pluginDir string, payload jVal, mode string, settings jVal) (jVal, error) {
+	configureStashbox(settings)
 	if !taskModeNative(mode) {
 		return jvNull(), fmt.Errorf("unknown Curator task: %s", mode)
 	}

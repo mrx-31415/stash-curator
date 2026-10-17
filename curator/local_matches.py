@@ -33,14 +33,18 @@ IDS_QUERY = (
 )
 
 
-def write_scene_match(connection: sqlite3.Connection, scene: Mapping[str, Any]) -> None:
+def write_scene_match(
+    connection: sqlite3.Connection,
+    scene: Mapping[str, Any],
+    endpoint: str = "https://stashdb.org/graphql",
+) -> None:
     scene_id = str(scene.get("id") or "")
     if not scene_id:
         raise RuntimeError("local scene match is missing an id")
     ids = {
         item["stash_id"]
         for item in scene.get("stash_ids", [])
-        if str(item.get("endpoint") or "").rstrip("/").casefold() == "https://stashdb.org/graphql"
+        if str(item.get("endpoint") or "").rstrip("/").casefold() == endpoint.rstrip("/").casefold()
         and item.get("stash_id")
     }
     hashes = {
@@ -72,10 +76,15 @@ def queue_scene_match(connection: sqlite3.Connection, scene_id: str) -> None:
     )
 
 
-def ensure_scene_matches(connection: sqlite3.Connection, payload: Mapping[str, Any]) -> bool:
-    if connection.execute(
+def ensure_scene_matches(
+    connection: sqlite3.Connection,
+    payload: Mapping[str, Any],
+    endpoint: str = "https://stashdb.org/graphql",
+) -> bool:
+    ready = connection.execute(
         "SELECT value FROM application_meta WHERE key='local_scene_matches_ready'"
-    ).fetchone():
+    ).fetchone()
+    if ready and str(ready[0]).rstrip("/").casefold() == endpoint.rstrip("/").casefold():
         return True
     latest = connection.execute(
         "SELECT state, COALESCE(error, ''), started_at_ms FROM curator_job "
@@ -108,10 +117,12 @@ def backfill_scene_matches(
     connection: sqlite3.Connection,
     client: GraphQLClient,
     progress: Callable[[float], None] | None = None,
+    endpoint: str = "https://stashdb.org/graphql",
 ) -> None:
-    if not connection.execute(
+    ready = connection.execute(
         "SELECT value FROM application_meta WHERE key='local_scene_matches_ready'"
-    ).fetchone():
+    ).fetchone()
+    if not ready or str(ready[0]).rstrip("/").casefold() != endpoint.rstrip("/").casefold():
         scenes: list[dict[str, Any]] = []
         page = 1
         with span("python", "local_matches.fetch"):
@@ -134,27 +145,37 @@ def backfill_scene_matches(
                     break
                 page += 1
         with span("python", "local_matches.index"), transaction(connection):
-            if not connection.execute(
+            existing = connection.execute(
                 "SELECT value FROM application_meta WHERE key='local_scene_matches_ready'"
-            ).fetchone():
+            ).fetchone()
+            if (
+                not existing
+                or str(existing[0]).rstrip("/").casefold() != endpoint.rstrip("/").casefold()
+            ):
                 connection.execute("DELETE FROM local_scene_match")
                 for scene in scenes:
-                    write_scene_match(connection, scene)
+                    write_scene_match(connection, scene, endpoint)
                 connection.execute(
-                    "INSERT OR IGNORE INTO application_meta(key,value) "
-                    "VALUES ('local_scene_matches_ready','1')"
+                    "INSERT INTO application_meta(key,value) "
+                    "VALUES ('local_scene_matches_ready',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (endpoint,),
                 )
 
 
-def scene_links(connection: sqlite3.Connection, client: GraphQLClient) -> dict[str, dict[str, str]]:
+def scene_links(
+    connection: sqlite3.Connection,
+    client: GraphQLClient,
+    endpoint: str = "https://stashdb.org/graphql",
+) -> dict[str, dict[str, str]]:
     with span("python", "local_matches.load"):
-        return _scene_links(connection, client)
+        return _scene_links(connection, client, endpoint)
 
 
 def _scene_links(
-    connection: sqlite3.Connection, client: GraphQLClient
+    connection: sqlite3.Connection, client: GraphQLClient, endpoint: str
 ) -> dict[str, dict[str, str]]:
-    backfill_scene_matches(connection, client)
+    backfill_scene_matches(connection, client, endpoint=endpoint)
     pending = connection.execute(
         "SELECT scene_id,revision FROM local_scene_match_pending ORDER BY scene_id"
     ).fetchall()
@@ -177,7 +198,7 @@ def _scene_links(
                 if not current or current[0] != revision:
                     continue
                 if scene_id in by_id:
-                    write_scene_match(connection, by_id[scene_id])
+                    write_scene_match(connection, by_id[scene_id], endpoint)
                 else:
                     connection.execute(
                         "DELETE FROM local_scene_match WHERE scene_id=?", (scene_id,)

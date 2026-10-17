@@ -438,7 +438,7 @@ def test_curator_tabs_update_browser_history() -> None:
     assert "curator-lane-card-desc" in source
     assert 'style: { "--lc": `var(--curator-hue-${section.value})` }' in source
     # The description must stay out of the accessible name (aria-label = the
-    # section label), or substring lookups like "StashDB" match every card.
+    # section label), or substring lookups like "Stash-box" match every card.
     assert '"aria-label": section.label,' in source
     # Header order is Recommendations | Find | Curate (issue #239): Find sits
     # before the remaining primary items (Curate) rather than after them.
@@ -1038,12 +1038,12 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
 
     assert 'operation: "get_performer_hunt"' in source
     assert 'value: "hunt"' in source
-    # Issue #218: the picker always searches local performers and StashDB
+    # Issue #218: the picker always searches local performers and Stash-box
     # performers together, tagging each dropdown option by source.
     assert 'operation: "get_stashdb_performer_search"' in source
     assert "searchBoth: true" in source
     assert "curator-token-source-badge" in source
-    assert 'item.source === "remote" ? "StashDB" : "Library"' in source
+    assert 'item.source === "remote" ? "Stash-box" : "Library"' in source
     assert "icon: faCrosshairs" in source
     assert 'initialType: "hunt", huntOnly: true' in source
     assert '["all", `All ${huntCounts.all}`]' in source
@@ -1250,7 +1250,7 @@ def test_custom_cards_follow_native_sfw_contract_and_explain_views() -> None:
     assert "Appeal is the model's estimate" in source
     assert '"appeal.performer_identity": "Performer match"' in source
     assert '"appeal.content_neighbor": "Similar scenes"' in source
-    assert "Discover scenes and performers on StashDB, ranked using your preferences." in source
+    assert "Discover scenes and performers on Stash-box, ranked using your preferences." in source
 
 
 def test_external_card_actions_are_a_named_shared_component() -> None:
@@ -1265,7 +1265,7 @@ def test_external_card_actions_are_a_named_shared_component() -> None:
     actions = source[
         source.index("  function ExternalActions(") : source.index("  function FindThumbnail(")
     ]
-    assert '"Open on StashDB"' not in actions
+    assert '"Open on Stash-box"' not in actions
     assert "onCopy" not in actions
     assert "onAddToWhisparr" in source
     assert "tagsAvailable: tags.length > 0" in source
@@ -1280,7 +1280,7 @@ def test_similarity_source_switch_visible_before_reference_is_selected() -> None
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text(encoding="utf-8")
     tabs = 'className: "btn-group curator-similar-source-tabs"'
     assert tabs in source
-    # The Library/StashDB switch must be usable with no reference selected yet.
+    # The Library/Stash-box switch must be usable with no reference selected yet.
     assert f'selected && React.createElement("div", {{ {tabs}' not in source
     # Switching the entity type must not silently reset the chosen source.
     assert 'setSource("library")' not in source
@@ -1607,7 +1607,7 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert 'className: "curator-tasks-completed"' in source
     assert "Completed (" in source
     assert "curator-task-state-" in source
-    assert "Querying StashDB" not in source
+    assert "Querying Stash-box" not in source
     assert 'className: "curator-loading", role: "status"' in source
     assert 'className: "curator-progress"' not in source
     assert '"Rate tags"' in source
@@ -1703,6 +1703,15 @@ def test_plugin_settings_are_applied_to_sidecar_config(tmp_path: Path) -> None:
         )["whisparr_enabled"]
         is False
     )
+    custom_settings = {
+        "stashBoxEndpoint": "https://example.test/graphql",
+        "whisparrUrl": "http://whisparr.local",
+        "whisparrApiKey": "secret",
+    }
+    custom_payload = {"args": {"database_path": str(tmp_path / "curator.sqlite3")}}
+    assert module._api(custom_payload, "get_config", custom_settings)["whisparr_enabled"] is False
+    with pytest.raises(RuntimeError, match="only available when the StashDB endpoint is selected"):
+        module._api(custom_payload, "send_whisparr", custom_settings)
     code_version = module._api(
         {"args": {"database_path": str(tmp_path / "curator.sqlite3")}},
         "get_config",
@@ -1852,7 +1861,7 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '"No profiles have been recorded yet."' in source
 
     # ── guidance prompts ──
-    assert '"Select a local performer linked to StashDB."' in source
+    assert '"Select a local performer linked to Stash-box."' in source
     assert "Expand has not been prepared yet" in source
     assert '" Prepare now"' in source
     assert '" Sync and build now"' in source
@@ -1862,7 +1871,7 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
 
     # ── warnings ──
     assert "Showing the first" in source
-    assert "StashDB scenes; the safety cap is" in source
+    assert "Stash-box scenes; the safety cap is" in source
     assert "Profiling is disabled." in source
     assert '"Initial sync failed: "' in source
     assert "Open Tasks for the full log" in source
@@ -1875,7 +1884,7 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert "TERM_PREFERENCE_QUEUE_KEY" not in source
     assert 'operation: "get_scene_description_tokens"' not in source
     assert 'operation: "submit_term_preferences"' not in source
-    assert '"Configure Whisparr in plugin settings"' in source
+    assert '"Whisparr requires the StashDB endpoint and configured Whisparr credentials"' in source
     assert '"Retry sending to Whisparr"' in source
     assert '"Send to Whisparr"' in source
 

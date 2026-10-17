@@ -51,8 +51,8 @@ selector.children[0][0].props.onClick();
 assert.equal(selected, "cards");
 assert.equal(context.RecommendationViewSelector({ view: "cards" }).children[0].length, 3);
 
-Object.assign(context, { Api: { components: {}, register: { component: (_, component) => component } }, transformComponentProps: (_, props) => props, useCuratorActivity: () => {} });
-vm.runInNewContext(source.slice(source.indexOf("  const ExternalCard"), source.indexOf("  function Feedback(")) + "\nglobalThis.testExternalCard = ExternalCard;", context);
+Object.assign(context, { URL, Api: { components: {}, register: { component: (_, component) => component } }, transformComponentProps: (_, props) => props, useCuratorActivity: () => {} });
+vm.runInNewContext(source.slice(source.indexOf("  function stashboxEntityURL("), source.indexOf("  function Feedback(")) + "\nglobalThis.testExternalCard = ExternalCard;", context);
 const external = context.testExternalCard({ item: { id: "fixture", payload: { title: "Fixture", images: [{ url: "fixture.jpg" }] } }, kind: "scene", thumbnails: true });
 assert.equal(external.type, context.FindThumbnail);
 assert.equal(external.props.image, "fixture.jpg");

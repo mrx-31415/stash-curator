@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -71,6 +72,16 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		}
 	}
 	count := argsInt(args, "count", pythonInt(cfg.get("page_size")))
+	endpointReady, err := ensureExpandEndpoint(pluginDir, payload, settings, db)
+	if err != nil {
+		return jvNull(), err
+	}
+	if !endpointReady {
+		return jvObj(jvKey("ready", jvBool(false)), jvKey("initializing", jvBool(true)),
+			jvKey("initializing_reason", jvStr("endpoint")), jvKey("page", jvInt(page)),
+			jvKey("page_size", jvInt(count)), jvKey("total", jvInt(0)),
+			jvKey("has_more", jvBool(false)), jvKey("items", jvArr())), nil
+	}
 	// The local-match exclusion is re-derived at serve time against the
 	// current links map: a candidate fetched while the local scene had no
 	// StashDB id keeps its missing annotation in payload_json forever, so
@@ -119,7 +130,11 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	} else if err != sql.ErrNoRows {
 		return jvNull(), err
 	}
-	if !cacheFound {
+	endpoint, err := cachedStashboxEndpoint(db, "expand_cache_endpoint")
+	if err != nil {
+		return jvNull(), err
+	}
+	if !cacheFound || !strings.EqualFold(endpoint, stashdbEndpoint) {
 		return jvObj(
 			jvKey("ready", jvBool(false)),
 			jvKey("page", jvInt(page)),
@@ -130,7 +145,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		), nil
 	}
 	shortlisted := map[string]bool{}
-	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type=?`, entityType)
+	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type=? AND endpoint=lower(?)`, entityType, stashdbEndpoint)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -168,7 +183,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	}
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
-	if err := encoder.Encode([]any{entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
+	if err := encoder.Encode([]any{stashdbEndpoint, entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery, hidePhash,
 		minimumScore, includeGroups, excludeGroups, blockedGroups, byExternalID, byPhash, revision}); err != nil {
 		return jvNull(), err
@@ -213,8 +228,12 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		pageRows, err := db.Query(`SELECT e.external_id, e.score, e.payload_json, e.sources_json
 FROM json_each(?) requested CROSS JOIN external_entity e ON e.external_id=requested.value
 WHERE e.entity_type=? AND e.pool='candidate'
+AND lower(rtrim(COALESCE(json_extract(e.payload_json,'$.curator_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?)
+AND lower(rtrim(COALESCE((SELECT value FROM application_meta WHERE key='expand_cache_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?)
 AND (SELECT revision FROM expand_candidate_revision WHERE entity_type=?)=?
-ORDER BY CAST(requested.key AS INTEGER)`, requested.marshalCompact(), entityType, entityType, revision)
+ORDER BY CAST(requested.key AS INTEGER)`, requested.marshalCompact(), entityType, stashdbEndpoint, stashdbEndpoint, entityType, revision)
 		if err != nil {
 			return jvNull(), err
 		}
@@ -245,7 +264,11 @@ ORDER BY CAST(requested.key AS INTEGER)`, requested.marshalCompact(), entityType
 	}
 	// Cache misses still parse and rank the full candidate pool in parallel.
 	entityRows, err := db.Query(`SELECT external_id, score, payload_json, sources_json
-FROM external_entity WHERE entity_type=? AND pool='candidate' ORDER BY external_id`, entityType)
+FROM external_entity WHERE entity_type=? AND pool='candidate'
+AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?)
+AND lower(rtrim(COALESCE((SELECT value FROM application_meta WHERE key='expand_cache_endpoint'),
+'https://stashdb.org/graphql'),'/'))=lower(?) ORDER BY external_id`, entityType, stashdbEndpoint, stashdbEndpoint)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -579,7 +602,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 		return jvNull(), err
 	}
 	shortlisted := map[string]bool{}
-	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type='scene'`)
+	shortRows, err := db.Query(`SELECT external_id FROM external_shortlist WHERE entity_type='scene' AND endpoint=lower(?)`, stashdbEndpoint)
 	if err != nil {
 		return jvNull(), err
 	}
