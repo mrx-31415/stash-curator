@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.2](https://github.com/mrx-31415/stash-curator/compare/v0.39.1...v0.39.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* use component hooks for card scores and badges ([#363](https://github.com/mrx-31415/stash-curator/issues/363)) ([ac0df73](https://github.com/mrx-31415/stash-curator/commit/ac0df730c14728751533318c056130ac010e7dda))
+
 ## [0.39.1](https://github.com/mrx-31415/stash-curator/compare/v0.39.0...v0.39.1) (2026-10-16)
 
 
