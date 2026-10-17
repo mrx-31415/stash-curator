@@ -94,8 +94,8 @@ context.React.useEffect = () => {};
 let cardPatch;
 context.Api.patch.before = (name) => { assert.equal(name, "FilteredPerformerList"); };
 context.Api.patch.after = (name, callback) => {
-  assert.ok(["PerformerCard", "FilteredPerformerList"].includes(name));
-  if (name === "PerformerCard") cardPatch = callback;
+  assert.ok(["PerformerCard.Overlays", "FilteredPerformerList"].includes(name));
+  if (name === "PerformerCard.Overlays") cardPatch = callback;
 };
 vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  const SCENE_AFFINITY_SORT ='))
   + source.slice(source.indexOf("  function CuratorPerformerCardBadge("), source.indexOf('  Api.patch.after("ScenePage"')), context);
@@ -166,18 +166,18 @@ console.log("PASS: performer pages group Similar, Hunt, and an explained affinit
 
 context.window.location.pathname = "/performers";
 const nativeOverlays = { type: "NativeOverlays", props: {} };
-const nativeCard = { type: "GridCard", props: { className: "performer-card", image, title: name, overlays: nativeOverlays } };
-const enhancedCard = cardPatch({ performer }, null, nativeCard);
-assert.equal(enhancedCard.props.className, nativeCard.props.className);
-assert.equal(enhancedCard.props.image, image);
-assert.equal(enhancedCard.props.title, name);
-assert.equal(enhancedCard.props.overlays.props.children[0], nativeOverlays);
-assert.equal(enhancedCard.props.overlays.props.children[1].type, context.CuratorPerformerCardBadge);
-assert.equal(enhancedCard.props.overlays.props.children[1].props.performer, performer);
-assert.equal(nativeCard.props.overlays, nativeOverlays, "preserve native overlays without mutation");
-assert.equal(cardPatch({ performer }, nativeCard).props.overlays.props.children[0], nativeOverlays, "accept the native hook's variable render arguments");
+for (const original of [nativeOverlays, null, []]) {
+  const enhanced = cardPatch({ performer }, null, original);
+  assert.equal(enhanced.props.children[0], original);
+  assert.equal(enhanced.props.children[1].type, context.CuratorPerformerCardBadge);
+  assert.equal(enhanced.props.children[1].props.performer, performer);
+  assert.equal(cardPatch({}, null, original), original);
+}
+assert.equal(cardPatch({ performer }, {}).props.children[0].length, 0);
+const themedOverlays = [nativeOverlays, image];
+assert.deepEqual(Array.from(cardPatch({ performer }, {}, ...themedOverlays).props.children[0]), themedOverlays);
 context.window.location.pathname = "/plugins/stash-curator";
-assert.equal(cardPatch({ performer }, null, nativeCard), nativeCard, "limit native card badges to the performer grid");
+assert.equal(cardPatch({ performer }, null, nativeOverlays), nativeOverlays, "limit native card badges to the performer grid");
 const cardControls = context.CuratorContextControls({ type: "performer", id: performer.id, label: performer.name, details: { affinity: -0.3 }, className: "curator-performer-card-badge" });
 assert.match(cardControls.props.className, /curator-performer-card-badge/);
 assert.equal(cardControls.props.children[1].props.value, -0.3);

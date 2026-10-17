@@ -6391,19 +6391,22 @@
       )
     );
   }
-  Api.patch.after("SceneCard", function (props, _, result) {
-    if (props.curatorAppeal === undefined || !result?.props) return result;
-    return React.cloneElement(result, {
-      details: null,
-      popovers: React.createElement("div", { className: "curator-native-score-row" }, React.createElement(EvidenceScore, {
-        evidenceContent: null,
-        dateContent: React.createElement("div", { className: "card-section curator-native-details" }, result.props.details),
-        scoreHeadline: "Appeal",
-        scoreHeadlineValue: formatAppealValue(props.curatorAppeal),
-        scoreHeadlineBar: scoreBar(props.curatorAppeal, true),
-        metadataContent: result.props.popovers,
-      })),
-    });
+  Api.patch.after("SceneCard.Details", function (props, _, ...details) {
+    const result = details.length === 1 ? details[0] : details;
+    return props.curatorAppeal === undefined ? result : null;
+  });
+  Api.patch.after("SceneCard.Popovers", function (props, _, ...popovers) {
+    const result = popovers.length === 1 ? popovers[0] : popovers;
+    if (props.curatorAppeal === undefined) return result;
+    return React.createElement("div", { className: "curator-native-score-row" }, React.createElement(EvidenceScore, {
+      evidenceContent: null,
+      // Clear the layout flag so the themed Details hook renders in this score row.
+      dateContent: React.createElement("div", { className: "card-section curator-native-details" }, React.createElement(Api.components["SceneCard.Details"], { ...props, curatorAppeal: undefined })),
+      scoreHeadline: "Appeal",
+      scoreHeadlineValue: formatAppealValue(props.curatorAppeal),
+      scoreHeadlineBar: scoreBar(props.curatorAppeal, true),
+      metadataContent: result,
+    }));
   });
 
   Api.patch.after("MainNavBar.MenuItems", function (props, _, result) {
@@ -6897,13 +6900,13 @@
     }, [performer.id]);
     return React.createElement(CuratorContextControls, { type: "performer", id: performer.id, label: performer.name, details, className: "curator-performer-card-badge" });
   }
-  Api.patch.after("PerformerCard", function (props, ...args) {
-    const result = args[args.length - 1];
-    if (!/^\/performers\/?$/.test(window.location.pathname) || props.performer?.id == null || !React.isValidElement(result)) return result;
-    return React.cloneElement(result, { overlays: React.createElement(React.Fragment, null,
-      result.props.overlays,
+  Api.patch.after("PerformerCard.Overlays", function (props, _, ...overlays) {
+    const result = overlays.length === 1 ? overlays[0] : overlays;
+    if (!/^\/performers\/?$/.test(window.location.pathname) || props.performer?.id == null) return result;
+    return React.createElement(React.Fragment, null,
+      result,
       React.createElement(CuratorPerformerCardBadge, { key: "curator-performer-affinity", performer: props.performer })
-    ) });
+    );
   });
   Api.patch.after("ScenePage", function (props, _, result) {
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, scene: props.scene }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));

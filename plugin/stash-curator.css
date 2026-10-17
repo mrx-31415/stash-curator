@@ -4703,6 +4703,7 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 
 .curator-compact-card .card-section-title { font-size: calc(1.05rem * var(--curator-card-text-scale, 1)); }
 .curator-compact-card .curator-native-score-row { padding: 0.1rem 0.7rem; }
+.curator-compact-card .curator-native-score-row > .curator-score-stack { display: block; }
 .curator-compact-card .curator-native-score-row .card-popovers { position: static; flex: 0 0 auto; }
 .curator-compact-card .curator-native-score-row .card-popovers .btn { font-size: 0.85rem; height: 1.65rem; padding: 0 0.25rem; }
 .curator-compact-card .curator-native-score-row hr { display: none; }
