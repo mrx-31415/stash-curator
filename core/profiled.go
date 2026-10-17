@@ -19,6 +19,7 @@ func profiledOperation(pluginDir string, payload jVal, name string, body func(jV
 func profiledKind(pluginDir string, payload jVal, name, kind string, body func(jVal) (jVal, error)) (jVal, error) {
 	t := beginTrace(name, kind)
 	settings := pluginSettings(payload) // swallows failures, like _settings
+	configureStashbox(settings)
 	// On-demand pprof capture (pprofEnabled setting): the CPU profile covers
 	// the op body; the heap dump and CPU stop run after the trace is saved.
 	stopCPU, dumpMem := startProfilingFor(pluginDir, payload, settings, name)

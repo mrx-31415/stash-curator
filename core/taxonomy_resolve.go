@@ -26,6 +26,12 @@ type taxonomyMatch struct {
 
 // isStashdbEndpoint mirrors taxonomy.store._is_stashdb.
 func isStashdbEndpoint(endpoint string) bool {
+	if strings.EqualFold(strings.TrimRight(endpoint, "/"), strings.TrimRight(stashdbEndpoint, "/")) {
+		return true
+	}
+	if !strings.EqualFold(stashdbEndpoint, "https://stashdb.org/graphql") {
+		return false
+	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return false

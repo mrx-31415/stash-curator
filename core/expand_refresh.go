@@ -263,8 +263,17 @@ func taxonomyDataCanonical(endpoint string, categories []taxonomyCategory, tags 
 // the active snapshot id in application_meta.
 // refreshTaxonomy mirrors ExpandService._refresh_taxonomy.
 func refreshTaxonomy(db dbx, clientURL, apiKey string, nowMs int64) (bool, error) {
+	endpoint, err := cachedStashboxEndpoint(db, "taxonomy_checked_endpoint")
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(endpoint, stashdbEndpoint) {
+		if _, err := db.Exec(`DELETE FROM application_meta WHERE key IN ('taxonomy_checked_at_ms','taxonomy_snapshot_id')`); err != nil {
+			return false, err
+		}
+	}
 	var checked sql.NullString
-	err := db.QueryRow(`SELECT value FROM application_meta WHERE key='taxonomy_checked_at_ms'`).Scan(&checked)
+	err = db.QueryRow(`SELECT value FROM application_meta WHERE key='taxonomy_checked_at_ms'`).Scan(&checked)
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
@@ -289,16 +298,15 @@ WHERE m.key='taxonomy_snapshot_id'`).Scan(&fetched)
 	if err != nil {
 		return false, nil
 	}
-	endpoint := clientURL
-	snapshotID, reused, err := taxonomyStorePublish(db, endpoint, categories, tags, nowMs)
+	snapshotID, reused, err := taxonomyStorePublish(db, clientURL, categories, tags, nowMs)
 	if err != nil {
 		return false, err
 	}
 	_ = snapshotID
 	if err := withTxn(db, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(context.Background(), `
-INSERT INTO application_meta(key, value) VALUES ('taxonomy_checked_at_ms', ?)
-ON CONFLICT(key) DO UPDATE SET value=excluded.value`, fmt.Sprintf("%d", nowMs))
+INSERT INTO application_meta(key, value) VALUES ('taxonomy_checked_at_ms', ?), ('taxonomy_checked_endpoint', ?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, fmt.Sprintf("%d", nowMs), stashdbEndpoint)
 		return err
 	}); err != nil {
 		return false, err
@@ -674,6 +682,14 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	forceFull bool, nowMs int64, progress func(processed, total int)) (jVal, error) {
 	fetchedAtMs := nowMs
 	started := time.Now()
+	if err := validateExpandSceneFilters(clientURL, apiKey); err != nil {
+		return jvNull(), err
+	}
+	previousEndpoint, err := cachedStashboxEndpoint(db, "expand_cache_endpoint")
+	if err != nil {
+		return jvNull(), err
+	}
+	endpointChanged := !strings.EqualFold(previousEndpoint, stashdbEndpoint)
 	timings := map[string]int64{}
 	// The taxonomy check and seed load used to be markerless: on a large
 	// library the bar sat at 5% for the whole stretch. The 50/150 ticks
@@ -727,7 +743,7 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	} else if err != nil && err != sql.ErrNoRows {
 		return jvNull(), err
 	}
-	if forceFull {
+	if forceFull || endpointChanged {
 		// A force rebuild is the dev escape hatch for scenes a watermark could never
 		// surface: it ignores the incremental cursor and re-fetches the whole window.
 		since = ""
@@ -849,8 +865,14 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	t0 = time.Now()
 	writeErr := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
+		if endpointChanged {
+			if _, err := conn.ExecContext(ctx, `DELETE FROM external_entity`); err != nil {
+				return err
+			}
+		}
 		upsert := func(entityType string, items []scoredScene) error {
 			for _, item := range items {
+				item.payload = externalPayload(item.payload)
 				srcs := jvArr()
 				sources := append([]string(nil), item.sources...)
 				sort.Strings(sources)
@@ -919,6 +941,11 @@ ON CONFLICT(singleton) DO UPDATE SET model_id=excluded.model_id,
   fetched_at_ms=excluded.fetched_at_ms, expires_at_ms=excluded.expires_at_ms,
   scene_count=excluded.scene_count, performer_count=excluded.performer_count`,
 			modelID, fetchedAtMs, fetchedAtMs+12*3_600_000, poolCounts["scene"], poolCounts["performer"])
+		if err != nil {
+			return err
+		}
+		_, err = conn.ExecContext(ctx, `INSERT INTO application_meta(key,value) VALUES ('expand_cache_endpoint',?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stashdbEndpoint)
 		return err
 	})
 	timings["database_writing"] = time.Since(t0).Milliseconds()

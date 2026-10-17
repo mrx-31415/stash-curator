@@ -26,7 +26,8 @@ def test_initialization_queues_once_and_surfaces_failure(tmp_path: Path) -> None
     with pytest.raises(RuntimeError, match="test failure"):
         ensure_scene_matches(connection, {})
     connection.execute(
-        "INSERT INTO application_meta(key,value) VALUES ('local_scene_matches_ready','1')"
+        "INSERT INTO application_meta(key,value) "
+        "VALUES ('local_scene_matches_ready','https://stashdb.org/graphql')"
     )
     assert ensure_scene_matches(connection, {})
     connection.close()
@@ -70,7 +71,10 @@ def test_failed_targeted_refresh_keeps_queue_and_matching_facts(tmp_path: Path) 
     connection = connect_database(tmp_path / "curator.sqlite3")
     MigrationRunner(connection).migrate(applied_at_ms=1)
     with transaction(connection):
-        connection.execute("INSERT INTO application_meta VALUES ('local_scene_matches_ready','1')")
+        connection.execute(
+            "INSERT INTO application_meta "
+            "VALUES ('local_scene_matches_ready','https://stashdb.org/graphql')"
+        )
         write_scene_match(
             connection,
             {

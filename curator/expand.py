@@ -13,6 +13,7 @@ from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from curator.config import DEFAULT_CONFIG
 from curator.features import FeatureStore, PerformerProfile, performer_similarity
@@ -187,8 +188,55 @@ class _AnchorMatcher:
 
 
 class ExpandService:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, stashbox_endpoint: str = STASHDB) -> None:
         self.connection = connection
+        self.stashbox_endpoint = stashbox_endpoint
+
+    def _cached_endpoint(self, key: str) -> str:
+        row = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key=?", (key,)
+        ).fetchone()
+        return str(row[0]).rstrip("/") if row else STASHDB
+
+    def ensure_endpoint(self, payload: dict[str, Any]) -> bool:
+        endpoint = self.stashbox_endpoint.rstrip("/")
+        if self._cached_endpoint("expand_cache_endpoint").casefold() == endpoint.casefold():
+            return True
+        latest = self.connection.execute(
+            "SELECT state, COALESCE(error,''), "
+            "COALESCE(json_extract(payload_json,'$.args.expand_endpoint'),''), "
+            "started_at_ms, job_id "
+            "FROM curator_job WHERE job_type IN ('expand-refresh','expand-rebuild') "
+            "ORDER BY started_at_ms DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        now_ms = time.time_ns() // 1_000_000
+        if latest and latest[0] in {"queued", "running"} and latest[3] > now_ms - 6 * 3_600_000:
+            if latest[0] == "queued":
+                with transaction(self.connection):
+                    self.connection.execute(
+                        "UPDATE curator_job SET payload_json=json_set(payload_json,"
+                        "'$.args.automatic',json('false')) WHERE job_id=? AND state='queued'",
+                        (latest[4],),
+                    )
+            return False
+        if (
+            latest
+            and latest[0] in {"failed", "cancelled"}
+            and latest[2].casefold() == endpoint.casefold()
+        ):
+            raise RuntimeError(
+                f"Preparing the selected endpoint failed: {latest[1]}. "
+                "Retry Refresh Expand cache in Manage > Tasks"
+            )
+        request = {**payload, "args": {**(payload.get("args") or {}), "expand_endpoint": endpoint}}
+        with transaction(self.connection):
+            self.connection.execute(
+                "INSERT INTO curator_job(job_id,job_type,state,started_at_ms,"
+                "queued_at_ms,payload_json) "
+                "VALUES (?,'expand-refresh','queued',?,?,?)",
+                (str(uuid4()), now_ms, now_ms, json.dumps(request, separators=(",", ":"))),
+            )
+        return False
 
     def _supports_incremental_fetch(self, client: GraphQLClient) -> bool:
         """Whether StashDB accepts the updated_at criterion used for incremental refresh."""
@@ -205,7 +253,36 @@ class ExpandService:
         except GraphQLError:
             return False
 
+    def _validate_scene_filters(self, client: GraphQLClient) -> None:
+        if self.stashbox_endpoint.rstrip("/").casefold() == STASHDB.casefold():
+            return
+        try:
+            data = client.execute(
+                'query CuratorSceneFilterSchema { __type(name:"SceneQueryInput") '
+                "{ inputFields { name type { kind name } } } }",
+                {},
+            )
+        except (KeyError, RuntimeError, TypeError):
+            return  # Introspection may be disabled; let the normal query report errors.
+        for field in (data.get("__type") or {}).get("inputFields", []):
+            name = field["name"]
+            if name in {"performers", "studios", "tags"} and field["type"]["name"] == "String":
+                raise RuntimeError(
+                    f"Curator does not yet support Expand with this endpoint: its {name} filter "
+                    "expects text instead of StashDB's filter object. "
+                    "Choose a compatible Stash-box endpoint"
+                )
+
     def _refresh_taxonomy(self, client: GraphQLClient, now_ms: int) -> bool:
+        if (
+            self._cached_endpoint("taxonomy_checked_endpoint").casefold()
+            != self.stashbox_endpoint.casefold()
+        ):
+            with transaction(self.connection):
+                self.connection.execute(
+                    "DELETE FROM application_meta "
+                    "WHERE key IN ('taxonomy_checked_at_ms','taxonomy_snapshot_id')"
+                )
         checked = self.connection.execute(
             "SELECT value FROM application_meta WHERE key='taxonomy_checked_at_ms'"
         ).fetchone()
@@ -227,10 +304,11 @@ class ExpandService:
         with transaction(self.connection):
             self.connection.execute(
                 """
-                INSERT INTO application_meta(key, value) VALUES ('taxonomy_checked_at_ms', ?)
+                INSERT INTO application_meta(key, value)
+                VALUES ('taxonomy_checked_at_ms', ?), ('taxonomy_checked_endpoint', ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
                 """,
-                (str(now_ms),),
+                (str(now_ms), self.stashbox_endpoint),
             )
         if not published.reused:
             ModelUpdateCoordinator(self.connection).request("taxonomy_sync")
@@ -254,6 +332,11 @@ class ExpandService:
     ) -> dict[str, object]:
         fetched_at_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000
         started = time.monotonic()
+        self._validate_scene_filters(client)
+        endpoint_changed = (
+            self._cached_endpoint("expand_cache_endpoint").casefold()
+            != self.stashbox_endpoint.casefold()
+        )
         timings: dict[str, int] = {}
         # The taxonomy check and seed load used to be markerless: on a large
         # library the bar sat at 5% for the whole stretch. The 50/150 ticks
@@ -302,7 +385,7 @@ class ExpandService:
             )
         # A force rebuild is the dev escape hatch for scenes a watermark could never
         # surface: it ignores the incremental cursor and re-fetches the whole window.
-        if force_full:
+        if force_full or endpoint_changed:
             since = None
         elif since is not None and not self._supports_incremental_fetch(client):
             # The live stashdb instance predates the updated_at SceneQueryInput field, so
@@ -364,6 +447,8 @@ class ExpandService:
         with transaction(self.connection):
             # Merge the newly fetched candidates instead of wiping the pool, so unchanged
             # entries and the explore rows from hunts and similar probes survive a refresh.
+            if endpoint_changed:
+                self.connection.execute("DELETE FROM external_entity")
             self.connection.executemany(
                 """
                 INSERT INTO external_entity(
@@ -379,7 +464,7 @@ class ExpandService:
                     (
                         kind,
                         str(item["id"]),
-                        json.dumps(item["payload"], separators=(",", ":")),
+                        json.dumps(self._external_payload(item["payload"]), separators=(",", ":")),
                         item["score"],
                         json.dumps(item["sources"], separators=(",", ":")),
                         fetched_at_ms,
@@ -431,6 +516,11 @@ class ExpandService:
                     pool_counts.get("scene", 0),
                     pool_counts.get("performer", 0),
                 ),
+            )
+            self.connection.execute(
+                "INSERT INTO application_meta(key,value) VALUES ('expand_cache_endpoint',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (self.stashbox_endpoint,),
             )
         if cached_model_id is not None and cached_model_id != model_id:
             # The affinities and seeds changed with the model, so every surviving candidate's
@@ -583,7 +673,9 @@ class ExpandService:
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
-                "SELECT external_id FROM external_shortlist WHERE entity_type='scene'"
+                "SELECT external_id FROM external_shortlist "
+                "WHERE entity_type='scene' AND endpoint=?",
+                (self.stashbox_endpoint.casefold(),),
             )
         }
         items = [
@@ -660,7 +752,10 @@ class ExpandService:
         if not -1 <= minimum_score <= 1:
             raise ValueError("minimum_score must be between -1 and 1")
         cache = self.connection.execute("SELECT * FROM expand_cache WHERE singleton=1").fetchone()
-        if cache is None:
+        if cache is None or (
+            self._cached_endpoint("expand_cache_endpoint").casefold()
+            != self.stashbox_endpoint.casefold()
+        ):
             return {
                 "ready": False,
                 "page": page,
@@ -672,8 +767,8 @@ class ExpandService:
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
-                "SELECT external_id FROM external_shortlist WHERE entity_type=?",
-                (entity_type,),
+                "SELECT external_id FROM external_shortlist WHERE entity_type=? AND endpoint=?",
+                (entity_type, self.stashbox_endpoint.casefold()),
             )
         }
         rows = []
@@ -681,8 +776,12 @@ class ExpandService:
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         blocked_groups = self._blocked_tag_name_groups()
         for row in self.connection.execute(
-            "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate'",
-            (entity_type,),
+            "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate' "
+            "AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),"
+            "'https://stashdb.org/graphql'),'/'))=lower(?) "
+            "AND lower(rtrim(COALESCE((SELECT value FROM application_meta "
+            "WHERE key='expand_cache_endpoint'),'https://stashdb.org/graphql'),'/'))=lower(?)",
+            (entity_type, self.stashbox_endpoint.rstrip("/"), self.stashbox_endpoint.rstrip("/")),
         ):
             if float(row["score"]) < minimum_score:
                 continue
@@ -845,8 +944,9 @@ class ExpandService:
         with transaction(self.connection):
             if not selected:
                 self.connection.execute(
-                    "DELETE FROM external_shortlist WHERE entity_type=? AND external_id=?",
-                    (entity_type, external_id),
+                    "DELETE FROM external_shortlist "
+                    "WHERE entity_type=? AND external_id=? AND endpoint=?",
+                    (entity_type, external_id, self.stashbox_endpoint.casefold()),
                 )
                 return
             row = self.connection.execute(
@@ -855,12 +955,15 @@ class ExpandService:
             ).fetchone()
             if row is None:
                 raise ValueError("external entity is not in the current Expand cache")
+            source = str(json.loads(row["payload_json"]).get("curator_endpoint") or STASHDB)
+            if source.rstrip("/").casefold() != self.stashbox_endpoint.casefold():
+                raise ValueError("external entity is not in the selected endpoint's cache")
             self.connection.execute(
                 """
                 INSERT INTO external_shortlist(
-                  entity_type, external_id, payload_json, score, sources_json, added_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(entity_type, external_id) DO UPDATE SET
+                  entity_type, external_id, payload_json, score, sources_json, added_at_ms, endpoint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(endpoint, entity_type, external_id) DO UPDATE SET
                   payload_json=excluded.payload_json, score=excluded.score,
                   sources_json=excluded.sources_json
                 """,
@@ -871,14 +974,19 @@ class ExpandService:
                     row["score"],
                     row["sources_json"],
                     time.time_ns() // 1_000_000,
+                    self.stashbox_endpoint.casefold(),
                 ),
             )
 
     def shortlist_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
             raise ValueError("invalid shortlist page")
+        source_filter = "endpoint=lower(?)"
         total = int(
-            self.connection.execute("SELECT count(*) FROM external_shortlist").fetchone()[0]
+            self.connection.execute(
+                "SELECT count(*) FROM external_shortlist WHERE " + source_filter,
+                (self.stashbox_endpoint,),
+            ).fetchone()[0]
         )
         items = [
             {
@@ -891,8 +999,10 @@ class ExpandService:
                 "added_at_ms": int(row["added_at_ms"]),
             }
             for row in self.connection.execute(
-                "SELECT * FROM external_shortlist ORDER BY added_at_ms DESC LIMIT ? OFFSET ?",
-                (count, (page - 1) * count),
+                "SELECT * FROM external_shortlist WHERE "
+                + source_filter
+                + " ORDER BY added_at_ms DESC LIMIT ? OFFSET ?",
+                (self.stashbox_endpoint, count, (page - 1) * count),
             )
         ]
         return {
@@ -923,7 +1033,8 @@ class ExpandService:
         shortlisted = {
             str(row[0])
             for row in self.connection.execute(
-                "SELECT external_id FROM external_shortlist WHERE entity_type=?", (entity_type,)
+                "SELECT external_id FROM external_shortlist WHERE entity_type=? AND endpoint=?",
+                (entity_type, self.stashbox_endpoint.casefold()),
             )
         }
         if entity_type == "scene":
@@ -970,7 +1081,10 @@ class ExpandService:
             weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
             items = []
             for row in self.connection.execute(
-                "SELECT * FROM external_entity WHERE entity_type='scene'"
+                "SELECT * FROM external_entity WHERE entity_type='scene' "
+                "AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),"
+                "'https://stashdb.org/graphql'),'/'))=lower(?)",
+                (self.stashbox_endpoint,),
             ):
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
@@ -1106,7 +1220,10 @@ class ExpandService:
             weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
             items = []
             for row in self.connection.execute(
-                "SELECT * FROM external_entity WHERE entity_type='performer'"
+                "SELECT * FROM external_entity WHERE entity_type='performer' "
+                "AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),"
+                "'https://stashdb.org/graphql'),'/'))=lower(?)",
+                (self.stashbox_endpoint,),
             ):
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
@@ -1391,7 +1508,7 @@ class ExpandService:
                 WHERE lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))
                   AND stash_id IN ({",".join("?" for _ in ids)})
                 """,
-                (STASHDB, *ids),
+                (self.stashbox_endpoint, *ids),
             )
         }
         frequencies: dict[str, int] = {}
@@ -1531,6 +1648,11 @@ class ExpandService:
                     sources[identifier].update(values)
         return rows, sources
 
+    def _external_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.stashbox_endpoint.casefold() != STASHDB.casefold():
+            payload["curator_endpoint"] = self.stashbox_endpoint
+        return payload
+
     def _merge_external(
         self, entity_type: str, items: Iterable[dict[str, Any]], *, pool: str = "explore"
     ) -> None:
@@ -1559,7 +1681,7 @@ class ExpandService:
                     (
                         entity_type,
                         str(item["id"]),
-                        json.dumps(item["payload"], separators=(",", ":")),
+                        json.dumps(self._external_payload(item["payload"]), separators=(",", ":")),
                         float(item["score"]),
                         json.dumps(item["sources"], separators=(",", ":")),
                         now_ms,
@@ -1686,7 +1808,7 @@ class ExpandService:
                 f"SELECT tag_id, stash_id FROM source_tag_stash_id WHERE tag_id IN "
                 f"({','.join('?' for _ in local_ids)}) "
                 "AND lower(rtrim(endpoint, '/'))=lower(rtrim(?, '/'))",
-                (*sorted(local_ids), STASHDB),
+                (*sorted(local_ids), self.stashbox_endpoint),
             )
         }
         for row in self.connection.execute(
@@ -1961,7 +2083,7 @@ class ExpandService:
               AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
             WHERE a.model_id=? AND d.feature_version=? AND d.family='content'
             """,
-            (STASHDB, model_id, feature_version),
+            (self.stashbox_endpoint, model_id, feature_version),
         ):
             value = float(row["value"])
             tag_affinity[f"name:{str(row['name']).casefold()}"] = value
@@ -1974,7 +2096,7 @@ class ExpandService:
             LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
               AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
             """,
-            (STASHDB,),
+            (self.stashbox_endpoint,),
         ):
             value = float(row["value"])
             tag_affinity.setdefault(f"name:{str(row['name']).casefold()}", value)

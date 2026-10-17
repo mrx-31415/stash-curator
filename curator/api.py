@@ -159,8 +159,9 @@ def _draw_slate(
 
 
 class CuratorAPI:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, stashbox_endpoint: str = STASHDB) -> None:
         self.connection = connection
+        self.stashbox_endpoint = stashbox_endpoint
 
     def get_slate(
         self,
@@ -851,10 +852,14 @@ class CuratorAPI:
         )
 
     def expand_shortlist(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
-        return ExpandService(self.connection).shortlist_results(page=page, count=page_size)
+        return ExpandService(self.connection, self.stashbox_endpoint).shortlist_results(
+            page=page, count=page_size
+        )
 
     def update_shortlist(self, entity_type: str, external_id: str, selected: bool) -> None:
-        ExpandService(self.connection).shortlist(entity_type, external_id, selected)
+        ExpandService(self.connection, self.stashbox_endpoint).shortlist(
+            entity_type, external_id, selected
+        )
 
     def external_similar(self, entity_type: str, entity_id: str) -> dict[str, object]:
         return ExpandService(self.connection).similar(entity_type, entity_id)
@@ -1064,7 +1069,7 @@ class CuratorAPI:
                   AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))
                 ORDER BY t.tag_id
                 """,
-                (config_version, STASHDB),
+                (config_version, self.stashbox_endpoint),
             )
         ]
         by_external = {str(row["stash_id"]): row for row in rows if row["stash_id"]}

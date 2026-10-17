@@ -46,7 +46,7 @@ async function check() {
   const options = tree.find((node) => node.props?.className === "curator-token-options");
   assert.equal(options.children.length, 2); // Same-name local tag wins.
   assert.equal(options.children[0].children[1].children[0], "Library");
-  assert.equal(options.children[1].children[1].children[0], "StashDB");
+  assert.equal(options.children[1].children[1].children[0], "Stash-box");
   options.children[1].props.onClick();
   assert.equal(applied[0].name, "Remote Only");
   assert.equal(applied[0].id, "stashdb:2"); // Cannot collide with local id 2.

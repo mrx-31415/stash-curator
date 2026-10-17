@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from curator.storage import MigrationRunner, connect_database
 from curator.taxonomy import (
     TaxonomyCategory,
@@ -8,12 +10,21 @@ from curator.taxonomy import (
     TaxonomyIndex,
     TaxonomyStore,
     TaxonomyTag,
+    store,
 )
 from curator.taxonomy.store import PERFORMER_ATTRIBUTE_CATEGORY_IDS
 
 BODY_TYPE_ID = "20c82f8a-4f2b-412a-8047-934eeb6c32e7"
 GENITALS_ID = "9bd1d55e-d7c4-4b7c-a66f-96ec52b7af08"
 CLOTHING_ID = "clothing-category"
+
+
+def test_taxonomy_uses_only_selected_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store, "ACTIVE_STASHBOX_ENDPOINT", "https://example.test/graphql")
+    assert store._is_stashdb("https://EXAMPLE.TEST/graphql/")
+    assert not store._is_stashdb("https://stashdb.org/graphql")
+    monkeypatch.setattr(store, "ACTIVE_STASHBOX_ENDPOINT", "https://stashdb.org/graphql")
+    assert store._is_stashdb("http://stashdb.org/graphql/")
 
 
 def _taxonomy() -> TaxonomyData:

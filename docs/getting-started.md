@@ -123,16 +123,30 @@ Curator's **Manage → Settings**. Useful early choices are:
   **Manage → Settings** to remove this discovery filter.
 - **Enable profiling:** keep off unless diagnosing performance.
 
-For optional StashDB discovery, configure a stash-box in Stash with the endpoint
-`https://stashdb.org/graphql` and your StashDB API key. Curator reuses those settings.
-Run **Refresh Expand cache** under **Manage → Tasks** to populate discovery results.
-Expand uses a recent-release window (90 days by default), so it does not search the
-entire StashDB catalog. Use **Find → Performer Hunt** for one performer's catalog.
-Local recommendations do not require a StashDB account.
+For optional external discovery, configure a stash-box in Stash with its endpoint and
+API key. Curator uses StashDB (`https://stashdb.org/graphql`) by default. A different
+endpoint must provide a GraphQL API compatible with StashDB's queries. To use a
+different configured stash-box, select it from the dropdown under **Manage → Settings →
+Discovery → Stash-box endpoint**. Run **Refresh Expand cache** under **Manage → Tasks** to
+populate discovery results. Expand uses a recent-release window (90 days by default),
+so it does not search the entire external catalog. Use **Find → Performer Hunt** for
+one performer's catalog. Local recommendations do not require an external account.
+
+After changing the endpoint, opening Expand automatically prepares candidates from
+the selected server. Previous-server candidates stay hidden during preparation;
+saved shortlist entries are preserved and shown when their source is selected.
+Existing shortlist entries belong to StashDB. Progress appears under **Manage → Tasks**.
+
+Some providers expose only partial Stash-box compatibility. ThePornDB's GraphQL
+interface is not supported for Expand yet; its discovery queries and taxonomy differ
+from Stash-box. ThePornDB REST support is planned separately. FansDB's discovery
+queries have been checked live; JAVStash's schema is compatible, but authenticated
+discovery results have not yet been verified.
 
 Whisparr v3 is also optional. Configure its URL and API key only if you want the
 explicit **Send to Whisparr** action on external scene cards. Curator sends an item
-only after you select that action. **Search Whisparr immediately** is enabled by
+only when the StashDB endpoint is selected; other endpoints disable this action.
+You must select the action explicitly. **Search Whisparr immediately** is enabled by
 default, so sending a scene also requests a release search. The URL must be
 reachable from the Stash server or container.
 

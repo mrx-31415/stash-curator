@@ -92,6 +92,7 @@ from curator.storage import (  # noqa: E402
 )
 from curator.sync import SyncService  # noqa: E402
 from curator.sync.repository import SyncRepository  # noqa: E402
+from curator.taxonomy import store as taxonomy_store  # noqa: E402
 from curator.whisparr import WhisparrClient  # noqa: E402
 
 SCHEMA_VERSION = 2
@@ -113,9 +114,9 @@ query CuratorStashBoxes {
 }
 """
 EXTERNAL_LINKS_QUERY = """
-query CuratorExternalLinks($page: Int!, $perPage: Int!) {
+query CuratorExternalLinks($page: Int!, $perPage: Int!, $endpoint: String!) {
   scenes: findScenes(
-    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    scene_filter: {stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) {
     count
@@ -126,33 +127,33 @@ query CuratorExternalLinks($page: Int!, $perPage: Int!) {
   }
   performers: findPerformers(
     performer_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) { count performers { id stash_ids { endpoint stash_id } } }
   studios: findStudios(
     studio_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
   ) { count studios { id stash_ids { endpoint stash_id } } }
 }
 """
 EXTERNAL_LINKS_STATE_QUERY = """
-query CuratorExternalLinksState {
+query CuratorExternalLinksState($endpoint: String!) {
   scenes: findScenes(
-    scene_filter: {stash_id_endpoint: {endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL}}
+    scene_filter: {stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count scenes { updated_at } }
   performers: findPerformers(
     performer_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count performers { updated_at } }
   studios: findStudios(
     studio_filter: {stash_id_endpoint: {
-      endpoint: "https://stashdb.org/graphql", modifier: NOT_NULL
+      endpoint: $endpoint, modifier: NOT_NULL
     }}
     filter: {page: 1, per_page: 1, sort: "updated_at", direction: DESC}
   ) { count studios { updated_at } }
@@ -208,19 +209,31 @@ def _client(payload: dict[str, Any]) -> GraphQLClient:
     return GraphQLClient(stash_url, headers=headers)
 
 
-def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
+def _stashbox_endpoint(settings: dict[str, Any] | None = None) -> str:
+    return (str((settings or {}).get("stashBoxEndpoint") or "").strip() or STASHDB).rstrip("/")
+
+
+def _configure_stashbox(settings: dict[str, Any]) -> str:
+    endpoint = _stashbox_endpoint(settings)
+    taxonomy_store.ACTIVE_STASHBOX_ENDPOINT = endpoint
+    return endpoint
+
+
+def _stashdb(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> GraphQLClient:
+    selected = _configure_stashbox(settings or {})
     boxes = _client(payload).execute(STASHBOX_QUERY)["configuration"]["general"]["stashBoxes"]
     box = next(
         (
             item
             for item in boxes
-            if str(item.get("endpoint") or "").rstrip("/").casefold()
-            == STASHDB.rstrip("/").casefold()
+            if str(item.get("endpoint") or "").rstrip("/").casefold() == selected.casefold()
         ),
         None,
     )
     if box is None or not box.get("api_key"):
-        raise RuntimeError("configure StashDB with an API key in Stash settings")
+        raise RuntimeError(
+            "configure the selected Stash-box endpoint with an API key in Stash settings"
+        )
     endpoint = str(os.environ.get("CURATOR_STASHDB_ENDPOINT") or box["endpoint"])
     return GraphQLClient(endpoint, api_key=str(box["api_key"]), profile_category="stashdb")
 
@@ -228,16 +241,19 @@ def _stashdb(payload: dict[str, Any]) -> GraphQLClient:
 EXTERNAL_LINKS_CACHE_KEY = "external_links"
 
 
-def _external_links_state(payload: dict[str, Any]) -> str:
+def _external_links_state(payload: dict[str, Any], endpoint: str = STASHDB) -> str:
     """Cheap description of the linked library, so the full scan can be skipped."""
-    data = _client(payload).execute(EXTERNAL_LINKS_STATE_QUERY)
+    data = _client(payload).execute(EXTERNAL_LINKS_STATE_QUERY, {"endpoint": endpoint})
     return json.dumps(
         {
-            kind: [
-                int(data[kind]["count"]),
-                str((data[kind][kind][:1] or [{}])[0].get("updated_at") or ""),
-            ]
-            for kind in ("scenes", "performers", "studios")
+            "endpoint": endpoint,
+            **{
+                kind: [
+                    int(data[kind]["count"]),
+                    str((data[kind][kind][:1] or [{}])[0].get("updated_at") or ""),
+                ]
+                for kind in ("scenes", "performers", "studios")
+            },
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -268,6 +284,7 @@ def _external_links(
     *,
     refresh: bool = False,
     progress: Callable[[int, int], None] | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Map local entities to their StashDB ids, reusing the last scan while Stash is unchanged.
 
@@ -277,7 +294,8 @@ def _external_links(
     walk (issue #110: the expand-refresh bar used to sit at 5% for the whole
     library walk).
     """
-    state = _external_links_state(payload) if connection is not None else ""
+    endpoint = _stashbox_endpoint(settings)
+    state = _external_links_state(payload, endpoint) if connection is not None else ""
     if connection is not None and not refresh:
         # Reuse the last scan while the linked library is unchanged: the saved
         # state is compared against the current one, and a mismatch falls
@@ -294,7 +312,9 @@ def _external_links(
     }
     page = 1
     while True:
-        data = _client(payload).execute(EXTERNAL_LINKS_QUERY, {"page": page, "perPage": 500})
+        data = _client(payload).execute(
+            EXTERNAL_LINKS_QUERY, {"page": page, "perPage": 500, "endpoint": endpoint}
+        )
         more = False
         for kind in ("scenes", "performers", "studios"):
             collection = data[kind]
@@ -304,7 +324,7 @@ def _external_links(
                         str(item["stash_id"])
                         for item in row.get("stash_ids", [])
                         if str(item.get("endpoint") or "").rstrip("/").casefold()
-                        == STASHDB.rstrip("/").casefold()
+                        == endpoint.casefold()
                     ),
                     None,
                 )
@@ -579,6 +599,7 @@ def _open(  # type: ignore[no-untyped-def]
 
 def _health(payload: dict[str, Any]) -> dict[str, object]:
     settings = _settings(payload)
+    _configure_stashbox(settings)
     stash = _client(payload).execute(RUNTIME_QUERY)
     connection = _open(payload, settings)
     try:
@@ -594,7 +615,7 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         current = connection.execute(
             "SELECT model_id FROM model_version WHERE status='published'"
         ).fetchone()
-        config = CuratorAPI(connection).config()["config"]
+        config = CuratorAPI(connection, _stashbox_endpoint(settings)).config()["config"]
         assert isinstance(config, dict)
         last_sync = connection.execute(
             """
@@ -649,7 +670,8 @@ def _health(payload: dict[str, Any]) -> dict[str, object]:
         "ready": current is not None,
         "sync_ready": last_sync is not None,
         "stashdb_available": any(
-            str(box.get("endpoint") or "").rstrip("/").casefold() == STASHDB.rstrip("/").casefold()
+            str(box.get("endpoint") or "").rstrip("/").casefold()
+            == _stashbox_endpoint(settings).casefold()
             and bool(box.get("api_key"))
             for box in stash["configuration"]["general"]["stashBoxes"]
         ),
@@ -689,10 +711,12 @@ def _round_trip(payload: dict[str, Any]) -> dict[str, object]:
 
 
 def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> dict[str, object]:
+    _configure_stashbox(settings)
     connection = _open(payload, settings)
     args = payload.get("args") or {}
     try:
-        api = CuratorAPI(connection)
+        endpoint = _stashbox_endpoint(settings)
+        api = CuratorAPI(connection, endpoint)
         if operation == "get_slate":
             config = api.config()["config"]
             excluded = args.get("exclude_scene_ids", [])
@@ -756,8 +780,20 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "get_expand":
             config = api.config()["config"]
             assert isinstance(config, dict)
+            endpoint = _configure_stashbox(settings)
+            if not ExpandService(connection, endpoint).ensure_endpoint(payload):
+                return {
+                    "ready": False,
+                    "initializing": True,
+                    "initializing_reason": "endpoint",
+                    "page": int(args.get("page") or 1),
+                    "page_size": int(args.get("count") or config["page_size"]),
+                    "total": 0,
+                    "has_more": False,
+                    "items": [],
+                }
             if str(args.get("entity_type") or "scene") == "scene" and not ensure_scene_matches(
-                connection, payload
+                connection, payload, endpoint
             ):
                 return {
                     "ready": False,
@@ -786,22 +822,22 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
                 count=int(args.get("count") or config["page_size"]),
-                links=scene_links(connection, _client(payload))
+                links=scene_links(connection, _client(payload), endpoint)
                 if str(args.get("entity_type") or "scene") == "scene"
                 else None,
             )
         if operation == "get_performer_hunt":
-            return ExpandService(connection).performer_hunt(
-                _stashdb(payload),
-                _external_links(payload, connection),
+            return ExpandService(connection, endpoint).performer_hunt(
+                _stashdb(payload, settings),
+                _external_links(payload, connection, settings=settings),
                 str(args.get("performer_id") or ""),
                 limit=PERFORMER_HUNT_LIMIT,
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
             )
         if operation == "get_stashdb_performer_search":
-            return ExpandService(connection).stashdb_performer_search(
-                _stashdb(payload),
+            return ExpandService(connection, endpoint).stashdb_performer_search(
+                _stashdb(payload, settings),
                 str(args.get("query") or ""),
                 limit=int(args.get("limit") or 8),
             )
@@ -815,9 +851,9 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "get_external_similar":
             config = api.config()["config"]
             assert isinstance(config, dict)
-            return ExpandService(connection).targeted_similar(
-                _stashdb(payload),
-                _external_links(payload, connection),
+            return ExpandService(connection, endpoint).targeted_similar(
+                _stashdb(payload, settings),
+                _external_links(payload, connection, settings=settings),
                 str(args.get("entity_type") or ""),
                 str(args.get("entity_id") or ""),
                 count=100,
@@ -847,11 +883,15 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 "selected": selected,
             }
         if operation == "send_whisparr":
+            if endpoint.casefold() != STASHDB.casefold():
+                raise RuntimeError(
+                    "Whisparr is only available when the StashDB endpoint is selected"
+                )
             external_id = str(args.get("external_id") or "")
             row = connection.execute(
                 """
                 SELECT payload_json FROM external_shortlist
-                WHERE entity_type='scene' AND external_id=?
+                WHERE entity_type='scene' AND external_id=? AND endpoint='https://stashdb.org/graphql'
                 UNION ALL
                 SELECT payload_json FROM external_entity
                 WHERE entity_type='scene' AND external_id=? LIMIT 1
@@ -861,6 +901,11 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if row is None:
                 raise ValueError("scene is not in Expand")
             payload_json = json.loads(str(row[0]))
+            if (
+                str(payload_json.get("curator_endpoint") or STASHDB).rstrip("/").casefold()
+                != STASHDB.casefold()
+            ):
+                raise ValueError("Whisparr only accepts scenes from StashDB")
             url = str(settings.get("whisparrUrl") or "").strip()
             key = str(settings.get("whisparrApiKey") or "").strip()
             root = str(settings.get("whisparrRootFolder") or "").strip()
@@ -1002,7 +1047,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             result = api.config()
             result["code_version"] = _installed_code_version()
             result["whisparr_enabled"] = bool(
-                str(settings.get("whisparrUrl") or "").strip()
+                endpoint.casefold() == STASHDB.casefold()
+                and str(settings.get("whisparrUrl") or "").strip()
                 and str(settings.get("whisparrApiKey") or "").strip()
             )
             return result
@@ -1599,6 +1645,7 @@ def _prepare_lanes(
 def _run_task_body(
     payload: dict[str, Any], mode: str, settings: dict[str, Any]
 ) -> dict[str, object]:
+    _configure_stashbox(settings)
     connection = _open(payload, settings)
     job_id = str(uuid4())
     started_at_ms = time.time_ns() // 1_000_000
@@ -1651,9 +1698,12 @@ def _run_task_body(
         if mode in {"expand-refresh", "expand-rebuild"}:
             _log("i", "Preparing local scene matches for Expand")
             backfill_scene_matches(
-                connection, _client(payload), progress=lambda value: _progress(0.01 + 0.03 * value)
+                connection,
+                _client(payload),
+                progress=lambda value: _progress(0.01 + 0.03 * value),
+                endpoint=_stashbox_endpoint(settings),
             )
-            scene_links(connection, _client(payload))
+            scene_links(connection, _client(payload), _stashbox_endpoint(settings))
         if mode in {"sync-build", "full-sync-build"}:
             sidecar_config = CuratorAPI(connection).config()["config"]
             assert isinstance(sidecar_config, dict)
@@ -1820,9 +1870,14 @@ def _run_task_body(
         elif mode == "local-matches":
             _progress(0.05)
             _log("i", "Checking your library for scenes already owned")
-            backfill_scene_matches(connection, _client(payload), progress=_progress)
+            backfill_scene_matches(
+                connection,
+                _client(payload),
+                progress=_progress,
+                endpoint=_stashbox_endpoint(settings),
+            )
             _progress(0.99)
-            scene_links(connection, _client(payload))
+            scene_links(connection, _client(payload), _stashbox_endpoint(settings))
             summary = {"local_scene_matches_ready": True}
         elif mode == "prepare":
             _progress(0.05)
@@ -1876,14 +1931,15 @@ def _run_task_body(
             assert isinstance(config, dict)
             _log("i", "Collecting bounded StashDB candidates")
             with span("python", "task.expand_refresh"):
-                summary = ExpandService(connection).refresh(
-                    _stashdb(payload),
+                summary = ExpandService(connection, _stashbox_endpoint(settings)).refresh(
+                    _stashdb(payload, settings),
                     # The refresh task is the escape hatch when Stash under-reports a change.
                     _external_links(
                         payload,
                         connection,
                         refresh=True,
                         progress=_mapped_progress(0.05, 0.08),
+                        settings=settings,
                     ),
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),
@@ -1903,13 +1959,14 @@ def _run_task_body(
             assert isinstance(config, dict)
             _log("i", "Force rebuilding full Expand candidate window")
             with span("python", "task.expand_rebuild"):
-                summary = ExpandService(connection).refresh(
-                    _stashdb(payload),
+                summary = ExpandService(connection, _stashbox_endpoint(settings)).refresh(
+                    _stashdb(payload, settings),
                     _external_links(
                         payload,
                         connection,
                         refresh=True,
                         progress=_mapped_progress(0.05, 0.08),
+                        settings=settings,
                     ),
                     horizon_days=int(config["expand_horizon_days"]),
                     gender=str(config["expand_gender"]),

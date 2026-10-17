@@ -19,8 +19,8 @@ import (
 
 const apiSchemaVersion = 2
 
-// stashdbEndpoint mirrors curator/expand.py STASHDB.
-const stashdbEndpoint = "https://stashdb.org/graphql"
+// stashdbEndpoint is the selected discovery source for this plugin operation.
+var stashdbEndpoint = "https://stashdb.org/graphql"
 
 // taskDisplayNames maps the yml task mode to its display name so health can
 // synthesize the Stash-style job description the frontend's task indicator
@@ -407,12 +407,15 @@ func getConfigBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	return result, nil
 }
 
-// whisparrEnabled mirrors backend.py: str(value or "") for both keys must be
-// non-empty after stripping.
+// Whisparr receives StashDB IDs directly; other providers need ID translation.
+func whisparrSupportsEndpoint(settings jVal) bool {
+	return strings.EqualFold(selectedStashboxEndpoint(settings), "https://stashdb.org/graphql")
+}
+
 func whisparrEnabled(settings jVal) bool {
 	url := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrUrl")))
 	key := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrApiKey")))
-	return url != "" && key != ""
+	return whisparrSupportsEndpoint(settings) && url != "" && key != ""
 }
 
 // pythonStrOrEmpty mirrors Python's `str(value or "")`.
@@ -475,6 +478,7 @@ func installedCodeVersion(pluginDir string) string {
 
 func opHealth(pluginDir string, payload jVal) (jVal, error) {
 	settings := pluginSettings(payload)
+	configureStashbox(settings)
 	base, headers := stashConnection(payload)
 	stash, err := graphqlQuery(base, headers, runtimeQuery, jvNull())
 	if err != nil {
@@ -622,6 +626,21 @@ func stashdbConfigured(boxes jVal) bool {
 		}
 	}
 	return false
+}
+
+func configureStashbox(settings jVal) {
+	stashdbEndpoint = selectedStashboxEndpoint(settings)
+}
+
+func selectedStashboxEndpoint(settings jVal) string {
+	endpoint := ""
+	if value := settings.get("stashBoxEndpoint"); value.kind == jStr {
+		endpoint = strings.TrimSpace(value.s)
+	}
+	if endpoint == "" {
+		endpoint = "https://stashdb.org/graphql"
+	}
+	return strings.TrimRight(endpoint, "/")
 }
 
 func scanCount(db dbx, query string) int64 {

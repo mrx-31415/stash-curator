@@ -128,7 +128,7 @@ func TestExpandRefreshPreparesLocalMatches(t *testing.T) {
 			}
 			run()
 			var ready, value string
-			if err := db.QueryRow(`SELECT value FROM application_meta WHERE key='local_scene_matches_ready'`).Scan(&ready); err != nil || ready != "1" {
+			if err := db.QueryRow(`SELECT value FROM application_meta WHERE key='local_scene_matches_ready'`).Scan(&ready); err != nil || ready != "https://stashdb.org/graphql" {
 				t.Fatalf("refresh did not initialize matches: %s %v", ready, err)
 			}
 			remoteID = "updated-owned"
