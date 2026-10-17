@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/mrx-31415/stash-curator/compare/v0.40.0...v0.40.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* preserve navbar rendering after other plugin hooks ([#367](https://github.com/mrx-31415/stash-curator/issues/367)) ([900f06f](https://github.com/mrx-31415/stash-curator/commit/900f06fd1db7ab1861d74b607ab4ce55a13e25d6))
+
 ## [0.40.0](https://github.com/mrx-31415/stash-curator/compare/v0.39.2...v0.40.0) (2026-10-17)
 
 
