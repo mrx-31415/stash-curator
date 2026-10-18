@@ -10,6 +10,13 @@
       currentApi = api;
       const { React } = api;
       const original = Object.fromEntries(["before", "instead", "after"].map((kind) => [kind, api.patch[kind].bind(api.patch)]));
+      if (window.__curatorReplacePopovers) {
+        original.instead("GridCard", function (props, ...args) {
+          const next = args.pop();
+          const popovers = React.createElement("div", { "data-patch-companion": "footer" }, "Theme tags");
+          return next.call(this, /\bscene-card\b/.test(props.className || "") ? { ...props, popovers } : props, ...args);
+        });
+      }
       const surfaces = ["MainNavBar.MenuItems", "ScenePlayer", "HoverPopover", "FilteredSceneList",
         "FilteredPerformerList", "SceneList", "ScenePage", "PerformerPage", "SceneCard.Details",
         "SceneCard.Popovers", "SceneCard.Overlays", "PerformerCard.Overlays"];
