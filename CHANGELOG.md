@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.2](https://github.com/mrx-31415/stash-curator/compare/v0.40.1...v0.40.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* preserve native pages and other plugins across Stash hooks ([#369](https://github.com/mrx-31415/stash-curator/issues/369)) ([ad41c5e](https://github.com/mrx-31415/stash-curator/commit/ad41c5e8c65ac9ceab52dee360c4c3e532398a0e))
+
 ## [0.40.1](https://github.com/mrx-31415/stash-curator/compare/v0.40.0...v0.40.1) (2026-10-17)
 
 
