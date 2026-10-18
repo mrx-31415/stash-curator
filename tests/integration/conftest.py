@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,6 +24,13 @@ import pytest
 
 INTEGRATION_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = INTEGRATION_DIR.parents[1]
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> Iterator[None]:
+    yield
+    # Run after fixture/parameter grouping: this test destroys the shared sidecar.
+    items.sort(key=lambda item: item.path.name == "test_z_nomodel_ui.py")
 
 
 def _gql(stash_url: str, query: str, variables: dict[str, object] | None = None) -> dict[str, Any]:

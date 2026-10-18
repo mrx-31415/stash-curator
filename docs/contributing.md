@@ -48,6 +48,21 @@ Build the plugin source with `uv run --frozen python scripts/build_plugin.py`. I
 writes `dist/stash-curator.zip` and a checksummed `dist/index.yml`. Repository tests
 use synthetic data and need no live Stash or StashDB access.
 
+### Plugin compatibility coverage
+
+`tests/plugin/test_patch_composition.cjs` exercises every registered Stash patch
+with rewritten argument counts and both plugin registration orders. It preserves
+renderer context, native content, and element, null and array results. Its surface
+inventory must be extended when adding a patch.
+
+`tests/integration/test_patch_composition.py` loads a synthetic companion plugin
+before Curator in the isolated Stash browser environment. It checks scene and
+performer grids and detail pages, card details/popovers/overlays, player and popover
+hook execution, retained navbar entries, and JavaScript errors. Run it through
+`scripts/verify integration`; it does not require access to a personal library.
+The destructive fresh-install reset test runs last, after pytest groups fixture
+parameters, so it cannot invalidate later model-dependent pages or background tasks.
+
 ## Code map
 
 | Area | Purpose |

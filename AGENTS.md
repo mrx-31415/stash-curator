@@ -35,6 +35,21 @@ contract: `scene-card`/`performer-card`, the matching `*-card-image`, `card-sect
 and `card-section-title`. Keep usable controls outside `card-section`; the SFW Switch
 blurs that section and the media while active.
 
+## Patching Stash components
+
+Inspect Stash's hook caller before changing a patch. Before-hooks may change the
+argument count; never assume a fixed context argument. Preserve trailing arguments,
+the renderer's `this`, and content added by other plugins. For array-returning
+components, use an `instead` continuation when inspecting the result: Stash's
+`after` caller flattens arrays through `args.concat(result)`.
+
+Hook changes need composition coverage with one and multiple input arguments and
+element, null, empty-array and multi-element results where supported. Exercise the
+actual calling contract, not callbacks invoked with a fixed dummy context. Keep
+browser smoke coverage for every patched Stash page and card/control surface,
+including a synthetic second plugin; assert native content survives and collect
+JavaScript errors.
+
 ## Implementation loop
 
 1. Make the smallest complete change.

@@ -497,9 +497,9 @@
     );
     return host ? ReactDOM.createPortal(content, host) : content;
   }
-  Api.patch.before("ScenePlayer", function (props) {
+  Api.patch.before("ScenePlayer", function (props, ...args) {
     const history = useHistory();
-    return [activeLanePlaylist(props.scene.id) ? { ...props, onNext: () => nextLanePlaylist(props.scene.id, history), onPrevious: undefined } : props];
+    return [activeLanePlaylist(props.scene.id) ? { ...props, onNext: () => nextLanePlaylist(props.scene.id, history), onPrevious: undefined } : props, ...args];
   });
 
   function localDay() {
@@ -6445,12 +6445,14 @@
       )
     );
   }
-  Api.patch.after("SceneCard.Details", function (props, _, ...details) {
-    const result = details.length === 1 ? details[0] : details;
+  Api.patch.instead("SceneCard.Details", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     return props.curatorAppeal === undefined ? result : null;
   });
-  Api.patch.after("SceneCard.Popovers", function (props, _, ...popovers) {
-    const result = popovers.length === 1 ? popovers[0] : popovers;
+  Api.patch.instead("SceneCard.Popovers", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     if (props.curatorAppeal === undefined) return result;
     return React.createElement("div", { className: "curator-native-score-row" }, React.createElement(EvidenceScore, {
       evidenceContent: null,
@@ -6465,11 +6467,12 @@
 
   Api.patch.after("MainNavBar.MenuItems", function (props, ...args) {
     const result = args[args.length - 1];
-    const children = React.Children.toArray(props.children);
-    if (!children.some((child) => child.key === "stash-curator")) {
+    if (!React.isValidElement(result)) return result;
+    const children = React.Children.toArray(result.props.children);
+    if (!children.some((child) => child?.type === CuratorNavItem)) {
       children.push(React.createElement(CuratorNavItem, { key: "stash-curator" }));
     }
-    return React.isValidElement(result) ? React.cloneElement(result, {}, children) : result;
+    return React.cloneElement(result, {}, children);
   });
   // Circular gauge around the affinity value (replaces the flat bar). The ring
   // fill tracks |affinity| and the value is tinted by sign.
@@ -6797,13 +6800,13 @@
     client.setLink(adapter.concat(client.link));
     performerSortInstalled = true;
   }
-  Api.patch.before("FilteredPerformerList", function (props) {
+  Api.patch.before("FilteredPerformerList", function (props, ...args) {
     installPerformerAffinitySort();
     const existingHook = props.filterHook;
     return [{ ...props, filterHook: (filter) => {
       configureAffinityFilter(filter);
       return existingHook ? existingHook(filter) : filter;
-    } }];
+    } }, ...args];
   });
   function addPerformerAffinitySortOption(element) {
     if (!React.isValidElement(element)) return;
@@ -6876,13 +6879,13 @@
     sceneSortInstalled = true;
   }
   installSceneAffinitySort();
-  Api.patch.before("FilteredSceneList", function (props) {
+  Api.patch.before("FilteredSceneList", function (props, ...args) {
     installSceneAffinitySort();
     const existingHook = props.filterHook;
     return [{ ...props, filterHook: (filter) => {
       configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
       return existingHook ? existingHook(filter) : filter;
-    } }];
+    } }, ...args];
   });
   function addSceneAffinitySortOption(element) {
     if (!React.isValidElement(element)) return;
@@ -6935,9 +6938,9 @@
       React.createElement(NavLink, { className: "curator-context-button curator-context-button-similar", to: `/plugins/stash-curator?${query}`, title: "Find similar scenes with Curator", "aria-label": "Find similar scenes with Curator" }, React.createElement(FontAwesomeIcon, { icon: faClone }))
     );
   }
-  Api.patch.after("SceneCard.Overlays", function (props, _, ...overlays) {
-    // Stash spreads theme replacement arrays into hook arguments, including empty arrays.
-    const result = overlays.length === 1 ? overlays[0] : overlays;
+  Api.patch.instead("SceneCard.Overlays", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     if (props.curatorAppeal !== undefined || props.scene?.id == null) return result;
     return React.createElement(React.Fragment, null,
       result, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title })
@@ -6955,18 +6958,23 @@
     }, [performer.id]);
     return React.createElement(CuratorContextControls, { type: "performer", id: performer.id, label: performer.name, details, className: "curator-performer-card-badge" });
   }
-  Api.patch.after("PerformerCard.Overlays", function (props, _, ...overlays) {
-    const result = overlays.length === 1 ? overlays[0] : overlays;
+  Api.patch.instead("PerformerCard.Overlays", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     if (!/^\/performers\/?$/.test(window.location.pathname) || props.performer?.id == null) return result;
     return React.createElement(React.Fragment, null,
       result,
       React.createElement(CuratorPerformerCardBadge, { key: "curator-performer-affinity", performer: props.performer })
     );
   });
-  Api.patch.after("ScenePage", function (props, _, result) {
+  Api.patch.instead("ScenePage", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, scene: props.scene }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
   });
-  Api.patch.after("PerformerPage", function (props, _, result) {
+  Api.patch.instead("PerformerPage", function (props, ...args) {
+    const next = args.pop();
+    const result = next.call(this, props, ...args);
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}` }));
   });
   Api.Event.addEventListener("stash:location", (event) => {
