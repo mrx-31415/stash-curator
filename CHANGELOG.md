@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.4](https://github.com/mrx-31415/stash-curator/compare/v0.40.3...v0.40.4) (2026-10-18)
+
+
+### Bug Fixes
+
+* align Stash UI styling and Curator card metadata ([#373](https://github.com/mrx-31415/stash-curator/issues/373)) ([f7c39a1](https://github.com/mrx-31415/stash-curator/commit/f7c39a1986b0f2cff88173d9825cfdb2a6802e55))
+
 ## [0.40.3](https://github.com/mrx-31415/stash-curator/compare/v0.40.2...v0.40.3) (2026-10-18)
 
 
