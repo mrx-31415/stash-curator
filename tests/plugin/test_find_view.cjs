@@ -78,7 +78,7 @@ const item = { id: "fixture", score: 0.8, appeal: 0.9, sources: ["learned"], pay
 const card = context.testExternalCard({ item, kind: "scene" });
 assert.ok(card.props.className.includes("curator-compact-card"));
 assert.equal(nodes(card).filter(node => node.type === "reason").length, 0);
-const score = nodes(card).find(node => node.type === "score");
+const score = nodes(card).find(node => node.type === "score" && node.props.evidenceContent !== null);
 assert.equal(score.props.evidenceContent.props.explanation.summary, "Match summary");
 assert.equal(score.props.metadataContent.props.className, "card-popovers");
 assert.ok(!nodes(nodes(card).find(node => node.props?.className === "scene-card__details")).some(node => node.props?.className === "card-popovers"));
@@ -98,7 +98,7 @@ assert.ok(!nodes(context.EvidenceScore({ scoreHeadline: "Appeal", scoreHeadlineB
 assert.ok(!nodes(context.EvidenceScore({ scoreBarContent: "bar", evidenceContent: null })).some(node => node.props?.className === "card-popovers"));
 context.EvidenceScore = "score";
 const missing = context.testExternalCard({ item: { ...item, payload: { title: "No evidence" } }, kind: "scene" });
-assert.equal(nodes(missing).find(node => node.type === "score").props.evidenceContent.type, "reason");
+assert.equal(nodes(missing).find(node => node.type === "score" && node.props.evidenceContent !== null).props.evidenceContent.type, "reason");
 context.React.useEffect = () => {};
 context.Api.components.SceneCard = "scene";
 context.GQL = {
@@ -133,27 +133,25 @@ context.Api.components["SceneCard.Details"] = "themed-details";
 vm.runInNewContext(source.slice(source.indexOf('  Api.patch.instead("SceneCard.Details",'), source.indexOf('  Api.patch.after("MainNavBar.MenuItems",')), context);
 assert.equal(cardHooks.has("SceneCard"), false);
 const detailsHook = cardHooks.get("SceneCard.Details");
-const popoversHook = cardHooks.get("SceneCard.Popovers");
-for (const original of ["native", null, [], { type: "themed", props: {} }]) {
+assert.equal(cardHooks.has("SceneCard.Popovers"), false, "leave themed tag footers intact");
+for (const original of ["native", null, [], { type: "themed", props: {} }, ["theme-one", "theme-two"]]) {
   assert.equal(detailsHook({}, () => original), original);
-  assert.equal(popoversHook({}, () => original), original);
-  assert.equal(detailsHook({ curatorAppeal: 0.8 }, () => original), null);
-  const config = { hideDate: true };
-  const patched = popoversHook({ curatorAppeal: 0.8, config }, () => original);
-  const nativeScore = nodes(patched).find(node => node.type === "score");
-  assert.equal(nativeScore.props.metadataContent, original);
-  const metadata = nodes(nativeScore.props.dateContent).find(node => node.type === "themed-details");
-  assert.equal(metadata.props.curatorAppeal, undefined, "render relocated details without suppressing them");
-  assert.equal(metadata.props.config, config, "preserve theme-specific props");
-  assert.equal(detailsHook(metadata.props, () => original), original);
+  for (const extras of [[], [{ theme: "extra argument" }]]) {
+    const receiver = { theme: "renderer context" };
+    const props = { curatorAppeal: 0.8, config: { shown: true } };
+    const patched = detailsHook.call(receiver, props, ...extras, function (...forwarded) {
+      assert.equal(this, receiver);
+      assert.deepEqual(forwarded, [props, ...extras]);
+      return original;
+    });
+    assert.equal(patched.children.at(-1), original, "preserve the theme's metadata result");
+    const score = nodes(patched).find(node => node.type === "score");
+    assert.equal(score.props.scoreHeadlineValue, "+0.8");
+    assert.equal(score.props.metadataContent, undefined);
+  }
 }
-const emptyScore = nodes(popoversHook({ curatorAppeal: 0 }, () => [])).find(node => node.type === "score");
-assert.equal(emptyScore.props.metadataContent.length, 0);
-assert.equal(detailsHook({}, () => []).length, 0);
-const themedPopovers = ["theme-one", "theme-two"];
-const multipleScore = nodes(popoversHook({ curatorAppeal: 0.8 }, () => themedPopovers)).find(node => node.type === "score");
-assert.deepEqual(Array.from(multipleScore.props.metadataContent), themedPopovers);
-assert.equal(detailsHook({}, () => themedPopovers), themedPopovers);
+const zeroScore = nodes(detailsHook({ curatorAppeal: 0 }, () => [])).find(node => node.type === "score");
+assert.ok(zeroScore, "neutral affinity remains visible");
 assert.ok(nodes(recommendationScore.props.evidenceContent).some(node => node.children?.includes("Rank in For You: 0.90 (0..1)")));
 assert.equal(nodes(recommendationScore.props.evidenceContent).find(node => node.type === "explanation").props.item, recommendationItem);
 const review = context.RecommendationCard({ item: { ...recommendationItem, source_lane: "score_review" }, scene: { id: "1" }, slate: { lane: "score_review" } });

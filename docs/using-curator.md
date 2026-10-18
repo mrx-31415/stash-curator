@@ -40,6 +40,10 @@ explanations, **Thumbnails** for a compact grid of screenshots without text over
 or **Wall** for muted playing previews. Thumbnails play a muted preview while hovered
 and restore the screenshot when the pointer leaves; touch devices show screenshots.
 The selected recommendation view is remembered in this browser.
+Curator follows available theme colors and surfaces. With Sticky enabled, external
+scene cards also use its studio/date row, performer names, and tag pills. Other
+themes keep Curator's usual metadata layout. After updating, run **Refresh Expand
+cache** once to fetch studio logos for existing discovery results.
 Cards keep Appeal visible; selection evidence and lane rank are under **Why this?**.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).

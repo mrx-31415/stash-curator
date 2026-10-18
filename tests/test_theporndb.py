@@ -22,7 +22,7 @@ def test_normalize_site_performers_to_graphql_ids_and_preserve_missing_data() ->
         {
             **data["scene"],
             "performers": [person, person],
-            "site": data["site"],
+            "site": {**data["site"], "image": "https://example.test/studio.png"},
             "tags": data["tags"],
         }
     )
@@ -39,6 +39,7 @@ def test_normalize_site_performers_to_graphql_ids_and_preserve_missing_data() ->
     assert profile["breast_type"] == "NATURAL"
     assert profile["piercings"] == []
     assert scene["studio"]["id"] == "studio-uuid"
+    assert scene["studio"]["images"][0]["url"] == "https://example.test/studio.png"
     assert scene["tags"][0]["id"] == "tag-uuid"
     assert scene["fingerprints"][0]["algorithm"] == "PHASH"
     missing = _performer(data["site_performer"])

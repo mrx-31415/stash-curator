@@ -61,7 +61,7 @@ assert.equal(patch(props)[0], props, "ordinary Stash browsing must stay unchange
 
 // Exercise the actual external cast markup, including a locally matched StashDB performer.
 Object.assign(context, {
-  kind: "scene", ButtonGroup: "ButtonGroup", faTag: "tag", faUser: "user", tags: [],
+  kind: "scene", stickyScene: false, ButtonGroup: "ButtonGroup", faTag: "tag", faUser: "user", tags: [],
   cast: [{ id: "stashdb-uuid", name: performer.name, curator_local: { id: "17" } }],
   metadataPopover: (id, icon, label, count, content) => ({ id, content }),
 });

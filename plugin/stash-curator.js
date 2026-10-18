@@ -2468,7 +2468,7 @@
     return React.createElement(
       "div",
       { className: "curator-score-stack" },
-      (scoreHeadline || scoreHeadlineBar) && React.createElement("div", { className: "curator-score-appeal-row" }, dateContent, scoreHeadline && !["Match", "Appeal"].includes(scoreHeadline) && React.createElement("span", { className: "curator-score-headline" }, scoreHeadline), scoreHeadlineBar && React.createElement("div", { className: "curator-score-headline-bar" }, scoreHeadlineBar), scoreHeadlineValue && React.createElement("strong", { className: "curator-score-headline-value" }, scoreHeadlineValue), metadataContent),
+      (scoreHeadline || scoreHeadlineBar || dateContent || metadataContent) && React.createElement("div", { className: "curator-score-appeal-row" }, dateContent, scoreHeadline && !["Match", "Appeal"].includes(scoreHeadline) && React.createElement("span", { className: "curator-score-headline" }, scoreHeadline), scoreHeadlineBar && React.createElement("div", { className: "curator-score-headline-bar" }, scoreHeadlineBar), scoreHeadlineValue && React.createElement("strong", { className: "curator-score-headline-value" }, scoreHeadlineValue), metadataContent),
       scoreBarContent && React.createElement("div", { className: "curator-match-row" }, React.createElement("span", { className: "curator-match-label" }, scoreLabel), scoreBarContent, React.createElement("span", { className: "curator-match-value" }, scoreSummary)),
       descriptionContent,
       (evidenceContent !== null || scoreContent || actionsContent) && React.createElement("div", { className: "curator-why-row" },
@@ -2553,6 +2553,52 @@
     };
   }
 
+  function ExternalStudioLink({ payload }) {
+    const [failed, setFailed] = React.useState(false);
+    const studio = payload.studio;
+    if (!studio?.name) return null;
+    const image = externalImageProps(studio.images);
+    return React.createElement("a", {
+      className: !failed && image.src ? "sticky-studio sticky-studio--top" : "curator-external-studio-name",
+      href: stashboxEntityURL(payload, "studios", studio.id), target: "_blank", rel: "noreferrer", title: studio.name,
+    }, !failed && image.src ? React.createElement("img", {
+      ...image, alt: studio.name, loading: "lazy", onError: (event) => {
+        image.onError(event);
+        if (event.currentTarget.style.visibility === "hidden") setFailed(true);
+      },
+    }) : studio.name);
+  }
+
+  function ExternalMetadataRow({ payload, items, kind }) {
+    const [anchor, setAnchor] = React.useState(null);
+    if (!items.length) return null;
+    const performers = kind === "performer";
+    function link(item, className) {
+      const local = item.curator_local;
+      return React.createElement(local ? NavLink : "a", {
+        key: item.id, className, title: item.name,
+        ...(local ? { to: `/${kind}s/${local.id}` } : { href: stashboxEntityURL(payload, `${kind}s`, item.id, item), target: "_blank", rel: "noreferrer" }),
+      }, item.name);
+    }
+    const remaining = items.slice(2);
+    const links = items.slice(0, 2).map((item, index) => performers
+      ? React.createElement(React.Fragment, { key: item.id }, index ? ", " : null, link(item, "sticky-names__name"))
+      : link(item, "sticky-pill sticky-pill--tag"));
+    return React.createElement("div", { className: performers ? "sticky-names" : "sticky-pills sticky-pills--tag" },
+      performers ? React.createElement("span", { className: "sticky-names__list" }, links) : links,
+      remaining.length > 0 && React.createElement(Button, {
+        className: `minimal curator-metadata-more ${performers ? "sticky-names__more" : "sticky-pill sticky-pill--more"}`,
+        variant: "link", "aria-label": `Show ${remaining.length} more ${kind}${remaining.length === 1 ? "" : "s"}`, "aria-expanded": !!anchor,
+        onClick: (event) => setAnchor(anchor ? null : event.currentTarget),
+      }, `+${remaining.length}`),
+      anchor && React.createElement(libraries.Bootstrap.Overlay, { show: true, target: anchor, placement: "top", rootClose: true, onHide: () => setAnchor(null) },
+        React.createElement(libraries.Bootstrap.Popover, { id: `curator-${kind}s-${items[0].id}`, className: "curator-metadata-popover", "aria-label": `More ${kind}s` },
+          React.createElement("div", { className: "sticky-popover-list" }, remaining.map((item) => link(item, `sticky-pill sticky-pill--${kind}`)))
+        )
+      )
+    );
+  }
+
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
     const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
@@ -2573,6 +2619,8 @@
     const cast = kind === "scene" ? (payload.performers || []).map((value) => value.performer) : [];
     const people = gender ? cast.filter((person) => person.gender === gender) : cast;
     const tags = kind === "scene" ? payload.tags || [] : [];
+    const stickyCards = !window.Sticky?.off && window.Sticky?.cards;
+    const stickyScene = kind === "scene" && typeof stickyCards?.formatDate === "function";
     if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind });
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
@@ -2589,7 +2637,7 @@
         trigger
       );
     }
-    const metadataControls = kind === "scene" && React.createElement(
+    const metadataControls = kind === "scene" && !stickyScene && React.createElement(
       ButtonGroup,
       { className: "card-popovers" },
       metadataPopover("tags", faTag, "Tags", tags.length, tags.map((tag) => React.createElement("span", { key: tag.id, className: "tag-item tag-link badge badge-secondary" }, React.createElement("a", { href: stashboxEntityURL(payload, "tags", tag.id), target: "_blank", rel: "noreferrer" }, tag.name)))),
@@ -2637,9 +2685,25 @@
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
-      React.createElement("div", { className: "card-section" }, React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title))),
-      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { scoreHeadline: item.appeal !== undefined ? "Appeal" : label, scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : score.toFixed(2), scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(score), evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
+      React.createElement("div", { className: "card-section" },
+        React.createElement("div", { className: "curator-card-affinity" }, React.createElement(EvidenceScore, {
+          evidenceContent: null,
+          scoreHeadline: item.appeal !== undefined ? "Appeal" : item.similarity === undefined ? "Match" : "Similarity",
+          scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : Number(item.score || 0).toFixed(2),
+          scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(Number(item.score || 0)),
+        })),
+        stickyScene && React.createElement("div", { className: "sticky-card-top" },
+          React.createElement(ExternalStudioLink, { key: payload.studio?.id, payload }),
+          payload.studio?.name && payload.release_date && React.createElement("span", { className: "sticky-card-top__dot", "aria-hidden": true }, "·"),
+          payload.release_date && React.createElement("span", { className: "sticky-date" }, stickyCards.formatDate(payload.release_date))
+        ),
+        React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)),
+        stickyScene && React.createElement(ExternalMetadataRow, { payload, items: people, kind: "performer" }),
+        stickyScene && cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)
+      ),
+      stickyScene && React.createElement("div", { className: "sticky-card-footer" }, React.createElement(ExternalMetadataRow, { payload, items: tags, kind: "tag" })),
+      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: !stickyScene && React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }))))
     );
   });
@@ -6448,21 +6512,14 @@
   Api.patch.instead("SceneCard.Details", function (props, ...args) {
     const next = args.pop();
     const result = next.call(this, props, ...args);
-    return props.curatorAppeal === undefined ? result : null;
-  });
-  Api.patch.instead("SceneCard.Popovers", function (props, ...args) {
-    const next = args.pop();
-    const result = next.call(this, props, ...args);
     if (props.curatorAppeal === undefined) return result;
-    return React.createElement("div", { className: "curator-native-score-row" }, React.createElement(EvidenceScore, {
+    // Themes may replace the popover slot; Details keeps the native metadata.
+    return React.createElement(React.Fragment, null, React.createElement("div", { className: "curator-card-affinity" }, React.createElement(EvidenceScore, {
       evidenceContent: null,
-      // Clear the layout flag so the themed Details hook renders in this score row.
-      dateContent: React.createElement("div", { className: "card-section curator-native-details" }, React.createElement(Api.components["SceneCard.Details"], { ...props, curatorAppeal: undefined })),
       scoreHeadline: "Appeal",
       scoreHeadlineValue: formatAppealValue(props.curatorAppeal),
       scoreHeadlineBar: scoreBar(props.curatorAppeal, true),
-      metadataContent: result,
-    }));
+    })), result);
   });
 
   Api.patch.after("MainNavBar.MenuItems", function (props, ...args) {

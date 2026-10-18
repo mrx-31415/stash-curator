@@ -527,7 +527,9 @@ def _scene(raw: JsonObject) -> JsonObject:
         "production_date": None,
         "duration": raw.get("duration"),
         "details": raw.get("description"),
-        "studio": {"id": site.get("uuid"), "name": site.get("name")} if site else None,
+        "studio": {"id": site.get("uuid"), "name": site.get("name"), "images": _images(site)}
+        if site
+        else None,
         "tags": [{"id": tag.get("uuid"), "name": tag.get("name")} for tag in raw.get("tags") or []],
         "performers": list(performers.values()),
         "images": _images(raw),
