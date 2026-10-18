@@ -11,6 +11,7 @@
       const { React } = api;
       const original = Object.fromEntries(["before", "instead", "after"].map((kind) => [kind, api.patch[kind].bind(api.patch)]));
       if (window.__curatorReplacePopovers) {
+        original.before("SceneCard", (props) => [{ ...props, curatorAppeal: 0.5 }]);
         original.instead("GridCard", function (props, ...args) {
           const next = args.pop();
           const popovers = React.createElement("div", { "data-patch-companion": "footer" }, "Theme tags");

@@ -86,17 +86,17 @@ def test_patched_stash_page_with_companion(
     assert not errors, f"{surface}: JavaScript errors: {errors}"
 
 
-def test_recommendation_affinity_survives_replaced_popovers(
-    page: Page, base_url: str, seeded: None
-) -> None:
+def test_card_affinity_survives_replaced_popovers(page: Page, base_url: str, seeded: None) -> None:
     from playwright.sync_api import expect
 
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.add_init_script(f"window.__curatorReplacePopovers = true;\n{COMPANION}")
-    page.goto(base_url + "/plugins/stash-curator", wait_until="domcontentloaded")
+    # Recommendation cards pass curatorAppeal to Stash's SceneCard; use seeded
+    # scenes directly so this check does not depend on lane eligibility.
+    page.goto(base_url + "/scenes", wait_until="domcontentloaded")
     _dismiss_modals(page)
     expect(page.locator("[data-patch-companion='footer']").first).to_be_visible(timeout=30_000)
     expect(page.locator(".curator-card-affinity .curator-score-scale").first).to_be_visible()
-    expect(page.locator(".curator-card .card-section-title").first).to_be_visible()
-    assert not errors, f"Recommendations: JavaScript errors: {errors}"
+    expect(page.locator(".scene-card .card-section-title").first).to_be_visible()
+    assert not errors, f"Scene cards: JavaScript errors: {errors}"
