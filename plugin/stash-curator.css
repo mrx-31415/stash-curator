@@ -1,11 +1,6 @@
-/* Design tokens (GH #150 Package 1, revised GH #152 Package 5). Stash's own
-   chrome (navbar, page background) has no light theme at all, so these
-   tokens can't be driven by the viewer's prefers-color-scheme — a
-   light-calibrated accent sitting in Stash's permanently-dark navbar would
-   read as washed out, not "light mode". Dark stays the default (bare
-   :root, matching the app it's embedded in and every existing install);
-   light is an explicit opt-in via [data-theme="light"], flipped by the
-   header's theme toggle rather than by OS preference.
+/* Shared surface and text tokens inherit Sticky or Bootstrap theme variables
+   when available, with Curator's existing palette as fallback. Lane hues and
+   the explicit light theme remain Curator-specific.
    --curator-card-* backs Stash's native scene-card/performer-card
    internals and curator's own adjacent card-body content — its colors
    *are* theme-responsive (see the light block below), Stash's own
@@ -13,20 +8,20 @@
    overrides instead of a token swap (see the .curator-card .card rules
    below the light-theme block). */
 :root {
-  --curator-bg: #101216;
-  --curator-surface: #182126;
-  --curator-surface-raised: #252a30;
-  --curator-card-surface: #182126;
-  --curator-card-border: rgba(255, 255, 255, 0.12);
-  --curator-card-border-strong: rgba(255, 255, 255, 0.22);
+  --curator-bg: var(--bg-0, var(--bs-body-bg, #101216));
+  --curator-surface: var(--surface-solid, var(--bs-tertiary-bg, var(--bs-secondary-bg, #182126)));
+  --curator-surface-raised: var(--control-bg-hover, var(--bs-secondary-bg, #252a30));
+  --curator-card-surface: var(--card-bg, var(--curator-surface));
+  --curator-card-border: var(--card-border, var(--bs-border-color, rgba(255, 255, 255, 0.12)));
+  --curator-card-border-strong: var(--surface-border, var(--bs-border-color, rgba(255, 255, 255, 0.22)));
   --curator-card-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
   --curator-card-shadow-lg: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
-  --curator-card-text: #f8f9fa;
-  --curator-card-text-muted: #adb5bd;
-  --curator-border: rgba(255, 255, 255, 0.14);
-  --curator-border-strong: rgba(255, 255, 255, 0.22);
-  --curator-text: #f8f9fa;
-  --curator-text-muted: #adb5bd;
+  --curator-card-text: var(--text, var(--bs-body-color, #f8f9fa));
+  --curator-card-text-muted: var(--text-muted, var(--bs-secondary-color, #adb5bd));
+  --curator-border: var(--border, var(--bs-border-color, rgba(255, 255, 255, 0.14)));
+  --curator-border-strong: var(--surface-border, var(--bs-border-color, rgba(255, 255, 255, 0.22)));
+  --curator-text: var(--text, var(--bs-body-color, #f8f9fa));
+  --curator-text-muted: var(--text-muted, var(--bs-secondary-color, #adb5bd));
   --curator-overlay: rgba(16, 18, 22, 0.82);
   --curator-wash-raised: rgba(255, 255, 255, 0.04);
   --curator-wash-recessed: rgba(0, 0, 0, 0.18);
@@ -48,9 +43,9 @@
   --curator-hue-prune: #9aa1ab;
   --curator-hue-curate: #4cc2a8;
 
-  --curator-radius-sm: 4px;
-  --curator-radius: 7px;
-  --curator-radius-lg: 10px;
+  --curator-radius-sm: var(--radius-sm, 4px);
+  --curator-radius: var(--radius, 7px);
+  --curator-radius-lg: var(--card-radius, 10px);
 
   --curator-shadow-sm: 0 0.2rem 0.55rem var(--curator-shadow-color);
   --curator-shadow-md: 0 0.25rem 0.8rem var(--curator-shadow-color);
@@ -117,7 +112,7 @@
    carries !important in Stash's own stylesheet, so the override needs it
    too, not just higher specificity. */
 .curator-page[data-theme="light"] .curator-card .card {
-  background-color: var(--curator-surface);
+  background-color: transparent;
   color: var(--curator-text);
 }
 
@@ -1059,7 +1054,7 @@
 .curator-pick-tag-strip-item:has(.curator-sentiment-labelled) { max-width: 100%; min-width: 0; }
 
 .popover.curator-rating-popover {
-  background: var(--curator-card-surface);
+  background: var(--curator-surface);
   border: 1px solid var(--curator-card-border-strong);
   color: var(--curator-card-text);
   max-width: calc(100vw - 1rem);
@@ -2203,7 +2198,7 @@
 }
 
 .curator-card > .scene-card {
-  background: var(--curator-card-surface);
+  background: transparent;
   border: 0;
   border-radius: 0;
   margin: 0;
@@ -2212,7 +2207,7 @@
 }
 
 .curator-card .card-section {
-  background: var(--curator-card-surface);
+  background: transparent;
   padding-bottom: 0.35rem;
 }
 
@@ -2318,7 +2313,7 @@
 }
 
 .curator-card-body {
-  background: var(--curator-card-surface);
+  background: transparent;
   border-top: 1px solid var(--curator-card-border);
   display: flex;
   flex-direction: column;
@@ -2358,7 +2353,7 @@
   gap: 0.35rem 0.8rem;
 }
 
-.curator-card-description {
+.curator-card .curator-score-stack > .curator-card-description {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   display: -webkit-box;
@@ -2983,6 +2978,35 @@
   top: 0.7rem;
 }
 
+.curator-external-studio-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curator-page .curator-metadata-more {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--curator-text-muted);
+  font: inherit;
+  padding: 0;
+  text-decoration: none;
+}
+
+.curator-page .curator-metadata-more.sticky-pill--more {
+  border: 1px dashed var(--chip-border);
+  font-size: 0.88rem;
+  padding: 4px 10px;
+}
+
+.popover.curator-metadata-popover {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  color: var(--curator-text);
+  padding: 0.6rem;
+}
+
 .curator-external-details,
 .curator-external-card .scene-card__details {
   color: var(--text-muted, var(--curator-card-text-muted));
@@ -3551,12 +3575,19 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 }
 
 .curator-card > .performer-card {
-  background: var(--curator-card-surface);
+  background: transparent;
   border: 0;
   margin: 0;
   max-width: 100%;
   padding-bottom: 0;
   width: 100%;
+}
+
+/* The wrapper owns the surface; translucent theme fills must be painted once. */
+.curator-card > :is(.scene-card, .performer-card).card {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
 }
 
 /* Issue #215: Similar performer cards must never bleed horizontally out of
@@ -4702,10 +4733,5 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-compact-card .curator-why-row > .curator-external-tag-rating { flex-basis: 100%; order: 1; }
 
 .curator-compact-card .card-section-title { font-size: calc(1.05rem * var(--curator-card-text-scale, 1)); }
-.curator-compact-card .curator-native-score-row { padding: 0.1rem 0.7rem; }
-.curator-compact-card .curator-native-score-row > .curator-score-stack { display: block; }
-.curator-compact-card .curator-native-score-row .card-popovers { position: static; flex: 0 0 auto; }
-.curator-compact-card .curator-native-score-row .card-popovers .btn { font-size: 0.85rem; height: 1.65rem; padding: 0 0.25rem; }
-.curator-compact-card .curator-native-score-row hr { display: none; }
-.curator-compact-card .curator-native-details { padding: 0; }
-.curator-compact-card .curator-native-details .scene-card__details { font-size: 0.75rem; min-height: 0; margin: 0; padding: 0; }
+.curator-card .card-section > .curator-card-affinity { order: -2; width: 100%; }
+.curator-card-affinity > .curator-score-stack { display: block; }

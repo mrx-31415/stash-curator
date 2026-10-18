@@ -154,9 +154,15 @@ func TestThePornDBNormalization(t *testing.T) {
 	person.set("parent", fixture.get("performer"))
 	scene := fixture.get("scene")
 	scene.set("performers", jvArr(person, person))
-	scene.set("site", fixture.get("site"))
+	site := fixture.get("site")
+	site.set("image", jvStr("https://example.test/studio.png"))
+	scene.set("site", site)
 	scene.set("tags", fixture.get("tags"))
 	value := tpdbScene(scene)
+	studioImages := value.get("studio").get("images")
+	if len(studioImages.arr) != 1 || studioImages.arr[0].get("url").asString() != "https://example.test/studio.png" {
+		t.Fatal("studio image was lost")
+	}
 	profile := value.get("performers").arr[0].get("performer")
 	if len(value.get("performers").arr) != 1 || profile.get("id").asString() != "parent-performer" ||
 		profile.get("height").asString() != "160.0" || profile.get("band_size").asString() != "34.0" ||

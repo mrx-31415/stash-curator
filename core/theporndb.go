@@ -705,7 +705,7 @@ func tpdbScene(raw jVal) jVal {
 	}
 	studio := jvNull()
 	if site := raw.get("site"); site.kind == jObj {
-		studio = jvObj(jvKey("id", site.get("uuid")), jvKey("name", site.get("name")))
+		studio = jvObj(jvKey("id", site.get("uuid")), jvKey("name", site.get("name")), jvKey("images", tpdbImages(site)))
 	}
 	return jvObj(jvKey("id", raw.get("id")), jvKey("title", raw.get("title")), jvKey("release_date", raw.get("date")),
 		jvKey("production_date", jvNull()), jvKey("duration", raw.get("duration")), jvKey("details", raw.get("description")),

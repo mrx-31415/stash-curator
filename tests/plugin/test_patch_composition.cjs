@@ -65,7 +65,7 @@ const nativeChild = element("native-child");
 const cases = {
   ScenePlayer: { scene: { id: "1" } },
   HoverPopover: { className: "unrelated-popover", content: nativeChild },
-  "SceneCard.Details": {}, "SceneCard.Popovers": {},
+  "SceneCard.Details": {},
   "MainNavBar.MenuItems": { children: [nativeChild] },
   FilteredPerformerList: { filterHook: (filter) => filter },
   FilteredSceneList: { filterHook: (filter) => filter },
