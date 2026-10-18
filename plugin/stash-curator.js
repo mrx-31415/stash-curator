@@ -2487,7 +2487,7 @@
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags", "aria-label": "Rate tags", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
-      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "primary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "secondary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", "aria-label": !whisparrEnabled ? "Whisparr requires the StashDB endpoint and configured Whisparr credentials" : whisparr?.status === "error" ? "Retry sending to Whisparr" : "Send to Whisparr", onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
       whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
   }
@@ -2687,18 +2687,18 @@
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" },
-        React.createElement("div", { className: "curator-card-affinity" }, React.createElement(EvidenceScore, {
-          evidenceContent: null,
-          scoreHeadline: item.appeal !== undefined ? "Appeal" : item.similarity === undefined ? "Match" : "Similarity",
-          scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : Number(item.score || 0).toFixed(2),
-          scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(Number(item.score || 0)),
-        })),
         stickyScene && React.createElement("div", { className: "sticky-card-top" },
           React.createElement(ExternalStudioLink, { key: payload.studio?.id, payload }),
           payload.studio?.name && payload.release_date && React.createElement("span", { className: "sticky-card-top__dot", "aria-hidden": true }, "·"),
           payload.release_date && React.createElement("span", { className: "sticky-date" }, stickyCards.formatDate(payload.release_date))
         ),
         React.createElement(TitleLink, localProfile, React.createElement("h5", { className: "card-section-title flex-aligned" }, title)),
+        React.createElement("div", { className: "curator-card-affinity" }, React.createElement(EvidenceScore, {
+          evidenceContent: null,
+          scoreHeadline: item.appeal !== undefined ? "Appeal" : item.similarity === undefined ? "Match" : "Similarity",
+          scoreHeadlineValue: item.appeal !== undefined ? formatSigned((Number(item.appeal) * 2) - 1) : Number(item.score || 0).toFixed(2),
+          scoreHeadlineBar: item.appeal !== undefined ? scoreBar((Number(item.appeal) * 2) - 1, true) : utilityBar(Number(item.score || 0)),
+        })),
         stickyScene && React.createElement(ExternalMetadataRow, { payload, items: people, kind: "performer" }),
         stickyScene && cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)
       ),
