@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.3](https://github.com/mrx-31415/stash-curator/compare/v0.40.2...v0.40.3) (2026-10-18)
+
+
+### Bug Fixes
+
+* align Curator cards with Sticky and preserve affinity bars ([#371](https://github.com/mrx-31415/stash-curator/issues/371)) ([fb0d35b](https://github.com/mrx-31415/stash-curator/commit/fb0d35b28dcaeaa4ca411e786f8c808ac5ebc42c))
+
 ## [0.40.2](https://github.com/mrx-31415/stash-curator/compare/v0.40.1...v0.40.2) (2026-10-18)
 
 
