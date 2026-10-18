@@ -37,6 +37,7 @@ const context = {
   Api: { utils: { StashService: { getClient: () => client } }, patch: {
     before: (name, callback) => patches.set(`before:${name}`, callback),
     after: (name, callback) => patches.set(`after:${name}`, callback),
+    instead: (name, callback) => patches.set(`instead:${name}`, callback),
   } },
   libraries: { Apollo: { ApolloLink, Observable } },
   React: {
@@ -144,22 +145,22 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.equal(pagePill.props.children[1].props.value, -0.4);
   assert.equal(pagePill.props.children[1].props.confidenceLabel, "Confidence 80%");
   assert.equal(pagePill.props.children[2].props.title, "Find similar scenes with Curator");
-  const overlays = patches.get("after:SceneCard.Overlays");
+  const overlays = patches.get("instead:SceneCard.Overlays");
   assert.equal(patches.has("after:SceneCard"), false, "avoid writing overlay props onto theme wrappers");
   for (const original of [element("native-overlay", { selecting: true }), null, element("studio-logo", {}), []]) {
-    const patched = overlays({ scene: { id: "3", title: "Example" } }, null, original);
+    const patched = overlays({ scene: { id: "3", title: "Example" } }, () => original);
     assert.equal(patched.props.children[0], original, "preserve native and themed overlays");
     const badge = patched.props.children[1];
     assert.equal(badge.type, context.CuratorSceneAffinityPill);
     assert.equal(badge.props.id, "3");
     assert.equal(badge.props.label, "Example");
-    assert.equal(overlays({ scene: { id: "3" }, curatorAppeal: 0.2 }, null, original), original);
-    assert.equal(overlays({}, null, original), original);
+    assert.equal(overlays({ scene: { id: "3" }, curatorAppeal: 0.2 }, () => original), original);
+    assert.equal(overlays({}, () => original), original);
   }
-  const emptyReplacement = overlays({ scene: { id: "3" } }, {});
-  assert.equal(emptyReplacement.props.children[0].length, 0, "Stash spreads an empty replacement array into no result arguments");
+  const emptyReplacement = overlays({ scene: { id: "3" } }, () => []);
+  assert.equal(emptyReplacement.props.children[0].length, 0, "preserve an empty theme replacement");
   const themedOverlays = [element("studio-logo", {}), element("theme-marker", {})];
-  const multiple = overlays({ scene: { id: "3" } }, {}, ...themedOverlays);
+  const multiple = overlays({ scene: { id: "3" } }, () => themedOverlays);
   assert.deepEqual(Array.from(multiple.props.children[0]), themedOverlays, "preserve every replacement overlay");
   console.log("scene affinity checks passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
