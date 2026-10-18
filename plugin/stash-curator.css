@@ -1,4 +1,4 @@
-/* Shared surface and text tokens inherit Sticky or Bootstrap theme variables
+/* Shared surface and text tokens inherit Sticky, Stash UI or Bootstrap variables
    when available, with Curator's existing palette as fallback. Lane hues and
    the explicit light theme remain Curator-specific.
    --curator-card-* backs Stash's native scene-card/performer-card
@@ -8,30 +8,30 @@
    overrides instead of a token swap (see the .curator-card .card rules
    below the light-theme block). */
 :root {
-  --curator-bg: var(--bg-0, var(--bs-body-bg, #101216));
-  --curator-surface: var(--surface-solid, var(--bs-tertiary-bg, var(--bs-secondary-bg, #182126)));
-  --curator-surface-raised: var(--control-bg-hover, var(--bs-secondary-bg, #252a30));
+  --curator-bg: var(--bg-0, var(--st-ink, var(--bs-body-bg, #101216)));
+  --curator-surface: var(--surface-solid, var(--st-ink-2, var(--bs-tertiary-bg, var(--bs-secondary-bg, #182126))));
+  --curator-surface-raised: var(--control-bg-hover, var(--st-ink-3, var(--bs-secondary-bg, #252a30)));
   --curator-card-surface: var(--card-bg, var(--curator-surface));
-  --curator-card-border: var(--card-border, var(--bs-border-color, rgba(255, 255, 255, 0.12)));
-  --curator-card-border-strong: var(--surface-border, var(--bs-border-color, rgba(255, 255, 255, 0.22)));
+  --curator-card-border: var(--card-border, var(--st-ink-3, var(--bs-border-color, rgba(255, 255, 255, 0.12))));
+  --curator-card-border-strong: var(--surface-border, var(--st-flush, var(--bs-border-color, rgba(255, 255, 255, 0.22))));
   --curator-card-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.2);
   --curator-card-shadow-lg: 0 0.4rem 1rem rgba(0, 0, 0, 0.3);
-  --curator-card-text: var(--text, var(--bs-body-color, #f8f9fa));
-  --curator-card-text-muted: var(--text-muted, var(--bs-secondary-color, #adb5bd));
-  --curator-border: var(--border, var(--bs-border-color, rgba(255, 255, 255, 0.14)));
-  --curator-border-strong: var(--surface-border, var(--bs-border-color, rgba(255, 255, 255, 0.22)));
-  --curator-text: var(--text, var(--bs-body-color, #f8f9fa));
-  --curator-text-muted: var(--text-muted, var(--bs-secondary-color, #adb5bd));
+  --curator-card-text: var(--text, var(--st-paper, var(--bs-body-color, #f8f9fa)));
+  --curator-card-text-muted: var(--text-muted, var(--st-smudge, var(--bs-secondary-color, #adb5bd)));
+  --curator-border: var(--border, var(--st-ink-3, var(--bs-border-color, rgba(255, 255, 255, 0.14))));
+  --curator-border-strong: var(--surface-border, var(--st-flush, var(--bs-border-color, rgba(255, 255, 255, 0.22))));
+  --curator-text: var(--text, var(--st-paper, var(--bs-body-color, #f8f9fa)));
+  --curator-text-muted: var(--text-muted, var(--st-smudge, var(--bs-secondary-color, #adb5bd)));
   --curator-overlay: rgba(16, 18, 22, 0.82);
   --curator-wash-raised: rgba(255, 255, 255, 0.04);
   --curator-wash-recessed: rgba(0, 0, 0, 0.18);
   --curator-shadow-color: rgba(0, 0, 0, 0.3);
   --curator-glow-color: rgba(51, 154, 240, 0.24);
 
-  --curator-accent: #4f8ce0;
+  --curator-accent: var(--st-flush, #4f8ce0);
   --curator-accent-secondary: #d59a52;
 
-  --curator-hue-for_you: #4f8ce0;
+  --curator-hue-for_you: var(--st-flush, #4f8ce0);
   --curator-hue-similar: #6cc4dc;
   --curator-hue-best_bets: #d59a52;
   --curator-hue-hunt: #d98a9e;
@@ -59,10 +59,10 @@
      as literals so dark theme's primary-button gradient passes AA too,
      without darkening the vivid accent everywhere else it's used
      (lane-hue dots, focus rings, etc). */
-  --curator-gradient-brand: linear-gradient(145deg, #1d5fb8, #1f7f96);
+  --curator-gradient-brand: linear-gradient(145deg, var(--st-ink-3, #1d5fb8), var(--st-ink-2, #1f7f96));
 
-  --curator-font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  --curator-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --curator-font-display: var(--st-display, "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif);
+  --curator-font-ui: var(--st-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif);
   --curator-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Consolas, monospace;
 }
 
@@ -85,10 +85,10 @@
   --curator-shadow-color: rgba(16, 18, 22, 0.16);
   --curator-glow-color: rgba(29, 95, 184, 0.22);
 
-  --curator-accent: #1d5fb8;
+  --curator-accent: var(--st-flush-deep, #1d5fb8);
   --curator-accent-secondary: #a56f2a;
 
-  --curator-hue-for_you: #1d5fb8;
+  --curator-hue-for_you: var(--st-flush-deep, #1d5fb8);
   --curator-hue-similar: #1f7f96;
   --curator-hue-best_bets: #a56f2a;
   --curator-hue-hunt: #a34a63;
@@ -117,7 +117,7 @@
 }
 
 .curator-page[data-theme="light"] .curator-card .card-section-title {
-  color: var(--curator-text);
+  color: var(--curator-text) !important;
 }
 
 .curator-page[data-theme="light"] .curator-card .text-muted {
@@ -526,6 +526,24 @@
   color: #fff;
 }
 
+/* Override Stash UI's important button/tab fills, preserving native card overlays. */
+html.kb-classic .curator-page .btn-primary:not(.minimal, .scene-card *, .performer-card *),
+html.kb-classic .curator-tabs .nav-link.active,
+html.kb-classic .curator-lane-card[aria-pressed="true"],
+html.kb-classic .curator-manage-item[aria-current="page"] {
+  background: var(--st-flush) !important;
+  border-color: var(--st-flush) !important;
+  color: var(--st-ink) !important;
+}
+
+html.kb-classic .curator-lane-card[aria-pressed="true"] :is(.curator-lane-card-name, .curator-lane-card-desc, .curator-lane-card-icon) {
+  color: inherit;
+}
+
+html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon {
+  background: var(--curator-wash-recessed);
+}
+
 /* ---------- lane switcher (Recommendations tab, inside the page body) ---------- */
 .curator-lane-switcher {
   display: flex;
@@ -679,14 +697,9 @@
   background: var(--curator-wash-raised);
 }
 
-/* Literal, not var(--curator-accent) — same WCAG AA failure as the old
-   .btn-primary gradient (dark theme's vivid #4f8ce0 measures 3.41:1 against
-   white text, below 4.5:1). Light theme's --curator-accent is already this
-   exact literal (#1d5fb8, 6.21:1), so hardcoding it fixes dark theme
-   without touching the token other UI (lane-hue dots, focus rings) still
-   relies on being vivid. */
+/* Use a dark fill so the selected item's white text stays readable. */
 .curator-manage-item[aria-current="page"] {
-  background: #1d5fb8;
+  background: var(--st-ink-3, #1d5fb8);
   color: #fff;
 }
 
@@ -2211,6 +2224,12 @@
   padding-bottom: 0.35rem;
 }
 
+/* Keep native card rows and their spacing consistent across themes. */
+.curator-card > .scene-card > .card-section {
+  display: flex;
+  flex-direction: column;
+}
+
 .curator-card > .scene-card > hr {
   display: none;
 }
@@ -2868,17 +2887,6 @@
 .curator-whisparr-logo img {
   inset: 0;
   position: absolute;
-}
-
-.curator-whisparr-action.btn-primary {
-  background: #241c1f;
-  border-color: #7137c8;
-}
-
-.curator-whisparr-action.btn-primary:hover,
-.curator-whisparr-action.btn-primary:focus {
-  background: #170b28;
-  border-color: #a66cff;
 }
 
 .curator-whisparr-status {
@@ -3583,11 +3591,12 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   width: 100%;
 }
 
-/* The wrapper owns the surface; translucent theme fills must be painted once. */
+/* The wrapper owns the surface and shadow; theme styling must be painted once. */
 .curator-card > :is(.scene-card, .performer-card).card {
   background: transparent !important;
   border: 0 !important;
   border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 /* Issue #215: Similar performer cards must never bleed horizontally out of
@@ -3785,10 +3794,10 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   height: 100%;
   transition: width 0.3s ease;
 }
-.curator-score-app { background: #50b86c; }
+.curator-score-app { background: var(--st-flush, #50b86c); }
 
 .curator-score-bar-clipped {
-  background: repeating-linear-gradient(45deg, #50b86c, #50b86c 4px, #d59a52 4px, #d59a52 8px);
+  background: repeating-linear-gradient(45deg, var(--st-flush, #50b86c), var(--st-flush, #50b86c) 4px, #d59a52 4px, #d59a52 8px);
 }
 
 /* ---- Relationship chips ---- */
@@ -4637,7 +4646,7 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-score-scale { background: var(--curator-wash-recessed); border-radius: 999px; height: 0.42rem; overflow: hidden; position: relative; }
 .curator-score-fill { border-radius: inherit; display: block; height: 100%; position: absolute; top: 0; }
 .curator-score-scale-signed .curator-score-zero { background: var(--curator-border-strong); bottom: 0; left: 50%; position: absolute; top: 0; width: 1px; z-index: 1; }
-.curator-score-fill.curator-score-positive { background: #5cae84; }
+.curator-score-fill.curator-score-positive { background: var(--st-flush, #5cae84); }
 .curator-score-fill.curator-score-negative { background: #c45e65; }
 .curator-score-row-head { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.78rem; }
 .curator-score-row-missing { opacity: 0.65; }
@@ -4733,5 +4742,37 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-compact-card .curator-why-row > .curator-external-tag-rating { flex-basis: 100%; order: 1; }
 
 .curator-compact-card .card-section-title { font-size: calc(1.05rem * var(--curator-card-text-scale, 1)); }
-.curator-card .card-section > .curator-card-affinity { order: -2; width: 100%; }
+
+/* Match Expand's divider and compact metadata row below Affinity. */
+.curator-compact-card > .scene-card > .card-section {
+  padding-inline: var(--card-pad, 0.7rem);
+}
+.curator-compact-card > .scene-card .scene-card__details {
+  align-items: center;
+  border-top: 1px solid var(--curator-card-border);
+  color: var(--curator-text-muted);
+  display: flex;
+  font-size: 0.75rem;
+  margin-inline: calc(-1 * var(--card-pad, 0.7rem));
+  margin-top: 0.1rem;
+  min-height: calc(1.85rem + 1px);
+  padding: 0.2rem calc(10rem * var(--curator-card-text-scale, 1) + var(--card-pad, 0.7rem)) 0 var(--card-pad, 0.7rem);
+}
+.curator-compact-card > .scene-card > .card-popovers {
+  align-items: center;
+  bottom: 0.2rem;
+  gap: 0.1rem;
+  left: auto;
+  right: var(--card-pad, 0.7rem);
+}
+.curator-compact-card > .scene-card > .card-popovers .btn {
+  font-size: 0.85rem;
+  height: 1.65rem;
+  padding: 0 0.25rem;
+}
+.curator-compact-card > .scene-card + .curator-card-body {
+  border-top: 0;
+}
+
+.curator-card .card-section > .curator-card-affinity { margin-bottom: 0.5rem; width: 100%; }
 .curator-card-affinity > .curator-score-stack { display: block; }

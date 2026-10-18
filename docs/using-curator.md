@@ -44,6 +44,10 @@ Curator follows available theme colors and surfaces. With Sticky enabled, extern
 scene cards also use its studio/date row, performer names, and tag pills. Other
 themes keep Curator's usual metadata layout. After updating, run **Refresh Expand
 cache** once to fetch studio logos for existing discovery results.
+Stash UI opens Curator in its embedded classic interface; Curator inherits that
+interface's colors and fonts. Stash UI's standalone lists and player do not run
+Stash's component hooks, so Curator's native card and detail-page additions appear
+in classic Stash only.
 Cards keep Appeal visible; selection evidence and lane rank are under **Why this?**.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).

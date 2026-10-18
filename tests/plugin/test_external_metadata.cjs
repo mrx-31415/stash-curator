@@ -46,7 +46,7 @@ assert.equal(card.find((node) => node.type === context.ExternalStudioLink).props
 assert.ok(!card.some((node) => node.props.className === "curator-external-studio-overlay"));
 assert.equal(card.filter((node) => node.type === "EvidenceScore" && node.props.scoreHeadline).length, 1);
 assert.ok(!card.some((node) => node.type === "EvidenceScore" && node.props.metadataContent));
-assert.equal(card.find((node) => node.props.className === "card-section").children[0].props.className, "curator-card-affinity");
+assert.equal(card.find((node) => node.props.className === "card-section").children[2].props.className, "curator-card-affinity");
 assert.equal(card.filter((node) => node.type === context.ExternalMetadataRow).length, 2);
 assert.equal(ExternalCard({ ...props, thumbnails: true }).type, "FindThumbnail");
 context.window.Sticky.off = true;
