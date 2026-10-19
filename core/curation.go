@@ -1410,7 +1410,7 @@ func pairVerdict(db dbx, roundID string) (jVal, error) {
 	}
 	names := map[string]string{}
 	if dimension == "orthogonal" {
-		rows, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+		rows, err := db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag`)
 		if err != nil {
 			return jvNull(), err
 		}
@@ -1961,7 +1961,7 @@ func curationImpact(db dbx) (jVal, error) {
 	}
 	pn.Close()
 	tagNames := map[string]string{}
-	tn, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+	tn, err := db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag`)
 	if err != nil {
 		return jvNull(), err
 	}

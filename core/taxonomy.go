@@ -123,7 +123,7 @@ WHERE snapshot_id=? AND external_tag_id IN (`+placeholders+`)`, args...)
 			for i, id := range ids {
 				args[i] = id
 			}
-			rows, err := db.Query(`SELECT name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args...)
+			rows, err := db.Query(`SELECT name FROM source_tag WHERE name IS NOT NULL AND tag_id IN (`+placeholders+`)`, args...)
 			if err != nil {
 				return nil, err
 			}

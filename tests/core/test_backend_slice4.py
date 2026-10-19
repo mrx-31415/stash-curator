@@ -410,6 +410,44 @@ def assert_slice4_identical(
 # ── get_external_tag_choices ────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("name", [None, ""])
+@pytest.mark.parametrize(
+    "operation", ["get_external_tag_choices", "get_scene_tag_choices", "get_taste_profile"]
+)
+def test_tag_choices_missing_name(
+    tmp_path: Path, binary: Path, stub_stash: str, name: str | None, operation: str
+) -> None:
+    sidecar = tmp_path / "curator.sqlite3"
+    make_slice4_sidecar(sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute("UPDATE source_tag SET name=? WHERE tag_id='t1'", (name,))
+    raw = payload(
+        operation, sidecar, stub_stash, scene_id="s1", tags=[{"id": "stash-t1", "name": "football"}]
+    )
+    result = run_backend(binary, PLUGIN_DIR, raw)
+    assert result.returncode == 0, result.stdout + result.stderr
+    items = json.loads(result.stdout)["output"]["items"]
+    assert next(item for item in items if item["tag_id"] == "t1")["name"] == "t1"
+    assert_slice4_identical(binary, raw, sidecar)
+
+
+@pytest.mark.parametrize("name", [None, ""])
+def test_external_tag_choices_do_not_match_missing_names(
+    tmp_path: Path, binary: Path, stub_stash: str, name: str | None
+) -> None:
+    sidecar = tmp_path / "curator.sqlite3"
+    make_slice4_sidecar(sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute("UPDATE source_tag SET name=? WHERE tag_id='t1'", (name,))
+    result = run_backend(
+        binary,
+        PLUGIN_DIR,
+        payload("get_external_tag_choices", sidecar, stub_stash, tags=[{"id": "unknown"}]),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["output"]["items"] == []
+
+
 def test_external_tag_choices_byte_identical(
     tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
 ) -> None:

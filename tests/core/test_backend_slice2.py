@@ -707,6 +707,22 @@ def _run_once_on_copy(
 # ── byte-identical network ops ─────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("operation", ["get_expand", "get_performer_hunt"])
+def test_expand_missing_tag_names(
+    tmp_path: Path, binary: Path, stub_stash: str, operation: str
+) -> None:
+    sidecar = tmp_path / "curator.sqlite3"
+    make_expand_sidecar(sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute("UPDATE source_tag SET name=NULL")
+    raw = payload(
+        operation, sidecar, stub_stash, entity_type="scene", performer_id="ext-p3", count=10
+    )
+    result = run_backend_env(binary, PLUGIN_DIR, raw, stub_stash)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["output"]["ready"] is True
+
+
 def test_get_expand_byte_identical(expand_sidecar: Path, binary: Path, stub_stash: str) -> None:
     raw = payload("get_expand", expand_sidecar, stub_stash, entity_type="scene", page=1, count=10)
     assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
