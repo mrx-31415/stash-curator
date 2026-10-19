@@ -567,9 +567,9 @@ func epochMsOf(v jVal) (int64, bool) {
 	if v.kind != jStr {
 		return 0, false
 	}
-	// Mirrors adapters._epoch_ms: datetime.fromisoformat(value.replace("Z","+00:00")).timestamp()*1000.
+	// History storage requires non-negative Unix timestamps.
 	parsed, err := parseISOTime(v.s)
-	if err != nil {
+	if err != nil || parsed < 0 {
 		return 0, false
 	}
 	return parsed, true
