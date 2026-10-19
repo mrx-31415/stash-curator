@@ -49,7 +49,8 @@ WHERE p.state IN ('review', 'remove') ORDER BY p.updated_at_ms DESC`)
 	defer rows.Close()
 	items := jvArr()
 	for rows.Next() {
-		var sceneID, state, reason, title string
+		var sceneID, state string
+		var reason, title any
 		var createdAtMs, updatedAtMs int64
 		if err := rows.Scan(&sceneID, &state, &createdAtMs, &updatedAtMs, &reason, &title); err != nil {
 			return jvNull(), err
@@ -59,8 +60,8 @@ WHERE p.state IN ('review', 'remove') ORDER BY p.updated_at_ms DESC`)
 			jvKey("state", jvStr(state)),
 			jvKey("created_at_ms", jvInt(createdAtMs)),
 			jvKey("updated_at_ms", jvInt(updatedAtMs)),
-			jvKey("reason", jvStr(reason)),
-			jvKey("title", jvStr(title)),
+			jvKey("reason", dbValueToJSON(reason)),
+			jvKey("title", dbValueToJSON(title)),
 		))
 	}
 	if err := rows.Err(); err != nil {
@@ -340,7 +341,7 @@ WHERE s.studio_id IS NOT NULL`)
 	}
 	pageIDs := ordered[start:end]
 	rowMap := map[string]struct {
-		title     string
+		title     jVal
 		playCount jVal
 	}{}
 	if len(pageIDs) > 0 {
@@ -356,7 +357,8 @@ WHERE s.studio_id IS NOT NULL`)
 			return jvNull(), err
 		}
 		for rows.Next() {
-			var sceneID, title string
+			var sceneID string
+			var title any
 			var playCount sql.NullInt64
 			if err := rows.Scan(&sceneID, &title, &playCount); err != nil {
 				rows.Close()
@@ -367,9 +369,9 @@ WHERE s.studio_id IS NOT NULL`)
 				pc = jvInt(playCount.Int64)
 			}
 			rowMap[sceneID] = struct {
-				title     string
+				title     jVal
 				playCount jVal
-			}{title, pc}
+			}{dbValueToJSON(title), pc}
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -379,7 +381,7 @@ WHERE s.studio_id IS NOT NULL`)
 	items := jvArr()
 	for _, sceneID := range pageIDs {
 		row, ok := rowMap[sceneID]
-		var title string
+		title := jvStr("")
 		var playCount jVal = jvInt(0)
 		if ok {
 			title = row.title
@@ -411,7 +413,7 @@ WHERE s.studio_id IS NOT NULL`)
 		}
 		items.arr = append(items.arr, jvObj(
 			jvKey("scene_id", jvStr(sceneID)),
-			jvKey("title", jvStr(title)),
+			jvKey("title", title),
 			jvKey("play_count", playCount),
 			jvKey("appeal", appeal),
 			jvKey("confidence", confidence),
@@ -568,7 +570,8 @@ ORDER BY e.created_at_ms DESC`)
 	defer rows.Close()
 	items := jvArr()
 	for rows.Next() {
-		var sceneID, title string
+		var sceneID string
+		var title any
 		var createdAtMs int64
 		if err := rows.Scan(&sceneID, &createdAtMs, &title); err != nil {
 			return jvNull(), err
@@ -576,7 +579,7 @@ ORDER BY e.created_at_ms DESC`)
 		items.arr = append(items.arr, jvObj(
 			jvKey("scene_id", jvStr(sceneID)),
 			jvKey("created_at_ms", jvInt(createdAtMs)),
-			jvKey("title", jvStr(title)),
+			jvKey("title", dbValueToJSON(title)),
 		))
 	}
 	if err := rows.Err(); err != nil {

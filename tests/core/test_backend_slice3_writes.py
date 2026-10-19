@@ -858,6 +858,70 @@ def test_update_config_invalid_byte_identical(
 # ── pruning / exclusions ─────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("title", [None, ""])
+@pytest.mark.parametrize(
+    ("operation", "view"),
+    [
+        ("get_pruning_queue", None),
+        ("get_exclusions", None),
+        *[
+            ("get_prune_candidates", view)
+            for view in ("candidates", "tagged", "explicit", "suspects")
+        ],
+    ],
+)
+def test_prune_missing_titles(
+    tmp_path: Path,
+    binary: Path,
+    stub_stash: str,
+    title: str | None,
+    operation: str,
+    view: str | None,
+) -> None:
+    sidecar = tmp_path / "curator.sqlite3"
+    make_writes_sidecar(sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute("UPDATE source_scene SET title=?", (title,))
+        connection.execute("UPDATE pruning_candidate SET reason=NULL")
+        connection.execute(
+            "INSERT INTO source_tag(tag_id,name,source_hash) VALUES ('prune','[Prune]','prune')"
+        )
+        connection.execute(
+            "INSERT INTO scene_tag(scene_id,tag_id,provenance) VALUES ('s3','prune','scene')"
+        )
+    raw = _writes_payload(operation, sidecar, stub_stash, **({"view": view} if view else {}))
+    result = run_backend(binary, PLUGIN_DIR, raw)
+    assert result.returncode == 0, result.stdout + result.stderr
+    items = json.loads(result.stdout)["output"]["items"]
+    assert items
+    assert all(item["title"] == title for item in items)
+    assert_slice3_identical(binary, raw, sidecar)
+
+
+@pytest.mark.parametrize("operation", ["get_pruning_queue", "get_exclusions"])
+def test_prune_missing_scene_title(
+    tmp_path: Path, binary: Path, stub_stash: str, operation: str
+) -> None:
+    sidecar = tmp_path / "curator.sqlite3"
+    make_writes_sidecar(sidecar)
+    with sqlite3.connect(sidecar) as connection:
+        connection.execute(
+            "INSERT INTO pruning_candidate(scene_id,state,created_at_ms,updated_at_ms) "
+            "VALUES ('missing','review',500,500)"
+        )
+        connection.execute(
+            "INSERT INTO exclusion("
+            "exclusion_id,entity_type,entity_id,exclusion_type,created_at_ms) "
+            "VALUES ('missing','scene','missing','never_show',500)"
+        )
+    raw = _writes_payload(operation, sidecar, stub_stash)
+    result = run_backend(binary, PLUGIN_DIR, raw)
+    assert result.returncode == 0, result.stdout + result.stderr
+    items = json.loads(result.stdout)["output"]["items"]
+    assert next(item for item in items if item["scene_id"] == "missing")["title"] is None
+    assert_slice3_identical(binary, raw, sidecar)
+
+
 def test_get_pruning_queue_byte_identical(
     writes_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
