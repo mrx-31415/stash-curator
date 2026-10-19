@@ -395,8 +395,7 @@
     const search = new URLSearchParams({ curator_playlist: playlist.id, autoplay: "true", continue: "false" });
     history.push(`/scenes/${origin.scene_id}?${search}`);
   }
-  function startLanePlaylist(slate, items, filters, history) {
-    if (!items.length) return;
+  function createLanePlaylist(slate, items, filters) {
     const draw = rotationLane(slate.lane);
     const playlist = {
       id: uuid(), lane: slate.lane, index: 0, items: playlistOrigins(slate, items), finished: false,
@@ -411,6 +410,11 @@
         studio_ids: (filters.studios || []).map((item) => String(item.id)), gender: filters.gender || "",
       },
     };
+    return playlist;
+  }
+  function startLanePlaylist(slate, items, filters, history) {
+    if (!items.length) return;
+    const playlist = createLanePlaylist(slate, items, filters);
     lanePlaylistError = "";
     openPlaylistScene(playlist, history);
   }
@@ -5823,6 +5827,395 @@
     );
   }
 
+  function createRouletteSession(slate, items, filters, scenes) {
+    return {
+      lane: slate.lane, request: createLanePlaylist(slate, items, filters).request,
+      pool: items.map((item, index) => ({ item, origin: playlistOrigins(slate, [item])[0], scene: scenes.get(String(item.scene_id)), rank: index })),
+      seen: new Set(), excluded: new Set(items.map((item) => String(item.scene_id))),
+      slots: [], history: [], index: -1, rotation: 0, phase: "idle", token: 0, done: false,
+    };
+  }
+  async function fillRoulette(session, count) {
+    while (!session.done && session.pool.filter((entry) => !session.seen.has(entry.origin.scene_id)).length < count) {
+      const slate = await operation({ ...session.request, operation: "get_slate", count,
+        exclude_scene_ids: [...new Set([...session.request.exclude_scene_ids.map(String), ...session.excluded])],
+        context: { route: location.pathname, roulette: true } });
+      if (session.closed) return;
+      const items = slate.items.filter((item) => !session.excluded.has(String(item.scene_id)));
+      if (!items.length) { session.done = true; break; }
+      const response = await fetch("/graphql", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `query RouletteScenes(${items.map((_, i) => `$s${i}: ID!`).join(", ")}) { ${items.map((_, i) => `s${i}: findScene(id: $s${i}) { id title paths { screenshot } files { duration } }`).join(" ")} }`,
+          variables: Object.fromEntries(items.map((item, i) => [`s${i}`, String(item.scene_id)])),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.errors?.length || !result.data || Object.keys(result.data).length !== items.length) throw new Error("Could not load roulette scenes. Retry to continue.");
+      if (session.closed) return;
+      const origins = playlistOrigins(slate, items);
+      items.forEach((item, i) => {
+        session.excluded.add(String(item.scene_id));
+        const scene = result.data[`s${i}`];
+        if (scene?.files.length) session.pool.push({ item, origin: origins[i], scene, rank: session.pool.length });
+      });
+    }
+    if (session.done && session.pool.length && session.pool.every((entry) => session.seen.has(entry.origin.scene_id))) {
+      session.pool = []; session.seen.clear(); session.excluded.clear(); session.done = false;
+      await fillRoulette(session, count);
+    }
+  }
+  function rouletteShuffle(items) {
+    const result = [...items];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+  function rouletteSlots(session, limit) {
+    const available = session.pool.filter((entry) => !session.seen.has(entry.origin.scene_id));
+    const candidates = new Map(session.pool.map((entry) => [entry.origin.scene_id, entry]));
+    if (!session.slots.length) return rouletteShuffle(available).slice(0, limit);
+    const present = new Set(session.slots.map((entry) => entry.origin.scene_id));
+    const incoming = rouletteShuffle(available.filter((entry) => !present.has(entry.origin.scene_id)));
+    const current = session.history[session.index]?.origin.scene_id;
+    const slots = session.slots.map((entry) => {
+      const id = entry.origin.scene_id;
+      const candidate = candidates.get(id);
+      if (candidate && entry.frame) candidate.frame ||= entry.frame;
+      return id !== current && (session.seen.has(id) || !candidate) && incoming.length ? incoming.pop() : candidate || entry;
+    });
+    while (slots.length < limit && incoming.length) slots.push(incoming.pop());
+    return slots;
+  }
+  function rouletteWinner(session, slots) {
+    const candidates = new Set(session.pool.map((entry) => entry.origin.scene_id));
+    let eligible = slots.filter((entry) => candidates.has(entry.origin.scene_id) && !session.seen.has(entry.origin.scene_id));
+    const current = session.history[session.index]?.origin.scene_id;
+    if (eligible.some((entry) => entry.origin.scene_id !== current)) eligible = eligible.filter((entry) => entry.origin.scene_id !== current);
+    const weights = eligible.map((entry) => 1 - .3 * entry.rank / session.pool.length);
+    let draw = Math.random() * weights.reduce((a, b) => a + b, 0);
+    return eligible.find((_, i) => (draw -= weights[i]) <= 0) || eligible[eligible.length - 1];
+  }
+  function rouletteShape(root, session) {
+    const stage = root.getBoundingClientRect();
+    const slot = session.history[session.index].slot;
+    const card = root.querySelectorAll(".curator-roulette-wheel-wrap image")[slot].getBoundingClientRect();
+    const rectangle = "polygon(0% 0%,100% 0%,100% 100%,0% 100%)";
+    return { left: `${card.left - stage.left}px`, top: `${card.top - stage.top}px`,
+      width: `${card.width}px`, height: `${card.height}px`, clipPath: rectangle, rectangle };
+  }
+  const rouletteTimestamp = () => {};
+  function RouletteScene({ entry, onNext, onPrevious, onComplete, onError }) {
+    const loadingPlayer = Api.hooks.useLoadComponents([Api.loadableComponents.ScenePlayer]);
+    const query = GQL.useFindSceneQuery({ variables: { id: entry.origin.scene_id }, fetchPolicy: "network-only" });
+    const scene = query.data?.findScene;
+    const playbackScene = React.useMemo(() => scene && { ...scene, resume_time: entry.time }, [scene, entry.time]);
+    React.useEffect(() => {
+      if (query.error || (!query.loading && (!scene || !scene.files.length))) onError("This scene is unavailable. Try Next or return to recommendations.");
+    }, [query.error, query.loading, scene, onError]);
+    if (loadingPlayer || query.loading || !scene?.files.length) return null;
+    return React.createElement("div", { className: "curator-roulette-scene", "data-roulette-scene": scene.id, "data-roulette-attempt": entry.attempt || 0 },
+      React.createElement(Api.components.ScenePlayer, { scene: playbackScene, autoplay: false, permitLoop: false,
+        hideScrubberOverride: true, initialTimestamp: entry.time, sendSetTimestamp: rouletteTimestamp,
+        onComplete, onNext, onPrevious }));
+  }
+  function RoulettePlayer({ session, onClose }) {
+    const dialog = React.useRef(null), stage = React.useRef(null), player = React.useRef(null);
+    const controller = React.useRef(null);
+    const [entry, setEntry] = React.useState(null);
+    const [view, setView] = React.useState({ phase: "loading", error: "", muted: false, index: -1 });
+    const next = React.useCallback(() => controller.current?.next(), []);
+    const previous = React.useCallback(() => controller.current?.previous(), []);
+    const completed = React.useCallback(() => controller.current?.complete(), []);
+    const failed = React.useCallback((message) => controller.current?.fail(message), []);
+    React.useEffect(() => {
+      const root = stage.current, host = player.current, wheel = root.querySelector("svg");
+      const spinner = root.querySelector(".curator-roulette-spinner"), wrap = root.querySelector(".curator-roulette-wheel-wrap");
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+      const focus = document.activeElement, overflow = document.body.style.overflow;
+      let muted = false, error = "", media = null, ready = null, frame = 0, markerOwner = null;
+      let audio = null, lastTick = 0, retrySpin = true, loadTimer, hideTimer;
+      try { muted = localStorage.getItem("curator-roulette-muted") === "true"; } catch (_) {}
+      const publish = (phase = session.phase) => {
+        session.phase = phase; root.dataset.phase = phase;
+        wake();
+        if (!session.closed) setView({ phase, error, muted, index: session.index });
+      };
+      function wake() {
+        clearTimeout(hideTimer); root.classList.remove("curator-roulette-quiet");
+        if (session.closed) return;
+        hideTimer = setTimeout(() => {
+          if (session.phase === "playing" && media && !media.paused && !media.ended && media.readyState >= 3) root.classList.add("curator-roulette-quiet");
+        }, 2700);
+      }
+      const resetShape = () => {
+        [host, spinner, wrap].forEach((node) => { node.getAnimations().forEach((animation) => animation.cancel()); node.removeAttribute("style"); });
+      };
+      const remember = () => { if (media && session.index >= 0) session.history[session.index].time = media.currentTime; };
+      const fullShape = (rectangle) => {
+        const aspect = media?.videoWidth / media?.videoHeight || 16 / 9;
+        const width = Math.min(root.clientWidth, root.clientHeight * aspect), height = width / aspect;
+        return { left: `${(root.clientWidth - width) / 2}px`, top: `${(root.clientHeight - height) / 2}px`, width: `${width}px`, height: `${height}px`, clipPath: rectangle };
+      };
+      const tone = (landing = false) => {
+        if (muted || audio?.state !== "running") return;
+        const now = audio.currentTime;
+        if (!landing && now - lastTick < .065) return;
+        lastTick = now;
+        const oscillator = audio.createOscillator(), gain = audio.createGain();
+        oscillator.frequency.setValueAtTime(landing ? 660 : 900, now);
+        oscillator.frequency.exponentialRampToValueAtTime(landing ? 440 : 540, now + .035);
+        gain.gain.setValueAtTime(landing ? .045 : .018, now);
+        gain.gain.exponentialRampToValueAtTime(.0001, now + (landing ? .25 : .045));
+        oscillator.connect(gain).connect(audio.destination); oscillator.start(now); oscillator.stop(now + .28);
+      };
+      const enableAudio = () => {
+        if (muted) return;
+        try { audio ||= new AudioContext(); audio.resume().catch(() => {}); } catch (_) {}
+      };
+      function renderWheel(slots) {
+        const svg = (name, attrs, parent) => {
+          const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+          Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+          parent.appendChild(node); return node;
+        };
+        const step = Math.PI * 2 / slots.length, tangent = Math.tan(Math.PI / Math.max(3, slots.length));
+        // Leave space between the inner corners of adjacent 16:9 cards.
+        const width = Math.min(360, 480 * tangent / (1 + 9 / 16 * tangent) * .92), height = width * 9 / 16;
+        root.style.setProperty("--curator-roulette-card-width", String(width));
+        root.style.setProperty("--curator-roulette-card-top", String((60 - height / 2) / 600));
+        // Keep slot nodes stable when their spent candidate is replenished.
+        if (wheel.children.length !== slots.length) {
+          wheel.replaceChildren();
+          slots.forEach((_, i) => {
+            const angle = -Math.PI / 2 + i * step, cx = 300 + 240 * Math.cos(angle), cy = 300 + 240 * Math.sin(angle);
+            const group = svg("g", { transform: `rotate(${i * 360 / slots.length} ${cx} ${cy})` }, wheel);
+            const bounds = { x: cx - width / 2, y: cy - height / 2, width, height };
+            svg("image", { ...bounds, preserveAspectRatio: "xMidYMid slice" }, group);
+            svg("rect", { ...bounds, class: "curator-roulette-wedge" }, group);
+            svg("title", {}, group);
+          });
+        }
+        slots.forEach((candidate, i) => {
+          const group = wheel.children[i], image = group.querySelector("image");
+          image.setAttribute("href", candidate.frame || candidate.scene?.paths?.screenshot || "");
+          group.querySelector("title").textContent = candidate.scene?.title || "Untitled scene";
+          group.dataset.scene = candidate.origin.scene_id;
+          group.querySelector("rect").classList.toggle("selected", session.seen.has(candidate.origin.scene_id));
+        });
+      }
+      async function reveal() {
+        if (!ready || !media || media.readyState < 2 || session.closed) return;
+        const selected = session.history[session.index], container = media.closest("[data-roulette-scene]");
+        if (container?.dataset.rouletteScene !== selected.origin.scene_id || container.dataset.rouletteAttempt !== String(selected.attempt || 0)) return;
+        const { token, shape } = ready; ready = null; clearTimeout(loadTimer);
+        if (token !== session.token) return;
+        media.muted = muted;
+        attachPlayer(location.pathname, { sceneId: session.history[session.index].origin.scene_id, origin: session.history[session.index].origin, root: host });
+        media.play().catch(() => { if (token === session.token) { error = "Playback paused by your browser. Press Play to continue."; publish(); } });
+        if (shape && !reduced.matches) {
+          const { rectangle, ...start } = shape, target = fullShape(rectangle);
+          Object.assign(host.style, start); publish("revealing");
+          const timing = { duration: 1300, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" };
+          const animation = host.animate([start, target], timing);
+          spinner.animate([{ transform: "scale(1)" }, { transform: `scale(${Math.min(.45, parseFloat(target.height) / root.clientHeight * .7)})` }], timing);
+          await animation.finished.catch(() => {});
+          if (session.closed || token !== session.token) return;
+        }
+        resetShape(); publish("playing");
+      }
+      function bind() {
+        const element = host.querySelector("video");
+        if (element !== media) {
+          if (media) {
+            media.removeEventListener("loadeddata", reveal); media.removeEventListener("error", mediaError); media.removeEventListener("volumechange", volumeChanged);
+            ["playing", "pause", "waiting", "ended"].forEach((event) => media.removeEventListener(event, wake));
+          }
+          media = element;
+          if (media) {
+            // Stash preloads nothing; load a frame even when the browser blocks autoplay.
+            media.preload = "auto"; media.muted = muted;
+            media.addEventListener("loadeddata", reveal); media.addEventListener("error", mediaError); media.addEventListener("volumechange", volumeChanged);
+            ["playing", "pause", "waiting", "ended"].forEach((event) => media.addEventListener(event, wake));
+            const native = Api.utils.InteractiveUtils.getPlayer();
+            if (native && native !== markerOwner && native.el()?.contains(media)) {
+              markerOwner = native;
+              const markers = native.markers?.();
+              // Stash's cleanup requests markers after disposal, recreating them against a removed element.
+              if (markers) native.one("dispose", () => { native.markers = () => markers; });
+              const play = native.play;
+              native.play = function (...args) {
+                const pending = play.apply(this, args);
+                // Stash ignores this promise; Roulette reports failures through its controls.
+                pending?.catch(() => {});
+                return pending;
+              };
+            }
+          }
+        }
+        reveal();
+      }
+      function mediaError() { fail("This scene could not play. Try Next or return to recommendations."); }
+      function volumeChanged() {
+        muted = media.muted;
+        try { localStorage.setItem("curator-roulette-muted", String(muted)); } catch (_) {}
+        publish();
+      }
+      function fail(message) {
+        if (session.closed) return;
+        error = message; ready = null; clearTimeout(loadTimer); resetShape(); publish("error");
+      }
+      function loadEntry(selected, shape, token) {
+        clearTimeout(loadTimer); ready = { token, shape };
+        loadTimer = setTimeout(() => {
+          if (token === session.token && ready) fail("This scene is taking too long to load. Retry or try Next.");
+        }, 30000);
+        setEntry(selected);
+      }
+      async function spin(first = false) {
+        const token = ++session.token;
+        retrySpin = true;
+        error = ""; publish("loading");
+        try {
+          await fillRoulette(session, innerWidth < 760 ? 16 : 24);
+          if (session.closed || token !== session.token) return;
+          const slots = rouletteSlots(session, innerWidth < 760 ? 16 : 24), winner = rouletteWinner(session, slots);
+          if (!winner) { publish("exhausted"); return; }
+          const winnerIndex = slots.indexOf(winner);
+          if (!session.slots.length) { session.slots = slots; renderWheel(slots); }
+          resetShape(); publish("spinning");
+          const start = session.rotation, step = 360 / slots.length;
+          const alignment = ((-winnerIndex * step - start) % 360 + 360) % 360;
+          const target = start + (first ? 720 : 360) + alignment, duration = reduced.matches ? 0 : first ? 3800 : 2600;
+          const started = performance.now(); let previousSector = -1;
+          await new Promise((resolve) => {
+            function rotate(now) {
+              if (session.closed || token !== session.token) { resolve(); return; }
+              const t = duration ? Math.min(1, (now - started) / duration) : 1;
+              const ease = t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+              session.rotation = start + (target - start) * ease;
+              wheel.style.transform = `rotate(${session.rotation}deg)`;
+              wrap.style.setProperty("--camera-zoom", String(1 + .07 * ease));
+              if (session.slots !== slots && t > 0) { session.slots = slots; renderWheel(slots); }
+              const sector = Math.floor(session.rotation / step);
+              if (sector !== previousSector) { previousSector = sector; tone(); }
+              if (t < 1) frame = requestAnimationFrame(rotate); else resolve();
+            }
+            frame = requestAnimationFrame(rotate);
+          });
+          if (session.closed || token !== session.token) return;
+          tone(true); session.seen.add(winner.origin.scene_id);
+          session.history.splice(session.index + 1);
+          const previous = session.history[session.index];
+          const selected = { ...winner, time: 0, slot: winnerIndex, slots: [...slots], rotation: session.rotation,
+            attempt: winner.origin.scene_id === previous?.origin.scene_id ? (previous.attempt || 0) + 1 : 0 };
+          session.history.push(selected); session.index = session.history.length - 1;
+          renderWheel(slots);
+          publish("landing");
+          retrySpin = false;
+          finishTracker(false); media?.pause();
+          loadEntry(selected, reduced.matches ? null : rouletteShape(root, session), token);
+        } catch (failure) { if (token === session.token) fail(failure.message); }
+      }
+      async function advance() {
+        if (!["playing", "error"].includes(session.phase)) return;
+        enableAudio(); remember();
+        const current = session.history[session.index];
+        if (current && session.phase === "playing" && !reduced.matches) {
+          const token = ++session.token;
+          session.slots = [...current.slots]; session.rotation = current.rotation; renderWheel(session.slots);
+          wheel.style.transform = `rotate(${session.rotation}deg)`;
+          const { rectangle, ...target } = rouletteShape(root, session);
+          const start = fullShape(rectangle); Object.assign(host.style, start); publish("returning");
+          const timing = { duration: 1100, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" };
+          const animation = host.animate([start, target], timing);
+          spinner.animate([{ transform: "scale(.45)" }, { transform: "scale(1)" }], timing);
+          await animation.finished.catch(() => {});
+          if (session.closed || token !== session.token) return;
+        }
+        media?.pause(); remember(); finishTracker(false);
+        if (current && media?.readyState >= 2) {
+          try {
+            const canvas = document.createElement("canvas"); canvas.width = Math.min(640, media.videoWidth);
+            canvas.height = canvas.width * media.videoHeight / media.videoWidth;
+            canvas.getContext("2d").drawImage(media, 0, 0, canvas.width, canvas.height); current.frame = canvas.toDataURL("image/jpeg");
+            session.pool.find((candidate) => candidate.origin.scene_id === current.origin.scene_id).frame = current.frame;
+            const image = wheel.querySelectorAll("image")[current.slot]; image?.setAttribute("href", current.frame);
+          } catch (_) { /* A cross-origin stream keeps its screenshot. */ }
+        }
+        await spin();
+      }
+      function back() {
+        if (!["playing", "error", "exhausted"].includes(session.phase) || session.index < 1) return;
+        remember(); media?.pause(); finishTracker(false);
+        const selected = session.history[--session.index];
+        session.slots = [...selected.slots]; session.rotation = selected.rotation; renderWheel(session.slots);
+        wheel.style.transform = `rotate(${session.rotation}deg)`; resetShape(); error = ""; publish("landing");
+        loadEntry(selected, null, ++session.token);
+      }
+      function close() {
+        session.closed = true; ++session.token; remember(); media?.pause(); finishTracker(false);
+        if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
+        onClose();
+      }
+      controller.current = {
+        next: advance, previous: back, fail, close,
+        complete() { finishTracker(true); advance(); },
+        mute() { muted = !muted; if (media) media.muted = muted; try { localStorage.setItem("curator-roulette-muted", String(muted)); } catch (_) {} enableAudio(); publish(); },
+        fullscreen() { wake(); const action = document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen?.(); action?.catch(() => { error = "Fullscreen is unavailable in this browser."; publish(); }); },
+        retry() {
+          if (retrySpin) { session.done = false; spin(!session.history.length); return; }
+          error = ""; media?.pause(); finishTracker(false); publish("landing");
+          const selected = session.history[session.index];
+          selected.attempt = (selected.attempt || 0) + 1; loadEntry({ ...selected }, null, ++session.token);
+        },
+      };
+      const activityEvents = ["pointermove", "pointerdown", "keydown", "focusin"];
+      activityEvents.forEach((event) => root.addEventListener(event, wake, true));
+      const observer = new MutationObserver(bind); observer.observe(host, { childList: true, subtree: true });
+      dialog.current.showModal(); document.body.style.overflow = "hidden"; enableAudio(); spin(true);
+      return () => {
+        session.closed = true; ++session.token; cancelAnimationFrame(frame); clearTimeout(loadTimer); clearTimeout(hideTimer); observer.disconnect();
+        activityEvents.forEach((event) => root.removeEventListener(event, wake, true));
+        remember(); media?.pause(); finishTracker(false); resetShape();
+        if (media) {
+          media.removeEventListener("loadeddata", reveal); media.removeEventListener("error", mediaError); media.removeEventListener("volumechange", volumeChanged);
+          ["playing", "pause", "waiting", "ended"].forEach((event) => media.removeEventListener(event, wake));
+        }
+        audio?.close().catch(() => {}); document.body.style.overflow = overflow;
+        if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
+        if (focus?.isConnected) focus.focus();
+      };
+    }, [session, onClose]);
+    const busy = ["loading", "spinning", "landing", "revealing", "returning"].includes(view.phase);
+    return ReactDOM.createPortal(React.createElement("dialog", { ref: dialog, className: "curator-roulette-dialog", "aria-label": "Roulette player", onCancel: (event) => { event.preventDefault(); controller.current?.close(); } },
+      React.createElement("div", { ref: stage, className: "curator-roulette-stage", "data-phase": view.phase, onKeyDownCapture: (event) => {
+        if (event.key.toLowerCase() === "f" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+          event.preventDefault(); event.stopPropagation(); controller.current?.fullscreen();
+        }
+      } },
+        React.createElement("div", { className: "curator-roulette-spinner", "aria-hidden": "true" },
+          React.createElement("div", { className: "curator-roulette-wheel-wrap scene-card" }, React.createElement("svg", { className: "scene-card-image card-section", viewBox: "0 0 600 600" }), React.createElement("div", { className: "curator-roulette-pointer" })) ),
+        React.createElement("div", { ref: player, className: "curator-roulette-player" },
+          entry && React.createElement(RouletteScene, { key: `${entry.origin.scene_id}:${entry.attempt || 0}`, entry, onNext: next, onPrevious: previous, onComplete: completed, onError: failed })),
+        React.createElement("header", { className: "curator-roulette-hud" },
+          React.createElement("span", null, "ROULETTE · ", laneByValue.get(session.lane).label),
+          React.createElement("div", null,
+            React.createElement(Button, { variant: "dark", size: "sm", "aria-pressed": view.muted, onClick: () => controller.current.mute() }, view.muted ? "Unmute" : "Mute"),
+            React.createElement(Button, { variant: "dark", size: "sm", onClick: () => controller.current.fullscreen() }, "Fullscreen"),
+            React.createElement(Button, { variant: "dark", size: "sm", onClick: () => controller.current.close() }, "Exit"))),
+        React.createElement("div", { className: "curator-roulette-status", role: "status", "aria-live": "polite" },
+          view.error || (view.phase === "loading" ? "Loading contenders…" : view.phase === "spinning" ? "Spinning…" : view.phase === "landing" ? "Loading selected scene…" : view.phase === "exhausted" ? "No recommendations qualify right now." : entry?.scene?.title || "Untitled scene")),
+        React.createElement("div", { className: "curator-roulette-controls" },
+          React.createElement(Button, { variant: "dark", disabled: busy || view.index < 1, onClick: previous }, "Back"),
+          React.createElement(Button, { variant: "primary", disabled: busy || view.phase === "exhausted", onClick: next }, "Next"),
+          view.phase === "error" && React.createElement(Button, { variant: "dark", onClick: () => controller.current.retry() }, "Retry"),
+          view.phase === "exhausted" && React.createElement(Button, { variant: "primary", onClick: () => controller.current.retry() }, "Retry"))
+      )), document.body);
+  }
+
   function CuratorPage() {
     React.useEffect(() => {
       const heartbeat = () => {
@@ -5840,6 +6233,9 @@
     }, []);
     const history = useHistory();
     const routeLocation = useLocation();
+    const [roulette, setRoulette] = React.useState(null);
+    const closeRoulette = React.useCallback(() => setRoulette(null), []);
+    React.useEffect(() => { setRoulette(null); }, [routeLocation.key]);
     const route = new URLSearchParams(routeLocation.search);
     const requestedView = route.get("view") || "for_you";
     const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard, Api.loadableComponents.PerformerCard]);
@@ -6165,6 +6561,7 @@
     return React.createElement(
       "main",
       { className: "curator-page container-fluid", "data-theme": theme, style: { "--curator-card-min-width": `${cardSize}rem` } },
+      roulette && React.createElement(RoulettePlayer, { session: roulette, onClose: closeRoulette }),
       React.createElement(
         "header",
         { className: "curator-header" },
@@ -6266,6 +6663,7 @@
           "div",
           { className: "curator-view-actions" },
           laneByValue.has(lane) && slate && React.createElement(Button, { size: "sm", variant: "primary", disabled: loading || !resolved || !visibleItems.length || slate.lane !== lane, onClick: () => { try { startLanePlaylist(slate, visibleItems, slateFilters, history); } catch (failure) { setError(failure.message); } }, title: "Play these recommendations and keep fetching more from this lane" }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play lane"),
+          laneByValue.has(lane) && slate && React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading || !resolved || !visibleItems.length || slate.lane !== lane, onClick: () => setRoulette(createRouletteSession(slate, visibleItems, slateFilters, scenes)), title: "Spin for a recommendation from this lane" }, "Roulette"),
           laneByValue.has(lane) && React.createElement(MoodMenu, { moods, moodID, disabled: !configReady, onSelect: selectMood, onManage: () => openManage("settings") }),
           laneByValue.has(lane) && diversityEnabled !== null && React.createElement(
             Button,
@@ -6391,21 +6789,22 @@
     return root?.querySelector("video") || document.querySelector(".video-js video, video.vjs-tech");
   }
 
-  function attachPlayer(pathname) {
+  function attachPlayer(pathname, embedded = null) {
     const match = pathname.match(/^\/scenes\/(\d+)/);
-    if (!match) {
+    if (!match && !embedded) {
       finishTracker(false);
       return;
     }
-    const sceneId = match[1];
+    const sceneId = embedded ? String(embedded.sceneId) : match[1];
     if (tracker?.value.scene_id === sceneId) return;
     finishTracker(false);
     let origin = null;
     try {
       origin = JSON.parse(sessionStorage.getItem(ORIGIN_KEY) || "null");
     } catch (_) {}
+    if (embedded) origin = embedded.origin;
     if (origin?.scene_id !== sceneId) origin = null;
-    if (origin) sessionStorage.removeItem(ORIGIN_KEY);
+    if (origin && !embedded) sessionStorage.removeItem(ORIGIN_KEY);
     const value = {
       session_id: uuid(),
       scene_id: sceneId,
@@ -6479,7 +6878,7 @@
     // Playback can begin long after navigation, and the element can be replaced mid-scene.
     const watch = setInterval(() => {
       if (location.pathname !== pathname) return;
-      const element = mediaElement();
+      const element = embedded ? embedded.root.querySelector("video") : mediaElement();
       if (element && element.isConnected) bind(element);
       else if (media && !media.isConnected) { tick(); closeRange(); playing = false; unbind(); }
     }, 500);
@@ -6492,7 +6891,7 @@
         unbind();
       },
     };
-    const element = mediaElement();
+    const element = embedded ? embedded.root.querySelector("video") : mediaElement();
     if (element?.isConnected) bind(element);
   }
 

@@ -85,6 +85,31 @@ The playlist stays in the current browser tab, including after a refresh.
 scenes qualify, Curator shows **End of recommendations**. A failed fetch keeps
 the current scene playing and offers **Retry next**. Moving on is manual.
 
+## Roulette
+
+Choose a recommendation lane and filters or mood, then click **Roulette** to spin
+for a scene. Higher-ranked contenders have slightly better odds. Large 16:9
+thumbnail cards travel around the visible upper arc of the wheel. The winning
+card expands into Stash's native player; **Next**, or reaching the end of the
+scene, folds it back into the wheel and spins again. **Back** returns to an earlier
+pick at its saved playback position.
+
+The session keeps its original lane settings and fetches more qualifying scenes
+as needed. Once every eligible scene has been selected, it automatically fetches
+a fresh round and continues. Scenes do not repeat within a round; when alternatives
+exist, the next round avoids immediately repeating the last pick. Spent tiles stay
+visible as context; replacements enter after the wheel starts moving. There is no
+fixed session length or total counter. If no scenes qualify, use **Retry** later.
+
+**Mute** is remembered locally. **Fullscreen** includes Roulette's controls;
+**Exit** or Escape closes the session and returns focus to its launch button.
+Roulette's controls and title fade after a short period of inactivity while video
+is playing. Move the pointer, touch the player, or use the keyboard to reveal them.
+They stay visible while paused, loading, or showing an error, and remain usable
+when focused with the keyboard.
+Reduced-motion preferences replace spinning and reshaping with a direct reveal.
+An unavailable scene or failed request offers retry and navigation controls.
+
 ## Inspect and teach
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
