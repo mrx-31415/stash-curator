@@ -172,7 +172,8 @@ def _run_go_build(binary: Path, sidecar: Path) -> tuple[str, Path]:
     return version, sidecar.parent / f"{sidecar.stem}-derived" / basename
 
 
-def test_feature_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing_names", [False, True])
+def test_feature_build_artifact_parity(binary: Path, tmp_path: Path, missing_names: bool) -> None:
     """Both implementations produce the same feature_version and a
     content-identical feature artifact; the sidecar writes match modulo the
     published timestamp."""
@@ -180,12 +181,18 @@ def test_feature_build_artifact_parity(binary: Path, tmp_path: Path) -> None:
     py_dir.mkdir()
     py_db = py_dir / "curator.sqlite3"
     make_feature_sidecar(py_db)
+    if missing_names:
+        with sqlite3.connect(py_db) as connection:
+            connection.execute("UPDATE source_tag SET name=NULL")
     py_version, py_artifact = _run_python_build(py_db)
 
     go_dir = tmp_path / "go"
     go_dir.mkdir()
     go_db = go_dir / "curator.sqlite3"
     make_feature_sidecar(go_db)
+    if missing_names:
+        with sqlite3.connect(go_db) as connection:
+            connection.execute("UPDATE source_tag SET name=NULL")
     go_version, go_artifact = _run_go_build(binary, go_db)
 
     assert go_version == py_version

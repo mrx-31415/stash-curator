@@ -113,7 +113,7 @@ func externalTagChoicesBody(pluginDir string, payload, settings jVal) (jVal, err
 		directBlocked sql.NullInt64
 		stashID       sql.NullString
 	}
-	rows, err := db.Query(`SELECT t.tag_id, t.name, p.value AS direct_value,
+	rows, err := db.Query(`SELECT t.tag_id, COALESCE(t.name, '') AS name, p.value AS direct_value,
        p.blocked AS direct_blocked, ids.stash_id
 FROM source_tag t
 JOIN tag_role r
@@ -144,8 +144,10 @@ ORDER BY t.tag_id`, configVersion, stashdbEndpoint)
 		if row.stashID.Valid && row.stashID.String != "" {
 			byExternal[row.stashID.String] = row
 		}
-		key := strings.ToLower(row.name) // Python str(row["name"] or "")
-		byName[key] = append(byName[key], row)
+		if row.name != "" {
+			key := strings.ToLower(row.name)
+			byName[key] = append(byName[key], row)
+		}
 	}
 	var snapshotID string
 	var hasSnapshot bool
@@ -245,7 +247,7 @@ func sceneTagChoicesBody(pluginDir string, payload, settings jVal) (jVal, error)
 	if err != nil {
 		return jvNull(), err
 	}
-	rows, err := db.Query(`SELECT t.tag_id, t.name, p.value AS direct_value,
+	rows, err := db.Query(`SELECT t.tag_id, COALESCE(t.name, '') AS name, p.value AS direct_value,
        p.blocked AS direct_blocked
 FROM scene_tag st
 JOIN source_tag t ON t.tag_id=st.tag_id

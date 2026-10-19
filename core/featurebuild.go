@@ -334,7 +334,7 @@ func resolveTagRoles(db dbx) (map[string]tagRoleResult, error) {
 		tagID string
 		name  string
 	}
-	rows, err := db.Query(`SELECT tag_id, name FROM source_tag ORDER BY tag_id`)
+	rows, err := db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag ORDER BY tag_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +464,7 @@ func featureIgnoredTagIDs(db dbx, ignoredTags []string) (map[string]bool, error)
 	for _, name := range ignoredTags {
 		names[name] = true
 	}
-	rows, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+	rows, err := db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag`)
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +648,7 @@ ORDER BY scene_id, tag_id`)
 		}
 	}
 	tagNames := map[string]string{}
-	rows, err = db.Query(`SELECT tag_id, name FROM source_tag`)
+	rows, err = db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag`)
 	if err != nil {
 		return nil, err
 	}

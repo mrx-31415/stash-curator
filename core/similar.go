@@ -841,7 +841,7 @@ GROUP BY other.scene_id`, featureVersion, sceneID, sceneID)
 // loadTagNames mirrors the source_tag read of SimilarityService.scenes.
 func loadTagNames(db dbx) (map[string]string, error) {
 	names := map[string]string{}
-	rows, err := db.Query(`SELECT tag_id, name FROM source_tag`)
+	rows, err := db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag`)
 	if err != nil {
 		return nil, err
 	}

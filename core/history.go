@@ -348,7 +348,7 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
   SELECT tag_id, count(DISTINCT scene_id) AS scene_count
   FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
 )
-SELECT t.tag_id, t.name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
+SELECT t.tag_id, COALESCE(NULLIF(t.name, ''), t.tag_id) AS name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
        a.affinity, a.confidence, a.effective_support
 FROM source_tag t
 JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?

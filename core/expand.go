@@ -653,7 +653,7 @@ func (s *expandService) blockedTagNameGroups() ([]map[string]bool, error) {
 	for i, id := range blockedIDs {
 		args[i] = id
 	}
-	nameRows, err := s.db.Query(`SELECT name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args...)
+	nameRows, err := s.db.Query(`SELECT name FROM source_tag WHERE name IS NOT NULL AND name<>'' AND tag_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -841,7 +841,7 @@ func (s *expandService) externalContent(sceneID string) (jVal, error) {
 		args[i] = id
 	}
 	names := map[string]string{}
-	nameRows, err := s.db.Query(`SELECT tag_id, name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args...)
+	nameRows, err := s.db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -898,7 +898,7 @@ func (s *expandService) externalContentSpace(featureVersion string) (*contentSpa
 	}
 	total := maxInt64(1, scanCount(s.db, `SELECT count(*) FROM source_scene`))
 	rows, err := s.db.Query(`
-SELECT d.name, d.metadata_json, t.tag_id, t.name AS tag_name
+SELECT d.name, d.metadata_json, t.tag_id, COALESCE(t.name, '') AS tag_name
 FROM feature_definition d JOIN source_tag t ON d.name='tag:' || t.tag_id
 WHERE d.feature_version=? AND d.family='content'`, featureVersion)
 	if err != nil {
@@ -1065,7 +1065,7 @@ func (s *expandService) externalTagIDs(localIDs map[string]bool) (map[string]str
 	if err != nil {
 		return nil, err
 	}
-	nameRows, err := s.db.Query(`SELECT tag_id, name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args[:len(ids)]...)
+	nameRows, err := s.db.Query(`SELECT tag_id, COALESCE(name, '') AS name FROM source_tag WHERE tag_id IN (`+placeholders+`)`, args[:len(ids)]...)
 	if err != nil {
 		return nil, err
 	}
@@ -1644,7 +1644,7 @@ func (s *expandService) score(scenes []jVal, sources map[string]map[string]bool,
 	modelID, featureVersion string, links jVal, multiHopSeed jVal) ([]scoredScene, []scoredScene, error) {
 	tagAffinity := map[string]float64{}
 	rows, err := s.db.Query(`
-SELECT ids.stash_id, t.name, a.affinity * a.confidence AS value
+SELECT ids.stash_id, COALESCE(t.name, '') AS name, a.affinity * a.confidence AS value
 FROM feature_affinity a JOIN feature_definition d USING(feature_id)
 JOIN source_tag t ON d.name='tag:' || t.tag_id
 LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
@@ -1661,7 +1661,9 @@ WHERE a.model_id=? AND d.feature_version=? AND d.family='content'`,
 		if err := rows.Scan(&stashID, &name, &value); err != nil {
 			return nil, nil, err
 		}
-		tagAffinity["name:"+strings.ToLower(name)] = value
+		if name != "" {
+			tagAffinity["name:"+strings.ToLower(name)] = value
+		}
 		if stashID.Valid && stashID.String != "" {
 			tagAffinity["id:"+stashID.String] = value
 		}
@@ -1671,7 +1673,7 @@ WHERE a.model_id=? AND d.feature_version=? AND d.family='content'`,
 		return nil, nil, err
 	}
 	prefRows, err := s.db.Query(`
-SELECT ids.stash_id, t.name, p.value
+SELECT ids.stash_id, COALESCE(t.name, '') AS name, p.value
 FROM direct_tag_preference p JOIN source_tag t USING(tag_id)
 LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
   AND lower(rtrim(ids.endpoint, '/'))=lower(rtrim(?, '/'))`, stashdbEndpoint)
@@ -1686,7 +1688,7 @@ LEFT JOIN source_tag_stash_id ids ON ids.tag_id=t.tag_id
 			return nil, nil, err
 		}
 		nameKey := "name:" + strings.ToLower(name)
-		if _, ok := tagAffinity[nameKey]; !ok {
+		if _, ok := tagAffinity[nameKey]; name != "" && !ok {
 			tagAffinity[nameKey] = value
 		}
 		if stashID.Valid && stashID.String != "" {
