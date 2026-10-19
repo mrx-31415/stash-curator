@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.6](https://github.com/mrx-31415/stash-curator/compare/v0.40.5...v0.40.6) (2026-10-19)
+
+
+### Bug Fixes
+
+* skip negative history timestamps during sync ([#380](https://github.com/mrx-31415/stash-curator/issues/380)) ([1cae5c9](https://github.com/mrx-31415/stash-curator/commit/1cae5c931a8ba8f8d8f1359280cce6ac90c8a19e))
+* tolerate missing local tag names across Curator ([#377](https://github.com/mrx-31415/stash-curator/issues/377)) ([3784137](https://github.com/mrx-31415/stash-curator/commit/37841375c270dabb76ceec4d9c53501c6bec803b))
+
 ## [0.40.5](https://github.com/mrx-31415/stash-curator/compare/v0.40.4...v0.40.5) (2026-10-19)
 
 
