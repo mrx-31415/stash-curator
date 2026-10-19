@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.5](https://github.com/mrx-31415/stash-curator/compare/v0.40.4...v0.40.5) (2026-10-19)
+
+
+### Bug Fixes
+
+* handle missing scene titles in Prune ([#375](https://github.com/mrx-31415/stash-curator/issues/375)) ([a656066](https://github.com/mrx-31415/stash-curator/commit/a656066258193456f0a70fa1107cd5587998c371))
+
 ## [0.40.4](https://github.com/mrx-31415/stash-curator/compare/v0.40.3...v0.40.4) (2026-10-18)
 
 
