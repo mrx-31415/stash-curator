@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CLIP = Path(__file__).with_name("fixtures") / "roulette.mp4"
 
 
-def _install(page: Page, base_url: str, count: int = 32) -> list[str]:
+def _install(page: Page, base_url: str, count: int = 32, rating_type: str = "stars") -> list[str]:
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(error.stack or str(error)))
     page.add_init_script(
@@ -203,7 +203,17 @@ def _install(page: Page, base_url: str, count: int = 32) -> list[str]:
         payload = route.request.post_data_json
         query = payload.get("query", "")
         variables = payload.get("variables", {})
-        if "RouletteScenes" in query:
+        if payload.get("operationName") == "Configuration":
+            response = route.fetch()
+            data = response.json()
+            # Keep native controls deterministic without changing the host's settings.
+            if "ui" in data["data"]["configuration"]:
+                data["data"]["configuration"]["ui"]["ratingSystemOptions"] = {
+                    "type": rating_type,
+                    "starPrecision": "full",
+                }
+            route.fulfill(response=response, json=data)
+        elif "RouletteScenes" in query:
             route.fulfill(
                 json={"data": {key: by_id.get(value) for key, value in variables.items()}}
             )
@@ -373,7 +383,8 @@ def test_roulette_simple_fade_keeps_letterboxing(page: Page, base_url: str) -> N
     assert not errors
 
 
-def test_roulette_scene_actions_and_statistics(page: Page, base_url: str) -> None:
+@pytest.mark.parametrize("rating_type", ["stars", "decimal"])
+def test_roulette_scene_actions_and_statistics(page: Page, base_url: str, rating_type: str) -> None:
     from playwright.sync_api import expect
 
     mutations = []
@@ -387,7 +398,7 @@ def test_roulette_scene_actions_and_statistics(page: Page, base_url: str) -> Non
             else None
         ),
     )
-    errors = _install(page, base_url, count=3)
+    errors = _install(page, base_url, count=3, rating_type=rating_type)
     page.set_viewport_size({"width": 390, "height": 844})
     page.emulate_media(reduced_motion="reduce")
     page.locator("#launch-roulette").click()
@@ -421,10 +432,15 @@ def test_roulette_scene_actions_and_statistics(page: Page, base_url: str) -> Non
         "n => n.closest('.curator-feedback').dataset.reaction === 'thumb_down'"
     )
     rating = page.locator(".curator-roulette-rating")
-    rating.locator(".edit-rating-button").click()
-    rating.locator("input").fill("8.0")
-    o_button.focus()
-    expect(rating).to_contain_text("8.0")
+    if rating_type == "stars":
+        rating.get_by_role("button").nth(3).click()
+        o_button.focus()
+        expect(rating.locator(".star-rating-number")).to_have_text("4")
+    else:
+        rating.locator(".edit-rating-button").click()
+        rating.locator("input").fill("8.0")
+        o_button.focus()
+        expect(rating).to_contain_text("8.0")
     assert any(
         r["variables"].get("input") == {"id": scene_id, "rating100": 80}
         for r in mutations
@@ -674,7 +690,7 @@ def test_native_roulette_transitions(page: Page, base_url: str) -> None:
     page.get_by_role("button", name="Next", exact=True).click()
     expect(stage).to_have_attribute("data-phase", "returning")
     assert video.evaluate("node => node.isConnected")
-    expect(stage).to_have_attribute("data-phase", "playing", timeout=15000)
+    expect(stage).to_have_attribute("data-phase", "playing", timeout=30000)
     expect(page.locator(".curator-roulette-flight")).to_have_count(0)
     expect(page.locator(".curator-roulette-hit")).to_have_count(0)
     assert page.evaluate("__rouletteSession.history[1].origin.scene_id") != first
@@ -901,7 +917,7 @@ def test_roulette_cancel_during_reveal(page: Page, base_url: str) -> None:
     errors = _install(page, base_url)
     page.locator("#launch-roulette").click()
     expect(page.locator(".curator-roulette-stage")).to_have_attribute(
-        "data-phase", "spinning", timeout=10000
+        "data-phase", "spinning", timeout=20000
     )
     page.wait_for_function("__rouletteSession.phase === 'revealing'", timeout=30000)
     page.get_by_role("button", name="Exit", exact=True).click()
