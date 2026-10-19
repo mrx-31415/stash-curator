@@ -1,63 +1,84 @@
 # Roulette implementation handoff
 
-Branch: `prototype/roulette`. This handoff accompanies the completed implementation
-and local installation. The branch has not been pushed.
+Branch: `prototype/roulette`. Targets current `main`; the standalone
+[prototype](prototypes/roulette/README.md) remains an interaction reference.
+The [public guide](using-curator.md#roulette) describes the final behavior.
 
 ## Delivered behavior
 
-- Roulette launches from the current recommendation lane and keeps its filters,
-  mood, and recommendation provenance when fetching more contenders.
-- Large rectangular 16:9 cards move around the wheel's visible upper arc. The
-  winning card expands into Stash's native player, retaining the same media element
-  through reveal and return animations.
-- Next and natural completion start another spin. Back restores an earlier pick's
-  saved position. Rounds continue automatically, avoiding an immediate repeat when
-  another eligible scene exists. A single eligible scene can play again.
-- Mute persists locally; fullscreen includes Roulette controls. Controls fade
-  during playback and wake on pointer, touch, or keyboard activity. Exit cancels
-  pending work and restores focus. Reduced motion skips the animations.
-- Playback observations use the existing event tracker, including recommendation
-  provenance and natural completion. No backend or schema changes were needed.
+- Launch from a recommendation lane with its filters, mood, and provenance.
+  Rank-weighted picks continue across fetched batches and automatically start
+  another round once all eligible scenes have been selected. Avoid immediate
+  repeats when an alternative exists; a single eligible scene can repeat.
+- Visible lane cards gather into a large rectangular-card wheel. The winner
+  pulses and expands into Stash's native ScenePlayer. The wheel and felt fade
+  completely to the player's black background; simple mode keeps letterboxing
+  consistent throughout its short fade.
+- Next and natural completion continue the session. Back restores a previous
+  pick and its saved playback position. The same native media element stays
+  mounted during reveal and return.
+- Native ratings, O counter, Useful/Not for me, and Open scene are available.
+  Native activity tracking retains play duration, resume position, and play count;
+  Curator observations retain lane provenance and natural completion.
+- Animate roulette is available in Manage → Settings → Playback and a small
+  in-player gear menu. Both controls share a browser-local preference, default on,
+  with cross-tab synchronization and an in-memory fallback if storage fails.
+  Changes apply to the next pick. Off skips wheel effects and sounds and uses
+  a 220 ms fade. Reduced motion also suppresses the fade.
+- Mute persists locally. Fullscreen includes the controls; overlays hide and wake
+  with activity. An open settings dropdown stays visible. Exit, errors, hidden
+  tabs, and moving between picks stop sound tails and cancel pending work.
+- Sound uses CC0 recordings for the card shuffle, textured rise, and a heavy
+  slam with chip accent and four-second room decay. The rise follows actual
+  wheel progress through landing. Audio remains embedded PCM with no runtime
+  requests or codec initialization. Source licenses, checksums, and reproducible
+  edits are in [the asset notes](assets/roulette-card-shuffle.md),
+  [rise note](assets/roulette-cinematic-sound.md), and
+  [landing note](assets/roulette-casino-slam.md).
 
-## Files for review
+## Implementation and scope
 
-- `plugin/stash-curator.js`: session selection, pagination, native playback,
-  transitions, and embedded-player event tracking.
-- `plugin/stash-curator.css`: responsive wheel, native player sizing, and controls.
-- `docs/using-curator.md`: current public behavior.
-- `tests/plugin/test_roulette.cjs` and its pytest wrapper: selection, lane scope,
-  replenishment, provenance, retries, continuous rounds, and cancellation.
-- `tests/integration/test_roulette.py` and `tests/integration/fixtures/`: six native
-  browser scenarios using synthetic media and blocking live mutations.
+Frontend session/ranking, player integration, preferences, and effects are in
+`plugin/stash-curator.js`; presentation is in `plugin/stash-curator.css`.
+Tests are in `tests/plugin/test_roulette.cjs`, its pytest wrapper, and
+`tests/integration/test_roulette.py` with synthetic media fixtures.
+Shared Feedback supports a compact form without removing its existing card flow.
+No backend, database schema, plugin manifest, or runtime dependency is added.
 
-The original [interaction prototype](prototypes/roulette/README.md) remains a
-reference artifact. Its session exhaustion and wedge descriptions predate the
-implemented continuous rounds and rectangular cards; use the public guide for
-current behavior. Preserve its existing files when preparing the commit.
+SVG card bounds come from getBBox plus the composed screen transform, avoiding
+Firefox's inflated intermediate rotation bounds. Native thumbnail padding is
+removed from the wheel SVG so the highlight and player expansion align.
+Native player initialization cannot restore a stale mute preference during a
+reveal; once playing, native mute controls synchronize back into Roulette.
 
-## Verification
+## Verification before PR preparation
 
-- Focused Roulette test: passed.
-- Native browser suite: all six scenarios passed, including plugin composition,
-  transitions, mobile layout, retries, natural completion, and cancellation.
-- Full verifier: lint, formatting, type checks, Go checks, packaging, and all 751
-  unit tests passed. The performance gate failed only `feature_validation`:
-  522 ms against a 508 ms budget. No performance baseline was changed.
-- The installed archive's 11 runtime files match the build, including current
-  JavaScript and CSS.
-- Installed-code smoke tests with real library videos passed on desktop and
-  mobile emulation, on first launch and reopening: playback, Next, Back with saved
-  position, mute, fullscreen, exit, and focus restoration. All GraphQL mutations
-  were intercepted and playback observations remained in the browser. The smoke
-  launcher supplied contenders locally, so this does not verify live lane writes.
-- A real video reaching its end advanced to another pick and produced a natural
-  completion observation. Native activity writes were intercepted in this check.
+- The full repository gate passed during implementation: lint, format, typing,
+  Go checks, packaging, 751 unit tests, and the performance budget. An earlier
+  performance failure was resolved by rerunning without competing browser work;
+  no baseline was changed.
+- Subsequent frontend changes passed 52 plugin checks and all 13 then-existing
+  native browser scenarios. The final fade correction passed its three focused
+  cases, including the new simple-mode regression (14 total browser scenarios).
+- Coverage includes selection, pagination, scope/provenance, continuous rounds,
+  history, native statistics/actions, sound rendering and decay, mute/visibility,
+  settings synchronization and persistence, geometry, and cancellation.
+- Native Stash tests intercept every GraphQL mutation and keep Curator events
+  in-browser. Synthetic fixture IDs and media isolate library data.
+- The installed archive's 11 runtime files matched tested JavaScript and CSS.
 
-## Remaining acceptance
+PR preparation will record fresh post-rebase verification below. Physical Firefox
+mobile touch, rotation, and platform fullscreen acceptance remains a manual check;
+desktop/mobile emulation and the user's installed listening/visual passes do not
+cover every device behavior.
 
-Check touch playback, device rotation, and fullscreen on a physical phone. Mobile
-emulation cannot establish platform-specific browser behavior. The performance
-gate also remains red as recorded above.
+## PR preparation
 
-Implementation commit subject: `feat: add continuous recommendation roulette`.
-Push still requires explicit instruction.
+Rebased cleanly onto main at `33c8ddf` (0.40.5). A recovery branch preserves the
+pre-rebase commits. Roulette runtime and native-browser tests are byte-identical
+across the rebase. Fresh Go, lint, formatting, type, archive, and syntax checks
+passed. The full unit run passed 764 tests and exposed one isolated SettingsPanel
+fixture missing the new RouletteAnimationSetting component; adding its component
+stub fixed that fixture, and all 53 focused plugin checks then passed. The PR's
+validation notes record the final performance result. No performance baseline
+was changed, and live Stash writes remain outside verification scope.

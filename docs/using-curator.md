@@ -88,11 +88,34 @@ the current scene playing and offers **Retry next**. Moving on is manual.
 ## Roulette
 
 Choose a recommendation lane and filters or mood, then click **Roulette** to spin
-for a scene. Higher-ranked contenders have slightly better odds. Large 16:9
-thumbnail cards travel around the visible upper arc of the wheel. The winning
-card expands into Stash's native player; **Next**, or reaching the end of the
-scene, folds it back into the wheel and spins again. **Back** returns to an earlier
-pick at its saved playback position.
+for a scene. Higher-ranked contenders have slightly better odds. Thumbnails lift
+from the lane, gather into a circle, and move into a close view of the wheel.
+Contenders outside the current view enter from the edges. Large 16:9 cards travel
+around a brass-trimmed wheel with a ticking pointer. The
+winning card gets a brief outline pulse before expanding into Stash's native
+player as the wheel and table fade into its black background; **Next**, or reaching the end of the
+scene, folds it back into the wheel and spins again. **Back** folds the current
+video into the wheel, takes a short turn to the previous pick, and expands it at
+its saved playback position.
+
+For a simpler experience, turn off **Animate roulette** in **Manage → Settings →
+Playback**, or open the gear menu inside Roulette. Both switches control the same
+preference, saved in this browser. Changes apply to the next pick. With animation
+off, Roulette selects immediately and uses a brief fade into the native player,
+without the wheel or its sound effects. Next, Back, continuous picks, and scene
+actions work in both modes. Animation is on by default; the browser's reduced
+motion preference still takes precedence.
+
+Gold light and inward-moving rings gather around the pointer during a spin,
+followed by a brief expanding outline when the winner lands. With sound enabled,
+a recorded card shuffle and a quiet air sweep follow the cards into the circle.
+The same layered, recorded sweep continues beneath the card clicks
+right up to the actual landing;
+a heavy slam with a brief chip clatter resolves the selection. Room reverb fades
+over four seconds beneath the reveal, alongside a soft whoosh. Mute, Exit, and
+moving to another pick stop the remaining tail.
+The controls use dark glass surfaces with a gold **Next** button, colored feedback
+confirmation, glowing ratings, and a small droplet burst when an O is saved.
 
 The session keeps its original lane settings and fetches more qualifying scenes
 as needed. Once every eligible scene has been selected, it automatically fetches
@@ -101,8 +124,15 @@ exist, the next round avoids immediately repeating the last pick. Spent tiles st
 visible as context; replacements enter after the wheel starts moving. There is no
 fixed session length or total counter. If no scenes qualify, use **Retry** later.
 
-**Mute** is remembered locally. **Fullscreen** includes Roulette's controls;
+**Mute** silences both the scene and Roulette effects immediately and is remembered
+locally. **Fullscreen** includes Roulette's controls;
 **Exit** or Escape closes the session and returns focus to its launch button.
+While watching, **Useful** and **Not for me** save Curator feedback. The normal
+Stash rating control and **O counter** update the selected scene directly.
+**Open scene ↗** pauses playback and opens the full scene page in another tab,
+keeping your Roulette session and position. Playback uses Stash's native activity
+tracking: watch duration and resume position are saved when tracking is enabled,
+and play count follows Stash's configured minimum watched percentage.
 Roulette's controls and title fade after a short period of inactivity while video
 is playing. Move the pointer, touch the player, or use the keyboard to reveal them.
 They stay visible while paused, loading, or showing an error, and remain usable

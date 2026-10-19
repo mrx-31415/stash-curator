@@ -2,9 +2,41 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(require("node:path").join(__dirname, "../../plugin/stash-curator.js"), "utf8");
+{
+  const saved = new Map(), states = [], cleanup = [], events = new EventTarget();
+  let storageBlocked = false;
+  const preferences = {
+    window: events, Event,
+    localStorage: {
+      getItem: key => saved.get(key) ?? null,
+      setItem(key, value) { if (storageBlocked) throw new Error("Storage unavailable"); saved.set(key, value); },
+    },
+    React: {
+      useState(value) { const state = { value }; states.push(state); return [value, next => { state.value = next; }]; },
+      useEffect(effect) { cleanup.push(effect()); },
+    },
+  };
+  vm.createContext(preferences);
+  vm.runInContext(source.slice(source.indexOf("  const ROULETTE_ANIMATION_KEY"), source.indexOf("  function useFindView")), preferences);
+  const [enabled, change] = preferences.useRouletteAnimation();
+  preferences.useRouletteAnimation();
+  assert.equal(enabled, true);
+  change(false);
+  assert.ok(states.every(state => state.value === false));
+  assert.equal(saved.get("stash-curator:roulette-animation:v1"), "false");
+  events.dispatchEvent(Object.assign(new Event("storage"), { key: "unrelated", newValue: "true" }));
+  assert.ok(states.every(state => state.value === false));
+  events.dispatchEvent(Object.assign(new Event("storage"), { key: "stash-curator:roulette-animation:v1", newValue: "true" }));
+  assert.ok(states.every(state => state.value === true));
+  storageBlocked = true;
+  change(false);
+  assert.equal(preferences.useRouletteAnimation()[0], false); // Failed persistence still works for this session.
+  cleanup.forEach(dispose => dispose());
+}
 const requests = [];
 let batches = [], missing = new Set(), graphqlError = false, closeDuringLoad = false, active;
 const context = {
+  atob,
   location: { pathname: "/plugins/stash-curator" }, uuid: () => "session",
   rotationLane: () => ({ seed: "seed", atMs: 123 }), laneExclusions: new Map([["best_bets", new Set(["99"])]]),
   readMoodID: () => "mood", readTogetherMode: () => true,
@@ -23,12 +55,82 @@ const context = {
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf("  function playlistOrigins("), source.indexOf("  function startLanePlaylist(")), context);
 vm.runInContext(source.slice(source.indexOf("  function createRouletteSession("), source.indexOf("  const rouletteTimestamp")), context);
+const sources = [], buses = [];
+const parameter = () => ({
+  value: 0, events: [],
+  setValueAtTime(value, time) { this.events.push({ value, time }); },
+  linearRampToValueAtTime(value, time) { this.events.push({ value, time }); },
+  setTargetAtTime(value, time) { this.events.push({ value, time }); },
+  exponentialRampToValueAtTime(value, time) { assert.ok(value > 0); this.events.push({ value, time }); },
+});
+const node = () => ({ connect() {}, disconnect() { this.disconnected = true; } });
+const sound = context.createRouletteSound({
+  currentTime: 2, sampleRate: 8000, destination: {},
+  createBuffer: (_, size, rate) => {
+    const data = new Float32Array(size);
+    return { duration: size / rate, getChannelData: () => data };
+  },
+  createGain: () => { const gain = { ...node(), gain: parameter() }; buses.push(gain); return gain; },
+  createBiquadFilter: () => ({ ...node(), frequency: parameter(), Q: parameter() }),
+  createBufferSource: () => makeSource(),
+  createOscillator: () => makeSource(),
+});
+function makeSource() {
+  const source = { ...node(), frequency: parameter(), playbackRate: parameter(), start(at) { this.started = at; }, stop(at) { this.stopped = at ?? "now"; } };
+  sources.push(source); return source;
+}
+sound.gather(1.5);
+assert.equal(sources.length, 3); // Shuffle and a quiet continuous swoosh start together.
+assert.ok(sources[0].buffer.duration > 1.2);
+assert.ok(sources[0].buffer.getChannelData(0).some(value => Math.abs(value) > .2));
+assert.ok(sources[0].playbackRate.value >= .85 && sources[0].playbackRate.value <= 1.2);
+assert.notEqual(sources[0].loop, true);
+const spinFirst = 1, spinBus = 2, assembledSources = sources.length;
+sound.spin(3.8); sound.tick();
+assert.equal(sources.length, assembledSources + 2); // Spin carries on the same swoosh, without restarting.
+assert.ok(sources.slice(spinFirst, spinFirst + 2).every(source => source.stopped === undefined));
+sound.progress(.75);
+const earlyPeak = buses[spinBus].gain.events.at(-1).value;
+sound.progress(1);
+assert.ok(buses[spinBus].gain.events.at(-1).value > earlyPeak);
+assert.ok(sources[spinFirst].buffer.getChannelData(0).some(value => Math.abs(value) > .2));
+assert.equal(sources[spinFirst].loop, true); // Recorded texture keeps rising until the actual landing.
+const landingFirst = sources.length;
+sound.land();
+assert.ok(sources.slice(0, landingFirst).every(source => source.stopped === "now" && source.disconnected));
+assert.equal(sources.length, landingFirst + 1); // Only the physical recording: no pitched oscillator boing.
+assert.equal(sources[landingFirst].buffer.duration, 4);
+assert.equal(sources[landingFirst].playbackRate.value, 1);
+assert.equal(sources[landingFirst].stopped, undefined); // Let the recording's full decay finish.
+sound.mute(true);
+assert.equal(buses[0].gain.events.at(-1).value, 0);
+assert.ok(sources.every(source => source.stopped === "now"));
+sound.mute(false);
+sound.progress(1);
+assert.equal(sources.length, landingFirst + 1); // Unmuting cannot restart a cancelled build-up.
+sound.spin(0); assert.equal(sources.length, landingFirst + 1);
+sound.reveal(); sound.stop(); sound.stop();
+assert.equal(sources.at(-1).stopped, "now");
+sources.forEach(source => source.onended());
 const item = (id) => ({ scene_id: String(id), position: id });
 const slate = (ids, impression = "first") => ({ lane: "best_bets", page_size: 2, model_id: "model", impression_id: impression, items: ids.map(item) });
 const filters = { includeTags: [{ name: "A" }], excludeTags: [{ name: "B" }], performers: [{ id: 2 }], studios: [{ id: 3 }], gender: "FEMALE" };
 const create = (ids) => context.createRouletteSession(slate(ids), slate(ids).items, filters, new Map(ids.map(id => [String(id), { id: String(id), files: [{}] }])));
 const plain = (value) => JSON.parse(JSON.stringify(value));
 (async () => {
+  const shape = context.rouletteShape({
+    getBoundingClientRect: () => ({ left: 30, top: 10 }),
+    querySelectorAll: () => [{
+      getBBox: () => ({ x: 10, y: 20, width: 160, height: 90 }),
+      getScreenCTM: () => ({ a: 2, b: 0, c: 0, d: 2, e: 100, f: 50 }),
+      getBoundingClientRect: () => ({ left: 50, top: 20, width: 400, height: 400 }),
+    }],
+  }, { history: [{ slot: 0 }], index: 0 });
+  assert.equal(shape.left, "90px");
+  assert.equal(shape.top, "80px");
+  assert.equal(shape.width, "320px");
+  assert.equal(shape.height, "180px");
+
   const session = create([1, 2]);
   assert.deepEqual(plain(session.request), {
     lane: "best_bets", page: 1, count: 2, exploration: 0, mood_id: "mood", together_mode: true,

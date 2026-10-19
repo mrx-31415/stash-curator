@@ -651,7 +651,7 @@ def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
     assert 'operation: "get_tag_sentiment_follow_up"' in source
     assert 'if (feedbackType === "thumb_down" && onThumbDown)' in source
     assert "onThumbDown(followUp);" in source
-    assert "onRemove(item.scene_id);" in source
+    assert 'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);' in source
     assert "TagSentimentFollowUp" in source
     assert '"None of these"' in source
     assert '"Something scene-specific"' in source
@@ -1272,7 +1272,7 @@ def test_external_card_actions_are_a_named_shared_component() -> None:
     assert "tagsActive: tagChoices !== null" in source
     # Feedback (thumbs up/down + More menu) is the other variant; still its
     # own function, untouched by this extraction.
-    assert "function Feedback({ item, onRemove, onThumbDown })" in source
+    assert "function Feedback({ item, onRemove, onThumbDown, compact = false })" in source
     assert 'className: "curator-more-menu"' in source
 
 
