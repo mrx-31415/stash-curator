@@ -143,7 +143,7 @@ assert.equal(focusCount, 9);
   context.React.useState = () => { const index = hook++; return [state[index], (value) => { state[index] = typeof value === "function" ? value(state[index]) : value; }]; };
   context.React.useRef = () => context.togetherSaveInFlight;
   context.React.Fragment = "fragment";
-  Object.assign(context, { SETTINGS_FIELD_GROUPS: [], Button: "button", uuid: () => "created", useCuratorActivity() {} });
+  Object.assign(context, { SETTINGS_FIELD_GROUPS: [], Button: "button", RouletteAnimationSetting: "roulette-animation-setting", uuid: () => "created", useCuratorActivity() {} });
   context.operation = async (args) => ({ config: { moods: args.values.moods } });
   vm.runInContext(settingsSource.slice(0, settingsSource.indexOf("  // Manage shell")), context);
   function settings() { hook = 0; return nodes(context.SettingsPanel({ diversityEnabled: null })); }

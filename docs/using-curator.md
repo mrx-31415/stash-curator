@@ -85,6 +85,66 @@ The playlist stays in the current browser tab, including after a refresh.
 scenes qualify, Curator shows **End of recommendations**. A failed fetch keeps
 the current scene playing and offers **Retry next**. Moving on is manual.
 
+## Roulette
+
+Choose a recommendation lane and filters or mood, then click **Roulette** to spin
+for a scene. Higher-ranked contenders have slightly better odds. Thumbnails lift
+from the lane, gather into a circle, and move into a close view of the wheel.
+Contenders outside the current view enter from the edges. Large 16:9 cards travel
+around a brass-trimmed wheel with a ticking pointer. The
+winning card gets a brief outline pulse before expanding into Stash's native
+player as the wheel and table fade into its black background; **Next**, or reaching the end of the
+scene, folds it back into the wheel and spins again. **Back** folds the current
+video into the wheel, takes a short turn to the previous pick, and expands it at
+its saved playback position.
+
+For a simpler experience, turn off **Animate roulette** in **Manage → Settings →
+Playback**, or open the gear menu inside Roulette. Both switches control the same
+preference, saved in this browser. Changes apply to the next pick. With animation
+off, Roulette selects immediately and uses a brief fade into the native player,
+without the wheel or its sound effects. Next, Back, continuous picks, and scene
+actions work in both modes. Animation is on by default; the browser's reduced
+motion preference still takes precedence.
+
+Gold light and inward-moving rings gather around the pointer during a spin,
+followed by a brief expanding outline when the winner lands. With sound enabled,
+a recorded card shuffle and a quiet air sweep follow the cards into the circle.
+The same layered, recorded sweep continues beneath the card clicks
+right up to the actual landing;
+a recorded mechanical clunk, double heartbeat, and quiet harmonic glow resolve
+the selection. A soft room tail fades beneath the reveal, alongside a whoosh. Mute, Exit, and
+moving to another pick stop the remaining tail.
+The controls use dark glass surfaces with a gold **Next** button, colored feedback
+confirmation, native rating controls, and a small droplet burst when an O is saved.
+Ratings, feedback, O, Open scene, Back, and Next share the top bar with the player
+options, leaving the picture and Stash's seek bar clear.
+Pointer clicks return focus to playback, so Space and arrow keys keep using
+Stash's native playback shortcuts. Rating inputs and open menus retain their
+editing focus; keyboard navigation to toolbar buttons retains normal button actions.
+
+The session keeps its original lane settings and fetches more qualifying scenes
+as needed. Once every eligible scene has been selected, it automatically fetches
+a fresh round and continues. Scenes do not repeat within a round; when alternatives
+exist, the next round avoids immediately repeating the last pick. Spent tiles stay
+visible as context; replacements enter after the wheel starts moving. There is no
+fixed session length or total counter. If no scenes qualify, use **Retry** later.
+
+**Mute** silences both the scene and Roulette effects immediately and is remembered
+locally. **Fullscreen** includes Roulette's controls;
+**Exit** or Escape closes the session and returns focus to its launch button.
+While watching, **Useful** and **Not for me** save Curator feedback. The normal
+Stash rating control and **O counter** update the selected scene directly.
+**Open scene ↗** pauses playback and opens the full scene page in another tab,
+keeping your Roulette session and position. Playback uses Stash's native activity
+tracking: watch duration and resume position are saved when tracking is enabled,
+and play count follows Stash's configured minimum watched percentage.
+Roulette's controls and title fade after a short period of inactivity while video
+is playing. Move the pointer, touch the player, or use the keyboard to reveal them.
+They stay visible while paused, loading, or showing an error, and remain usable
+when focused with the keyboard.
+Reduced-motion preferences replace spinning and reshaping with a direct reveal.
+An unavailable scene or failed request offers retry and navigation controls.
+
 ## Inspect and teach
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
