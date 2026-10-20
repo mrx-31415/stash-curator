@@ -98,7 +98,7 @@ assert.equal(sources[spinFirst].loop, true); // Recorded texture keeps rising un
 const landingFirst = sources.length;
 sound.land();
 assert.ok(sources.slice(0, landingFirst).every(source => source.stopped === "now" && source.disconnected));
-assert.equal(sources.length, landingFirst + 1); // Only the physical recording: no pitched oscillator boing.
+assert.equal(sources.length, landingFirst + 1); // Recorded clunk, heartbeat and glow share one cancellable buffer.
 assert.equal(sources[landingFirst].buffer.duration, 4);
 assert.equal(sources[landingFirst].playbackRate.value, 1);
 assert.equal(sources[landingFirst].stopped, undefined); // Let the recording's full decay finish.

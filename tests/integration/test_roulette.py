@@ -528,16 +528,18 @@ def test_roulette_sound_build_resolution_and_mute(page: Page, base_url: str) -> 
       return {spin:peak(.2, 2.5), early:peak(.8, 1.2), late:peak(2.1, 2.5),
         landing:peak(2.6, 3.1), landingBody:rms(2.6, 3),
         sustainedBody:rms(3, 3.4), buildBody:rms(2.1, 2.5),
-        reveal:peak(3.3, 3.6), decay:rms(5, 5.5), lateDecay:rms(5.6, 6.1),
+        firstBeat:rms(2.68, 2.78), secondBeat:rms(2.91, 3.01),
+        reveal:peak(3.3, 3.6), decay:rms(3.6, 4), lateDecay:rms(4.4, 4.8),
         tail:peak(6.8, 8), peak:peak(0, 8)};
     }""")
     assert all(rendered[phase] > 0.005 for phase in ["spin", "landing", "reveal"])
     assert rendered["peak"] < 0.95
-    assert rendered["landingBody"] > max(0.16, rendered["buildBody"] * 4)
-    assert rendered["sustainedBody"] > 0.2
+    assert rendered["landingBody"] > max(0.08, rendered["buildBody"] * 2)
+    assert min(rendered["firstBeat"], rendered["secondBeat"]) > 0.06
+    assert rendered["sustainedBody"] > 0.006
     assert rendered["late"] > rendered["early"] * 1.5
-    assert rendered["decay"] > 0.003
-    assert 0.001 < rendered["lateDecay"] < rendered["decay"]
+    assert rendered["decay"] > 0.001
+    assert 0 < rendered["lateDecay"] < rendered["decay"]
     assert rendered["tail"] == 0
     # Reproduce an intro cue racing the audio context's startup.
     page.evaluate("""() => {

@@ -1,5 +1,7 @@
 # Roulette casino slam
 
+Historical mix, replaced by the [light-clunk reveal](roulette-latch-reveal.md).
+
 The landing combines two real-world recordings, both published under
 [CC0](https://creativecommons.org/publicdomain/zero/1.0/):
 

@@ -28,13 +28,30 @@ The [public guide](using-curator.md#roulette) describes the final behavior.
 - Mute persists locally. Fullscreen includes the controls; overlays hide and wake
   with activity. An open settings dropdown stays visible. Exit, errors, hidden
   tabs, and moving between picks stop sound tails and cancel pending work.
-- Sound uses CC0 recordings for the card shuffle, textured rise, and a heavy
-  slam with chip accent and four-second room decay. The rise follows actual
-  wheel progress through landing. Audio remains embedded PCM with no runtime
-  requests or codec initialization. Source licenses, checksums, and reproducible
-  edits are in [the asset notes](assets/roulette-card-shuffle.md),
+- Sound uses CC0 recordings for the card shuffle, textured rise, and a
+  recorded light clunk with a double heartbeat and velvet glow. The rise follows
+  actual wheel progress through landing. Audio remains embedded PCM with no runtime
+  requests or codec initialization. Source licenses, checksums, and mix
+  details are in [the asset notes](assets/roulette-card-shuffle.md),
   [rise note](assets/roulette-cinematic-sound.md), and
-  [landing note](assets/roulette-casino-slam.md).
+  [landing note](assets/roulette-latch-reveal.md).
+
+## Public demo follow-up
+
+Use a fresh work package for recording. Start from `_install` in
+`tests/integration/test_roulette.py`: it runs the production Roulette and native
+ScenePlayer with synthetic scenes and intercepts all mutations. Replace fixture
+media with short, local Blender open-film excerpts and matching extracted
+thumbnails; keep media outside Git. The old standalone prototype predates the
+final player and sound polish, so it is unsuitable for the release recording.
+
+Prepare 16–24 varied thumbnails from Big Buck Bunny and Sintel, with film/source/
+license credits beside published outputs. Their official license pages are
+https://peach.blender.org/about/ and https://durian.blender.org/sharing/.
+Record a clean browser window with desktop audio in OBS, then export a short
+GIF from the recording. A good take shows lane cards assembling, one spin,
+reveal/playback, then Next folding back into the wheel. Keep an MP4/WebM version
+to demonstrate the sound; GIF has no audio. This setup is planned, not implemented.
 
 ## Implementation and scope
 

@@ -16,7 +16,7 @@ and converts to mono, signed 16-bit little-endian PCM at 22050 Hz. The recording
 is embedded as base64 in `createRouletteSound` so playback needs no additional
 asset request or codec initialization. The rise uses a separate
 [cinematic recording](roulette-cinematic-sound.md), and the landing uses a
-[slam-and-chip mix](roulette-casino-slam.md).
+[recorded clunk with heartbeat and glow](roulette-latch-reveal.md).
 
 Reproduce the PCM from the original file with an existing FFmpeg installation:
 

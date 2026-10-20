@@ -25,7 +25,7 @@ The loop plays at 0.8 speed. Gathering starts it at 18% of the build envelope,
 beneath the card shuffle. Spin reuses those voices without restarting, opening
 the filter and raising gain with actual wheel progress until landing stops them.
 The riser PCM is embedded alongside the shuffle and the separate
-[casino slam](roulette-casino-slam.md), avoiding runtime requests or codec
+[clunk, heartbeat, and glow](roulette-latch-reveal.md), avoiding runtime requests or codec
 initialization. Mute, exit, and tab
 visibility cleanup stop recordings and synthesis together; no independent reverb
 graph can keep sounding after cancellation.
