@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/mrx-31415/stash-curator/compare/v0.40.6...v0.41.0) (2026-10-20)
+
+
+### Features
+
+* add continuous recommendation roulette ([#378](https://github.com/mrx-31415/stash-curator/issues/378)) ([82222f5](https://github.com/mrx-31415/stash-curator/commit/82222f5b4dc65e0e50fe2b32c6a1920bd74ed714))
+
 ## [0.40.6](https://github.com/mrx-31415/stash-curator/compare/v0.40.5...v0.40.6) (2026-10-19)
 
 
