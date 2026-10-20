@@ -28,6 +28,12 @@ The [public guide](using-curator.md#roulette) describes the final behavior.
 - Mute persists locally. Fullscreen includes the controls; overlays hide and wake
   with activity. An open settings dropdown stays visible. Exit, errors, hidden
   tabs, and moving between picks stop sound tails and cancel pending work.
+- Ratings, feedback, O, Open scene, and Back/Next share the top bar with the player
+  options; the title sits beneath that header, leaving the playback area clear.
+  Native player focus does not pin overlays open. Pointer toolbar actions
+  restore playback focus; Space, seek/volume arrows, and other native shortcuts
+  delegate to Stash's handler. Inputs, menus, and intentional keyboard focus on
+  toolbar controls retain their normal editing/navigation behavior.
 - Sound uses CC0 recordings for the card shuffle, textured rise, and a
   recorded light clunk with a double heartbeat and velvet glow. The rise follows
   actual wheel progress through landing. Audio remains embedded PCM with no runtime
@@ -38,12 +44,12 @@ The [public guide](using-curator.md#roulette) describes the final behavior.
 
 ## Public demo follow-up
 
-Use a fresh work package for recording. Start from `_install` in
-`tests/integration/test_roulette.py`: it runs the production Roulette and native
-ScenePlayer with synthetic scenes and intercepts all mutations. Replace fixture
-media with short, local Blender open-film excerpts and matching extracted
-thumbnails; keep media outside Git. The old standalone prototype predates the
-final player and sound polish, so it is unsuitable for the release recording.
+The playback controls have been accepted on desktop and mobile; recording remains
+a separate follow-up. The first Blender film demo lives on `demo/roulette`;
+its scaffold does not faithfully show the current Curator page. The next recording
+should use a disposable Stash library with the real Curator page and native player,
+seeded only with open-film excerpts. Keep media outside Git and leave the personal
+library untouched.
 
 Prepare 16–24 varied thumbnails from Big Buck Bunny and Sintel, with film/source/
 license credits beside published outputs. Their official license pages are
@@ -51,7 +57,8 @@ https://peach.blender.org/about/ and https://durian.blender.org/sharing/.
 Record a clean browser window with desktop audio in OBS, then export a short
 GIF from the recording. A good take shows lane cards assembling, one spin,
 reveal/playback, then Next folding back into the wheel. Keep an MP4/WebM version
-to demonstrate the sound; GIF has no audio. This setup is planned, not implemented.
+to demonstrate the sound; GIF has no audio. Check capture smoothness before
+rendering the final take.
 
 ## Implementation and scope
 
@@ -88,6 +95,30 @@ PR preparation will record fresh post-rebase verification below. Physical Firefo
 mobile touch, rotation, and platform fullscreen acceptance remains a manual check;
 desktop/mobile emulation and the user's installed listening/visual passes do not
 cover every device behavior.
+
+## Playback toolbar polish verification
+
+- The repository gate passed lint, format, typing, Go checks, packaging, and all
+  765 unit tests. Its performance check exceeded feature-stage budgets with
+  disk-backed temporary storage; the isolated retry with `TMPDIR=/tmp` passed
+  without changing budgets (40,922 ms total).
+- Roulette browser regression and focused runs passed, including native player
+  focus while idle, Space after toolbar clicks and Next/Back, native seek/volume
+  shortcuts, rating input focus, and desktop seek-bar clearance. An animation
+  timeout during competing full-suite work passed on its isolated rerun.
+- Desktop and mobile layouts were inspected with open-film fixture media. The
+  local install's 11 runtime files matched the build archive. Physical Firefox
+  mobile verification and the replacement real-Stash demo remain outstanding.
+- The complete toolbar now lives in the header, including ratings, feedback,
+  O, Open scene, navigation, and the scene title. Its layout follow-up passed
+  six focused native browser cases (settings, both rating formats, mobile
+  navigation, auto-hide, and keyboard focus) plus plugin checks and desktop/mobile
+  visual checks.
+- Mobile toolbar rows and title share a left edge with consistent gaps and button
+  heights. Both native rating formats were visually checked at 320, 390, and
+  448 CSS pixels; controls stay within the viewport.
+- The installed toolbar layout was accepted on mobile and desktop before PR
+  update and merge. Device rotation and platform fullscreen remain manual checks.
 
 ## PR preparation
 

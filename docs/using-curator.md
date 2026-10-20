@@ -111,11 +111,16 @@ followed by a brief expanding outline when the winner lands. With sound enabled,
 a recorded card shuffle and a quiet air sweep follow the cards into the circle.
 The same layered, recorded sweep continues beneath the card clicks
 right up to the actual landing;
-a heavy slam with a brief chip clatter resolves the selection. Room reverb fades
-over four seconds beneath the reveal, alongside a soft whoosh. Mute, Exit, and
+a recorded mechanical clunk, double heartbeat, and quiet harmonic glow resolve
+the selection. A soft room tail fades beneath the reveal, alongside a whoosh. Mute, Exit, and
 moving to another pick stop the remaining tail.
 The controls use dark glass surfaces with a gold **Next** button, colored feedback
-confirmation, glowing ratings, and a small droplet burst when an O is saved.
+confirmation, native rating controls, and a small droplet burst when an O is saved.
+Ratings, feedback, O, Open scene, Back, and Next share the top bar with the player
+options, leaving the picture and Stash's seek bar clear.
+Pointer clicks return focus to playback, so Space and arrow keys keep using
+Stash's native playback shortcuts. Rating inputs and open menus retain their
+editing focus; keyboard navigation to toolbar buttons retains normal button actions.
 
 The session keeps its original lane settings and fetches more qualifying scenes
 as needed. Once every eligible scene has been selected, it automatically fetches

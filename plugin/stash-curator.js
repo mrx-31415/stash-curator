@@ -6101,6 +6101,14 @@
           if (session.phase === "playing" && media && !media.paused && !media.ended && media.readyState >= 3) root.classList.add("curator-roulette-quiet");
         }, 2700);
       }
+      function focusPlayback(pointer = false) {
+        const active = document.activeElement;
+        if (root.querySelector(".curator-roulette-settings.show") || active?.matches("input, textarea, select, [contenteditable=true]")) return;
+        if (!pointer && active?.closest(".curator-roulette-hud, .curator-roulette-controls") && active.matches(":focus-visible")) return;
+        const native = Api.utils.InteractiveUtils.getPlayer();
+        if (session.phase === "playing" && native?.el()?.contains(media)) native.focus();
+        else if (pointer) root.focus({ preventScroll: true });
+      }
       const resetShape = () => {
         spinner.getAnimations({ subtree: true }).forEach((animation) => animation.cancel());
         spinner.querySelectorAll(".curator-roulette-flight, .curator-roulette-hit").forEach((node) => node.remove());
@@ -6232,21 +6240,21 @@
           await host.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: "ease-out" }).finished.catch(() => {});
           if (session.closed || token !== session.token) return;
         }
-        resetShape(); publish("playing");
+        resetShape(); publish("playing"); focusPlayback();
       }
       function bind() {
         const element = host.querySelector("video");
         if (element !== media) {
           if (media) {
             media.removeEventListener("loadeddata", reveal); media.removeEventListener("error", mediaError); media.removeEventListener("volumechange", volumeChanged);
-            ["playing", "pause", "waiting", "ended"].forEach((event) => media.removeEventListener(event, wake));
+            ["playing", "pause", "waiting", "ended", "canplay", "seeked"].forEach((event) => media.removeEventListener(event, wake));
           }
           media = element;
           if (media) {
             // Stash preloads nothing; load a frame even when the browser blocks autoplay.
             media.preload = "auto"; media.muted = muted;
             media.addEventListener("loadeddata", reveal); media.addEventListener("error", mediaError); media.addEventListener("volumechange", volumeChanged);
-            ["playing", "pause", "waiting", "ended"].forEach((event) => media.addEventListener(event, wake));
+            ["playing", "pause", "waiting", "ended", "canplay", "seeked"].forEach((event) => media.addEventListener(event, wake));
             const native = Api.utils.InteractiveUtils.getPlayer();
             if (native && native !== markerOwner && native.el()?.contains(media)) {
               markerOwner = native;
@@ -6428,6 +6436,17 @@
       }
       controller.current = {
         next: advance, previous: back, fail, close,
+        focus() { if (!session.closed && root.isConnected) focusPlayback(true); },
+        hotkeys(event) {
+          if (session.phase !== "playing" || event.metaKey || event.defaultPrevented) return false;
+          const target = event.target;
+          if (target.closest(".video-js, input, textarea, select, [contenteditable=true], [role=slider], .dropdown-menu")) return false;
+          if (target.closest(".curator-roulette-hud, .curator-roulette-controls") && target.matches(":focus-visible")) return false;
+          if (![" ", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "m", "l", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "[", "]"].includes(event.key)) return false;
+          const native = Api.utils.InteractiveUtils.getPlayer(), handler = native?.options()?.userActions?.hotkeys;
+          if (typeof handler !== "function" || !native.el()?.contains(media)) return false;
+          native.focus(); handler.call(native, event); return true;
+        },
         pause() { media?.pause(); remember(); },
         complete() { finishTracker(true); advance(); },
         mute() { muted = !muted; if (media) media.muted = muted; try { localStorage.setItem("curator-roulette-muted", String(muted)); } catch (_) {} enableAudio(); sound?.mute(muted); publish(); },
@@ -6452,7 +6471,7 @@
         remember(); media?.pause(); finishTracker(false); resetShape();
         if (media) {
           media.removeEventListener("loadeddata", reveal); media.removeEventListener("error", mediaError); media.removeEventListener("volumechange", volumeChanged);
-          ["playing", "pause", "waiting", "ended"].forEach((event) => media.removeEventListener(event, wake));
+          ["playing", "pause", "waiting", "ended", "canplay", "seeked"].forEach((event) => media.removeEventListener(event, wake));
         }
         sound?.stop(); audio?.close().catch(() => {}); document.body.style.overflow = overflow;
         if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
@@ -6461,9 +6480,15 @@
     }, [session, onClose]);
     const busy = ["loading", "assembling", "spinning", "rewinding", "celebrating", "landing", "revealing", "returning"].includes(view.phase);
     return ReactDOM.createPortal(React.createElement("dialog", { ref: dialog, className: "curator-roulette-dialog", "aria-label": "Roulette player", onCancel: (event) => { event.preventDefault(); controller.current?.close(); } },
-      React.createElement("div", { ref: stage, className: "curator-roulette-stage", "data-phase": view.phase, "data-intro": view.index < 0, onKeyDownCapture: (event) => {
+      React.createElement("div", { ref: stage, className: "curator-roulette-stage", tabIndex: -1, "data-phase": view.phase, "data-intro": view.index < 0,
+      onClickCapture: (event) => {
+        if (event.detail > 0 && event.target.closest(".curator-roulette-hud button, .curator-roulette-controls button, .curator-roulette-controls a")) requestAnimationFrame(() => controller.current?.focus());
+      }, onKeyDownCapture: (event) => {
+        if (event.target.closest("input, textarea, select, [contenteditable=true], .dropdown-menu")) return;
         if (event.key.toLowerCase() === "f" && !event.ctrlKey && !event.altKey && !event.metaKey) {
           event.preventDefault(); event.stopPropagation(); controller.current?.fullscreen();
+        } else if (controller.current?.hotkeys(event.nativeEvent)) {
+          event.preventDefault(); event.stopPropagation();
         }
       } },
         React.createElement("div", { className: "curator-roulette-spinner", "aria-hidden": "true" },
@@ -6474,22 +6499,22 @@
           entry && React.createElement(RouletteScene, { key: `${entry.origin.scene_id}:${entry.attempt || 0}`, entry, onNext: next, onPrevious: previous, onComplete: completed, onError: failed })),
         React.createElement("header", { className: "curator-roulette-hud" },
           React.createElement("span", null, "ROULETTE · ", laneByValue.get(session.lane).label),
+          React.createElement("div", { className: "curator-roulette-controls" },
+            React.createElement("div", { className: "curator-roulette-status", role: "status", "aria-live": "polite" },
+            view.error || (view.phase === "loading" ? "Loading contenders…" : view.phase === "assembling" ? "Gathering your lane…" : view.phase === "spinning" ? "Spinning…" : view.phase === "rewinding" ? "Returning to your previous pick…" : view.phase === "celebrating" ? "Your pick" : view.phase === "landing" ? "Loading selected scene…" : view.phase === "exhausted" ? "No recommendations qualify right now." : entry?.scene?.title || "Untitled scene")),
+            entry && React.createElement(RouletteActions, { key: entry.origin.scene_id, entry, disabled: busy || view.phase !== "playing", onOpen: () => controller.current.pause() })),
           React.createElement("div", null,
+            React.createElement("div", { className: "curator-roulette-navigation" },
+              React.createElement(Button, { variant: "dark", disabled: busy || view.index < 1, onClick: previous }, "Back"),
+              React.createElement(Button, { variant: "primary", disabled: busy || view.phase === "exhausted", onClick: next }, "Next"),
+              view.phase === "error" && React.createElement(Button, { variant: "dark", onClick: () => controller.current.retry() }, "Retry"),
+              view.phase === "exhausted" && React.createElement(Button, { variant: "primary", onClick: () => controller.current.retry() }, "Retry")),
             React.createElement(Button, { variant: "dark", size: "sm", "aria-pressed": view.muted, onClick: () => controller.current.mute() }, view.muted ? "Unmute" : "Mute"),
             React.createElement(libraries.Bootstrap.Dropdown, { alignRight: true, className: "curator-roulette-settings" },
               React.createElement(libraries.Bootstrap.Dropdown.Toggle, { id: "curator-roulette-settings", variant: "dark", size: "sm", "aria-label": "Roulette settings", title: "Roulette settings" }, React.createElement(FontAwesomeIcon, { icon: faCog })),
               React.createElement(libraries.Bootstrap.Dropdown.Menu, null, React.createElement(RouletteAnimationSetting, { compact: true }))),
             React.createElement(Button, { variant: "dark", size: "sm", onClick: () => controller.current.fullscreen() }, "Fullscreen"),
-            React.createElement(Button, { variant: "dark", size: "sm", onClick: () => controller.current.close() }, "Exit"))),
-        React.createElement("div", { className: "curator-roulette-controls" },
-          React.createElement("div", { className: "curator-roulette-status", role: "status", "aria-live": "polite" },
-          view.error || (view.phase === "loading" ? "Loading contenders…" : view.phase === "assembling" ? "Gathering your lane…" : view.phase === "spinning" ? "Spinning…" : view.phase === "rewinding" ? "Returning to your previous pick…" : view.phase === "celebrating" ? "Your pick" : view.phase === "landing" ? "Loading selected scene…" : view.phase === "exhausted" ? "No recommendations qualify right now." : entry?.scene?.title || "Untitled scene")),
-          entry && React.createElement(RouletteActions, { key: entry.origin.scene_id, entry, disabled: busy || view.phase !== "playing", onOpen: () => controller.current.pause() }),
-          React.createElement("div", { className: "curator-roulette-navigation" },
-          React.createElement(Button, { variant: "dark", disabled: busy || view.index < 1, onClick: previous }, "Back"),
-          React.createElement(Button, { variant: "primary", disabled: busy || view.phase === "exhausted", onClick: next }, "Next"),
-          view.phase === "error" && React.createElement(Button, { variant: "dark", onClick: () => controller.current.retry() }, "Retry"),
-          view.phase === "exhausted" && React.createElement(Button, { variant: "primary", onClick: () => controller.current.retry() }, "Retry")))
+            React.createElement(Button, { variant: "dark", size: "sm", onClick: () => controller.current.close() }, "Exit")))
       )), document.body);
   }
 

@@ -562,7 +562,7 @@ def test_roulette_sound_build_resolution_and_mute(page: Page, base_url: str) -> 
     expect(stage).to_have_attribute("data-phase", "spinning", timeout=15000)
     assert page.evaluate("window.__introAudioResumed === true")
     assert page.evaluate("__rouletteSounds.some(c => c.name === 'gather')")
-    page.get_by_role("button", name="Mute", exact=True).click()
+    page.locator(".curator-roulette-hud").get_by_role("button", name="Mute", exact=True).click()
     muted_at = page.evaluate("__rouletteSounds.length")
     expect(stage).to_have_attribute("data-phase", "playing", timeout=30000)
     assert not page.evaluate(
@@ -850,6 +850,8 @@ def test_roulette_overlays_hide_and_wake(page: Page, base_url: str) -> None:
     page.locator("#launch-roulette").click()
     stage = page.locator(".curator-roulette-stage")
     expect(stage).to_have_attribute("data-phase", "playing", timeout=15000)
+    # Native player focus must not pin Roulette's overlay open.
+    page.evaluate("PluginApi.utils.InteractiveUtils.getPlayer().focus()")
     page.mouse.move(20, 400)
     hidden = "getComputedStyle(document.querySelector('.curator-roulette-hud')).opacity === '0'"
     page.wait_for_function(hidden)
@@ -877,6 +879,88 @@ def test_roulette_overlays_hide_and_wake(page: Page, base_url: str) -> None:
     assert page.locator(".curator-roulette-hud").evaluate(
         "node => getComputedStyle(node).opacity === '1'"
     )
+    page.get_by_role("button", name="Exit", exact=True).click()
+    assert not errors, errors
+
+
+def test_roulette_native_keyboard_focus_and_control_spacing(page: Page, base_url: str) -> None:
+    from playwright.sync_api import expect
+
+    errors = _install(page, base_url, count=3, rating_type="decimal")
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
+    page.locator("#launch-roulette").click()
+    stage = page.locator(".curator-roulette-stage")
+    expect(stage).to_have_attribute("data-phase", "playing", timeout=30000)
+    expect(
+        page.locator(".curator-roulette-hud").get_by_role("button", name="Next", exact=True)
+    ).to_be_visible()
+    expect(
+        page.locator(".curator-roulette-hud").get_by_role("button", name="Back", exact=True)
+    ).to_be_visible()
+    expect(page.locator(".curator-roulette-hud .curator-roulette-actions")).to_be_visible()
+    assert page.evaluate("""() => {
+      const toolbar = document.querySelector('.curator-roulette-hud');
+      const seek = document.querySelector('.curator-roulette-player .vjs-control-bar');
+      return toolbar.getBoundingClientRect().bottom < 150 &&
+        toolbar.getBoundingClientRect().bottom + 48 <= seek.getBoundingClientRect().top;
+    }""")
+    native_focus = """PluginApi.utils.InteractiveUtils.getPlayer().el()
+      .contains(document.activeElement)"""
+    page.locator(".curator-roulette-hud").get_by_role("button", name="Mute", exact=True).click()
+    page.wait_for_function(native_focus)
+    page.keyboard.press("Space")
+    page.wait_for_function("document.querySelector('video').paused")
+    page.keyboard.press("Space")
+    page.wait_for_function("!document.querySelector('video').paused")
+    assert page.evaluate("__rouletteSession.index") == 0
+
+    # Observe real native shortcut seeks without relying on byte-range seeking
+    # in the short, intercepted MP4 fixture.
+    page.evaluate("""() => {
+      const player=PluginApi.utils.InteractiveUtils.getPlayer(), read=player.currentTime;
+      window.__rouletteSeeks=[];
+      player.currentTime=function(value) {
+        if(arguments.length){__rouletteSeeks.push(value);return this;}
+        return read.call(this);
+      };
+      player.volume(.4);
+    }""")
+    stage.focus()
+    page.keyboard.press("Shift+ArrowRight")
+    stage.focus()
+    page.keyboard.press("ArrowLeft")
+    seeks = page.evaluate("__rouletteSeeks")
+    assert len(seeks) == 2 and 5 <= seeks[0] < 6 and seeks[1] == 0
+    stage.focus()
+    page.keyboard.press("ArrowUp")
+    assert page.evaluate("PluginApi.utils.InteractiveUtils.getPlayer().volume()") == pytest.approx(
+        0.5
+    )
+
+    page.get_by_role("button", name="Useful", exact=True).click()
+    page.wait_for_function(native_focus)
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.wait_for_function("__rouletteSession.index===1&&__rouletteSession.phase==='playing'")
+    page.wait_for_function(native_focus)
+    page.keyboard.press("Space")
+    page.wait_for_function("document.querySelector('video').paused")
+    assert page.evaluate("__rouletteSession.index") == 1
+    page.get_by_role("button", name="Back", exact=True).click()
+    page.wait_for_function("__rouletteSession.index===0&&__rouletteSession.phase==='playing'")
+    page.wait_for_function(native_focus)
+    page.keyboard.press("Space")
+    page.wait_for_function("document.querySelector('video').paused")
+
+    rating = page.locator(".curator-roulette-rating")
+    rating.locator(".edit-rating-button").click()
+    expect(rating.locator("input")).to_be_focused()
+    rating.locator("input").fill("7.0")
+    page.keyboard.press("ArrowUp")
+    page.keyboard.press("f")
+    expect(rating.locator("input")).to_be_focused()
+    assert page.locator("video").evaluate("video=>video.paused")
+    assert page.evaluate("document.fullscreenElement===null")
     page.get_by_role("button", name="Exit", exact=True).click()
     assert not errors, errors
 
