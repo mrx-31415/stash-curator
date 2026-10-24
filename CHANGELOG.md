@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.1](https://github.com/mrx-31415/stash-curator/compare/v0.41.0...v0.41.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* avoid SQLite variable limits when building lanes on large libraries ([#382](https://github.com/mrx-31415/stash-curator/issues/382)) ([484c790](https://github.com/mrx-31415/stash-curator/commit/484c790f038baf8d27d20350af3b7db725b09a3a))
+
 ## [0.41.0](https://github.com/mrx-31415/stash-curator/compare/v0.40.6...v0.41.0) (2026-10-20)
 
 
