@@ -84,17 +84,11 @@ WHERE fa.model_id=? AND fd.family='performer_identity'
 	if len(m.affinity) == 0 {
 		return nil
 	}
-	affinityKeys := sortedFloatKeysM(m.affinity)
-	placeholders := inClause(len(affinityKeys))
-	args := make([]any, 0, len(affinityKeys)+1)
-	args = append(args, m.modelID)
-	for _, key := range affinityKeys {
-		args = append(args, key)
-	}
+	affinityKeys := jsonIDs(sortedFloatKeysM(m.affinity))
 	edgeRows, err := m.db.Query(`SELECT performer_id, similar_performer_id, similarity
 FROM model_performer_edge
-WHERE model_id=? AND performer_id IN (`+placeholders+`)
-ORDER BY performer_id, rank`, args...)
+WHERE model_id=? AND performer_id IN (SELECT value FROM json_each(?))
+ORDER BY performer_id, rank`, m.modelID, affinityKeys)
 	if err != nil {
 		return err
 	}
@@ -112,7 +106,7 @@ ORDER BY performer_id, rank`, args...)
 	}
 	membership := make(map[string]map[string]bool)
 	memberRows, err := m.db.Query(`SELECT scene_id, performer_id FROM scene_performer
-WHERE performer_id IN (`+placeholders+`) ORDER BY scene_id, performer_id`, args...)
+WHERE performer_id IN (SELECT value FROM json_each(?)) ORDER BY scene_id, performer_id`, affinityKeys)
 	if err != nil {
 		return err
 	}
@@ -167,13 +161,9 @@ WHERE performer_id IN (`+placeholders+`) ORDER BY scene_id, performer_id`, args.
 		return nil
 	}
 	sort.Strings(walkable)
-	scenePlaceholders := inClause(len(walkable))
-	sceneArgs := make([]any, len(walkable))
-	for i, sceneID := range walkable {
-		sceneArgs[i] = sceneID
-	}
+	sceneIDs := jsonIDs(walkable)
 	studioRows, err := m.db.Query(`SELECT scene_id, studio_id FROM source_scene
-WHERE scene_id IN (`+scenePlaceholders+`) AND studio_id IS NOT NULL`, sceneArgs...)
+WHERE scene_id IN (SELECT value FROM json_each(?)) AND studio_id IS NOT NULL`, sceneIDs)
 	if err != nil {
 		return err
 	}
@@ -190,7 +180,7 @@ WHERE scene_id IN (`+scenePlaceholders+`) AND studio_id IS NOT NULL`, sceneArgs.
 	}
 	tagSets := make(map[string]map[string]bool)
 	tagRows, err := m.db.Query(`SELECT st.scene_id, st.tag_id FROM scene_tag st
-WHERE st.scene_id IN (`+scenePlaceholders+`) ORDER BY st.scene_id, st.tag_id`, sceneArgs...)
+WHERE st.scene_id IN (SELECT value FROM json_each(?)) ORDER BY st.scene_id, st.tag_id`, sceneIDs)
 	if err != nil {
 		return err
 	}
