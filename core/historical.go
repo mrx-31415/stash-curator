@@ -289,11 +289,7 @@ func historicalRebuild(db dbx, sceneIDs []string, progress func(processed, total
 	} else if limited {
 		// One JSON parameter avoids SQLite's variable limit on large library syncs.
 		clause = "WHERE scene_id IN (SELECT value FROM json_each(?))"
-		selected := jvArr()
-		for _, id := range sceneIDs {
-			selected.arr = append(selected.arr, jvStr(id))
-		}
-		args = []any{selected.marshalCompact()}
+		args = []any{jsonIDs(sceneIDs)}
 	}
 	type sceneRow struct {
 		sceneID  string

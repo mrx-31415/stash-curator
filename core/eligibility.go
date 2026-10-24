@@ -52,6 +52,17 @@ func inClause(n int) string {
 	return strings.Repeat("?,", n-1) + "?"
 }
 
+// jsonIDs encodes ids as the single parameter of an
+// `IN (SELECT value FROM json_each(?))` clause, which avoids SQLite's
+// bound-variable limit on library-sized selections.
+func jsonIDs(ids []string) string {
+	values := jvArr()
+	for _, id := range ids {
+		values.arr = append(values.arr, jvStr(id))
+	}
+	return values.marshalCompact()
+}
+
 // sceneEligibility mirrors curator/model/boundaries.py scene_eligibility
 // with include_temporary=True (the read path never disables it).
 func sceneEligibility(db dbx, referenceAtMs int64, sceneIDs map[string]bool) (map[string]eligibilityResult, error) {

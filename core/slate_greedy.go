@@ -956,14 +956,10 @@ func buildCandidates(db dbx, modelID string, classifications []*greedyCandidate)
 		}
 	}
 	if len(sceneIDs) > 0 {
-		ids := sortedKeys(sceneIDs)
-		placeholders := inClause(len(ids))
-		args := make([]any, len(ids))
-		for i, id := range ids {
-			args[i] = id
-		}
+		// Every classified scene: one JSON parameter, not one per scene.
+		ids := jsonIDs(sortedKeys(sceneIDs))
 		rows, err := db.Query(`SELECT scene_id, performer_id FROM scene_performer
-WHERE scene_id IN (`+placeholders+`) ORDER BY scene_id, position`, args...)
+WHERE scene_id IN (SELECT value FROM json_each(?)) ORDER BY scene_id, position`, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -981,7 +977,7 @@ WHERE scene_id IN (`+placeholders+`) ORDER BY scene_id, position`, args...)
 		}
 		studioRows, err := db.Query(`SELECT s.scene_id, s.studio_id, st.parent_studio_id
 FROM source_scene s LEFT JOIN source_studio st ON st.studio_id=s.studio_id
-WHERE s.scene_id IN (`+placeholders+`)`, args...)
+WHERE s.scene_id IN (SELECT value FROM json_each(?))`, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -1023,19 +1019,12 @@ func sceneContentVectors(db dbx, featureVersion string, sceneIDs map[string]bool
 	if len(sceneIDs) == 0 {
 		return result, order, nil
 	}
-	ids := sortedKeys(sceneIDs)
-	placeholders := inClause(len(ids))
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, featureVersion)
-	for _, id := range ids {
-		args = append(args, id)
-	}
 	rows, err := db.Query(`SELECT ef.entity_id, fd.name, ef.value
 FROM entity_feature ef
 JOIN feature_definition fd ON fd.feature_id=ef.feature_id
 WHERE ef.feature_version=? AND ef.entity_type='scene' AND fd.family='content'
-  AND ef.entity_id IN (`+placeholders+`)
-ORDER BY ef.entity_id, fd.name`, args...)
+  AND ef.entity_id IN (SELECT value FROM json_each(?))
+ORDER BY ef.entity_id, fd.name`, featureVersion, jsonIDs(sortedKeys(sceneIDs)))
 	if err != nil {
 		return nil, nil, err
 	}
