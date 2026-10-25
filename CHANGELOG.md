@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.42.2](https://github.com/mrx-31415/stash-curator/compare/v0.42.1...v0.42.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* keep endless recommendations from restoring another lane's results ([#395](https://github.com/mrx-31415/stash-curator/issues/395)) ([11fc969](https://github.com/mrx-31415/stash-curator/commit/11fc9697abe620dede78a3d54a11c9e8f0f73c2e))
+* let Curator pages use the full screen width ([#393](https://github.com/mrx-31415/stash-curator/issues/393)) ([ac7535a](https://github.com/mrx-31415/stash-curator/commit/ac7535af9beb2d68c08a087bc181554a77355b35))
+* repeat anchored schedules every interval under a day ([#391](https://github.com/mrx-31415/stash-curator/issues/391)) ([2d39173](https://github.com/mrx-31415/stash-curator/commit/2d391731423c57eed64b8cbcfaf6e6bacb37e183))
+
+
+### Performance Improvements
+
+* hydrate only the returned recommendation page ([#394](https://github.com/mrx-31415/stash-curator/issues/394)) ([a2cd02e](https://github.com/mrx-31415/stash-curator/commit/a2cd02edd2e53ab9f788455b37e562a88fac49a9))
+* refresh Expand incrementally and reuse the look-alike chase ([#390](https://github.com/mrx-31415/stash-curator/issues/390)) ([1439d4d](https://github.com/mrx-31415/stash-curator/commit/1439d4d69e8407f48e5ce3570ea9a6019fa26049))
+
 ## [0.42.1](https://github.com/mrx-31415/stash-curator/compare/v0.42.0...v0.42.1) (2026-10-25)
 
 
