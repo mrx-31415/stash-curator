@@ -412,7 +412,9 @@ removed from the same view or in Stash.
   you start explicitly still run; a task already running finishes normally.
 - On Linux containers, the worker uses half the container memory limit as a soft
   Go memory budget, leaving room for Stash and build subprocesses. An explicit
-  `GOMEMLIMIT` takes precedence.
+  `GOMEMLIMIT` takes precedence. The worker also collects garbage more often than
+  Go's default (`GOGC=50`) to lower build peak memory; an explicit `GOGC` takes
+  precedence.
 - Sync after meaningful library or metadata changes; a full sync reconciles deletions and
   tag merges that targeted entity hooks do not cover.
 - Run the first sync/build before expecting recommendation lanes to contain results.

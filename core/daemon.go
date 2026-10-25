@@ -742,6 +742,12 @@ func runDaemon(pluginDir string) {
 			infoLog(fmt.Sprintf("worker Go memory budget: %d MiB", budget>>20))
 		}
 	}
+	// Builds are SQLite-bound, so trading GC work for headroom is cheap: on a
+	// 24k-scene synthetic corpus GOGC=50 cut build peak RSS by ~20%.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(workerGCPercent)
+		os.Setenv("GOGC", strconv.Itoa(workerGCPercent))
+	}
 
 	state, err := readWorkerState(pluginDir)
 	if err != nil {

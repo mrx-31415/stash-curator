@@ -35,7 +35,14 @@ func parallelChunks[T any](n, threads int, fn func(start, end int) []T) []T {
 		}(w, start, end)
 	}
 	wg.Wait()
-	var out []T
+	total := 0
+	for _, part := range results {
+		total += len(part)
+	}
+	if total == 0 {
+		return nil
+	}
+	out := make([]T, 0, total)
 	for _, part := range results {
 		out = append(out, part...)
 	}
