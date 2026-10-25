@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.42.1](https://github.com/mrx-31415/stash-curator/compare/v0.42.0...v0.42.1) (2026-10-25)
+
+
+### Performance Improvements
+
+* lower model-build peak memory ([#388](https://github.com/mrx-31415/stash-curator/issues/388)) ([28313c9](https://github.com/mrx-31415/stash-curator/commit/28313c91100d90201ebe624e038cca282c5b1684))
+* pack performer profiles into one feature-artifact row per performer ([#387](https://github.com/mrx-31415/stash-curator/issues/387)) ([8db67d4](https://github.com/mrx-31415/stash-curator/commit/8db67d4b855edab23e7dcdaec8e4fb9348815d02))
+
 ## [0.42.0](https://github.com/mrx-31415/stash-curator/compare/v0.41.1...v0.42.0) (2026-10-25)
 
 
