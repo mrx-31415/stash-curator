@@ -503,6 +503,34 @@ func TestSchedulerAnchorCatchUp(t *testing.T) {
 	})
 }
 
+// An interval under a day repeats from the anchor hour instead of collapsing
+// to once a day: 6h at 04:00 runs at 04, 10, 16 and 22.
+func TestNextAnchoredRunRepeatsWithinTheDay(t *testing.T) {
+	at := func(day, hour, minute int) int64 {
+		return time.Date(2026, 10, day, hour, minute, 0, 0, time.Local).UnixMilli()
+	}
+	for _, tc := range []struct {
+		now      int64
+		interval float64
+		want     int64
+	}{
+		{at(25, 3, 0), 6, at(25, 4, 0)},
+		{at(25, 4, 0), 6, at(25, 10, 0)},
+		{at(25, 11, 30), 6, at(25, 16, 0)},
+		{at(25, 22, 0), 6, at(26, 4, 0)},
+		{at(26, 1, 0), 6, at(26, 4, 0)},
+		{at(25, 23, 0), 5, at(26, 0, 0)}, // 04, 09, 14, 19, 00 — then 04 again
+		{at(26, 0, 30), 5, at(26, 4, 0)},
+		{at(25, 5, 0), 24, at(26, 4, 0)},
+		{at(25, 5, 0), 48, at(27, 4, 0)},
+	} {
+		if got := nextAnchoredRun(tc.now, 4, tc.interval); got != tc.want {
+			t.Errorf("now %s every %vh: got %s, want %s", time.UnixMilli(tc.now).Format("02 15:04"), tc.interval,
+				time.UnixMilli(got).Format("02 15:04"), time.UnixMilli(tc.want).Format("02 15:04"))
+		}
+	}
+}
+
 func TestSchedulerStayAlive(t *testing.T) {
 	db, _ := openTempDB(t)
 	if err := migrate(db, 1_700_000_000_000); err != nil {
