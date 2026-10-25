@@ -16,11 +16,16 @@ import (
 	"strings"
 )
 
-const artifactSchemaVersion = 4
+const artifactSchemaVersion = 5
 
-var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true}
+var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true}
 
+// featureTables are required in every feature artifact (compaction checks
+// them); featureViewTables adds the tables only newer schemas carry, which
+// get a view only when the attached artifact has them.
 var featureTables = []string{"feature_definition", "entity_feature", "scene_content_search"}
+
+var featureViewTables = append(append([]string{}, featureTables...), "performer_profile")
 
 var modelTables = []string{
 	"feature_affinity",
@@ -142,7 +147,7 @@ func attachActiveArtifacts(db dbx) error {
 		query  string
 	}
 	attaches := []attach{
-		{"feature_generation", featureTables, "feature_build",
+		{"feature_generation", featureViewTables, "feature_build",
 			`SELECT artifact_basename FROM feature_build WHERE status='published' AND validation_status='valid'`},
 		{"model_generation", modelTables, "model_version",
 			`SELECT artifact_basename FROM model_version WHERE status='published' AND validation_status='valid'`},
@@ -194,11 +199,11 @@ func attachActiveArtifacts(db dbx) error {
 // database (read-only, mutable) plus the feature generation, shadowing every
 // non-owned core table and the feature tables with temp views.
 func attachBuildSources(db dbx, corePath, featurePath string) error {
-	owned := make(map[string]bool, len(modelTables)+len(featureTables))
+	owned := make(map[string]bool, len(modelTables)+len(featureViewTables))
 	for _, table := range modelTables {
 		owned[table] = true
 	}
-	for _, table := range featureTables {
+	for _, table := range featureViewTables {
 		owned[table] = true
 	}
 	if _, err := db.Exec(`ATTACH DATABASE ? AS core`, readonlyArtifactURI(corePath, false)); err != nil {
@@ -237,7 +242,11 @@ func attachBuildSources(db dbx, corePath, featurePath string) error {
 			return err
 		}
 	}
-	for _, table := range featureTables {
+	featureViews, err := artifactTables(db, "feature_generation", featureViewTables)
+	if err != nil {
+		return err
+	}
+	for _, table := range featureViews {
 		if _, err := db.Exec(fmt.Sprintf(`CREATE TEMP VIEW %s AS SELECT * FROM feature_generation.%s`,
 			quoteIdent(table), quoteIdent(table))); err != nil {
 			return err

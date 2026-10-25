@@ -20,7 +20,6 @@ import (
 	"math"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 )
 
@@ -58,35 +57,19 @@ type performerProfile struct {
 }
 
 func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (map[string]*performerProfile, error) {
-	rows, err := db.Query(`
-		SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
-		FROM entity_feature ef
-		JOIN feature_definition fd ON fd.feature_id = ef.feature_id
-		WHERE ef.feature_version = ? AND ef.entity_type = 'performer' AND fd.family LIKE 'profile:%'
-		ORDER BY ef.entity_id, ef.feature_id`, featureVersion)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	profiles := make(map[string]*performerProfile)
-	for rows.Next() {
-		var entity, family, name string
-		var value, confidence float64
-		if err := rows.Scan(&entity, &family, &name, &value, &confidence); err != nil {
-			return nil, err
-		}
+	err := forEachProfileRow(db, featureVersion, nil, func(entity, block, name string, value, confidence float64) {
 		profile := profiles[entity]
 		if profile == nil {
 			profile = &performerProfile{id: entity, blocks: make(map[string]map[string]profileValue)}
 			profiles[entity] = profile
 		}
-		block := strings.TrimPrefix(family, "profile:")
 		if profile.blocks[block] == nil {
 			profile.blocks[block] = make(map[string]profileValue)
 		}
 		profile.blocks[block][name] = profileValue{value: value, confidence: confidence}
-	}
-	if err := rows.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	cacheProfileEntries(profiles)

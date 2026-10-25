@@ -17,48 +17,7 @@ import (
 // performerProfilesAll mirrors FeatureStore.performer_profiles without an id
 // restriction (the targeted performer path loads every profile).
 func performerProfilesAll(db dbx, featureVersion string) (map[string]*performerProfile, error) {
-	rows, err := db.Query(`SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
-FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-WHERE ef.feature_version=? AND ef.entity_type='performer' AND fd.family LIKE 'profile:%'
-ORDER BY ef.entity_id, ef.feature_id`, featureVersion)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	profiles := make(map[string]*performerProfile)
-	for rows.Next() {
-		var entityID, family, name string
-		var value, confidence float64
-		if err := rows.Scan(&entityID, &family, &name, &value, &confidence); err != nil {
-			return nil, err
-		}
-		profile := profiles[entityID]
-		if profile == nil {
-			profile = &performerProfile{
-				id:     entityID,
-				blocks: map[string]map[string]profileValue{},
-				norms:  map[string]float64{},
-				keys:   map[string]map[string]bool{},
-			}
-			profiles[entityID] = profile
-		}
-		block := strings.TrimPrefix(family, "profile:")
-		values := profile.blocks[block]
-		if values == nil {
-			values = map[string]profileValue{}
-			profile.blocks[block] = values
-			profile.keys[block] = map[string]bool{}
-		}
-		values[name] = profileValue{value: value, confidence: confidence}
-		profile.keys[block][name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, profile := range profiles {
-		finalizeProfileNorms(profile)
-	}
-	return profiles, nil
+	return loadPerformerProfiles(db, featureVersion, nil)
 }
 
 // expandSimilar mirrors ExpandService.similar: rank the external_entity pool
