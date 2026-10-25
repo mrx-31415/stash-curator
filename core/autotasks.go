@@ -159,11 +159,21 @@ func nextRunFor(spec scheduleSpec, now int64, intervalMs int64) int64 {
 	return now + intervalMs
 }
 
-// nextAnchoredRun returns the next wall-clock occurrence of the anchor hour,
-// advanced by whole days when the interval is longer than 24h (48h = every
-// other day at the same hour; anything under 24h is daily at the hour).
+// nextAnchoredRun returns the next anchored run. Under 24h the day's runs
+// start at the anchor hour and repeat every interval until the next anchor
+// (6h at 04:00 = 04, 10, 16, 22); otherwise it is the next occurrence of the
+// hour, advanced by whole days (48h = every other day at the same hour).
 func nextAnchoredRun(nowMs int64, hour int64, intervalHours float64) int64 {
 	base := nextOccurrenceOfHour(nowMs, hour)
+	if step := int64(pyRound(intervalHours * 3_600_000)); step > 0 && intervalHours < 24 {
+		previous := time.UnixMilli(base).AddDate(0, 0, -1).UnixMilli()
+		for slot := previous + step; slot < base; slot += step {
+			if slot > nowMs {
+				return slot
+			}
+		}
+		return base
+	}
 	days := int64(intervalHours / 24)
 	if days < 1 {
 		days = 1

@@ -88,7 +88,7 @@ settings:
     type: STRING
   scheduleExpandRefreshIntervalHours:
     displayName: Expand refresh interval (hours)
-    description: How often the scheduled Expand refresh runs. Default 24 (daily).
+    description: How often the scheduled Expand refresh runs. Default 24 (daily). With an hour of day set, runs start at that hour and repeat every interval (6 at 04:00 = 04, 10, 16, 22).
     type: NUMBER
   scheduleExpandRefreshAtHour:
     displayName: Expand refresh hour of day
@@ -100,7 +100,7 @@ settings:
     type: BOOLEAN
   scheduleSyncBuildIntervalHours:
     displayName: Sync and build interval (hours)
-    description: How often the scheduled sync and build runs. Default 24 (daily).
+    description: How often the scheduled sync and build runs. Default 24 (daily). With an hour of day set, runs start at that hour and repeat every interval (6 at 04:00 = 04, 10, 16, 22).
     type: NUMBER
   scheduleSyncBuildAtHour:
     displayName: Sync and build hour of day
@@ -112,7 +112,7 @@ settings:
     type: BOOLEAN
   scheduleBackupIntervalHours:
     displayName: Backup interval (hours)
-    description: How often the scheduled backup runs. Default 24 (daily).
+    description: How often the scheduled backup runs. Default 24 (daily). With an hour of day set, runs start at that hour and repeat every interval (6 at 04:00 = 04, 10, 16, 22).
     type: NUMBER
   scheduleBackupAtHour:
     displayName: Backup hour of day
