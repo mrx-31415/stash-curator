@@ -636,6 +636,7 @@ func stageTimingsJValForExpand(timings map[string]int64) jVal {
 var expandStageTimingOrder = []string{
 	"taxonomy", "seeds", "fetch", "score", "database_writing", "total",
 	"seeds_profiles", "seeds_chase_base", "seeds_chase_network", "seeds_chase_match", "seeds_chase_calls",
+	"seeds_chase_cached",
 }
 
 // taskSyncBuild mirrors backend.py's sync-build / full-sync-build mode.

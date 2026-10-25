@@ -73,9 +73,11 @@ It also maintains scheduled-task records for optional Expand refresh, sync/build
 Direct tag sentiments keep append-only replacement history plus one current value per
 tag. Model publication blends that value into the shared content affinity, so local
 recommendations, Similar, Expand, and factual explanations consume the same result.
-Expand refresh is incremental where the StashDB instance supports the updated_at
-watermark (fetching only changed entries), falling back to a full fetch otherwise; it
-keeps the existing candidate pool and explore rows from hunts and StashDB Similar,
+Expand refresh is incremental between weekly full fetches: StashDB cannot filter
+scenes by update time, so each seed probe sorts by UPDATED_AT and stops at the previous
+refresh, while seeds new since then get the full recency and popularity sample
+(ThePornDB always fetches in full). The favourite look-alike chase is reused for a week
+while the chased favourites stay the same. A refresh keeps the existing candidate pool and explore rows from hunts and StashDB Similar,
 re-scores the pool when the model has changed, and drops candidates older than the
 recent-release horizon.
 
