@@ -3,16 +3,30 @@
 // under application_meta while Stash reports an unchanged library. The cache
 // row's JSON must match Python byte-for-byte (sorted state keys, insertion
 // ordered links), so the differential harness can pin the cache write.
+//
+// Beyond Python, a changed state no longer forces a full library walk: the
+// per-entity records behind the cache are patched with only the entities
+// Stash reports as updated since the saved state (incrementalLinkRecords),
+// falling back to the walk whenever the result could differ from one.
 package main
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const externalLinksCacheKey = "external_links"
+
+// externalLinkRecordsKey holds the per-entity records behind the links
+// cache. It is a separate row so the external_links value stays
+// byte-identical to Python's.
+const externalLinkRecordsKey = "external_link_records"
 
 // externalLinksState mirrors backend.py's _external_links_state: a compact
 // JSON description of the linked library, with sorted keys exactly like
@@ -98,89 +112,142 @@ func externalLinksRefresh(payload jVal, db dbx, progress func(processed, total i
 	return externalLinksImpl(payload, db, true, progress)
 }
 
-// linksPage is one externalLinksQuery page: the per-kind id->external maps
-// plus each collection's reported count (page 1's counts fix the page set).
-type linksPage struct {
-	page         int64
-	counts       map[string]int64
-	scenes       jVal
-	sceneIDs     jVal
-	scenePhashes jVal
-	performers   jVal
-	studios      jVal
-	err          error
+// linkRecord is one entity the stash_id_endpoint filter returned: its
+// StashDB id ("" when no stash_id matches the endpoint exactly) and, for
+// scenes, its normalized file phashes in first-seen order.
+type linkRecord struct {
+	ID       string   `json:"i"`
+	External string   `json:"e,omitempty"`
+	Phashes  []string `json:"p,omitempty"`
 }
 
-// fetchLinksPage executes one externalLinksQuery page, merging each kind's
-// stash_id matches and scene phashes exactly like the sequential walk's
-// per-page body.
-func fetchLinksPage(base string, headers map[string]string, page int64) linksPage {
-	data, err := graphqlQuery(base, headers, externalLinksQuery,
-		jvObj(jvKey("page", jvInt(page)), jvKey("perPage", jvInt(500)),
-			jvKey("endpoint", jvStr(stashdbEndpoint))))
+// linkRecords is every linked entity per kind in ascending id order, saved
+// beside the links cache under the library state it was read at. The links
+// object is a pure function of it (buildExternalLinks), so a changed library
+// can be patched with only the entities edited since that state.
+type linkRecords struct {
+	State      string       `json:"state"`
+	Scenes     []linkRecord `json:"scenes"`
+	Performers []linkRecord `json:"performers"`
+	Studios    []linkRecord `json:"studios"`
+}
+
+var linkKinds = []string{"scenes", "performers", "studios"}
+
+func (r *linkRecords) kind(kind string) *[]linkRecord {
+	switch kind {
+	case "scenes":
+		return &r.Scenes
+	case "performers":
+		return &r.Performers
+	default:
+		return &r.Studios
+	}
+}
+
+// linksPage is one externalLinksQuery (or externalLinksChangedQuery) page:
+// each kind's records plus its reported count.
+type linksPage struct {
+	counts  map[string]int64
+	records linkRecords
+	err     error
+}
+
+func fetchLinksPage(base string, headers map[string]string, query string, variables jVal) linksPage {
+	data, err := graphqlQuery(base, headers, query, variables)
 	if err != nil {
-		return linksPage{page: page, err: err}
+		return linksPage{err: err}
 	}
-	result := linksPage{
-		page:         page,
-		counts:       map[string]int64{},
-		scenes:       jvObj(),
-		sceneIDs:     jvObj(),
-		scenePhashes: jvObj(),
-		performers:   jvObj(),
-		studios:      jvObj(),
-	}
-	for _, kind := range []string{"scenes", "performers", "studios"} {
+	result := linksPage{counts: map[string]int64{}}
+	for _, kind := range linkKinds {
 		collection := data.get(kind)
 		result.counts[kind] = pythonInt(collection.get("count"))
-		rows := collection.get(kind)
-		var target *jVal
-		switch kind {
-		case "scenes":
-			target = &result.scenes
-		case "performers":
-			target = &result.performers
-		default:
-			target = &result.studios
-		}
-		for _, row := range rows.arr {
-			external := ""
-			for _, item := range row.get("stash_ids").arr {
-				if strings.EqualFold(strings.TrimRight(item.get("endpoint").asString(), "/"),
-					strings.TrimRight(stashdbEndpoint, "/")) {
-					external = item.get("stash_id").asString()
-					break
-				}
-			}
-			if external != "" {
-				id := row.get("id").asString()
-				target.set(id, jvStr(external))
-				if kind == "scenes" {
-					result.sceneIDs.set(external, jvStr(id))
-				}
-			}
-			if kind == "scenes" {
-				for _, file := range row.get("files").arr {
-					for _, fingerprint := range file.get("fingerprints").arr {
-						if !strings.EqualFold(pythonStrOrEmpty(fingerprint.get("type")), "phash") {
-							continue
-						}
-						if value, ok := normalizePhash(fingerprint.get("value")); ok {
-							if !result.scenePhashes.has(value) { // setdefault
-								result.scenePhashes.set(value, jvStr(row.get("id").asString()))
-							}
-						}
-					}
-				}
-			}
+		target := result.records.kind(kind)
+		for _, row := range collection.get(kind).arr {
+			*target = append(*target, parseLinkRow(kind, row))
 		}
 	}
 	return result
 }
 
+func parseLinkRow(kind string, row jVal) linkRecord {
+	record := linkRecord{ID: row.get("id").asString()}
+	for _, item := range row.get("stash_ids").arr {
+		if strings.EqualFold(strings.TrimRight(item.get("endpoint").asString(), "/"),
+			strings.TrimRight(stashdbEndpoint, "/")) {
+			record.External = item.get("stash_id").asString()
+			break
+		}
+	}
+	if kind == "scenes" {
+		seen := map[string]bool{}
+		for _, file := range row.get("files").arr {
+			for _, fingerprint := range file.get("fingerprints").arr {
+				if !strings.EqualFold(pythonStrOrEmpty(fingerprint.get("type")), "phash") {
+					continue
+				}
+				if value, ok := normalizePhash(fingerprint.get("value")); ok && !seen[value] {
+					seen[value] = true
+					record.Phashes = append(record.Phashes, value)
+				}
+			}
+		}
+	}
+	return record
+}
+
+// buildExternalLinks turns records into the links object exactly like the
+// sequential id-ordered walk: per-kind maps keep the first position and the
+// last value, scene_phashes keeps the first scene that reported a value.
+func buildExternalLinks(records *linkRecords) jVal {
+	scenes, sceneIDs, scenePhashes, performers, studios := jvObj(), jvObj(), jvObj(), jvObj(), jvObj()
+	indexes := make([]map[string]int, 5)
+	for i := range indexes {
+		indexes[i] = make(map[string]int)
+	}
+	for _, record := range records.Scenes {
+		if record.External != "" {
+			putLink(&scenes, indexes[0], record.ID, jvStr(record.External), false)
+			putLink(&sceneIDs, indexes[1], record.External, jvStr(record.ID), false)
+		}
+		for _, phash := range record.Phashes {
+			putLink(&scenePhashes, indexes[2], phash, jvStr(record.ID), true)
+		}
+	}
+	for _, record := range records.Performers {
+		if record.External != "" {
+			putLink(&performers, indexes[3], record.ID, jvStr(record.External), false)
+		}
+	}
+	for _, record := range records.Studios {
+		if record.External != "" {
+			putLink(&studios, indexes[4], record.ID, jvStr(record.External), false)
+		}
+	}
+	return jvObj(
+		jvKey("scenes", scenes),
+		jvKey("scene_ids", sceneIDs),
+		jvKey("scene_phashes", scenePhashes),
+		jvKey("performers", performers),
+		jvKey("studios", studios),
+	)
+}
+
+func putLink(target *jVal, index map[string]int, key string, val jVal, keepFirst bool) {
+	if position, exists := index[key]; exists {
+		if !keepFirst {
+			target.obj[position].val = val
+		}
+		return
+	}
+	index[key] = len(target.obj)
+	target.obj = append(target.obj, jPair{key: key, val: val})
+}
+
 func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(processed, total int)) (jVal, error) {
 	state := ""
 	var err error
+	base, headers := stashConnection(payload)
 	if db != nil {
 		state, err = externalLinksState(payload)
 		if err != nil {
@@ -189,26 +256,51 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 		if !refresh {
 			// Reuse the last scan while the linked library is unchanged: the
 			// saved state is compared against the current one, and a mismatch
-			// falls through to the walk so newly-linked entities appear.
+			// falls through so newly-linked entities appear.
 			if cached, ok, err := cachedExternalLinks(db, state); err != nil {
 				return jvNull(), err
 			} else if ok {
 				return cached, nil
 			}
+			// One edited entity changes the state; patch the saved records
+			// with only the entities edited since then instead of walking
+			// the whole library inside an interactive request.
+			records, ok, err := incrementalLinkRecords(base, headers, db, state)
+			if err != nil {
+				return jvNull(), err
+			}
+			if ok {
+				return saveExternalLinks(db, records)
+			}
 		}
 	}
-	base, headers := stashConnection(payload)
-	// Page 1 is fetched synchronously: its counts fix the page set (the
-	// fetchParallel pattern). The remaining pages run over a bounded worker
-	// pool and merge in page order, so the aggregate is identical to the
-	// sequential loop (scene_phashes keeps first-seen semantics).
+	records, err := walkLinkRecords(base, headers, progress)
+	if err != nil {
+		return jvNull(), err
+	}
+	if db == nil {
+		return buildExternalLinks(records), nil
+	}
+	records.State = state
+	return saveExternalLinks(db, records)
+}
+
+// walkLinkRecords reads every linked entity. Page 1 is fetched synchronously:
+// its counts fix the page set (the fetchParallel pattern). The remaining
+// pages run over a bounded worker pool and are concatenated in page order,
+// so the records keep Stash's ascending id order.
+func walkLinkRecords(base string, headers map[string]string, progress func(processed, total int)) (*linkRecords, error) {
 	const pageSize = int64(500)
-	first := fetchLinksPage(base, headers, 1)
+	variables := func(page int64) jVal {
+		return jvObj(jvKey("page", jvInt(page)), jvKey("perPage", jvInt(pageSize)),
+			jvKey("endpoint", jvStr(stashdbEndpoint)))
+	}
+	first := fetchLinksPage(base, headers, externalLinksQuery, variables(1))
 	if first.err != nil {
-		return jvNull(), first.err
+		return nil, first.err
 	}
 	total := int64(0)
-	for _, kind := range []string{"scenes", "performers", "studios"} {
+	for _, kind := range linkKinds {
 		if count := first.counts[kind]; count > total {
 			total = count
 		}
@@ -231,7 +323,7 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 			go func() {
 				defer wg.Done()
 				for p := range pageCh {
-					pages[p-1] = fetchLinksPage(base, headers, p)
+					pages[p-1] = fetchLinksPage(base, headers, externalLinksQuery, variables(p))
 				}
 			}()
 		}
@@ -241,26 +333,14 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 		close(pageCh)
 		wg.Wait()
 	}
-	scenes := jvObj()
-	sceneIDs := jvObj()
-	scenePhashes := jvObj()
-	performers := jvObj()
-	studios := jvObj()
-	indexes := make([]map[string]int, 5)
-	for i := range indexes {
-		indexes[i] = make(map[string]int)
-	}
+	records := &linkRecords{}
 	for index, page := range pages {
 		if page.err != nil {
-			return jvNull(), page.err
+			return nil, page.err
 		}
-		// Merge in page order: per-kind maps take the last seen id mapping,
-		// scene_phashes keeps the first page that reported the value.
-		mergeLinkPage(&scenes, indexes[0], page.scenes, false)
-		mergeLinkPage(&sceneIDs, indexes[1], page.sceneIDs, false)
-		mergeLinkPage(&scenePhashes, indexes[2], page.scenePhashes, true)
-		mergeLinkPage(&performers, indexes[3], page.performers, false)
-		mergeLinkPage(&studios, indexes[4], page.studios, false)
+		for _, kind := range linkKinds {
+			*records.kind(kind) = append(*records.kind(kind), *page.records.kind(kind)...)
+		}
 		if progress != nil {
 			processed := int64(index+1) * pageSize
 			if processed > total {
@@ -269,37 +349,143 @@ func externalLinksImpl(payload jVal, db dbx, refresh bool, progress func(process
 			progress(int(processed), int(total))
 		}
 	}
-	result := jvObj(
-		jvKey("scenes", scenes),
-		jvKey("scene_ids", sceneIDs),
-		jvKey("scene_phashes", scenePhashes),
-		jvKey("performers", performers),
-		jvKey("studios", studios),
-	)
-	if db != nil {
-		cacheValue := jvObj(jvKey("state", jvStr(state)), jvKey("links", result))
-		if err := execImmediate(db,
-			`INSERT INTO application_meta(key, value) VALUES (?, ?)
-ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-			externalLinksCacheKey, cacheValue.marshalCompact()); err != nil {
-			return jvNull(), err
-		}
-	}
-	return result, nil
+	return records, nil
 }
 
-// Preserve insertion order and duplicate semantics without scanning every prior key.
-func mergeLinkPage(target *jVal, index map[string]int, page jVal, keepFirst bool) {
-	for _, pair := range page.obj {
-		if position, exists := index[pair.key]; exists {
-			if !keepFirst {
-				target.obj[position].val = pair.val
+// maxIncrementalLinkPages bounds the incremental patch; a larger edit (a
+// bulk scrape or identify run) is cheaper to re-walk in parallel.
+const maxIncrementalLinkPages = 4
+
+// incrementalLinkRecords patches the saved records up to state. It reports
+// false whenever the result could differ from a full walk: no saved records,
+// an unparseable state, too many edits, or a per-kind record count that no
+// longer matches Stash's count. Deleted and unlinked entities only show up
+// as a count mismatch, so they always fall back to the walk.
+func incrementalLinkRecords(base string, headers map[string]string, db dbx, state string) (*linkRecords, bool, error) {
+	var raw string
+	err := db.QueryRow(`SELECT value FROM application_meta WHERE key=?`, externalLinkRecordsKey).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var records linkRecords
+	if json.Unmarshal([]byte(raw), &records) != nil || records.State == "" {
+		return nil, false, nil
+	}
+	previous, err1 := parseJSON([]byte(records.State))
+	current, err2 := parseJSON([]byte(state))
+	if err1 != nil || err2 != nil {
+		return nil, false, nil
+	}
+	variables := jvObj(jvKey("perPage", jvInt(500)), jvKey("endpoint", jvStr(stashdbEndpoint)))
+	for _, kind := range linkKinds {
+		before, after := previous.get(kind), current.get(kind)
+		if len(before.arr) != 2 || len(after.arr) != 2 {
+			return nil, false, nil
+		}
+		since := after.arr[1].asString() // nothing is newer: unchanged kind
+		if !deepEqual(before, after) {
+			updated := before.arr[1].asString()
+			if updated == "" {
+				since = "1970-01-01T00:00:00Z"
+			} else {
+				// GREATER_THAN is strict at one-second resolution; re-read the
+				// boundary second so a same-second edit is not missed.
+				parsed, err := time.Parse(time.RFC3339, updated)
+				if err != nil {
+					return nil, false, nil
+				}
+				since = parsed.Add(-time.Second).UTC().Format(time.RFC3339)
 			}
-		} else {
-			index[pair.key] = len(target.obj)
-			target.obj = append(target.obj, pair)
+		}
+		variables.set(strings.TrimSuffix(kind, "s")+"Since", jvStr(since))
+	}
+	changed := linkRecords{}
+	for page := int64(1); ; page++ {
+		variables.set("page", jvInt(page))
+		result := fetchLinksPage(base, headers, externalLinksChangedQuery, variables)
+		if result.err != nil {
+			return nil, false, result.err
+		}
+		more := false
+		for _, kind := range linkKinds {
+			*changed.kind(kind) = append(*changed.kind(kind), *result.records.kind(kind)...)
+			if result.counts[kind] > int64(len(*changed.kind(kind))) && len(*result.records.kind(kind)) > 0 {
+				more = true
+			}
+		}
+		if !more {
+			break
+		}
+		if page >= maxIncrementalLinkPages {
+			return nil, false, nil
 		}
 	}
+	for _, kind := range linkKinds {
+		target := records.kind(kind)
+		*target = mergeLinkRecords(*target, *changed.kind(kind))
+		if int64(len(*target)) != pythonInt(current.get(kind).arr[0]) {
+			return nil, false, nil
+		}
+	}
+	records.State = state
+	return &records, true, nil
+}
+
+// mergeLinkRecords replaces or adds each changed record and restores
+// Stash's ascending numeric id order.
+func mergeLinkRecords(records, changed []linkRecord) []linkRecord {
+	if len(changed) == 0 {
+		return records
+	}
+	index := make(map[string]int, len(records))
+	for i, record := range records {
+		index[record.ID] = i
+	}
+	for _, record := range changed {
+		if i, ok := index[record.ID]; ok {
+			records[i] = record
+		} else {
+			index[record.ID] = len(records)
+			records = append(records, record)
+		}
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		a, errA := strconv.ParseInt(records[i].ID, 10, 64)
+		b, errB := strconv.ParseInt(records[j].ID, 10, 64)
+		if errA != nil || errB != nil {
+			return records[i].ID < records[j].ID
+		}
+		return a < b
+	})
+	return records
+}
+
+// saveExternalLinks builds the links object and stores it with its records
+// in one transaction, so the two rows always describe the same state.
+func saveExternalLinks(db dbx, records *linkRecords) (jVal, error) {
+	result := buildExternalLinks(records)
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		return jvNull(), err
+	}
+	cacheValue := jvObj(jvKey("state", jvStr(records.State)), jvKey("links", result))
+	err = withTxn(db, func(conn *sql.Conn) error {
+		const upsert = `INSERT INTO application_meta(key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+		if _, err := conn.ExecContext(context.Background(), upsert,
+			externalLinksCacheKey, cacheValue.marshalCompact()); err != nil {
+			return err
+		}
+		_, err := conn.ExecContext(context.Background(), upsert, externalLinkRecordsKey, string(encoded))
+		return err
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	return result, nil
 }
 
 // normalizePhash mirrors curator/expand.py's normalize_phash: exactly 16 hex

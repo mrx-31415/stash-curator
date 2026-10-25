@@ -80,6 +80,44 @@ query CuratorExternalLinks($page: Int!, $perPage: Int!, $endpoint: String!) {
 }
 `
 
+// externalLinksChangedQuery is externalLinksQuery limited to entities
+// updated after each kind's RFC3339 timestamp (Stash reads other formats in
+// its local timezone).
+const externalLinksChangedQuery = `
+query CuratorExternalLinksChanged(
+  $page: Int!, $perPage: Int!, $endpoint: String!,
+  $sceneSince: String!, $performerSince: String!, $studioSince: String!
+) {
+  scenes: findScenes(
+    scene_filter: {
+      stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}
+      updated_at: {value: $sceneSince, modifier: GREATER_THAN}
+    }
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) {
+    count
+    scenes {
+      id stash_ids { endpoint stash_id }
+      files { fingerprints { type value } }
+    }
+  }
+  performers: findPerformers(
+    performer_filter: {
+      stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}
+      updated_at: {value: $performerSince, modifier: GREATER_THAN}
+    }
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count performers { id stash_ids { endpoint stash_id } } }
+  studios: findStudios(
+    studio_filter: {
+      stash_id_endpoint: {endpoint: $endpoint, modifier: NOT_NULL}
+      updated_at: {value: $studioSince, modifier: GREATER_THAN}
+    }
+    filter: {page: $page, per_page: $perPage, sort: "id", direction: ASC}
+  ) { count studios { id stash_ids { endpoint stash_id } } }
+}
+`
+
 // StashDB query documents, byte-identical to curator/expand.py.
 const stashdbScenesQuery = `
 query CuratorExpandScenes($input: SceneQueryInput!) {
