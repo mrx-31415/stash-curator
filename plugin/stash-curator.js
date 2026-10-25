@@ -3230,7 +3230,11 @@
     } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
   }
   function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onThumbDown }) {
-    const cacheKey = endlessBatchKey(slate, ["recommendations", lane, filters, rotationLane(lane), cards, thumbnails]);
+    // Key by the lane the slate was served for: on a lane switch this renders
+    // once with the new lane prop but the previous lane's slate, and keying by
+    // the prop saved those items as the new lane's restore point.
+    const slateLane = slate.lane || lane;
+    const cacheKey = endlessBatchKey(slate, ["recommendations", slateLane, filters, rotationLane(slateLane), cards, thumbnails]);
     const saved = React.useRef(readEndlessCache(cacheKey));
     const [restoring, setRestoring] = React.useState(Boolean(saved.current));
     const snapshot = React.useRef(null);
