@@ -187,7 +187,7 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetExternalSimilar(pluginDir, payload)
 	case "send_whisparr":
 		return opSendWhisparr(pluginDir, payload)
-	case "list_backups", "create_backup", "restore_backup", "delete_backup":
+	case "list_backups", "create_backup", "restore_backup", "delete_backup", "download_backup":
 		return opBackupControl(pluginDir, payload)
 	case "update_shortlist":
 		return opUpdateShortlist(pluginDir, payload)
