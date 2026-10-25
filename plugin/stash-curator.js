@@ -4553,6 +4553,35 @@
         setBusy(false);
       }
     }
+    async function download(item) {
+      setBusy(true);
+      setError("");
+      try {
+        const parts = [];
+        let offset = 0;
+        for (;;) {
+          setMessage(`Downloading ${item.id}: ${Math.floor((offset / Math.max(item.size_bytes, 1)) * 100)}%`);
+          const chunk = await operation({ operation: "download_backup", backup_id: item.id, offset }, 120000);
+          const bytes = Uint8Array.from(atob(chunk.content_base64), (c) => c.charCodeAt(0));
+          parts.push(bytes);
+          offset += bytes.length;
+          if (chunk.done) break;
+          if (!bytes.length) throw new Error("Backup download stopped before the end of the file.");
+        }
+        const url = URL.createObjectURL(new Blob(parts, { type: "application/vnd.sqlite3" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = item.id.replace(/\.backup$/, "");
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        setMessage(`Downloaded ${item.id}.`);
+      } catch (failure) {
+        setMessage("");
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
     async function remove(item) {
       if (!window.confirm(`Delete completed Curator backup ${item.id}?`)) return;
       setBusy(true);
@@ -4593,6 +4622,7 @@
             React.createElement("div", { className: "curator-record-title" }, item.id),
             React.createElement("div", { className: "curator-record-meta" }, `${new Date(item.created_at_ms).toLocaleString()} · ${(item.size_bytes / 1048576).toFixed(1)} MB`)
           ),
+          React.createElement(Button, { size: "sm", variant: "link", disabled: busy, title: "Download this backup as a SQLite file for debugging.", onClick: () => download(item) }, "Download"),
           React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: () => restore(item) }, "Restore"),
           React.createElement(Button, { size: "sm", variant: "link", className: "curator-record-destructive", disabled: busy, onClick: () => remove(item) }, "Delete")
         ))

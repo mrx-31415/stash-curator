@@ -61,6 +61,12 @@ The Curator **Backups** view can restore a recognized backup. It first creates a
 safety copy of the current sidecar, then invalidates the current recommendation
 model; run **Rebuild recommendation model** after restoring.
 
+**Download** in the same view saves a backup to your browser as a plain SQLite file,
+which is useful for debugging when the sidecar lives on storage you cannot reach
+directly. Create a fresh backup first to capture the current state. The file holds the
+same library and viewing data as the sidecar, so treat it accordingly. Model and
+feature tables live in separate derived artifacts and are not included.
+
 Removing Curator leaves Stash-owned entities and history intact. Applied Prune tags
 remain in Stash until you remove them. Deleting the sidecar discards Curator's learned
 state and cannot be undone without a backup; it is never a migration repair step.

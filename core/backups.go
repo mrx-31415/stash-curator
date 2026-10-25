@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -355,6 +356,15 @@ func opBackupControl(pluginDir string, payload jVal) (jVal, error) {
 			jvKey("items", items),
 		), nil
 	}
+	if operation == "download_backup" {
+		// Read-only: a completed backup file never changes, so downloading
+		// does not open the sidecar or wait for running jobs.
+		backup, err := selectBackup(directory, pythonStrOrEmpty(args.get("backup_id")))
+		if err != nil {
+			return jvNull(), err
+		}
+		return readBackupChunk(backup, pythonInt(args.get("offset")))
+	}
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
 		return jvNull(), err
@@ -396,11 +406,9 @@ func opBackupControl(pluginDir string, payload jVal) (jVal, error) {
 		), nil
 	}
 	backupID := pythonStrOrEmpty(args.get("backup_id"))
-	match := backupName.FindStringSubmatch(backupID)
-	backup := filepath.Join(directory, backupID)
-	if match == nil || realpath(filepath.Dir(backup)) != directory ||
-		!isRegularFile(backup) || isSymlink(backup) {
-		return jvNull(), errors.New("select a recognized Curator backup")
+	backup, err := selectBackup(directory, backupID)
+	if err != nil {
+		return jvNull(), err
 	}
 	if operation == "delete_backup" {
 		if pythonStrOrEmpty(args.get("confirmation")) != "DELETE "+backupID {
@@ -489,6 +497,49 @@ WHERE status='published'`); err != nil {
 		jvKey("restored_from", jvStr(realpath(backup))),
 		jvKey("safety_backup", jvStr(safety)),
 		jvKey("recommendations_need_rebuilding", jvBool(true)),
+	), nil
+}
+
+// selectBackup resolves backupID to a regular, non-symlink backup file
+// directly inside directory.
+func selectBackup(directory, backupID string) (string, error) {
+	backup := filepath.Join(directory, backupID)
+	if backupName.FindStringSubmatch(backupID) == nil || realpath(filepath.Dir(backup)) != directory ||
+		!isRegularFile(backup) || isSymlink(backup) {
+		return "", errors.New("select a recognized Curator backup")
+	}
+	return backup, nil
+}
+
+// backupChunkBytes bounds one download_backup response: a sidecar backup is
+// far larger than a single plugin-operation response should carry, so the
+// UI fetches it in base64 chunks and reassembles them.
+const backupChunkBytes = 8 << 20
+
+func readBackupChunk(path string, offset int64) (jVal, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return jvNull(), err
+	}
+	size := info.Size()
+	if offset < 0 || offset > size {
+		return jvNull(), fmt.Errorf("offset %d is outside the %d-byte backup", offset, size)
+	}
+	buffer := make([]byte, min(int64(backupChunkBytes), size-offset))
+	if _, err := file.ReadAt(buffer, offset); err != nil && !errors.Is(err, io.EOF) {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("id", jvStr(filepath.Base(path))),
+		jvKey("offset", jvInt(offset)),
+		jvKey("size_bytes", jvInt(size)),
+		jvKey("content_base64", jvStr(base64.StdEncoding.EncodeToString(buffer))),
+		jvKey("done", jvBool(offset+int64(len(buffer)) >= size)),
 	), nil
 }
 
