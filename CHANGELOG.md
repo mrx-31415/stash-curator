@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.42.0](https://github.com/mrx-31415/stash-curator/compare/v0.41.1...v0.42.0) (2026-10-25)
+
+
+### Features
+
+* download Curator backups from the Backups view ([#384](https://github.com/mrx-31415/stash-curator/issues/384)) ([bba3e06](https://github.com/mrx-31415/stash-curator/commit/bba3e065cb477cea6a757c63d29ea287ac2adc49))
+
+
+### Performance Improvements
+
+* patch the external-links cache incrementally after small library edits ([#386](https://github.com/mrx-31415/stash-curator/issues/386)) ([e6b030e](https://github.com/mrx-31415/stash-curator/commit/e6b030e6d2b980f43617bc2a054f20f821ee1fc6))
+
 ## [0.41.1](https://github.com/mrx-31415/stash-curator/compare/v0.41.0...v0.41.1) (2026-10-24)
 
 
