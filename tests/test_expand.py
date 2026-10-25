@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -193,21 +193,32 @@ class NoChangeStashDB(FakeStashDB):
     def execute(self, document: str, variables: dict[str, object]):
         input_data = variables["input"]
         assert isinstance(input_data, dict)
-        if not self.changed and "updated_at" in input_data:
+        if not self.changed and input_data.get("sort") == "UPDATED_AT":
             self.inputs.append(input_data)
             return {"queryScenes": {"count": 0, "scenes": []}}
         return super().execute(document, variables)
 
 
-class NoSinceStashDB(FakeStashDB):
-    """A StashDB instance without the updated_at criterion: watermark queries fail."""
+class UpdatedSortStashDB(FakeStashDB):
+    """StashDB's real contract: no updated_at filter, but an UPDATED_AT sort over
+    scenes that carry their last update time."""
+
+    def __init__(self, updated: dict[str, str]) -> None:
+        super().__init__()
+        self.updated = updated
 
     def execute(self, document: str, variables: dict[str, object]):
         input_data = variables["input"]
         assert isinstance(input_data, dict)
         if "updated_at" in input_data:
-            raise GraphQLError('Stash GraphQL error: Cannot query field "updated_at"')
-        return super().execute(document, variables)
+            raise GraphQLError('Stash GraphQL error: Unknown field "updated_at"')
+        data = super().execute(document, variables)
+        scenes = data["queryScenes"]["scenes"]
+        for scene in scenes:
+            scene["updated"] = self.updated[scene["id"]]
+        if input_data.get("sort") == "UPDATED_AT":
+            scenes.sort(key=lambda scene: scene["updated"], reverse=True)
+        return data
 
 
 class PerformerHuntStashDB(FakeStashDB):
@@ -640,7 +651,7 @@ def test_refresh_is_incremental_and_preserves_the_candidate_pool(tmp_path: Path)
     )
     assert second["incremental"] is True
     assert client.inputs
-    assert all("updated_at" in item for item in client.inputs)
+    assert not any("updated_at" in item for item in client.inputs)
     assert all(item["sort"] == "UPDATED_AT" for item in client.inputs)
     assert [item["id"] for item in service.results("scene")["items"]] == ["new-external-scene"]
     cache = connection.execute(
@@ -728,6 +739,34 @@ def test_seed_expansion_chases_similar_performers_into_scenes(tmp_path: Path) ->
     )
 
 
+def test_lookalike_chase_is_reused_for_a_week(tmp_path: Path) -> None:
+    """Favourite look-alikes barely move between refreshes: the next refresh reuses the
+    chase instead of re-querying StashDB, until it is a week old."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
+    service = ExpandService(connection)
+    day = 86_400_000
+
+    class CountingStashDB(SeedExpansionStashDB):
+        performer_queries = 0
+
+        def execute(self, document: str, variables: dict[str, object]):
+            if "queryPerformers" in document:
+                self.performer_queries += 1
+            return super().execute(document, variables)
+
+    for offset, chased in ((0, True), (day, False), (7 * day, True)):
+        client = CountingStashDB()
+        result = service.refresh(client, links, now_ms=REFERENCE_MS + offset, candidate_limit=100)
+        assert bool(client.performer_queries) is chased
+        assert ("seeds_chase_cached" in result["stage_timings_ms"]) is not chased
+        assert any(
+            "lookalike-performer" in (item.get("performers", {}).get("value") or [])
+            for item in client.inputs
+        )
+
+
 def test_refresh_samples_each_seed_source_by_recency_and_popularity(tmp_path: Path) -> None:
     """A full refresh probes every active seed source by BOTH recency (DATE) and
     popularity, so interesting-but-not-new scenes are not truncated out of the
@@ -751,7 +790,7 @@ def test_refresh_samples_each_seed_source_by_recency_and_popularity(tmp_path: Pa
 
 
 def test_incremental_refresh_keeps_single_probe_per_seed_source(tmp_path: Path) -> None:
-    """An incremental refresh walks the updated_at watermark, where the DATE and
+    """An incremental refresh walks back to the previous refresh, where the DATE and
     POPULARITY sorts are equivalent, so it issues one UPDATED_AT probe per source
     rather than duplicating the fetch."""
     connection = _database(tmp_path / "curator.sqlite3")
@@ -774,7 +813,8 @@ def test_incremental_refresh_keeps_single_probe_per_seed_source(tmp_path: Path) 
         if item.get("sort") == "UPDATED_AT" and ("performers" in item or "studios" in item)
     ]
     assert len(incremental) == 2  # performers + studios, one probe each
-    assert all("updated_at" in item for item in incremental)
+    assert len(client.inputs) == 2
+    assert not any("updated_at" in item for item in incremental)
 
 
 def test_refresh_ages_out_explore_rows_but_preserves_shortlisted(tmp_path: Path) -> None:
@@ -897,26 +937,122 @@ def test_refresh_purges_candidates_older_than_the_horizon(tmp_path: Path) -> Non
     )
 
 
-def test_refresh_falls_back_to_full_fetch_when_stashdb_rejects_the_watermark(
-    tmp_path: Path,
-) -> None:
-    """An instance without the updated_at criterion keeps refresh working (full fetch)."""
+def test_incremental_refresh_stops_at_the_previous_refresh(tmp_path: Path) -> None:
+    """StashDB cannot filter scenes by updated_at, so the probe sorts by UPDATED_AT and
+    stops at the first scene the previous refresh already saw (less an hour of slack
+    for clock skew)."""
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
-    links = {
-        "scenes": {"old-good": "owned-external-scene"},
-        "performers": {"p1": "known-external-performer"},
-        "studios": {},
-    }
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
     service = ExpandService(connection)
-    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10)
+    old = datetime.fromtimestamp((REFERENCE_MS - 7_200_000) / 1000, UTC).isoformat()
+    client = UpdatedSortStashDB({"owned-external-scene": old, "new-external-scene": old})
+    service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=10, similar_top_k=0)
 
-    client = NoSinceStashDB()
-    result = service.refresh(client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10)
+    edited = datetime.fromtimestamp((REFERENCE_MS + 60_000) / 1000, UTC)
+    client.updated["new-external-scene"] = edited.isoformat().replace("+00:00", "Z")
+    client.inputs.clear()
+    result = service.refresh(
+        client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10, similar_top_k=0
+    )
 
+    assert result["incremental"] is True
+    assert result["scene_count"] == 1
+    assert [item["sort"] for item in client.inputs] == ["UPDATED_AT"]
+
+
+def test_incremental_refresh_fully_samples_new_seeds(tmp_path: Path) -> None:
+    """A seed the cached pool never covered has no watermark to walk back to, so it gets
+    the full recency and popularity sample while the covered seeds stay incremental."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
+    service = ExpandService(connection)
+    client = FakeStashDB()
+    service.refresh(client, links, now_ms=REFERENCE_MS, candidate_limit=100, similar_top_k=0)
+
+    links["studios"] = {"studio-1": "external-studio"}
+    client.inputs.clear()
+    result = service.refresh(
+        client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=100, similar_top_k=0
+    )
+
+    assert result["incremental"] is True
+    probes = sorted(
+        (item["sort"], "performers" if "performers" in item else "studios")
+        for item in client.inputs
+    )
+    assert probes == [
+        ("DATE", "studios"),
+        ("POPULARITY", "studios"),
+        ("UPDATED_AT", "performers"),
+    ]
+
+
+def test_incremental_refresh_falls_back_to_a_full_fetch(tmp_path: Path) -> None:
+    """A stash-box without the UPDATED_AT sort rejects the incremental probe; the
+    refresh still succeeds with a full fetch."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
+    service = ExpandService(connection)
+    service.refresh(FakeStashDB(), links, now_ms=REFERENCE_MS, candidate_limit=10, similar_top_k=0)
+
+    class NoUpdatedSort(FakeStashDB):
+        def execute(self, document: str, variables: dict[str, object]):
+            input_data = variables["input"]
+            assert isinstance(input_data, dict)
+            if input_data.get("sort") == "UPDATED_AT":
+                raise GraphQLError('Stash GraphQL error: "UPDATED_AT" is not a valid sort')
+            return super().execute(document, variables)
+
+    client = NoUpdatedSort()
+    result = service.refresh(
+        client, links, now_ms=REFERENCE_MS + 86_400_000, candidate_limit=10, similar_top_k=0
+    )
     assert result["incremental"] is False
-    assert not any("updated_at" in item for item in client.inputs)
-    assert [item["id"] for item in service.results("scene")["items"]] == ["new-external-scene"]
+    assert sorted(item["sort"] for item in client.inputs) == ["DATE", "POPULARITY"]
+    assert {item["id"] for item in service.results("scene")["items"]} == {
+        "new-external-scene",
+        "owned-external-scene",
+    }
+    # The fallback counts as a full fetch: the next refresh is incremental again.
+    client = FakeStashDB()
+    result = service.refresh(
+        client, links, now_ms=REFERENCE_MS + 2 * 86_400_000, candidate_limit=10, similar_top_k=0
+    )
+    assert result["incremental"] is True
+
+
+def test_refresh_resamples_fully_every_week(tmp_path: Path) -> None:
+    """Popularity changes never bump a scene's update time, so incremental refreshes
+    give way to a full fetch a week after the last one."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
+    service = ExpandService(connection)
+    day = 86_400_000
+    results = [
+        service.refresh(
+            FakeStashDB(), links, now_ms=REFERENCE_MS + offset, candidate_limit=10, similar_top_k=0
+        )["incremental"]
+        for offset in (0, day, 6 * day, 7 * day, 8 * day)
+    ]
+    assert results == [False, True, True, False, True]
+
+
+def test_refresh_fetches_fully_on_theporndb(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    links = {"scenes": {}, "performers": {"p1": "known-external-performer"}, "studios": {}}
+    service = ExpandService(connection, "https://theporndb.net/graphql")
+    for offset in (0, 86_400_000):
+        client = FakeStashDB()
+        result = service.refresh(
+            client, links, now_ms=REFERENCE_MS + offset, candidate_limit=10, similar_top_k=0
+        )
+        assert result["incremental"] is False
+        assert not any(item.get("sort") == "UPDATED_AT" for item in client.inputs)
 
 
 def test_expand_pages_and_preserves_cache_during_outage(tmp_path: Path) -> None:

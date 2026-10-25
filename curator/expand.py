@@ -40,6 +40,20 @@ from curator.taxonomy import (
 from curator.theporndb import is_theporndb
 
 STASHDB = "https://stashdb.org/graphql"
+# Incremental Expand refresh state (mirrors core/expand_incremental.go). StashDB has no
+# updated_at scene filter, but it sorts by UPDATED_AT, so an incremental refresh walks
+# each seed probe newest-update-first and stops at the previous refresh. Seeds outside
+# the last refresh still get the full sample, and a weekly full fetch renews the
+# popularity sample a watermark cannot see. The look-alike chase is reused for a week
+# while its inputs stay the same.
+EXPAND_SEED_STATE_KEY = "expand_seed_state"
+EXPAND_LOOKALIKE_KEY = "expand_lookalike_cache"
+EXPAND_FULL_FETCH_INTERVAL_MS = 7 * 24 * 3_600_000
+# Re-read an hour before the previous refresh so StashDB/host clock skew cannot drop
+# an update.
+EXPAND_WATERMARK_SLACK_MS = 3_600_000
+EXPAND_LOOKALIKE_TTL_MS = 7 * 24 * 3_600_000
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 PERFORMER_HUNT_LIMIT = 1_000
 
 
@@ -48,7 +62,7 @@ query CuratorExpandScenes($input: SceneQueryInput!) {
   queryScenes(input: $input) {
     count
     scenes {
-      id title release_date production_date duration details
+      id title release_date production_date duration details updated
       studio { id name images { url width height } }
       tags { id name }
       images { url width height }
@@ -239,20 +253,25 @@ class ExpandService:
             )
         return False
 
-    def _supports_incremental_fetch(self, client: GraphQLClient) -> bool:
-        """Whether StashDB accepts the updated_at criterion used for incremental refresh."""
-        probe: dict[str, object] = {
-            "page": 1,
-            "per_page": 1,
-            "sort": "UPDATED_AT",
-            "direction": "DESC",
-            "updated_at": {"value": "1970-01-01T00:00:00Z", "modifier": "GREATER_THAN"},
-        }
+    def _expand_meta(self, key: str) -> dict[str, Any] | None:
+        """One JSON application_meta value; missing or unreadable reads as None."""
+        row = self.connection.execute(
+            "SELECT value FROM application_meta WHERE key=?", (key,)
+        ).fetchone()
+        if row is None:
+            return None
         try:
-            client.execute(SCENES, {"input": probe})
-            return True
-        except GraphQLError:
-            return False
+            value = json.loads(str(row[0]))
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _write_expand_meta(self, key: str, value: dict[str, Any]) -> None:
+        self.connection.execute(
+            "INSERT INTO application_meta(key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, json.dumps(value, separators=(",", ":"))),
+        )
 
     def _validate_scene_filters(self, client: GraphQLClient) -> None:
         if self.stashbox_endpoint.rstrip("/").casefold() == STASHDB.casefold():
@@ -359,6 +378,7 @@ class ExpandService:
         feature_version = str(model[0])
         if progress:
             progress(150, 1_000)
+        lookalike: dict[str, Any] = self._expand_meta(EXPAND_LOOKALIKE_KEY) or {}
         phase = time.monotonic()
         seeds = self._seeds(
             client,
@@ -370,6 +390,8 @@ class ExpandService:
             gender=gender,
             ethnicity=ethnicity,
             timings=timings,
+            lookalike=lookalike,
+            now_ms=fetched_at_ms,
         )
         timings["seeds"] = round((time.monotonic() - phase) * 1_000)
         if progress:
@@ -377,24 +399,26 @@ class ExpandService:
         cache = self.connection.execute(
             "SELECT model_id, fetched_at_ms FROM expand_cache WHERE singleton=1"
         ).fetchone()
-        since = None
         cached_model_id = None
         if cache is not None:
             cached_model_id = str(cache["model_id"])
-            since = datetime.fromtimestamp(int(cache["fetched_at_ms"]) / 1000, UTC).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        # A force rebuild is the dev escape hatch for scenes a watermark could never
-        # surface: it ignores the incremental cursor and re-fetches the whole window.
-        if force_full or endpoint_changed:
-            since = None
-        elif since is not None and not self._supports_incremental_fetch(client):
-            # The live stashdb instance predates the updated_at SceneQueryInput field, so
-            # the watermark queries would fail validation; fall back to a full fetch there
-            # while newer instances keep the incremental behavior.
-            since = None
-        rows: dict[str, dict[str, Any]] = {}
-        sources: dict[str, set[str]] = defaultdict(set)
+        previous = self._expand_meta(EXPAND_SEED_STATE_KEY)
+        # An incremental refresh needs a previous refresh to walk back to and the seed set
+        # it covered. A force rebuild is the escape hatch for scenes a watermark could
+        # never surface, and ThePornDB has no update sort.
+        since_ms = 0
+        if (
+            not force_full
+            and not endpoint_changed
+            and not is_theporndb(self.stashbox_endpoint)
+            and cache is not None
+            and previous is not None
+            and 0
+            <= fetched_at_ms - int(previous.get("full_fetch_at_ms") or 0)
+            < EXPAND_FULL_FETCH_INTERVAL_MS
+        ):
+            since_ms = max(1, int(cache["fetched_at_ms"]) - EXPAND_WATERMARK_SLACK_MS)
+        seed_state: dict[str, Any] = {"performers": [], "studios": [], "tags": []}
         filters = (
             ("performers", seeds["performers"]),
             ("studios", seeds["studios"]),
@@ -402,27 +426,63 @@ class ExpandService:
         )
         active = sum(bool(values) for _, values in filters) + int(wildcard)
         per_source = max(1, math.ceil(candidate_limit / max(1, active)))
-        queries = []
-        for source, values in filters:
-            if not values:
-                continue
-            # A full refresh samples each seed source by recency AND by popularity so
-            # interesting scenes older than the newest N are not truncated out (a date-only
-            # pool is recency-biased). An incremental refresh walks the watermark, where the
-            # UPDATED_AT sort makes both probes identical, so it keeps one probe per source.
-            if since is not None:
-                queries.append((source, values, per_source, "DATE"))
-            else:
-                half = max(1, per_source // 2)
-                queries.append((source, values, half, "DATE"))
-                queries.append((source, values, half, "POPULARITY"))
-        if wildcard:
-            queries.append(("wildcard", [], min(100, per_source), "TRENDING"))
+
+        def probes(since_ms: int) -> list[tuple[str, list[str], int, str, int]]:
+            seed_state["full_fetch_at_ms"] = (
+                int(previous["full_fetch_at_ms"]) if since_ms and previous else fetched_at_ms
+            )
+            queries: list[tuple[str, list[str], int, str, int]] = []
+            for source, values in filters:
+                if not values:
+                    continue
+                known: list[str] = []
+                fresh = list(values)
+                if since_ms and previous is not None:
+                    covered = set(previous.get(source) or [])
+                    known = [value for value in values if value in covered]
+                    fresh = [value for value in values if value not in covered]
+                # Seeds the cached pool already covers only need what changed since the last
+                # refresh: one probe newest-update-first, stopped at the watermark.
+                if known:
+                    queries.append((source, known, per_source, "UPDATED_AT", since_ms))
+                # A full fetch samples each seed source by recency AND by popularity so
+                # interesting scenes older than the newest N are not truncated out (a date-only
+                # pool is recency-biased); new seeds get the same sample.
+                if fresh:
+                    half = max(1, per_source // 2)
+                    queries.append((source, fresh, half, "DATE", 0))
+                    queries.append((source, fresh, half, "POPULARITY", 0))
+                seed_state[source] = sorted(values)
+            if wildcard:
+                queries.append(("wildcard", [], min(100, per_source), "TRENDING", 0))
+            return queries
+
+        def fetch(
+            queries: list[tuple[str, list[str], int, str, int]],
+        ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+            rows: dict[str, dict[str, Any]] = {}
+            sources: dict[str, set[str]] = defaultdict(set)
+            for position, (source, values, limit, sort, probe_since_ms) in enumerate(queries, 1):
+                if probe_since_ms:
+                    self._fetch_since(client, rows, sources, source, values, limit, probe_since_ms)
+                else:
+                    self._fetch(client, rows, sources, source, values, limit, sort=sort)
+                if progress:
+                    progress(200 + round(450 * position / max(1, len(queries))), 1_000)
+            return rows, sources
+
+        queries = probes(since_ms)
         fetch_phase = time.monotonic()
-        for position, (source, values, limit, sort) in enumerate(queries, 1):
-            self._fetch(client, rows, sources, source, values, limit, sort=sort, since=since)
-            if progress:
-                progress(200 + round(450 * position / max(1, len(queries))), 1_000)
+        try:
+            rows, sources = fetch(queries)
+        except (GraphQLError, RuntimeError, KeyError, TypeError):
+            if not since_ms:
+                raise
+            # A stash-box without the UPDATED_AT sort rejects the incremental probes; the
+            # full fetch still works there.
+            since_ms = 0
+            queries = probes(0)
+            rows, sources = fetch(queries)
         timings["fetch"] = round((time.monotonic() - fetch_phase) * 1_000)
         if progress and not queries:
             progress(650, 1_000)
@@ -523,6 +583,9 @@ class ExpandService:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (self.stashbox_endpoint,),
             )
+            self._write_expand_meta(EXPAND_SEED_STATE_KEY, seed_state)
+            if lookalike.get("key"):
+                self._write_expand_meta(EXPAND_LOOKALIKE_KEY, lookalike)
         if cached_model_id is not None and cached_model_id != model_id:
             # The affinities and seeds changed with the model, so every surviving candidate's
             # score is stale; rescore the whole candidate pool in place.
@@ -535,7 +598,7 @@ class ExpandService:
             "scene_count": len(scenes),
             "performer_count": len(performers),
             "taxonomy_refreshed": taxonomy_refreshed,
-            "incremental": since is not None,
+            "incremental": since_ms > 0,
             "stage_timings_ms": timings,
         }
 
@@ -1837,8 +1900,11 @@ class ExpandService:
         gender: str = "",
         ethnicity: str = "",
         timings: dict[str, int] | None = None,
+        lookalike: dict[str, Any] | None = None,
+        now_ms: int = 0,
     ) -> dict[str, list[str]]:
         timings = timings if timings is not None else {}
+        lookalike = lookalike if lookalike is not None else {}
         top = [
             str(row[0])
             for row in self.connection.execute(
@@ -1880,6 +1946,8 @@ class ExpandService:
                 gender,
                 ethnicity,
                 timings,
+                lookalike,
+                now_ms,
             )
         played = [
             str(row[0])
@@ -1948,10 +2016,37 @@ class ExpandService:
         gender: str,
         ethnicity: str,
         timings: dict[str, int],
+        lookalike: dict[str, Any] | None = None,
+        now_ms: int = 0,
     ) -> list[str]:
         # Best-effort enrichment: it must never fail an Expand refresh. A lookup-alike pass
         # is only worth the seed breadth it adds, so any failure (a StashDB instance that
         # predates a query, a missing profile, or a broken response) degrades to base seeds.
+        #
+        # lookalike holds the cached chase on entry; its additions are reused while the
+        # inputs match and it is under a week old. On return it holds the entry to save,
+        # or nothing for a cache hit or a chase with a failed lookup (an incomplete result).
+        lookalike = lookalike if lookalike is not None else {}
+        cached = dict(lookalike)
+        lookalike.clear()
+        ranked = sorted(
+            evidence.items(), key=lambda value: (-float(value[1]["strength"]), value[0])
+        )
+        key = json.dumps(
+            [
+                self.stashbox_endpoint.rstrip("/").lower(),
+                gender,
+                ethnicity,
+                top_k,
+                per_favorite,
+                [external_id for external_id, _info in ranked[:top_k]],
+            ],
+            separators=(",", ":"),
+        )
+        cached_at = int(cached.get("fetched_at_ms") or 0)
+        if cached.get("key") == key and 0 <= now_ms - cached_at < EXPAND_LOOKALIKE_TTL_MS:
+            timings["seeds_chase_cached"] = 1
+            return self._merge_lookalikes(base, cached.get("additions") or [], evidence)
         t0 = time.monotonic()
         try:
             profiles = FeatureStore(self.connection).performer_profiles(feature_version)
@@ -1966,9 +2061,7 @@ class ExpandService:
         network_ms = 0
         match_ms = 0
         calls = 0
-        ranked = sorted(
-            evidence.items(), key=lambda value: (-float(value[1]["strength"]), value[0])
-        )
+        failures = 0
         for external_id, info in ranked[:top_k]:
             target = profiles.get(info["local_id"])
             if target is None:
@@ -1979,6 +2072,7 @@ class ExpandService:
                     client, target, gender, ethnicity, performed_with=external_id
                 )
             except (GraphQLError, KeyError, TypeError):
+                failures += 1
                 continue
             network_ms += round((time.monotonic() - t_net) * 1_000)
             calls += 1
@@ -1998,7 +2092,19 @@ class ExpandService:
         timings["seeds_chase_network"] = network_ms
         timings["seeds_chase_match"] = match_ms
         timings["seeds_chase_calls"] = calls
-        return list(dict.fromkeys((*base, *additions)))
+        if not failures:
+            lookalike.update(key=key, fetched_at_ms=now_ms, additions=additions)
+        return self._merge_lookalikes(base, additions, evidence)
+
+    @staticmethod
+    def _merge_lookalikes(
+        base: list[str], additions: Iterable[str], evidence: dict[str, dict[str, Any]]
+    ) -> list[str]:
+        """Base seeds plus chase additions the user has no evidence for yet (a cached
+        chase can predate the latest evidence)."""
+        return list(
+            dict.fromkeys((*base, *(value for value in additions if value not in evidence)))
+        )
 
     @staticmethod
     def _fetch(
@@ -2010,7 +2116,6 @@ class ExpandService:
         limit: int,
         modifier: str = "INCLUDES",
         sort: str = "DATE",
-        since: str | None = None,
     ) -> tuple[int, bool]:
         fetched = 0
         page = 1
@@ -2025,12 +2130,6 @@ class ExpandService:
             }
             if source != "wildcard":
                 query[source] = {"value": values, "modifier": modifier}
-            if since is not None and source != "wildcard":
-                # Incremental refresh: only entries changed since the last refresh. Sorting
-                # by updated_at keeps pagination stable under the filter; the wildcard
-                # sample stays unfiltered because it is a small popularity probe.
-                query["updated_at"] = {"value": since, "modifier": "GREATER_THAN"}
-                query["sort"] = "UPDATED_AT"
             data = client.execute(SCENES, {"input": query})["queryScenes"]
             total = int(data["count"])
             batch = data["scenes"]
@@ -2044,6 +2143,52 @@ class ExpandService:
                 break
             page += 1
         return total, fetched < total
+
+    @staticmethod
+    def _fetch_since(
+        client: GraphQLClient,
+        rows: dict[str, dict[str, Any]],
+        sources: dict[str, set[str]],
+        source: str,
+        values: list[str],
+        limit: int,
+        since_ms: int,
+    ) -> None:
+        """StashDB cannot filter scenes by updated_at, so the probe sorts by UPDATED_AT
+        and pages until it reaches a scene last updated at or before the watermark. A
+        scene without a readable updated time counts as changed."""
+        fetched = 0
+        page = 1
+        page_size = min(250, limit)
+        while fetched < limit:
+            query: dict[str, object] = {
+                "page": page,
+                "per_page": page_size,
+                "sort": "UPDATED_AT",
+                "direction": "DESC",
+                source: {"value": values, "modifier": "INCLUDES"},
+            }
+            data = client.execute(SCENES, {"input": query})["queryScenes"]
+            total = int(data["count"])
+            batch = data["scenes"]
+            for scene in batch:
+                if fetched >= limit:
+                    return
+                try:
+                    updated = datetime.fromisoformat(str(scene["updated"]))
+                except (KeyError, TypeError, ValueError):
+                    updated = None
+                if updated is not None:
+                    updated = updated if updated.tzinfo else updated.replace(tzinfo=UTC)
+                    if (updated - _EPOCH) // timedelta(milliseconds=1) <= since_ms:
+                        return
+                identifier = str(scene["id"])
+                rows.setdefault(identifier, scene)
+                sources[identifier].add(source)
+                fetched += 1
+            if not batch or page * page_size >= total:
+                return
+            page += 1
 
     @staticmethod
     def _recent(scene: dict[str, Any], cutoff: date) -> bool:

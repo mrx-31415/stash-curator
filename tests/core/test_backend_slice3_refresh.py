@@ -20,6 +20,8 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
+import time
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -76,6 +78,11 @@ class _StubRefresh(BaseHTTPRequestHandler):
 
     plugin_settings: ClassVar[dict[str, object]] = {}
     scene_filter_type: ClassVar[str] = "MultiIDCriterionInput"
+    # StashDB's scene update times; set, scenes carry them and UPDATED_AT sorts by them.
+    scene_updated: ClassVar[dict[str, str]] = {}
+    scene_probes: ClassVar[list[str]] = []
+    reject_updated_sort: ClassVar[bool] = False
+    performer_queries: ClassVar[list[str]] = []
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
@@ -130,7 +137,38 @@ class _StubRefresh(BaseHTTPRequestHandler):
                 }
             }
         elif operation == "CuratorExpandScenes":
-            data = {"data": {"queryScenes": {"count": len(FRESH_SCENES), "scenes": FRESH_SCENES}}}
+            query = json.loads(body)["variables"]["input"]
+            self.scene_probes.append(str(query.get("sort")))
+            if self.reject_updated_sort and query.get("sort") == "UPDATED_AT":
+                raw = json.dumps({"errors": [{"message": "invalid sort UPDATED_AT"}]}).encode()
+                self.send_response(422)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
+            scenes = [
+                {**scene, "updated": self.scene_updated[scene["id"]]}
+                if scene["id"] in self.scene_updated
+                else scene
+                for scene in FRESH_SCENES
+            ]
+            if query.get("sort") == "UPDATED_AT":
+                scenes.sort(key=lambda scene: str(scene.get("updated")), reverse=True)
+            data = {"data": {"queryScenes": {"count": len(scenes), "scenes": scenes}}}
+        elif operation == "CuratorSimilarPerformers":
+            self.performer_queries.append(body)
+            lookalike = {
+                "id": "ext-lookalike",
+                "name": "Lookalike",
+                "gender": "FEMALE",
+                "height": 170,
+                "scene_count": 50,
+                "tattoos": [],
+                "piercings": [],
+                "images": [],
+            }
+            data = {"data": {"queryPerformers": {"performers": [lookalike]}}}
         elif operation == "CuratorLocalSceneMatches":
             data = {"data": {"findScenes": {"count": 0, "scenes": []}}}
         elif operation == "CuratorSceneFilterSchema":
@@ -160,6 +198,7 @@ class _StubRefresh(BaseHTTPRequestHandler):
             "CuratorExternalLinksState",
             "CuratorExternalLinks",
             "CuratorExpandScenes",
+            "CuratorSimilarPerformers",
             "CuratorLocalSceneMatches",
             "CuratorSceneFilterSchema",
         ):
@@ -428,3 +467,118 @@ def test_expand_refresh_state_parity(
         stop_worker(worker_dir)
         shutil.rmtree(worker_dir, ignore_errors=True)
     assert_equivalent(states[0], states[1])
+
+
+def _iso(seconds: float) -> str:
+    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+@pytest.mark.parametrize("reject_updated_sort", [False, True])
+def test_incremental_refresh_parity(
+    refresh_sidecar: Path,
+    binary: Path,
+    stub_stash: str,
+    reject_updated_sort: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two refreshes in a row: the second walks back to the first with one
+    UPDATED_AT probe per covered seed source and reuses the look-alike chase;
+    a server that rejects that sort gets a full fetch instead. Both backends
+    issue the same probes and leave the same summary and state."""
+
+    monkeypatch.setattr(_StubRefresh, "reject_updated_sort", reject_updated_sort)
+
+    run_dir = refresh_sidecar.parent / f"{refresh_sidecar.stem}-refresh-incremental"
+    worker_dir = Path(tempfile.mkdtemp(prefix="curator-worker-"))
+    env = dict(os.environ)
+    env["CURATOR_STASHDB_ENDPOINT"] = stub_stash
+    runs: list[dict[str, object]] = []
+    try:
+        for runner in (None, binary):
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.mkdir()
+            run_db = run_dir / refresh_sidecar.name
+            shutil.copy2(refresh_sidecar, run_db)
+            shutil.copytree(
+                refresh_sidecar.parent / f"{refresh_sidecar.stem}-derived",
+                run_dir / f"{run_db.stem}-derived",
+            )
+            stale = _iso(time.time() - 3 * 3600)
+            monkeypatch.setattr(_StubRefresh, "scene_updated", {"fresh-1": stale, "fresh-2": stale})
+            summaries = []
+            for attempt in range(2):
+                if attempt:
+                    # Edited on StashDB after the first refresh.
+                    _StubRefresh.scene_updated["fresh-2"] = _iso(time.time() + 60)
+                monkeypatch.setattr(_StubRefresh, "scene_probes", [])
+                monkeypatch.setattr(_StubRefresh, "performer_queries", [])
+                if runner is None:
+                    result = _run_refresh_backend(
+                        None,
+                        PLUGIN_DIR,
+                        _with_db(_task_payload(refresh_sidecar, stub_stash), run_db),
+                        stub_stash,
+                    )
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    summary = json.loads(result.stdout)["output"]
+                else:
+                    row = run_go_task_via_worker(
+                        binary, worker_dir, run_db, "expand-refresh", stub_stash, env=env
+                    )
+                    assert row["state"] == "complete", row
+                    summary = dict(row["summary"] or {})
+                for field in ("job_id", "schema_version"):
+                    summary.pop(field, None)
+                timings = summary.pop("stage_timings_ms")
+                summaries.append(
+                    {
+                        "summary": summary,
+                        # Go probes in parallel, so a rejected sort can cost it
+                        # more failed requests than Python's sequential loop.
+                        "probes": sorted(
+                            set(_StubRefresh.scene_probes)
+                            if reject_updated_sort
+                            else _StubRefresh.scene_probes
+                        ),
+                        "chased": bool(_StubRefresh.performer_queries),
+                        "chase_cached": "seeds_chase_cached" in timings,
+                    }
+                )
+            with sqlite3.connect(run_db) as connection:
+                meta = dict(
+                    connection.execute(
+                        "SELECT key, value FROM application_meta"
+                        " WHERE key IN ('expand_seed_state', 'expand_lookalike_cache')"
+                    ).fetchall()
+                )
+                state = json.loads(meta["expand_seed_state"])
+                state.pop("full_fetch_at_ms")
+                lookalike = json.loads(meta.get("expand_lookalike_cache") or "{}")
+                lookalike.pop("fetched_at_ms", None)
+                runs.append(
+                    {
+                        "refreshes": summaries,
+                        "seed_state": state,
+                        "lookalike": lookalike,
+                        "external_entity": connection.execute(
+                            "SELECT entity_type, external_id, score, sources_json, pool"
+                            " FROM external_entity ORDER BY entity_type, external_id"
+                        ).fetchall(),
+                    }
+                )
+            shutil.rmtree(run_dir, ignore_errors=True)
+    finally:
+        stop_worker(worker_dir)
+        shutil.rmtree(worker_dir, ignore_errors=True)
+    first, second = runs[0]["refreshes"]
+    assert first["summary"]["incremental"] is False
+    if reject_updated_sort:
+        assert second["summary"]["incremental"] is False
+        assert {"DATE", "POPULARITY", "UPDATED_AT"} == set(second["probes"])
+    else:
+        assert second["summary"]["incremental"] is True
+        assert second["probes"] and set(second["probes"]) == {"UPDATED_AT"}
+    if first["chased"]:
+        assert runs[0]["lookalike"]
+        assert not second["chased"] and second["chase_cached"]
+    assert_equivalent(runs[0], runs[1])

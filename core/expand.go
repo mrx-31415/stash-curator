@@ -1215,14 +1215,15 @@ WHERE family='content' AND name IN (`+valuePlaceholders+`)`, valueArgs...)
 
 // ── StashDB fetches ───────────────────────────────────────────────────────
 
-// fetchPageSpec mirrors one _fetch probe: source, values, limit, modifier, sort.
+// fetchPageSpec mirrors one _fetch probe: source, values, limit, modifier,
+// sort. A probe with sinceMs set is incremental (fetchUpdatedSince).
 type fetchPageSpec struct {
 	source   string
 	values   []string
 	limit    int64
 	modifier string
 	sort     string
-	since    string
+	sinceMs  int64
 }
 
 // fetchScenesPage executes one SCENES query page and returns (count, scenes).
@@ -1243,13 +1244,6 @@ func fetchScenesPage(clientURL, apiKey string, spec fetchPageSpec, page, pageSiz
 			jvKey("value", values),
 			jvKey("modifier", jvStr(spec.modifier)),
 		))
-	}
-	if spec.since != "" && spec.source != "wildcard" {
-		query.set("updated_at", jvObj(
-			jvKey("value", jvStr(spec.since)),
-			jvKey("modifier", jvStr("GREATER_THAN")),
-		))
-		query.set("sort", jvStr("UPDATED_AT"))
 	}
 	data, err := stashdbQuery(clientURL, apiKey, stashdbScenesQuery, jvObj(jvKey("input", query)))
 	if err != nil {
@@ -1355,6 +1349,40 @@ func fetchParallel(clientURL, apiKey string, spec fetchPageSpec, rows *sceneRows
 	return lastTotal, merged < total, nil
 }
 
+// fetchUpdatedSince mirrors ExpandService._fetch_since: StashDB cannot
+// filter scenes by updated_at, so the probe sorts by UPDATED_AT and pages
+// until it reaches a scene last updated at or before the watermark. A scene
+// without a readable updated time counts as changed.
+func fetchUpdatedSince(clientURL, apiKey string, spec fetchPageSpec, rows *sceneRows, sources map[string]map[string]bool) error {
+	pageSize := minInt64(fetchPageSize, spec.limit)
+	fetched := int64(0)
+	for page := int64(1); fetched < spec.limit; page++ {
+		total, batch, err := fetchScenesPage(clientURL, apiKey, spec, page, pageSize)
+		if err != nil {
+			return err
+		}
+		for _, scene := range batch {
+			if fetched >= spec.limit {
+				return nil
+			}
+			if updated, err := parseISOTime(scene.get("updated").asString()); err == nil && updated <= spec.sinceMs {
+				return nil
+			}
+			identifier := scene.get("id").asString()
+			rows.add(identifier, scene)
+			if sources[identifier] == nil {
+				sources[identifier] = map[string]bool{}
+			}
+			sources[identifier][spec.source] = true
+			fetched++
+		}
+		if len(batch) == 0 || page*pageSize >= total {
+			return nil
+		}
+	}
+	return nil
+}
+
 // fetchProbes mirrors ExpandService._fetch_probes: each probe runs its own
 // page loop (pages in parallel via fetchParallel, merged in page order),
 // and the probes run concurrently (Python's ThreadPoolExecutor). Results
@@ -1378,7 +1406,12 @@ func fetchProbes(clientURL, apiKey string, probes []fetchPageSpec) (*sceneRows, 
 			defer wg.Done()
 			probeRows := &sceneRows{m: map[string]jVal{}}
 			probeSources := map[string]map[string]bool{}
-			_, _, err := fetchParallel(clientURL, apiKey, spec, probeRows, probeSources, runtime.GOMAXPROCS(0))
+			var err error
+			if spec.sinceMs > 0 {
+				err = fetchUpdatedSince(clientURL, apiKey, spec, probeRows, probeSources)
+			} else {
+				_, _, err = fetchParallel(clientURL, apiKey, spec, probeRows, probeSources, runtime.GOMAXPROCS(0))
+			}
 			results[index] = probeResult{rows: probeRows, sources: probeSources, err: err}
 		}(i, spec)
 	}

@@ -321,22 +321,6 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`, fmt.Sprintf("%d", nowMs), 
 	return !reused, nil
 }
 
-// supportsIncrementalFetch mirrors ExpandService._supports_incremental_fetch.
-func supportsIncrementalFetch(clientURL, apiKey string) bool {
-	probe := jvObj(
-		jvKey("page", jvInt(1)),
-		jvKey("per_page", jvInt(1)),
-		jvKey("sort", jvStr("UPDATED_AT")),
-		jvKey("direction", jvStr("DESC")),
-		jvKey("updated_at", jvObj(
-			jvKey("value", jvStr("1970-01-01T00:00:00Z")),
-			jvKey("modifier", jvStr("GREATER_THAN")),
-		)),
-	)
-	_, err := stashdbQuery(clientURL, apiKey, stashdbScenesQuery, jvObj(jvKey("input", probe)))
-	return err == nil
-}
-
 // recentScene mirrors ExpandService._recent: release_date or production_date
 // missing/invalid is recent; else >= cutoff.
 func recentScene(scene jVal, cutoff string) bool {
@@ -361,7 +345,8 @@ func recentScene(scene jVal, cutoff string) bool {
 
 // refreshSeeds mirrors ExpandService._seeds.
 func refreshSeeds(s *expandService, clientURL, apiKey, modelID, featureVersion string, links jVal,
-	similarTopK, similarPerFavorite int, gender, ethnicity string, timings map[string]int64) (jVal, error) {
+	similarTopK, similarPerFavorite int, gender, ethnicity string, timings map[string]int64,
+	lookalike *lookalikeEntry, nowMs int64) (jVal, error) {
 	topRows, err := s.db.Query(`
 SELECT scene_id FROM model_scene_score WHERE model_id=?
 ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
@@ -407,7 +392,7 @@ ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
 		similarTopK, similarPerFavorite = min(4, similarTopK), min(4, similarPerFavorite)
 	}
 	expandedPerformers := expandSimilarPerformers(s, clientURL, apiKey, basePerformers, evidence,
-		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity, timings)
+		featureVersion, similarTopK, similarPerFavorite, gender, ethnicity, timings, lookalike, nowMs)
 	if isThePornDB(stashdbEndpoint) {
 		expandedPerformers = expandedPerformers[:min(32, len(expandedPerformers))]
 	}
@@ -557,9 +542,16 @@ ORDER BY a.affinity * a.confidence DESC LIMIT 50`, modelID, featureVersion)
 // chase the strongest favourites into StashDB and pull their closest look-alikes so
 // the seed set reaches performers the model has affinity for but has not seen.
 // Best-effort: any failure degrades to the base seed set.
+//
+// lookalike holds the cached chase on entry; a chase reuses its additions
+// while the inputs match and it is under a week old. On return it holds the
+// entry to save, or a zero entry when nothing should be saved (a cache hit,
+// or a chase with a failed lookup, whose result is incomplete).
 func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []string,
 	evidence map[string]*performerEvidence, featureVersion string, topK, perFavorite int,
-	gender, ethnicity string, timings map[string]int64) []string {
+	gender, ethnicity string, timings map[string]int64, lookalike *lookalikeEntry, nowMs int64) []string {
+	cached := *lookalike
+	*lookalike = lookalikeEntry{}
 	if topK <= 0 || perFavorite <= 0 || len(base) == 0 {
 		return base
 	}
@@ -584,6 +576,11 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 	if limit > len(ids) {
 		limit = len(ids)
 	}
+	key := lookalikeCacheKey(gender, ethnicity, topK, perFavorite, ids[:limit])
+	if cached.Key == key && nowMs >= cached.FetchedAtMs && nowMs-cached.FetchedAtMs < expandLookalikeTTLMs {
+		timings["seeds_chase_cached"] = 1
+		return mergeLookalikes(base, cached.Additions, evidence)
+	}
 	favouriteIDs := make(map[string]bool, limit)
 	for i := range limit {
 		favouriteIDs[evidence[ids[i]].localID] = true
@@ -602,7 +599,7 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 		scored []scoredPerformer
 	}
 	results := make([]chaseResult, limit)
-	var networkMs, matchMs, calls int64
+	var networkMs, matchMs, calls, failures int64
 	// Fetch the shared popularity recall floor once (it is identical across all
 	// favorites), then union each favorite's co-star/age pools against it. This
 	// removes the redundant per-favorite base fetch, the largest query of the
@@ -638,6 +635,7 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 				atomic.AddInt64(&networkMs, time.Since(tNet).Milliseconds())
 				atomic.AddInt64(&calls, 1)
 				if err != nil {
+					atomic.AddInt64(&failures, 1)
 					continue
 				}
 				var scored []scoredPerformer
@@ -661,7 +659,7 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 	close(workCh)
 	wg.Wait()
 	added := map[string]bool{}
-	var additions []string
+	additions := []string{}
 	for idx := range limit {
 		scored := results[idx].scored
 		if len(scored) == 0 {
@@ -680,10 +678,26 @@ func expandSimilarPerformers(s *expandService, clientURL, apiKey string, base []
 	timings["seeds_chase_network"] = networkMs
 	timings["seeds_chase_match"] = matchMs
 	timings["seeds_chase_calls"] = int64(calls)
-	if len(additions) == 0 {
-		return base
+	if failures == 0 {
+		*lookalike = lookalikeEntry{Key: key, FetchedAtMs: nowMs, Additions: additions}
 	}
-	return append(append([]string(nil), base...), additions...)
+	return mergeLookalikes(base, additions, evidence)
+}
+
+// mergeLookalikes appends the chase additions to the base seeds, skipping
+// performers the user already has evidence for: a cached chase can predate
+// the latest evidence.
+func mergeLookalikes(base, additions []string, evidence map[string]*performerEvidence) []string {
+	out := append([]string(nil), base...)
+	added := map[string]bool{}
+	for _, eid := range additions {
+		if _, known := evidence[eid]; known || added[eid] {
+			continue
+		}
+		added[eid] = true
+		out = append(out, eid)
+	}
+	return out
 }
 
 // expandRefresh mirrors ExpandService.refresh and returns the summary dict.
@@ -731,9 +745,13 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if progress != nil {
 		progress(150, 1000)
 	}
+	var lookalike lookalikeEntry
+	if _, err := readExpandMeta(db, expandLookalikeKey, &lookalike); err != nil {
+		return jvNull(), err
+	}
 	t0 = time.Now()
 	seeds, err := refreshSeeds(s, clientURL, apiKey, modelID, featureVersion, links,
-		similarTopK, similarPerFavorite, gender, ethnicity, timings)
+		similarTopK, similarPerFavorite, gender, ethnicity, timings, &lookalike, nowMs)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -741,28 +759,30 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	if progress != nil {
 		progress(200, 1000)
 	}
-	since := ""
 	cachedModelID := ""
 	var cacheModelID sql.NullString
 	var cachedFetchedAt sql.NullInt64
 	err = db.QueryRow(`SELECT model_id, fetched_at_ms FROM expand_cache WHERE singleton=1`).
 		Scan(&cacheModelID, &cachedFetchedAt)
-	if err == nil && cacheModelID.Valid && cachedFetchedAt.Valid {
+	if err == nil && cacheModelID.Valid {
 		cachedModelID = cacheModelID.String
-		since = epochMsToISO(cachedFetchedAt.Int64)
 	} else if err != nil && err != sql.ErrNoRows {
 		return jvNull(), err
 	}
-	if forceFull || endpointChanged {
-		// A force rebuild is the dev escape hatch for scenes a watermark could never
-		// surface: it ignores the incremental cursor and re-fetches the whole window.
-		since = ""
-	} else if since != "" && !supportsIncrementalFetch(clientURL, apiKey) {
-		// The live stashdb instance predates the updated_at SceneQueryInput field, so
-		// the watermark queries would fail validation; fall back to a full fetch there
-		// while newer instances keep the incremental behavior.
-		since = ""
+	var previous expandSeedState
+	hasPrevious, err := readExpandMeta(db, expandSeedStateKey, &previous)
+	if err != nil {
+		return jvNull(), err
 	}
+	// An incremental refresh needs a previous refresh to walk back to and the
+	// seed set it covered. A force rebuild is the escape hatch for scenes a
+	// watermark could never surface, and ThePornDB has no update sort.
+	sinceMs := int64(0)
+	if !forceFull && !endpointChanged && !isThePornDB(stashdbEndpoint) && cachedFetchedAt.Valid &&
+		hasPrevious && nowMs >= previous.FullFetchAtMs && nowMs-previous.FullFetchAtMs < expandFullFetchIntervalMs {
+		sinceMs = max(1, cachedFetchedAt.Int64-expandWatermarkSlackMs)
+	}
+	seedState := expandSeedState{FullFetchAtMs: nowMs, Performers: []string{}, Studios: []string{}, Tags: []string{}}
 	rows := &sceneRows{m: map[string]jVal{}}
 	sources := map[string]map[string]bool{}
 	filters := []struct {
@@ -783,49 +803,61 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 		active++
 	}
 	perSource := maxInt(1, int(math.Ceil(float64(candidateLimit)/float64(maxInt(1, active)))))
-	type querySpec struct {
-		source string
-		values []string
-		limit  int64
-		sort   string
-	}
-	var queries []querySpec
-	for _, filter := range filters {
-		if len(filter.values.arr) > 0 {
-			values := make([]string, 0, len(filter.values.arr))
-			for _, v := range filter.values.arr {
-				values = append(values, v.asString())
-			}
-			// A full refresh samples each seed source by recency AND by popularity so
-			// interesting scenes older than the newest N are not truncated out (a date-only
-			// pool is recency-biased). An incremental refresh walks the watermark, where the
-			// UPDATED_AT sort makes both probes identical, so it keeps one probe per source.
-			if since != "" {
-				queries = append(queries, querySpec{filter.source, values, int64(perSource), "DATE"})
-			} else {
-				half := int64(perSource) / 2
-				if half < 1 {
-					half = 1
+	buildSpecs := func(sinceMs int64) []fetchPageSpec {
+		var specs []fetchPageSpec
+		probe := func(source string, values []string, limit int64, sort string, sinceMs int64) {
+			specs = append(specs, fetchPageSpec{
+				source: source, values: values, limit: limit, modifier: "INCLUDES", sort: sort, sinceMs: sinceMs,
+			})
+		}
+		seedState.FullFetchAtMs = nowMs
+		if sinceMs > 0 {
+			seedState.FullFetchAtMs = previous.FullFetchAtMs
+		}
+		for _, filter := range filters {
+			if len(filter.values.arr) > 0 {
+				values := make([]string, 0, len(filter.values.arr))
+				for _, v := range filter.values.arr {
+					values = append(values, v.asString())
 				}
-				queries = append(queries, querySpec{filter.source, values, half, "DATE"})
-				queries = append(queries, querySpec{filter.source, values, half, "POPULARITY"})
+				known, fresh := []string(nil), values
+				if sinceMs > 0 {
+					known, fresh = splitKnownSeeds(values, previous.values(filter.source))
+				}
+				// Seeds the cached pool already covers only need what changed since the
+				// last refresh: one probe newest-update-first, stopped at the watermark.
+				if len(known) > 0 {
+					probe(filter.source, known, int64(perSource), "UPDATED_AT", sinceMs)
+				}
+				// A full fetch samples each seed source by recency AND by popularity so
+				// interesting scenes older than the newest N are not truncated out (a
+				// date-only pool is recency-biased); new seeds get the same sample.
+				if len(fresh) > 0 {
+					half := int64(perSource) / 2
+					if half < 1 {
+						half = 1
+					}
+					probe(filter.source, fresh, half, "DATE", 0)
+					probe(filter.source, fresh, half, "POPULARITY", 0)
+				}
+				sorted := append([]string(nil), values...)
+				sort.Strings(sorted)
+				switch filter.source {
+				case "performers":
+					seedState.Performers = sorted
+				case "studios":
+					seedState.Studios = sorted
+				default:
+					seedState.Tags = sorted
+				}
 			}
 		}
+		if wildcard {
+			probe("wildcard", nil, minInt64(100, int64(perSource)), "TRENDING", 0)
+		}
+		return specs
 	}
-	if wildcard {
-		queries = append(queries, querySpec{"wildcard", nil, minInt64(100, int64(perSource)), "TRENDING"})
-	}
-	specs := make([]fetchPageSpec, 0, len(queries))
-	for _, query := range queries {
-		specs = append(specs, fetchPageSpec{
-			source:   query.source,
-			values:   query.values,
-			limit:    query.limit,
-			modifier: "INCLUDES",
-			sort:     query.sort,
-			since:    since,
-		})
-	}
+	specs := buildSpecs(sinceMs)
 	// Fetch every probe concurrently (pages within each probe in parallel),
 	// merging in probe order — the same merge semantics as the sequential
 	// loop, so the fetched rows are identical while the fetch phase takes
@@ -833,6 +865,14 @@ func expandRefresh(db dbx, clientURL, apiKey string, links jVal, horizonDays int
 	// sequential values and fire once all probes have returned.
 	t0 = time.Now()
 	fetched, fetchedSources, err := fetchProbes(clientURL, apiKey, specs)
+	if err != nil && sinceMs > 0 {
+		// A stash-box without the UPDATED_AT sort rejects the incremental
+		// probes; the full fetch still works there.
+		warnLog("Incremental Expand fetch failed; fetching in full: " + err.Error())
+		sinceMs = 0
+		specs = buildSpecs(0)
+		fetched, fetchedSources, err = fetchProbes(clientURL, apiKey, specs)
+	}
 	if err != nil {
 		return jvNull(), err
 	}
@@ -956,7 +996,16 @@ ON CONFLICT(singleton) DO UPDATE SET model_id=excluded.model_id,
 		}
 		_, err = conn.ExecContext(ctx, `INSERT INTO application_meta(key,value) VALUES ('expand_cache_endpoint',?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stashdbEndpoint)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := writeExpandMeta(ctx, conn, expandSeedStateKey, seedState); err != nil {
+			return err
+		}
+		if lookalike.Key != "" {
+			return writeExpandMeta(ctx, conn, expandLookalikeKey, lookalike)
+		}
+		return nil
 	})
 	timings["database_writing"] = time.Since(t0).Milliseconds()
 	if writeErr != nil {
@@ -975,7 +1024,7 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stashdbEndpoint)
 		jvKey("scene_count", jvInt(int64(len(scenes)))),
 		jvKey("performer_count", jvInt(int64(len(performers)))),
 		jvKey("taxonomy_refreshed", jvBool(taxonomyRefreshed)),
-		jvKey("incremental", jvBool(since != "")),
+		jvKey("incremental", jvBool(sinceMs > 0)),
 		jvKey("stage_timings_ms", stageTimingsJValForExpand(timings)),
 	), nil
 }
