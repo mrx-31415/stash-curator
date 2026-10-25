@@ -209,9 +209,7 @@
      sides with matching negative margin, matched by extra padding so the
      visible content inset is unchanged.
   */
-  margin: -7px auto 0;
-  margin-inline: -15px;
-  max-width: calc(112rem + 30px);
+  margin: -7px -15px 0;
   min-height: 100vh;
   min-width: 0;
   overflow-x: clip;
@@ -282,6 +280,19 @@
 .curator-expand-toolbar {
   min-width: 0;
   max-width: 100%;
+}
+
+/* The page spans the full screen so card grids gain columns on wide
+   displays. Forms, comparisons and reading text keep the previous content
+   width (the old 112rem page cap minus its padding) instead of stretching
+   across ultrawide screens. */
+.curator-curate,
+.curator-manage-shell,
+.curator-hunt-controls,
+.curator-hunt > .alert,
+.curator-similar-search,
+.curator-similar-candidates {
+  max-width: 109.5rem;
 }
 
 .curator-hunt-controls {
