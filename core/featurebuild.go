@@ -483,8 +483,7 @@ func featureIgnoredTagIDs(db dbx, ignoredTags []string) (map[string]bool, error)
 }
 
 func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
-	documentFrequency map[string]int64, tagNames map[string]string,
-	roles map[string]tagRoleResult, total int) []featureRow {
+	documentFrequency map[string]int64, tagMetadata map[string]jVal, total int) []featureRow {
 	weighted := map[string]float64{}
 	for tagID, base := range baseVectors[sceneID] {
 		frequency := documentFrequency[tagID]
@@ -500,12 +499,12 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 	if norm == 0 {
 		norm = 1.0
 	}
-	var features []featureRow
-	var tagKeys []string
+	tagKeys := make([]string, 0, len(weighted))
 	for key := range weighted {
 		tagKeys = append(tagKeys, key)
 	}
 	sort.Strings(tagKeys)
+	features := make([]featureRow, 0, len(tagKeys))
 	for _, tagID := range tagKeys {
 		frequency := documentFrequency[tagID]
 		confidence := math.Min(1.0, float64(frequency)/3)
@@ -516,12 +515,7 @@ func sceneFeatureRows(sceneID string, baseVectors map[string]map[string]float64,
 			name:       "tag:" + tagID,
 			value:      weighted[tagID] / norm,
 			confidence: confidence,
-			metadata: jvObj(
-				jvKey("tag_id", jvStr(tagID)),
-				jvKey("tag_name", jvStr(tagNames[tagID])),
-				jvKey("document_frequency", jvInt(frequency)),
-				jvKey("role_reason", jvStr(roles[tagID].reason)),
-			),
+			metadata:   tagMetadata[tagID],
 		})
 	}
 	return features
@@ -665,6 +659,18 @@ ORDER BY scene_id, tag_id`)
 		return nil, err
 	}
 	total := maxInt(1, len(sceneIDs))
+	// A tag's metadata is the same in every scene, and publish keeps only the
+	// first copy per feature, so every row shares one object per tag instead of
+	// allocating its own (one per scene-tag row dominated the build's heap).
+	tagMetadata := make(map[string]jVal, len(documentFrequency))
+	for tagID, frequency := range documentFrequency {
+		tagMetadata[tagID] = jvObj(
+			jvKey("tag_id", jvStr(tagID)),
+			jvKey("tag_name", jvStr(tagNames[tagID])),
+			jvKey("document_frequency", jvInt(frequency)),
+			jvKey("role_reason", jvStr(roles[tagID].reason)),
+		)
+	}
 	// Each scene's content rows depend only on its own vector and the
 	// precomputed frequency maps, so the pass is row-independent: run it in
 	// fixed chunks (the kernel pattern) with progress ticks emitted in scene
@@ -685,7 +691,7 @@ ORDER BY scene_id, tag_id`)
 		var out []featureRow
 		for _, sceneID := range sceneIDs[start:end] {
 			out = append(out, sceneFeatureRows(sceneID, baseVectors, documentFrequency,
-				tagNames, roles, total)...)
+				tagMetadata, total)...)
 			progressReporter.done()
 		}
 		return out
@@ -1194,7 +1200,9 @@ ON CONFLICT(feature_version) DO UPDATE SET status='building', error=NULL`,
 	if progress != nil {
 		progress(0.60)
 	}
-	allFeatures := append(append([]featureRow(nil), sceneRows...), performerRows...)
+	allFeatures := make([]featureRow, 0, len(sceneRows)+len(performerRows))
+	allFeatures = append(append(allFeatures, sceneRows...), performerRows...)
+	sceneRows, performerRows = nil, nil
 	if err := featurePublish(db, featureVersion, sourceFingerprint, roles, allFeatures, nowMs, progress, rec); err != nil {
 		failErr := withTxn(db, func(conn *sql.Conn) error {
 			_, err := conn.ExecContext(context.Background(),
