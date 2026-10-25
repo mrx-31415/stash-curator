@@ -229,4 +229,15 @@ const load = (tree) => tree.children[1].children.at(-1).props.onClick();
   assert.equal(context.readEndlessRecommendationFilters().filters.gender, "FEMALE");
   assert.equal(context.readEndlessRecommendationFilters().filters.includeTags[0].name, "Tag");
   assert.equal(context.readEndlessRecommendationFilters().configUpdatedAtMs, 1);
+  // A lane switch renders once with the new lane but the previous lane's
+  // slate; unmounting then must not save those items as the new lane's list.
+  context.clearEndlessCache();
+  hooks.length = 0; top = 0;
+  render();
+  props.lane = "best_bets";
+  render();
+  for (const hook of hooks) hook?.cleanup?.();
+  const otherLane = context.endlessBatchKey(slate, ["recommendations", "best_bets", props.filters, { seed: 1 }, true, true]);
+  assert.equal(context.readEndlessCache(otherLane), null);
+  assert.ok(context.readEndlessCache(context.endlessBatchKey(slate, ["recommendations", "for_you", props.filters, { seed: 1 }, true, true])));
 })().catch((error) => { console.error(error); process.exitCode = 1; });
