@@ -1174,58 +1174,7 @@ type similarPerformerMatch struct {
 // performerProfiles mirrors FeatureStore.performer_profiles: profile blocks
 // from entity_feature with family LIKE 'profile:%'.
 func (s *similarityService) performerProfiles() (map[string]*performerProfile, error) {
-	rows, err := s.db.Query(`SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
-FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-WHERE ef.feature_version=? AND ef.entity_type='performer' AND fd.family LIKE 'profile:%'
-ORDER BY ef.entity_id, ef.feature_id`, s.featureVersion)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	profiles := make(map[string]*performerProfile)
-	for rows.Next() {
-		var entityID, family, name string
-		var value, confidence float64
-		if err := rows.Scan(&entityID, &family, &name, &value, &confidence); err != nil {
-			return nil, err
-		}
-		profile := profiles[entityID]
-		if profile == nil {
-			profile = &performerProfile{
-				id:     entityID,
-				blocks: map[string]map[string]profileValue{},
-				norms:  map[string]float64{},
-				keys:   map[string]map[string]bool{},
-			}
-			profiles[entityID] = profile
-		}
-		block := strings.TrimPrefix(family, "profile:")
-		values := profile.blocks[block]
-		if values == nil {
-			values = map[string]profileValue{}
-			profile.blocks[block] = values
-			profile.keys[block] = map[string]bool{}
-		}
-		values[name] = profileValue{value: value, confidence: confidence}
-		profile.keys[block][name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, profile := range profiles {
-		for block, values := range profile.blocks {
-			if numericBlocks[block] {
-				continue
-			}
-			// profiles.py: norm = sqrt(sum(value**2 ...)).
-			squares := make([]float64, 0, len(values))
-			for _, item := range values {
-				squares = append(squares, item.value*item.value)
-			}
-			profile.norms[block] = math.Sqrt(sumFloats(squares))
-		}
-	}
-	return profiles, nil
+	return loadPerformerProfiles(s.db, s.featureVersion, nil)
 }
 
 func intersectStringSets(a, b []string) map[string]bool {

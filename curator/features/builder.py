@@ -8,7 +8,7 @@ import math
 import sqlite3
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -24,6 +24,7 @@ from curator.profiling import record_duration, span
 from curator.storage import transaction
 from curator.storage.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
+    PERFORMER_PROFILE_GENERATION,
     activate_artifact,
     artifact_path,
     create_artifact,
@@ -85,6 +86,28 @@ class _Feature:
     value: float
     confidence: float
     metadata: dict[str, object]
+
+
+def _performer_profile_json(features: Iterable[_Feature]) -> list[tuple[str, str]]:
+    """Pack each performer's profile:* features into one compact JSON object,
+    ``{block: {name: [value, confidence]}}``, in (performer, family, name)
+    order, so query-time readers load one row per performer."""
+    profiles: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for feature in sorted(
+        (
+            item
+            for item in features
+            if item.entity_type == "performer" and item.family.startswith("profile:")
+        ),
+        key=lambda item: (item.entity_id, item.family, item.name),
+    ):
+        blocks = profiles.setdefault(feature.entity_id, {})
+        block = blocks.setdefault(feature.family.removeprefix("profile:"), {})
+        block[feature.name] = [float(feature.value), float(feature.confidence)]
+    return [
+        (performer_id, json.dumps(blocks, separators=(",", ":")))
+        for performer_id, blocks in profiles.items()
+    ]
 
 
 class FeatureBuilder:
@@ -264,6 +287,7 @@ class FeatureBuilder:
         ).fetchone()
         digest.update(f"taxonomy_snapshot\0{row[0] if row else ''}\n".encode())
         digest.update(f"taxonomy_category_roles\0{CATEGORY_ROLE_FINGERPRINT}\n".encode())
+        digest.update(f"performer_profile\0{PERFORMER_PROFILE_GENERATION}\n".encode())
         return digest.hexdigest()
 
     def _resolve_tag_roles(self) -> dict[str, TagRoleResult]:
@@ -751,6 +775,16 @@ class FeatureBuilder:
                         )
                         for feature in features
                         if feature.entity_type == "scene" and feature.family == "content"
+                    ),
+                )
+                artifact.executemany(
+                    """
+                    INSERT INTO performer_profile(feature_version, performer_id, profile_json)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        (feature_version, performer_id, profile_json)
+                        for performer_id, profile_json in _performer_profile_json(features)
                     ),
                 )
             timings["database_writing"] = round((time.perf_counter() - writing_started) * 1000)

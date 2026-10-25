@@ -42,6 +42,41 @@ type featureRow struct {
 	metadata   jVal
 }
 
+// performerProfileJSON packs each performer's profile:* feature rows into one
+// compact JSON object, {block: {name: [value, confidence]}}, so query-time
+// readers load one row per performer instead of hundreds. features must be
+// sorted by (entity type, entity id, family, name); the output is
+// [performer id, json] pairs in that order, byte-identical to the Python
+// builder's json.dumps.
+func performerProfileJSON(features []featureRow) [][2]string {
+	var result [][2]string
+	var current string
+	var profile jVal
+	flush := func() {
+		if current != "" {
+			result = append(result, [2]string{current, profile.marshalCompact()})
+		}
+	}
+	for _, feature := range features {
+		if feature.entityType != "performer" || !strings.HasPrefix(feature.family, "profile:") {
+			continue
+		}
+		if feature.entityID != current {
+			flush()
+			current, profile = feature.entityID, jvObj()
+		}
+		block := strings.TrimPrefix(feature.family, "profile:")
+		if n := len(profile.obj); n == 0 || profile.obj[n-1].key != block {
+			profile.obj = append(profile.obj, jvKey(block, jvObj()))
+		}
+		values := &profile.obj[len(profile.obj)-1].val
+		values.obj = append(values.obj, jvKey(feature.name,
+			jvArr(jvFloat(feature.value), jvFloat(feature.confidence))))
+	}
+	flush()
+	return result
+}
+
 // fingerprintTable mirrors features/builder._fingerprint_table: rows are
 // JSON-encoded in batches of 1000 with ensure_ascii=False.
 func fingerprintTable(db dbx, digest interface{ Write([]byte) (int, error) }, label, statement string) error {
@@ -242,6 +277,9 @@ FROM source_performer ORDER BY performer_id`},
 		return "", err
 	}
 	if _, err := digest.Write([]byte("taxonomy_category_roles\x00" + categoryRoleFingerprint() + "\n")); err != nil {
+		return "", err
+	}
+	if _, err := digest.Write([]byte("performer_profile\x00" + performerProfileGeneration + "\n")); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
@@ -1427,6 +1465,21 @@ INSERT INTO scene_content_search(
 			}
 			if err := flushSearchRows(); err != nil {
 				return err
+			}
+			profileRows := make([][]any, 0, publishRowChunk)
+			for _, profile := range performerProfileJSON(features) {
+				profileRows = append(profileRows, []any{featureVersion, profile[0], profile[1]})
+				if len(profileRows) >= publishRowChunk {
+					if err := execMultiRow(conn, `
+INSERT INTO performer_profile(feature_version, performer_id, profile_json) VALUES (?, ?, ?)`, profileRows); err != nil {
+						return err
+					}
+					profileRows = profileRows[:0]
+				}
+			}
+			if len(profileRows) > 0 {
+				return execMultiRow(conn, `
+INSERT INTO performer_profile(feature_version, performer_id, profile_json) VALUES (?, ?, ?)`, profileRows)
 			}
 			return nil
 		})

@@ -32,6 +32,10 @@ CREATE TABLE scene_content_search (
     feature_version TEXT NOT NULL, feature_id TEXT NOT NULL, scene_id TEXT NOT NULL,
     value REAL NOT NULL, PRIMARY KEY (feature_id, scene_id)
 ) STRICT, WITHOUT ROWID;
+CREATE TABLE performer_profile (
+    feature_version TEXT NOT NULL, performer_id TEXT NOT NULL, profile_json TEXT NOT NULL,
+    PRIMARY KEY (feature_version, performer_id)
+) STRICT, WITHOUT ROWID;
 `
 
 // artifactModelSchema mirrors artifacts.MODEL_SCHEMA.
@@ -315,7 +319,7 @@ func discardArtifact(db dbx, temporary string) {
 // artifact as the active generation and recreate the shadowing temp views.
 func activateArtifact(db dbx, kind, path string) error {
 	alias := kind + "_generation"
-	tables := featureTables
+	tables := featureViewTables
 	if kind == "model" {
 		tables = modelTables
 	}

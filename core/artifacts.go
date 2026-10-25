@@ -20,7 +20,18 @@ const artifactSchemaVersion = 4
 
 var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true}
 
+// performerProfileGeneration salts the feature fingerprint so the first build
+// with packed performer_profile rows publishes a new generation instead of
+// reusing an artifact without them. The table is additive, so the schema
+// version stays 4 and older binaries keep attaching these artifacts.
+const performerProfileGeneration = "1"
+
+// featureTables are required in every feature artifact (compaction checks
+// them); featureViewTables adds the optional tables newer builds write, which
+// get a view only when the attached artifact has them.
 var featureTables = []string{"feature_definition", "entity_feature", "scene_content_search"}
+
+var featureViewTables = append(append([]string{}, featureTables...), "performer_profile")
 
 var modelTables = []string{
 	"feature_affinity",
@@ -142,7 +153,7 @@ func attachActiveArtifacts(db dbx) error {
 		query  string
 	}
 	attaches := []attach{
-		{"feature_generation", featureTables, "feature_build",
+		{"feature_generation", featureViewTables, "feature_build",
 			`SELECT artifact_basename FROM feature_build WHERE status='published' AND validation_status='valid'`},
 		{"model_generation", modelTables, "model_version",
 			`SELECT artifact_basename FROM model_version WHERE status='published' AND validation_status='valid'`},
@@ -194,11 +205,11 @@ func attachActiveArtifacts(db dbx) error {
 // database (read-only, mutable) plus the feature generation, shadowing every
 // non-owned core table and the feature tables with temp views.
 func attachBuildSources(db dbx, corePath, featurePath string) error {
-	owned := make(map[string]bool, len(modelTables)+len(featureTables))
+	owned := make(map[string]bool, len(modelTables)+len(featureViewTables))
 	for _, table := range modelTables {
 		owned[table] = true
 	}
-	for _, table := range featureTables {
+	for _, table := range featureViewTables {
 		owned[table] = true
 	}
 	if _, err := db.Exec(`ATTACH DATABASE ? AS core`, readonlyArtifactURI(corePath, false)); err != nil {
@@ -237,7 +248,11 @@ func attachBuildSources(db dbx, corePath, featurePath string) error {
 			return err
 		}
 	}
-	for _, table := range featureTables {
+	featureViews, err := artifactTables(db, "feature_generation", featureViewTables)
+	if err != nil {
+		return err
+	}
+	for _, table := range featureViews {
 		if _, err := db.Exec(fmt.Sprintf(`CREATE TEMP VIEW %s AS SELECT * FROM feature_generation.%s`,
 			quoteIdent(table), quoteIdent(table))); err != nil {
 			return err

@@ -2133,29 +2133,14 @@ func performerProfilesForIDs(db dbx, featureVersion string, performerIDs map[str
 	if len(performerIDs) == 0 {
 		return map[string]*performerProfile{}, nil
 	}
-	ids := sortedStringSet(performerIDs)
-	placeholders := inClause(len(ids))
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, featureVersion)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	rows, err := db.Query(`SELECT ef.entity_id, fd.family, fd.name, ef.value, ef.confidence
-FROM entity_feature ef JOIN feature_definition fd USING(feature_id)
-WHERE ef.feature_version=? AND ef.entity_type='performer' AND fd.family LIKE 'profile:%'
-  AND ef.entity_id IN (`+placeholders+`)
-ORDER BY ef.entity_id, ef.feature_id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return loadPerformerProfiles(db, featureVersion, sortedStringSet(performerIDs))
+}
+
+// loadPerformerProfiles builds query-time profiles (blocks, keys, norms) for
+// the given performers, or every performer when ids is nil.
+func loadPerformerProfiles(db dbx, featureVersion string, ids []string) (map[string]*performerProfile, error) {
 	profiles := make(map[string]*performerProfile)
-	for rows.Next() {
-		var entityID, family, name string
-		var value, confidence float64
-		if err := rows.Scan(&entityID, &family, &name, &value, &confidence); err != nil {
-			return nil, err
-		}
+	err := forEachProfileRow(db, featureVersion, ids, func(entityID, block, name string, value, confidence float64) {
 		profile := profiles[entityID]
 		if profile == nil {
 			profile = &performerProfile{
@@ -2166,7 +2151,6 @@ ORDER BY ef.entity_id, ef.feature_id`, args...)
 			}
 			profiles[entityID] = profile
 		}
-		block := strings.TrimPrefix(family, "profile:")
 		values := profile.blocks[block]
 		if values == nil {
 			values = map[string]profileValue{}
@@ -2175,8 +2159,8 @@ ORDER BY ef.entity_id, ef.feature_id`, args...)
 		}
 		values[name] = profileValue{value: value, confidence: confidence}
 		profile.keys[block][name] = true
-	}
-	if err := rows.Err(); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
 	for _, profile := range profiles {
