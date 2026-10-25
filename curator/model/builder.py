@@ -249,6 +249,22 @@ def _classification_payload(
     return payload
 
 
+def _stored_components(components: dict[str, object]) -> dict[str, object]:
+    """components_json without the build-only stretch_candidates lists.
+
+    _classification_payload has already condensed them into stretch_contributors;
+    they were over half of every stored row and every slate item.
+    """
+    return {
+        family: (
+            {key: value for key, value in component.items() if key != "stretch_candidates"}
+            if isinstance(component, dict)
+            else component
+        )
+        for family, component in components.items()
+    }
+
+
 def _confirmed_tag_candidates(contributions: list[dict[str, object]]) -> list[dict[str, object]]:
     """Content-family contributions restricted to StashDB-confirmed tags.
 
@@ -2079,7 +2095,11 @@ class PreferenceModelBuilder:
                         score.confidence,
                         score.metadata_confidence,
                         score.recovery,
-                        json.dumps(score.components, sort_keys=True, separators=(",", ":")),
+                        json.dumps(
+                            _stored_components(score.components),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
                         # Lane classification reads only the six family values and the
                         # direct signals; keeping them in a small document avoids
                         # parsing the full components_json (with its top-contributor

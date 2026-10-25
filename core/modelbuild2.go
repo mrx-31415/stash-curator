@@ -686,6 +686,27 @@ func classificationPayload(components jVal) jVal {
 	return payload
 }
 
+// storedComponents mirrors _stored_components: components_json without the
+// build-only stretch_candidates lists, which classificationPayload has already
+// condensed into stretch_contributors. They were over half of every stored
+// row and every slate item.
+func storedComponents(components jVal) jVal {
+	stored := jVal{kind: jObj, obj: make([]jPair, 0, len(components.obj))}
+	for _, pair := range components.obj {
+		if pair.val.kind == jObj && pair.val.has("stretch_candidates") {
+			family := jVal{kind: jObj, obj: make([]jPair, 0, len(pair.val.obj)-1)}
+			for _, field := range pair.val.obj {
+				if field.key != "stretch_candidates" {
+					family.obj = append(family.obj, field)
+				}
+			}
+			pair.val = family
+		}
+		stored.obj = append(stored.obj, pair)
+	}
+	return stored
+}
+
 // edgeMatches mirrors _edge_matches.
 func edgeMatches(entry jVal) ([]jVal, error) {
 	matches := entry.get("matches")
@@ -1071,7 +1092,7 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 		metadataConfidence: metadataConfidence,
 		recovery:           recovery,
 		// Publication only needs JSON; release each scene's object tree now.
-		componentsJSON:     components.marshalSortedKeys(),
+		componentsJSON:     storedComponents(components).marshalSortedKeys(),
 		classificationJSON: classificationPayload(components).marshalSortedKeys(),
 		neighbors:          neighborItems,
 		eligibility:        eligibilityValue,

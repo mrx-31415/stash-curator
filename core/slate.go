@@ -228,6 +228,9 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 			selected = append(selected, &item)
 		}
 	}
+	if err := hydrateItemDetails(db, built.modelID, selected); err != nil {
+		return jvNull(), err
+	}
 	if impressionID.kind == jNull {
 		impressionID = jvStr(uuid4())
 	}
@@ -304,6 +307,34 @@ type recommendationItem struct {
 	eligibility   jVal
 	qualification jVal
 	reasonIDs     []string
+	// needsDetails marks a materialized item whose components, neighbors
+	// and eligibility are loaded by hydrateItemDetails only once selected.
+	needsDetails bool
+}
+
+// hydrateItemDetails fills the score details of the selected items that the
+// materialized path left unloaded.
+func hydrateItemDetails(db dbx, modelID string, items []*recommendationItem) error {
+	sceneIDs := map[string]bool{}
+	for _, item := range items {
+		if item.needsDetails {
+			sceneIDs[item.sceneID] = true
+		}
+	}
+	if len(sceneIDs) == 0 {
+		return nil
+	}
+	scores, err := modelScores(db, modelID, sceneIDs)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if score, ok := scores[item.sceneID]; ok && item.needsDetails {
+			item.components, item.neighbors, item.eligibility = score.components, score.neighbors, score.eligibility
+			item.needsDetails = false
+		}
+	}
+	return nil
 }
 
 func recommendationItemDict(item *recommendationItem) jVal {
@@ -663,7 +694,7 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 	for _, row := range selectedRows {
 		sceneIDs[row.sceneID] = true
 	}
-	scores, err := modelScores(db, modelID, sceneIDs)
+	scores, err := modelScoreSummaries(db, modelID, sceneIDs)
 	if err != nil {
 		return builtSlate{}, false, err
 	}
@@ -733,11 +764,9 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 			finalUtility:  row.utility - liveCooldown[sceneID],
 			penalties:     penaltiesCopy,
 			bonuses:       bonuses,
-			components:    score.components,
-			neighbors:     score.neighbors,
-			eligibility:   score.eligibility,
 			qualification: classification.qualification,
 			reasonIDs:     reasons,
+			needsDetails:  true,
 		})
 	}
 	elapsed := int64(0)
@@ -820,6 +849,17 @@ type modelScore struct {
 // modelScores mirrors RecommendationModelStore.scores: the score row plus
 // neighbors from model_scene_neighbor ordered by (scene_id, rank).
 func modelScores(db dbx, modelID string, sceneIDs map[string]bool) (map[string]modelScore, error) {
+	return queryModelScores(db, modelID, sceneIDs, true)
+}
+
+// modelScoreSummaries reads only the numeric score columns. Decoding
+// components_json dominates slate latency, so the materialized path ranks and
+// draws on summaries and hydrates only the returned page.
+func modelScoreSummaries(db dbx, modelID string, sceneIDs map[string]bool) (map[string]modelScore, error) {
+	return queryModelScores(db, modelID, sceneIDs, false)
+}
+
+func queryModelScores(db dbx, modelID string, sceneIDs map[string]bool, details bool) (map[string]modelScore, error) {
 	result := make(map[string]modelScore, len(sceneIDs))
 	if len(sceneIDs) == 0 {
 		return result, nil
@@ -831,8 +871,11 @@ func modelScores(db dbx, modelID string, sceneIDs map[string]bool) (map[string]m
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := db.Query(`SELECT scene_id, appeal, current_fit, confidence,
-    components_json, eligibility_json
+	detailColumns := `'', ''`
+	if details {
+		detailColumns = `components_json, eligibility_json`
+	}
+	rows, err := db.Query(`SELECT scene_id, appeal, current_fit, confidence, `+detailColumns+`
 FROM model_scene_score WHERE model_id=? AND scene_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -844,19 +887,25 @@ FROM model_scene_score WHERE model_id=? AND scene_id IN (`+placeholders+`)`, arg
 			rows.Close()
 			return nil, err
 		}
-		components, err := parseJSON([]byte(componentsJSON))
-		if err != nil {
-			components = jvNull()
+		score := modelScore{appeal: appeal, currentFit: currentFit, confidence: confidence}
+		if details {
+			score.components, err = parseJSON([]byte(componentsJSON))
+			if err != nil {
+				score.components = jvNull()
+			}
+			score.eligibility, err = parseJSON([]byte(eligibilityJSON))
+			if err != nil {
+				score.eligibility = jvNull()
+			}
 		}
-		eligibility, err := parseJSON([]byte(eligibilityJSON))
-		if err != nil {
-			eligibility = jvNull()
-		}
-		result[sceneID] = modelScore{appeal: appeal, currentFit: currentFit, confidence: confidence, components: components, eligibility: eligibility}
+		result[sceneID] = score
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if !details {
+		return result, nil
 	}
 	neighborRows, err := db.Query(`SELECT scene_id, neighbor_scene_id, similarity, weight, outcome
 FROM model_scene_neighbor WHERE model_id=? AND scene_id IN (`+placeholders+`) ORDER BY scene_id, rank`, args...)
