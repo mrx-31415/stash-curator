@@ -279,9 +279,7 @@ FROM source_performer ORDER BY performer_id`},
 	if _, err := digest.Write([]byte("taxonomy_category_roles\x00" + categoryRoleFingerprint() + "\n")); err != nil {
 		return "", err
 	}
-	// A new artifact schema needs a new generation: an unchanged library
-	// would otherwise keep reusing the published older-schema artifact.
-	if _, err := digest.Write([]byte(fmt.Sprintf("artifact_schema\x00%d\n", artifactSchemaVersion))); err != nil {
+	if _, err := digest.Write([]byte("performer_profile\x00" + performerProfileGeneration + "\n")); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil

@@ -2,7 +2,7 @@ package main
 
 // Performer profile rows — the one read path behind every performer-profile
 // loader (expand, targeted similar, local similar, the performer-similarity
-// build stage). Schema-5 feature artifacts carry performer_profile: one
+// build stage). Newer feature artifacts carry performer_profile: one
 // compact JSON row per performer packing its profile:* features. Reading a
 // few hundred rows instead of hundreds of thousands of entity_feature rows is
 // what keeps Performer Hunt and Expand scoring fast; older artifacts fall back
@@ -144,8 +144,8 @@ func profileKey(raw []byte) (string, error) {
 }
 
 // hasPerformerProfiles reports whether featureVersion's profiles are packed:
-// performer_profile is readable (a temp view over an attached schema-5
-// feature artifact, or a real table) and holds rows for that version. A
+// performer_profile is readable (a temp view over an attached feature
+// artifact, or a real table) and holds rows for that version. A
 // schema that has the table but no packed rows reads entity_feature instead.
 func hasPerformerProfiles(db dbx, featureVersion string) (bool, error) {
 	var found int

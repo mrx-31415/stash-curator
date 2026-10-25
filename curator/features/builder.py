@@ -24,6 +24,7 @@ from curator.profiling import record_duration, span
 from curator.storage import transaction
 from curator.storage.artifacts import (
     ARTIFACT_SCHEMA_VERSION,
+    PERFORMER_PROFILE_GENERATION,
     activate_artifact,
     artifact_path,
     create_artifact,
@@ -286,7 +287,7 @@ class FeatureBuilder:
         ).fetchone()
         digest.update(f"taxonomy_snapshot\0{row[0] if row else ''}\n".encode())
         digest.update(f"taxonomy_category_roles\0{CATEGORY_ROLE_FINGERPRINT}\n".encode())
-        digest.update(f"artifact_schema\0{ARTIFACT_SCHEMA_VERSION}\n".encode())
+        digest.update(f"performer_profile\0{PERFORMER_PROFILE_GENERATION}\n".encode())
         return digest.hexdigest()
 
     def _resolve_tag_roles(self) -> dict[str, TagRoleResult]:

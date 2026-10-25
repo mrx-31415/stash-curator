@@ -11,8 +11,11 @@ from uuid import uuid4
 
 from curator.storage.database import StorageError
 
-ARTIFACT_SCHEMA_VERSION = 5
-SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4, 5})
+ARTIFACT_SCHEMA_VERSION = 4
+SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
+# Salts the feature fingerprint for the first build with packed
+# performer_profile rows; the table is additive, so the schema stays 4.
+PERFORMER_PROFILE_GENERATION = "1"
 _FINAL_NAME = re.compile(r"(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.sqlite3")
 _TEMP_NAME = re.compile(r"\.(feature-fv-[0-9a-f]{20}|model-[0-9a-f]{20})\.[0-9a-f]{32}\.tmp")
 FEATURE_TABLES = ("feature_definition", "entity_feature", "scene_content_search")

@@ -16,12 +16,18 @@ import (
 	"strings"
 )
 
-const artifactSchemaVersion = 5
+const artifactSchemaVersion = 4
 
-var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true}
+var supportedArtifactSchemaVersions = map[int]bool{1: true, 2: true, 3: true, 4: true}
+
+// performerProfileGeneration salts the feature fingerprint so the first build
+// with packed performer_profile rows publishes a new generation instead of
+// reusing an artifact without them. The table is additive, so the schema
+// version stays 4 and older binaries keep attaching these artifacts.
+const performerProfileGeneration = "1"
 
 // featureTables are required in every feature artifact (compaction checks
-// them); featureViewTables adds the tables only newer schemas carry, which
+// them); featureViewTables adds the optional tables newer builds write, which
 // get a view only when the attached artifact has them.
 var featureTables = []string{"feature_definition", "entity_feature", "scene_content_search"}
 

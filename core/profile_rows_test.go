@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// A schema-5 artifact's packed performer_profile rows must load exactly the
+// A feature artifact's packed performer_profile rows must load exactly the
 // profiles the entity_feature join yields for older artifacts.
 func TestPackedPerformerProfilesMatchEntityFeatures(t *testing.T) {
 	db, err := sql.Open("sqlite3", fileURI(filepath.Join(t.TempDir(), "feature.sqlite3"), false))
