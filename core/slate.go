@@ -1303,9 +1303,15 @@ func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs 
 	if len(includeTags) == 0 && len(excludeTags) == 0 && len(performerIDs) == 0 && len(studioIDs) == 0 && gender == "" {
 		return nil, nil
 	}
-	performers, err := scenePerformers(db)
-	if err != nil {
-		return nil, err
+	// Scene performers are only consulted by the gender and performer
+	// filters; loading them for a tag-only filter cost more than the filter.
+	var performers map[string][]string
+	var err error
+	if gender != "" || len(performerIDs) > 0 {
+		performers, err = scenePerformers(db)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var genders map[string]string
 	if gender != "" {

@@ -989,6 +989,9 @@ func studios(db dbx) (map[string]string, error) {
 }
 
 // sceneTagNames mirrors SimilarityService._scene_tags: tag names casefolded.
+// The CROSS JOIN pins the join order: lower(name) can't use an index, so
+// SQLite would otherwise scan every scene_tag row and probe source_tag,
+// instead of matching the few tags first and reading their scenes by index.
 func sceneTagNames(db dbx, names map[string]bool) (map[string]map[string]bool, error) {
 	sortedNames := make([]string, 0, len(names))
 	for name := range names {
@@ -1000,8 +1003,8 @@ func sceneTagNames(db dbx, names map[string]bool) (map[string]map[string]bool, e
 	for i, name := range sortedNames {
 		args[i] = name
 	}
-	rows, err := db.Query(`SELECT st.scene_id, t.name FROM scene_tag st
-JOIN source_tag t USING(tag_id) WHERE lower(t.name) IN (`+placeholders+`)`, args...)
+	rows, err := db.Query(`SELECT st.scene_id, t.name FROM source_tag t
+CROSS JOIN scene_tag st ON st.tag_id=t.tag_id WHERE lower(t.name) IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
