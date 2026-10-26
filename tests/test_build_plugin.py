@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import zipfile
 from hashlib import sha256
 from pathlib import Path
@@ -88,3 +89,27 @@ def test_link_shims_share_cache_across_checkouts(tmp_path: Path, monkeypatch) ->
     updated = build_plugin.cached_link_shims()
     assert updated != cached
     assert (updated / "libresolv.tbd").read_text() == "changed stub"
+
+
+def test_dev_version_counts_commits_since_the_last_release(tmp_path: Path, monkeypatch) -> None:
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n')
+    (tmp_path / ".release-please-manifest.json").write_text('{".": "1.2.3"}\n')
+    git("add", ".")
+    git("commit", "-qm", "chore(main): release 1.2.3")
+    monkeypatch.setattr(build_plugin, "ROOT", tmp_path)
+    assert build_plugin.dev_version() == "1.2.3"
+    for change in ("a", "b"):
+        (tmp_path / change).write_text(change)
+        git("add", change)
+        git("commit", "-qm", f"fix: {change}")
+    assert build_plugin.dev_version() == f"1.2.3+dev.2.{git('rev-parse', '--short', 'HEAD')}"
