@@ -26,6 +26,12 @@ resident RPC conversion is off the table (disproven — no residency in Stash's
 
 ## Current state
 
+Pair picks have been retired (`docs/decisions/005-retire-pair-picks.md`). The
+Curate Pick tab, its three operations and the pick label conversion are gone.
+Applied migrations and answered pick rows are preserved as history, and the
+implicit-skip channel still uses the matched-pair accumulator. Removing the pick
+constants changes the model config, so the next update rebuilds the model once.
+
 Description-term extraction, ratings, scoring, and exclusions have been retired.
 The historical #94/#95 delivery notes below describe the old implementation.
 Stored term answers and applied migrations are preserved. A new feature

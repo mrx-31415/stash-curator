@@ -243,12 +243,6 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetSceneAffinities(pluginDir, payload)
 	case "get_tag_sentiment_follow_up":
 		return opGetTagSentimentFollowUp(pluginDir, payload)
-	case "get_curation_picks":
-		return opGetCurationPicks(pluginDir, payload)
-	case "submit_curation_picks":
-		return opSubmitCurationPicks(pluginDir, payload)
-	case "get_curation_pair_verdict":
-		return opGetCurationPairVerdict(pluginDir, payload)
 	case "get_curation_impact":
 		return opGetCurationImpact(pluginDir, payload)
 	case "submit_impact_correction":

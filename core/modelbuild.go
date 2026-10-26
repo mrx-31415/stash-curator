@@ -26,31 +26,24 @@ const (
 	modelBuildVersion                 = 4
 	affinityPrior                     = 1.0
 	affinitySiblingPrior              = 1.0
-	// the base confidence and the IPS cap bounds a pick's weight. It is kept
-	// well under a rating (0.8): a comparison signals across the symmetric
-	// difference of two scenes' features — roughly twice a single scene — so a
-	// strong pick would move feature affinities about as much as an entire
-	// observed watch history and dominate the model. The 1.0 clamp stays as an
-	// outlier bound; only a maximally surprising pick approaches it.
-	curationPairConfidence    = 0.10
-	curationPairSurpriseBonus = 2.0
-	curationPairIPSCap        = 1.0
 	// Mirrors ModelConfig.impact_correction_confidence: a deliberate "this
 	// impact move is wrong" correction is direct evidence about the scene's own
 	// appeal, so it sits below a fresh rating but above an implicit signal.
 	impactCorrectionConfidence = 0.60
 	// Mirrors ModelConfig.implicit_skip_* in curator/config.py (#146 Channel A).
-	// The base is half the deliberate-pick base (curationPairConfidence) so
-	// implicit signal never outranks explicit feedback; the issue author
-	// flagged it may need to be even weaker after live measurement.
+	// The base is kept far below explicit feedback (thumbs, ratings) so
+	// implicit signal never outranks it; the issue author flagged it may need
+	// to be even weaker after live measurement.
 	implicitSkipConfidence    = 0.075
 	implicitSkipSurpriseBonus = 2.0
 	implicitSkipIPSCap        = 2.0
 )
 
 // sceneLabel mirrors _SceneLabel: outcome/confidence/effectiveEvidence cover
-// every signal and drive affinity learning; the absolute* fields exclude
-// pairwise picks and are what materializes as a scene's own appeal.
+// every signal and drive affinity learning; the absolute* fields are what
+// materializes as a scene's own appeal. Every current label signal is
+// absolute, so the two agree; pairwise evidence (implicit skips) enters
+// affinities as matched pair events instead of labels.
 type sceneLabel struct {
 	outcome           float64
 	confidence        float64
@@ -58,22 +51,6 @@ type sceneLabel struct {
 	signalTypes       []string
 	absoluteOutcome   float64
 	absoluteEvidence  float64
-}
-
-// pairSignalTypes mirrors builder.PAIR_SIGNAL_TYPES.
-var pairSignalTypes = map[string]bool{
-	"curation_pair_winner": true,
-	"curation_pair_loser":  true,
-	"curation_pair_tie":    true,
-}
-
-// pairSignalOutcomes mirrors builder.PAIR_SIGNAL_OUTCOMES: the Bradley-Terry
-// gradient per label. A tie contributes 0, pulling the features that differed
-// between the two scenes toward the label mean rather than either extreme.
-var pairSignalOutcomes = map[string]float64{
-	"curation_pair_winner": 1.0,
-	"curation_pair_loser":  -1.0,
-	"curation_pair_tie":    0.0,
 }
 
 // storedFeature mirrors features.store.StoredFeature.
@@ -216,50 +193,6 @@ ORDER BY scene_id, occurred_at_ms`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = db.Query(`
-SELECT scene_id, feedback_type, payload_json FROM feedback
-WHERE reversed_by_id IS NULL
-  AND feedback_type IN (
-      'curation_pair_winner', 'curation_pair_loser', 'curation_pair_tie'
-  )
-ORDER BY scene_id, occurred_at_ms`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var sceneID, feedbackType, payloadJSON string
-		if err := rows.Scan(&sceneID, &feedbackType, &payloadJSON); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		payload, parseErr := parseJSON([]byte(payloadJSON))
-		if parseErr != nil {
-			continue
-		}
-		selectionProbability := pythonFloatValue(payload.get("selection_probability"))
-		if selectionProbability <= 0 {
-			selectionProbability = 1.0
-		}
-		if selectionProbability > 1 {
-			continue
-		}
-		predictedWinner := pythonFloatValue(payload.get("predicted_winner"))
-		predictedLoser := pythonFloatValue(payload.get("predicted_loser"))
-		surprise := predictedLoser - predictedWinner
-		if surprise < 0 {
-			surprise = 0
-		}
-		confidence := curationPairConfidence * (1.0 + curationPairSurpriseBonus*surprise) * math.Min(curationPairIPSCap, 1.0/selectionProbability)
-		if confidence > 1.0 {
-			confidence = 1.0
-		}
-		signals[sceneID] = append(signals[sceneID],
-			signal{pairSignalOutcomes[feedbackType], confidence, feedbackType})
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 	rows, err = db.Query(`SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL`)
 	if err != nil {
 		return nil, err
@@ -320,10 +253,8 @@ ORDER BY scene_id, occurred_at_ms`)
 		for _, item := range sceneSignals {
 			confidences = append(confidences, item.confidence)
 			products = append(products, item.value*item.confidence)
-			if !pairSignalTypes[item.signalType] {
-				absoluteConfidences = append(absoluteConfidences, item.confidence)
-				absoluteProducts = append(absoluteProducts, item.value*item.confidence)
-			}
+			absoluteConfidences = append(absoluteConfidences, item.confidence)
+			absoluteProducts = append(absoluteProducts, item.value*item.confidence)
 		}
 		evidence := sumFloats(confidences)
 		if evidence <= 0 {
@@ -408,9 +339,7 @@ func modelLabelMean(labels map[string]sceneLabel) float64 {
 
 // modelAbsoluteLabelMean mirrors _absolute_label_mean: the population
 // baseline for modelAffinities' general per-scene loop, scoped to the
-// absolute channel like that loop, so a pairwise pick anywhere in the corpus
-// never shifts the baseline a feature both scenes of some OTHER pair share is
-// measured against.
+// absolute channel like that loop.
 func modelAbsoluteLabelMean(labels map[string]sceneLabel) float64 {
 	confidences := make([]float64, 0, len(labels))
 	products := make([]float64, 0, len(labels))
@@ -690,105 +619,20 @@ func modelSceneContexts(db dbx) (map[string]sceneContext, error) {
 	return contexts, nil
 }
 
-// pairEvent mirrors _PairEvent: one answered comparison reconstructed from
-// its matched winner/loser feedback rows.
+// pairEvent mirrors _PairEvent: one implicit comparison (a played or thumbed
+// card beating an earlier card it was shown below).
 type pairEvent struct {
 	winnerScene string
 	loserScene  string
 	confidence  float64
 }
 
-// modelPairEvents mirrors _pair_events.
-func modelPairEvents(db dbx) ([]pairEvent, error) {
-	metadataWrong, err := metadataWrongScenes(db)
-	if err != nil {
-		return nil, err
-	}
-	type pairAccum struct {
-		winnerScene, loserScene string
-		confidence              float64
-	}
-	byPair := map[string]*pairAccum{}
-	rows, err := db.Query(`
-SELECT scene_id, feedback_type, payload_json FROM feedback
-WHERE reversed_by_id IS NULL
-  AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
-ORDER BY scene_id, occurred_at_ms`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var sceneID, feedbackType, payloadJSON string
-		if err := rows.Scan(&sceneID, &feedbackType, &payloadJSON); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if metadataWrong[sceneID] {
-			continue
-		}
-		payload, parseErr := parseJSON([]byte(payloadJSON))
-		if parseErr != nil {
-			continue
-		}
-		pairID := pythonStrOrEmpty(payload.get("pair_id"))
-		if pairID == "" {
-			continue
-		}
-		selectionProbability := pythonFloatValue(payload.get("selection_probability"))
-		if selectionProbability <= 0 {
-			selectionProbability = 1.0
-		}
-		if selectionProbability > 1 {
-			continue
-		}
-		predictedWinner := pythonFloatValue(payload.get("predicted_winner"))
-		predictedLoser := pythonFloatValue(payload.get("predicted_loser"))
-		surprise := predictedLoser - predictedWinner
-		if surprise < 0 {
-			surprise = 0
-		}
-		confidence := curationPairConfidence * (1.0 + curationPairSurpriseBonus*surprise) * math.Min(curationPairIPSCap, 1.0/selectionProbability)
-		if confidence > 1.0 {
-			confidence = 1.0
-		}
-		entry, ok := byPair[pairID]
-		if !ok {
-			entry = &pairAccum{}
-			byPair[pairID] = entry
-		}
-		entry.confidence = confidence
-		if feedbackType == "curation_pair_winner" {
-			entry.winnerScene = sceneID
-		} else {
-			entry.loserScene = sceneID
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	pairIDs := make([]string, 0, len(byPair))
-	for pairID := range byPair {
-		pairIDs = append(pairIDs, pairID)
-	}
-	sort.Strings(pairIDs)
-	events := make([]pairEvent, 0, len(pairIDs))
-	for _, pairID := range pairIDs {
-		entry := byPair[pairID]
-		if entry.winnerScene == "" || entry.loserScene == "" {
-			continue
-		}
-		events = append(events, pairEvent{entry.winnerScene, entry.loserScene, entry.confidence})
-	}
-	return events, nil
-}
-
 // modelImplicitSkipEvents mirrors _implicit_skip_events (#146 Channel A):
 // when a recommended scene is played or thumbed, the earlier-position cards
 // in the same impression are treated as weak pairwise losers. Surprise uses
 // the stored policy_score (surprise = max(0, loser_score - winner_score));
-// confidence uses the implicit base (half the deliberate-pick base) so
-// implicit signal never outranks explicit feedback. Trigger is played or
+// confidence uses the implicit base, so implicit signal never outranks
+// explicit feedback. Trigger is played or
 // thumbed only. Pairs are virtual (build-time only).
 func modelImplicitSkipEvents(db dbx) ([]pairEvent, error) {
 	metadataWrong, err := metadataWrongScenes(db)
@@ -900,10 +744,8 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 		outcome float64
 	}
 	accumulators := map[string][]accumulator{}
-	// Absolute channel only: pairwise picks are accumulated as matched pairs
-	// below, where shared features cancel by construction rather than
-	// approximately (this loop's own cancellation only held when both scenes
-	// had equal confidence and the corpus-wide mean was 0).
+	// Absolute channel only: pairwise evidence is accumulated as matched pairs
+	// below, where shared features cancel by construction.
 	for _, sceneID := range sortedStringKeys(labels) {
 		label := labels[sceneID]
 		if label.absoluteEvidence <= 0 {
@@ -923,15 +765,10 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	// share is skipped entirely (no numerator or support contribution) — only
 	// what differed between the two scenes carries information. No labelMean
 	// subtraction: the comparison already isolates the signal.
-	pairEvents, err := modelPairEvents(db)
+	pairEvents, err := modelImplicitSkipEvents(db)
 	if err != nil {
 		return nil, err
 	}
-	implicitSkipEvents, err := modelImplicitSkipEvents(db)
-	if err != nil {
-		return nil, err
-	}
-	pairEvents = append(pairEvents, implicitSkipEvents...)
 	for _, event := range pairEvents {
 		winnerFeatures := map[string]storedFeature{}
 		for _, f := range sceneFeatures[event.winnerScene] {

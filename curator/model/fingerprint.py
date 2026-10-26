@@ -5,4 +5,4 @@ Identifies the scoring code that produced a model artifact. Regenerate with
 script's MANIFEST.
 """
 
-SCORING_FINGERPRINT = "693db4db0832733b"
+SCORING_FINGERPRINT = "5cfb5066c46d2836"

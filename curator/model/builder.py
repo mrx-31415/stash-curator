@@ -44,17 +44,6 @@ from curator.storage.retention import prune_snapshots
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
 MODEL_BUILD_VERSION = 4
-# Pairwise-pick signals train feature affinities but never stand in for a
-# scene's own absolute sentiment; see _SceneLabel.
-PAIR_SIGNAL_TYPES = frozenset({"curation_pair_winner", "curation_pair_loser", "curation_pair_tie"})
-# Outcome per pair label: the Bradley-Terry gradient. A tie contributes 0,
-# which pulls the features that differed between the two scenes toward the
-# label mean rather than toward either extreme.
-PAIR_SIGNAL_OUTCOMES = {
-    "curation_pair_winner": 1.0,
-    "curation_pair_loser": -1.0,
-    "curation_pair_tie": 0.0,
-}
 
 
 @dataclass(frozen=True)
@@ -72,14 +61,10 @@ class _SceneLabel:
     """A scene's aggregated feedback, split into two channels.
 
     ``outcome``/``confidence``/``effective_evidence`` cover every signal and
-    drive feature-affinity learning: pairwise picks belong here, where the
-    ±1 winner/loser conversion is the Bradley-Terry gradient.
-
-    ``absolute_*`` excludes pairwise picks. A pick says "this beat that", not
-    "this is a 10/10" — materializing it as absolute sentiment made a scene
-    that lost one comparison against a better scene read as strongly disliked
-    everywhere appeal is surfaced (Sentiment review, Prune). Ratings stay the
-    absolute anchors, per docs/workpackage-pairwise-picks.md.
+    drive feature-affinity learning; ``absolute_*`` is what materializes as
+    the scene's own appeal. Every current label signal is absolute, so the two
+    agree; pairwise evidence (implicit skips) enters affinities as matched
+    pair events instead of labels.
     """
 
     outcome: float
@@ -118,8 +103,8 @@ class _NeighborEvidence:
 
 @dataclass(frozen=True)
 class _PairEvent:
-    """One answered pick, reconstructed from its matched winner/loser feedback
-    rows. ``confidence`` is the same surprise/IPS value both rows carry."""
+    """One implicit comparison: a played or thumbed card beating an earlier
+    card it was shown below. ``confidence`` is the surprise-weighted value."""
 
     winner_scene: str
     loser_scene: str
@@ -585,10 +570,7 @@ class PreferenceModelBuilder:
             scene_features = FeatureStore(self.connection).entity_features(feature_version, "scene")
             label_mean = self._label_mean(training_labels)
             # _affinities' general per-scene loop is scoped to the absolute
-            # channel (see _affinities), so its own baseline must be too, or a
-            # pairwise pick anywhere in the corpus would still nudge every
-            # shared feature's affinity via label_mean even though the loop
-            # itself no longer touches that feature for this comparison.
+            # channel (see _affinities), so its own baseline is too.
             absolute_label_mean = self._absolute_label_mean(training_labels)
             affinities = self._affinities(scene_features, training_labels, absolute_label_mean)
             self._report(0.35)
@@ -719,38 +701,6 @@ class PreferenceModelBuilder:
                 )
             )
         for row in self.connection.execute(
-            """
-            SELECT scene_id, feedback_type, payload_json FROM feedback
-            WHERE reversed_by_id IS NULL
-              AND feedback_type IN (
-                  'curation_pair_winner', 'curation_pair_loser', 'curation_pair_tie'
-              )
-            ORDER BY scene_id, occurred_at_ms
-            """
-        ):
-            payload = json.loads(str(row["payload_json"]) or "{}")
-            try:
-                selection_probability = float(payload.get("selection_probability") or 1.0)
-                predicted_winner = float(payload.get("predicted_winner") or 0.0)
-                predicted_loser = float(payload.get("predicted_loser") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            if not 0 < selection_probability <= 1:
-                continue
-            feedback_type = str(row["feedback_type"])
-            # Surprise-weighted: a pick that contradicts the model's predicted
-            # ordering is stronger evidence than one that confirms it.
-            surprise = max(0.0, predicted_loser - predicted_winner)
-            confidence = (
-                self.config.model.curation_pair_confidence
-                * (1.0 + self.config.model.curation_pair_surprise_bonus * surprise)
-                * min(self.config.model.curation_pair_ips_cap, 1.0 / selection_probability)
-            )
-            confidence = min(1.0, confidence)
-            signals[str(row["scene_id"])].append(
-                (PAIR_SIGNAL_OUTCOMES[feedback_type], confidence, feedback_type)
-            )
-        for row in self.connection.execute(
             "SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL"
         ):
             value = _clamp((float(row["rating100"]) - 50) / 50)
@@ -783,9 +733,7 @@ class PreferenceModelBuilder:
             if evidence <= 0:
                 continue
             outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
-            absolute_signals = [
-                signal for signal in scene_signals if signal[2] not in PAIR_SIGNAL_TYPES
-            ]
+            absolute_signals = scene_signals
             # float(): sum() over no absolute signals returns int 0, which the
             # fingerprint would serialize as "0" where the Go core writes "0.0".
             absolute_evidence = float(sum(confidence for _, confidence, _ in absolute_signals))
@@ -914,53 +862,6 @@ class PreferenceModelBuilder:
             _fingerprint_table(self.connection, digest, label, statement)
         return digest.hexdigest()
 
-    def _pair_events(self) -> list[_PairEvent]:
-        """Reconstruct answered comparisons from their matched winner/loser
-        feedback rows, sharing a pair_id in payload_json. A tie has no winner
-        so it is not a _PairEvent; a pair reversed on only one side (a
-        feedback correction touching just the winner or loser row) yields no
-        complete match and is dropped, same as the excluded scene below."""
-        metadata_wrong = self._metadata_wrong_scenes()
-        by_pair: dict[str, dict[str, Any]] = {}
-        for row in self.connection.execute(
-            """
-            SELECT scene_id, feedback_type, payload_json FROM feedback
-            WHERE reversed_by_id IS NULL
-              AND feedback_type IN ('curation_pair_winner', 'curation_pair_loser')
-            ORDER BY scene_id, occurred_at_ms
-            """
-        ):
-            payload = json.loads(str(row["payload_json"]) or "{}")
-            pair_id = payload.get("pair_id")
-            scene_id = str(row["scene_id"])
-            if not pair_id or scene_id in metadata_wrong:
-                continue
-            try:
-                selection_probability = float(payload.get("selection_probability") or 1.0)
-                predicted_winner = float(payload.get("predicted_winner") or 0.0)
-                predicted_loser = float(payload.get("predicted_loser") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            if not 0 < selection_probability <= 1:
-                continue
-            surprise = max(0.0, predicted_loser - predicted_winner)
-            confidence = min(
-                1.0,
-                self.config.model.curation_pair_confidence
-                * (1.0 + self.config.model.curation_pair_surprise_bonus * surprise)
-                * min(self.config.model.curation_pair_ips_cap, 1.0 / selection_probability),
-            )
-            entry = by_pair.setdefault(str(pair_id), {"confidence": confidence})
-            if str(row["feedback_type"]) == "curation_pair_winner":
-                entry["winner_scene"] = scene_id
-            else:
-                entry["loser_scene"] = scene_id
-        return [
-            _PairEvent(entry["winner_scene"], entry["loser_scene"], entry["confidence"])
-            for _, entry in sorted(by_pair.items())
-            if "winner_scene" in entry and "loser_scene" in entry
-        ]
-
     def _implicit_skip_events(self) -> list[_PairEvent]:
         """Implicit negatives from impressions (#146 Channel A): when a
         recommended scene is played or thumbed, the earlier-position cards in
@@ -970,9 +871,8 @@ class PreferenceModelBuilder:
         loser (-1). Surprise uses the stored policy_score recorded at display
         time (surprise = max(0, loser_score - winner_score)), so a pick that
         contradicts the model's ordering is informative while a confirmation
-        adds nothing. Confidence uses the implicit base (half the
-        deliberate-pick base) so implicit signal never outranks explicit
-        feedback. Trigger is played or thumbed only — never a raw click.
+        adds nothing. Confidence uses the implicit base, so implicit signal
+        never outranks explicit feedback. Trigger is played or thumbed only — never a raw click.
 
         Pairs are virtual (build-time only): they are emitted here and fed to
         the affinity accumulator, never written to the feedback table.
@@ -1115,10 +1015,8 @@ class PreferenceModelBuilder:
     ) -> dict[str, _Affinity]:
         accumulators: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
         for scene_id, label in labels.items():
-            # Absolute channel only: pairwise picks are accumulated as matched
-            # pairs below, where shared features cancel by construction rather
-            # than approximately (this loop's own cancellation only held when
-            # both scenes had equal confidence and the corpus-wide mean was 0).
+            # Absolute channel only: pairwise evidence is accumulated as
+            # matched pairs below, where shared features cancel by construction.
             if label.absolute_evidence <= 0:
                 continue
             absolute_confidence = 1 - math.exp(-label.absolute_evidence)
@@ -1136,7 +1034,7 @@ class PreferenceModelBuilder:
         # share is skipped entirely (no numerator or support contribution) —
         # only what differed between the two scenes carries information. No
         # label_mean subtraction: the comparison already isolates the signal.
-        for event in [*self._pair_events(), *self._implicit_skip_events()]:
+        for event in self._implicit_skip_events():
             winner_features = {f.feature_id: f for f in scene_features.get(event.winner_scene, ())}
             loser_features = {f.feature_id: f for f in scene_features.get(event.loser_scene, ())}
             # sorted(): set difference has no defined order, and this feeds
@@ -1245,11 +1143,7 @@ class PreferenceModelBuilder:
     def _absolute_label_mean(labels: dict[str, _SceneLabel]) -> float:
         """The population baseline for _affinities' general per-scene loop.
 
-        Scoped to the absolute channel (matching that loop's own scope) so a
-        pairwise pick's learning-channel outcome never shifts the baseline a
-        shared feature is measured against — otherwise a feature two scenes
-        share would still drift slightly whenever any pair anywhere in the
-        corpus changed, even though its own weight and outcome did not.
+        Scoped to the absolute channel, matching that loop's own scope.
         """
         weighted = [
             (1 - math.exp(-label.absolute_evidence), label.absolute_outcome)
@@ -1536,8 +1430,6 @@ class PreferenceModelBuilder:
             )
             general = _soft_bound(component_total, 1.0)
             direct = labels.get(scene_id, _SceneLabel(0.0, 0.0, 0.0, ()))
-            # Absolute channel only: a pairwise pick is evidence about the
-            # features that differed, not a verdict on this scene's own appeal.
             exact_confidence = direct_confidence(direct.absolute_evidence, config=self.config.model)
             appeal = blend_appeal(general, direct.absolute_outcome, exact_confidence)
             last = last_played.get(scene_id)
