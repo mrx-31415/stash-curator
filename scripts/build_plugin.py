@@ -16,6 +16,7 @@ install — only Go plus the repo's uv environment.
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import re
@@ -34,6 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "dist" / "stash-curator.zip"
+DEV_OUTPUT = ROOT / "dist" / "dev" / "stash-curator.zip"
 
 # Shipped platforms mirror Stash's own release matrix (no 32-bit, no
 # windows-arm64). Binary names use Go's GOOS/GOARCH naming; the resolver in
@@ -154,6 +156,26 @@ def version() -> str:
     """Read the single version source (pyproject.toml)."""
     with (ROOT / "pyproject.toml").open("rb") as source:
         return str(tomllib.load(source)["project"]["version"])
+
+
+def dev_version() -> str:
+    """Tag the release version with the commits merged since that release.
+
+    The dev plugin source rebuilds on every push to main, so the suffix tells
+    which commit an installation runs; the release commit itself keeps the plain
+    version. Stash offers updates by index date only.
+    """
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    release = git("log", "-1", "--format=%H", "--", ".release-please-manifest.json")
+    count = git("rev-list", "--count", f"{release}..HEAD")
+    if count == "0":
+        return version()
+    return f"{version()}+dev.{count}.{git('rev-parse', '--short', 'HEAD')}"
 
 
 def core_binary_name(goos: str, goarch: str) -> str:
@@ -282,9 +304,9 @@ def core_binaries() -> list[Path]:
     ]
 
 
-def build(output: Path = OUTPUT) -> Path:
+def build(output: Path = OUTPUT, plugin_version: str | None = None) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
-    plugin_version = version()
+    plugin_version = plugin_version or version()
     binaries = core_binaries()
     with tempfile.TemporaryDirectory() as temporary:
         staging = Path(temporary) / "stash-curator"
@@ -354,4 +376,13 @@ def build(output: Path = OUTPUT) -> Path:
 
 
 if __name__ == "__main__":
-    print(build())
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="build the dev plugin source into dist/dev/ with a commit-tagged version",
+    )
+    if parser.parse_args().dev:
+        print(build(DEV_OUTPUT, dev_version()))
+    else:
+        print(build())
