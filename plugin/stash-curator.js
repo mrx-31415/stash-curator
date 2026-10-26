@@ -173,11 +173,17 @@
     (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
   );
   const FIND_SECTION_VALUES = new Set(FIND_SECTIONS.map((item) => item.value));
-  // Curate's own sections. Tag sentiment is a real section here (issue
-  // #241): direct tag teaching lives under Curate, not Manage. Pair picks
-  // were retired; an old section=stream link falls back to the first section.
-  // Section URL values stay stable (sentiment / progress) so links keep working.
+  // Curate's own sections. Tag questions and Tag sentiment teach tags directly
+  // (issue #241: under Curate, not Manage). Pair picks were retired; an old
+  // section=stream link falls back to the first section. Section URL values
+  // stay stable (sentiment / progress) so links keep working.
   const CURATE_SECTIONS = [
+    {
+      value: "questions",
+      label: "Tag questions",
+      icon: faCircleQuestion,
+      description: "A few quick questions about the tags that would change your recommendations most.",
+    },
     {
       value: "sentiment",
       label: "Tag sentiment",
@@ -1884,6 +1890,126 @@
 
   // ── Curate ────────────────────────────────────────────────────────────────
 
+  // Tag questions: unanswered tags ranked by how much one answer would change
+  // what For You shows (leverage x reach, from get_tag_questions). Answers go
+  // through the ordinary Tag sentiment path; skips are remembered per browser.
+  const TAG_QUESTION_BATCH = 5;
+  const TAG_QUESTION_SKIP_KEY = "stash-curator:tag-question-skips:v1";
+  const TAG_QUESTION_SKIP_MS = 30 * 86_400_000;
+
+  function readTagQuestionSkips() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(TAG_QUESTION_SKIP_KEY) || "{}");
+      const now = Date.now();
+      return Object.fromEntries(Object.entries(stored).filter(([, at]) => now - Number(at) < TAG_QUESTION_SKIP_MS));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function rememberTagQuestionSkip(tagId) {
+    try {
+      localStorage.setItem(TAG_QUESTION_SKIP_KEY, JSON.stringify({ ...readTagQuestionSkips(), [tagId]: Date.now() }));
+    } catch (_) {
+      // Without storage a skipped tag can come back on the next batch.
+    }
+  }
+
+  function tagQuestionReason(item) {
+    const share = Math.max(1, Math.round(Number(item.reach) * 100));
+    const belief = Number(item.confidence) < 0.35
+      ? "Curator has little evidence about it yet"
+      : `Curator currently thinks you ${Number(item.inferred_value) >= 0 ? "like" : "dislike"} it`;
+    return `On about ${share}% of what For You would show you. ${belief}.`;
+  }
+
+  function TagQuestions() {
+    const [items, setItems] = React.useState(null);
+    const [index, setIndex] = React.useState(0);
+    const [answered, setAnswered] = React.useState(0);
+    const [error, setError] = React.useState("");
+    const [applying, setApplying] = React.useState(false);
+    useCuratorActivity("tag-questions", items === null && !error, "Finding useful questions…");
+
+    const load = React.useCallback(async () => {
+      setError("");
+      try {
+        const result = await operation({ operation: "get_tag_questions", limit: 10 });
+        const skips = readTagQuestionSkips();
+        setItems((result.items || []).filter((item) => !skips[item.tag_id]).slice(0, TAG_QUESTION_BATCH));
+        setIndex(0);
+      } catch (failure) {
+        setItems([]);
+        setError(failure.message);
+      }
+    }, []);
+    React.useEffect(() => { load(); }, [load]);
+
+    function answer(item, choice) {
+      submitTagPreference(item.tag_id, choice);
+      setAnswered((count) => count + 1);
+      setIndex((current) => current + 1);
+    }
+    function skip(item) {
+      rememberTagQuestionSkip(item.tag_id);
+      setIndex((current) => current + 1);
+    }
+    async function applyNow() {
+      setApplying(true);
+      try {
+        await applyFeedbackAndAwaitBuild();
+        await load();
+      } finally {
+        setApplying(false);
+      }
+    }
+
+    if (items === null) return null;
+    const item = items[index];
+    const controls = React.createElement(
+      "div",
+      { className: "curator-curate-actions" },
+      answered > 0 && React.createElement(Button, { size: "sm", variant: "primary", disabled: applying, onClick: applyNow },
+        applying ? "Applying…" : "Apply my answers now"),
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: load }, "More questions")
+    );
+    return React.createElement(
+      "div",
+      { className: "curator-tag-questions" },
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      !error && items.length === 0 && React.createElement("div", { className: "alert alert-info" },
+        "No questions right now. Every tag in your current recommendations is either answered, skipped, or too rare to matter. Tag sentiment lists all tags."),
+      item && React.createElement(
+        "section",
+        { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-tag-question-${item.tag_id}` },
+        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" }, `Question ${index + 1} of ${items.length}`),
+        React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, `More or less of “${item.name}”?`),
+        React.createElement("p", { className: "curator-tag-question-reason" }, tagQuestionReason(item)),
+        React.createElement(
+          "div",
+          { className: "curator-tag-question-examples" },
+          (item.examples || []).map((sceneId) => React.createElement(
+            "a",
+            { key: sceneId, className: "curator-tag-question-example scene-card", href: `/scenes/${sceneId}`, title: "Open scene" },
+            React.createElement("img", { className: "scene-card-image card-section", src: `/scene/${sceneId}/screenshot`, alt: "", loading: "lazy" })
+          ))
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-tag-question-answer" },
+          React.createElement(TagSentimentControl, { tag: item, value: null, blocked: false, inferredValue: item.inferred_value, showScale: true, onChange: (choice) => answer(item, choice) }),
+          React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(item) }, "Skip")
+        )
+      ),
+      !item && items.length > 0 && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
+        answered > 0
+          ? `${answered} answer${answered === 1 ? "" : "s"} queued. They change recommendations after the next model update.`
+          : "You skipped this batch."),
+      controls
+    );
+  }
+
+
   function CurateProgress({ onFixTag }) {
     const [impact, setImpact] = React.useState(null);
     const [profile, setProfile] = React.useState(null);
@@ -1974,6 +2100,7 @@
   function CuratePanel({ section, onSelectSection, sentimentQuery }) {
     const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
+      questions: () => React.createElement(TagQuestions),
       sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery }),
       progress: () => React.createElement(CurateProgress, { onFixTag: (tagId) => onSelectSection("sentiment", { sentTag: tagId }) }),
     };

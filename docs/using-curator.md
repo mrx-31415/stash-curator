@@ -202,9 +202,19 @@ evidence strength, not the probability of enjoyment.
 
 ## Curate
 
-Curate brings together Tag sentiment and Impact. Pair picks have been retired;
-answers you gave earlier stay in **Manage → Feedback history** but no longer change
-recommendations.
+Curate brings together Tag questions, Tag sentiment, and Impact. Pair picks have
+been retired; answers you gave earlier stay in **Manage → Feedback history** but no
+longer change recommendations.
+
+### Tag questions
+
+Tag questions asks about the few tags where one answer would change your
+recommendations most: tags common in what For You would show you, about which
+Curator has little evidence. Each question shows up to three of those scenes and a
+short reason. Answer with the sentiment scale, or **Skip**; a skipped tag stays
+hidden in this browser for 30 days. Answers are ordinary Tag sentiment answers, so
+you can review or clear them there. **Apply my answers now** runs a model update;
+otherwise they apply with the next one.
 
 ### Tag sentiment
 

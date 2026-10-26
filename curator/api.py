@@ -29,6 +29,14 @@ from curator.similarity import SimilarityService
 from curator.storage import transaction
 
 API_SCHEMA_VERSION = 2
+# Tag questions: the For You pool an answer is measured against, the fewest
+# pool scenes a tag must reach to be asked about, and the example scenes shown
+# with each question. DIRECT_TAG_SUPPORT mirrors the model build's blend weight
+# for a direct tag answer.
+TAG_QUESTION_POOL_SIZE = 300
+TAG_QUESTION_MIN_REACH = 2
+TAG_QUESTION_EXAMPLES = 3
+DIRECT_TAG_SUPPORT = 8.0
 
 
 def _performer_preference(
@@ -1181,6 +1189,86 @@ class CuratorAPI:
         return {
             "schema_version": API_SCHEMA_VERSION,
             "scene_id": scene_id,
+            "items": candidates[:limit],
+        }
+
+    def tag_questions(self, limit: int = 5) -> dict[str, object]:
+        """Unanswered content tags ranked by how much one answer would change
+        what For You shows.
+
+        value = leverage x reach. leverage is the share of the tag's blended
+        affinity a direct answer would control; reach is the rank-discounted
+        share of the For You pool carrying the tag.
+        """
+        if not 1 <= limit <= 10:
+            raise ValueError("limit must be between 1 and 10")
+        profile_items = self.taste_profile()["items"]
+        assert isinstance(profile_items, list)
+        config = self.config()["config"]
+        assert isinstance(config, dict)
+        slate = SlateBuilder(
+            self.connection, diversity_enabled=bool(config["diversity_enabled"])
+        ).recommend("for_you", TAG_QUESTION_POOL_SIZE)
+        pool = [item.scene_id for item in slate.items]
+        weights = {scene_id: 1 / math.log2(rank + 1) for rank, scene_id in enumerate(pool, 1)}
+        total_weight = sum(weights.values())
+        scene_tags: dict[str, set[str]] = defaultdict(set)
+        for row in self.connection.execute(
+            """
+            SELECT scene_id, tag_id FROM scene_tag
+            WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))
+            """,
+            (json.dumps(pool),),
+        ):
+            scene_tags[str(row["scene_id"])].add(str(row["tag_id"]))
+        reach_weight: dict[str, float] = defaultdict(float)
+        members: dict[str, list[str]] = defaultdict(list)
+        for scene_id in pool:
+            for tag_id in sorted(scene_tags[scene_id]):
+                reach_weight[tag_id] += weights[scene_id]
+                members[tag_id].append(scene_id)
+        total_scenes = int(
+            self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0]
+        )
+        candidates: list[dict[str, object]] = []
+        for item in profile_items:
+            assert isinstance(item, dict)
+            tag_id = str(item["tag_id"])
+            scene_count = int(item["scene_count"])
+            if (
+                item["prompt"] is None
+                or len(members[tag_id]) < TAG_QUESTION_MIN_REACH
+                # ponytail: library-wide prevalence is the existing cheap generic-tag signal.
+                or (scene_count >= 5 and scene_count >= 0.8 * total_scenes)
+            ):
+                continue
+            reach = reach_weight[tag_id] / total_weight
+            leverage = DIRECT_TAG_SUPPORT / (float(str(item["support"])) + DIRECT_TAG_SUPPORT)
+            candidates.append(
+                {
+                    "tag_id": tag_id,
+                    "name": item["name"],
+                    "inferred_value": item["inferred_value"],
+                    "confidence": item["confidence"],
+                    "support": item["support"],
+                    "scene_count": scene_count,
+                    "reach": reach,
+                    "leverage": leverage,
+                    "value": leverage * reach,
+                    "examples": members[tag_id][:TAG_QUESTION_EXAMPLES],
+                }
+            )
+        candidates.sort(
+            key=lambda item: (
+                -float(str(item["value"])),
+                abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "pool_size": len(pool),
             "items": candidates[:limit],
         }
 

@@ -38,7 +38,7 @@ Python and Curator's data paths must be available inside the Stash container. Se
 and troubleshooting.
 
 Once the model is ready, start with **Recommendations → For You**. Open **Why this?**
-to inspect a suggestion, and use thumbs up/down or **Curate → Tag sentiment** to teach
+to inspect a suggestion, and use thumbs up/down or **Curate → Tag questions** to teach
 Curator your preferences. Feedback affects rankings after a model update.
 
 ## Explore Curator
@@ -64,7 +64,8 @@ catalog. An external result does not mean you have the scene.
 
 ### Curate
 
-Rate tags in Tag sentiment or give direct feedback on a scene to help Curator learn.
+Answer a few Tag questions, rate tags in Tag sentiment, or give direct feedback on a
+scene to help Curator learn.
 Open **Why this?** on a result to inspect its reasons. After a model build, Impact
 shows what your feedback changed.
 

@@ -4015,6 +4015,58 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   align-items: center;
 }
 
+.curator-tag-question {
+  margin-bottom: 1rem;
+}
+
+.curator-tag-question h3 {
+  font-size: 1.05rem;
+  margin: 0 0 0.25rem;
+}
+
+.curator-tag-question-progress,
+.curator-tag-question-reason,
+.curator-tag-question-done {
+  color: var(--curator-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+}
+
+.curator-tag-question-examples {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  max-width: 640px;
+  margin-bottom: 0.75rem;
+}
+
+.curator-tag-question-example {
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+  aspect-ratio: 16 / 9;
+  background: var(--curator-border);
+}
+
+.curator-tag-question-example img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.curator-tag-question-answer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  max-width: 640px;
+}
+
+.curator-tag-question-answer .curator-sentiment {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
 @media (max-width: 576px) {
   .curator-curate-grid {
     grid-template-columns: 1fr;

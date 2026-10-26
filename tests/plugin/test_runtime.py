@@ -525,11 +525,16 @@ def test_curate_lane_renders_sections_without_pair_picks() -> None:
     assert 'value: "curate"' in source
     assert "const CURATE_SECTIONS = [" in source
     curate_sections_block = source.split("const CURATE_SECTIONS = [", 1)[1].split("];", 1)[0]
-    # Tag sentiment is the first section, so an old section=stream link (the
-    # retired Pair picks) falls back to it.
-    assert curate_sections_block.index('value: "sentiment"') < curate_sections_block.index(
-        'value: "progress"'
-    )
+    # Tag questions is the first section, so an old section=stream link (the
+    # retired Pair picks) falls back to it; Tag sentiment and Impact follow.
+    order = [
+        curate_sections_block.index(f'value: "{value}"')
+        for value in ("questions", "sentiment", "progress")
+    ]
+    assert order == sorted(order)
+    assert 'label: "Tag questions"' in curate_sections_block
+    assert "questions: () => React.createElement(TagQuestions)" in source
+    assert 'operation: "get_tag_questions", limit: 10' in source
     assert 'value: "stream"' not in curate_sections_block
     assert 'label: "Impact"' in curate_sections_block
     assert 'value: "hypothesis"' not in curate_sections_block

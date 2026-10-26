@@ -91,6 +91,21 @@ TABS: list[tuple[str, list[str]]] = [
             "no published model",
         ],
     ),
+    # Tag questions is Curate's first section; the retired Pair picks link
+    # (section=stream) falls back to it. "no published model" covers the
+    # post-reset ordering described above.
+    *(
+        (
+            url,
+            [
+                "Finding useful questions",
+                "More or less of",
+                "No questions right now",
+                "no published model",
+            ],
+        )
+        for url in ("?view=curate&section=questions", "?view=curate&section=stream")
+    ),
     ("?view=hunt", ["Select a local performer linked to Stash-box"]),
     (
         "?view=feedback",

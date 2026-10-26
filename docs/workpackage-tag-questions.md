@@ -1,6 +1,8 @@
 # Workpackage: Tag questions (high-value Tag sentiment prompts)
 
-Status: proposed. Follows `docs/decisions/005-retire-pair-picks.md`: the user
+Status: **implemented** on `feat/tag-questions` (stacked on the Pair picks
+retirement). Deviations from the proposal below are listed under
+"As built". Follows `docs/decisions/005-retire-pair-picks.md`: the user
 attention that went into Pair picks moves to direct feature answers, asked in
 the order that changes recommendations most.
 
@@ -26,6 +28,29 @@ chips (a separate package, see Follow-up).
   confidence and inferred-value sorts). It works for a user who knows what
   to fix, but it does not say where an answer matters. Most tags are rare or
   already well supported, so a random answer usually moves nothing visible.
+
+## As built
+
+- **Pool:** `recommend("for_you", 300)` with the user's diversity setting, the
+  same path `get_slate` serves. Every eligibility rule the lane applies holds
+  for free. A tag only becomes a question once it appears in that feed, which
+  is the intent: tags you are never shown can't change what you're shown.
+- **Candidates:** the taste profile's `prompt` field (non-null for an
+  unanswered `content` tag on at least 2 scenes) plus the generic and minimum
+  reach rules. `performer_attribute` tags are left out, because a direct answer
+  only blends into content-tag features.
+- **Constants:** `TAG_QUESTION_POOL_SIZE = 300`, `TAG_QUESTION_MIN_REACH = 2`,
+  `TAG_QUESTION_EXAMPLES = 3` are module constants mirrored in Go, like the
+  follow-up op's thresholds, not a config class. They never affect model
+  fingerprints.
+- **Response:** also returns `value` per item and `pool_size`; `examples` are
+  scene ids.
+- **Keyboard:** no `1`–`5`/`S` shortcuts. Stash binds global single-key
+  shortcuts, and the sentiment slider and Skip button are already keyboard
+  operable.
+- **Measurement:** deferred. Impact already reports per-build tag affinity
+  moves and declared-versus-inferred divergences; a dedicated "Answered
+  questions" line remains a follow-up.
 
 ## Package: backend
 
