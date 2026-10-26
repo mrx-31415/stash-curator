@@ -8,30 +8,32 @@ running platform to the shipped per-arch binary name
 execs it with the same argv contract the binary serves — argv[1] = plugin
 dir, argv[2] = optional task/hook mode.
 
-The shim imports only the standard library and does no work beyond the
-exec, so its own spawn cost stays in the tens of milliseconds. Every
-operation, task mode, and the entity-sync hook mode is native in the
-binary; no Python runtime ships in the plugin. If the binary is absent for
-this platform (never in the shipped zip, but possible for hand-installed
-plugins), the shim fails with a clear reinstall message instead of
-half-running.
+Every call pays the interpreter's startup before the binary runs, so the
+shim runs with `-S` and imports nothing beyond os and sys (the platform
+module alone used to cost more than the rest of the shim). If the binary is
+absent for this platform (never in the shipped zip, but possible for
+hand-installed plugins), the shim fails with a clear reinstall message
+instead of half-running.
 """
 
-from __future__ import annotations
-
 import os
-import platform
 import sys
-from pathlib import Path
 
-PLUGIN_DIR = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).parent.resolve()
+PLUGIN_DIR = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(__file__))
 
 
 def _binary_name() -> str:
     """The shipped per-arch binary name for this platform (Go GOOS/GOARCH
     naming, mirroring curator/core.py's resolver)."""
-    system = platform.system().lower()
-    machine = platform.machine().lower()
+    if sys.platform == "win32":
+        system = "windows"
+        machine = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get(
+            "PROCESSOR_ARCHITECTURE", ""
+        )
+    else:
+        system = "darwin" if sys.platform == "darwin" else sys.platform.rstrip("0123456789")
+        machine = os.uname().machine
+    machine = machine.lower()
     arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
         machine, machine
     )
@@ -40,10 +42,10 @@ def _binary_name() -> str:
 
 
 def main() -> None:
-    binary = PLUGIN_DIR / _binary_name()
-    args = [str(binary), str(PLUGIN_DIR), *sys.argv[2:]]
-    if binary.is_file() and os.access(binary, os.X_OK):
-        os.execv(str(binary), args)
+    binary = os.path.join(PLUGIN_DIR, _binary_name())
+    args = [binary, PLUGIN_DIR, *sys.argv[2:]]
+    if os.path.isfile(binary) and os.access(binary, os.X_OK):
+        os.execv(binary, args)
     sys.stderr.write(
         f"stash-curator: no curator-core binary for this platform ({_binary_name()}); "
         "reinstall the plugin from the index\n"

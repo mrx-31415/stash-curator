@@ -6,6 +6,7 @@ url: https://github.com/mrx-31415/stash-curator
 
 exec:
   - python
+  - -S
   - "{pluginDir}/launcher.py"
   - "{pluginDir}"
 interface: raw
