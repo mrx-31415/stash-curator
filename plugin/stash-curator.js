@@ -1959,7 +1959,7 @@
       ),
       React.createElement(
         "div",
-        { className: "curator-curate-controls" },
+        { className: "curator-curate-actions" },
         React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: applyNow },
           applying ? "Applying…" : "Apply my answers to the model now"
         )

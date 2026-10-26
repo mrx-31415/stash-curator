@@ -4026,13 +4026,6 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   }
 }
 
-.curator-curate-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
-}
-
 /* ── Impact report (verdict) ────────────────────────────────────────────── */
 
 .curator-impact {
