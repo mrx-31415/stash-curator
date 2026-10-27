@@ -9,6 +9,32 @@ from pathlib import Path
 from scripts import build_plugin
 
 
+def test_single_platform_build_packages_only_that_binary(tmp_path: Path, monkeypatch) -> None:
+    requested = []
+
+    def binaries(platforms):
+        requested.append(platforms)
+        paths = []
+        for goos, goarch in platforms:
+            path = tmp_path / build_plugin.core_binary_name(goos, goarch)
+            path.write_bytes(b"core")
+            paths.append(path)
+        return paths
+
+    monkeypatch.setattr(build_plugin, "core_binaries", binaries)
+    output = build_plugin.build(
+        tmp_path / "dist" / "stash-curator.zip", platforms=(("linux", "amd64"),)
+    )
+    assert requested == [(("linux", "amd64"),)]
+    with zipfile.ZipFile(output) as archive:
+        cores = [name for name in archive.namelist() if name.startswith("curator-core-")]
+    assert cores == [build_plugin.core_binary_name("linux", "amd64")]
+    assert sorted(path.name for path in output.parent.glob("index*.yml")) == [
+        "index-linux-amd64.yml",
+        "index.yml",
+    ]
+
+
 def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -18,7 +44,7 @@ def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
         binary.write_bytes(f"{goos}-{goarch}".encode())
         binary.chmod(0o755)
         binaries.append(binary)
-    monkeypatch.setattr(build_plugin, "core_binaries", lambda: binaries)
+    monkeypatch.setattr(build_plugin, "core_binaries", lambda platforms: binaries)
     output = build_plugin.build(tmp_path / "dist" / "stash-curator.zip")
     binary_names = {binary.name for binary in binaries}
     with zipfile.ZipFile(output) as multi:

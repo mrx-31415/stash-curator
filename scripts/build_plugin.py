@@ -226,7 +226,7 @@ def _core_binary_fresh(path: Path) -> bool:
     return path.stat().st_mtime >= newest
 
 
-def core_binaries() -> list[Path]:
+def core_binaries(platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS) -> list[Path]:
     """Build (or reuse) the shipped curator-core binaries under core/bin/.
 
     The five targets are independent cgo builds (each compiles the SQLite
@@ -240,7 +240,7 @@ def core_binaries() -> list[Path]:
         )
     plugin_version = version()
     pending: list[tuple[Path, dict[str, str]]] = []
-    for goos, goarch in SHIPPED_PLATFORMS:
+    for goos, goarch in platforms:
         target = ROOT / "core" / "bin" / core_binary_name(goos, goarch)
         if _core_binary_fresh(target):
             continue
@@ -299,15 +299,20 @@ def core_binaries() -> list[Path]:
         with ThreadPoolExecutor(max_workers=min(len(pending), os.cpu_count() or 2)) as pool:
             list(pool.map(build_one, pending))
 
-    return [
-        ROOT / "core" / "bin" / core_binary_name(goos, goarch) for goos, goarch in SHIPPED_PLATFORMS
-    ]
+    return [ROOT / "core" / "bin" / core_binary_name(goos, goarch) for goos, goarch in platforms]
 
 
-def build(output: Path = OUTPUT, plugin_version: str | None = None) -> Path:
+def build(
+    output: Path = OUTPUT,
+    plugin_version: str | None = None,
+    platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS,
+) -> Path:
+    """Package the plugin. Restricting ``platforms`` (the integration tests
+    need only the host's Linux binary) skips the other cross-compiles; such
+    an archive is not shippable."""
     output.parent.mkdir(parents=True, exist_ok=True)
     plugin_version = plugin_version or version()
-    binaries = core_binaries()
+    binaries = core_binaries(platforms)
     with tempfile.TemporaryDirectory() as temporary:
         staging = Path(temporary) / "stash-curator"
         shutil.copytree(
@@ -341,7 +346,7 @@ def build(output: Path = OUTPUT, plugin_version: str | None = None) -> Path:
                 f"index-{goos}-{goarch}.yml",
                 [binary],
             )
-            for (goos, goarch), binary in zip(SHIPPED_PLATFORMS, binaries, strict=True)
+            for (goos, goarch), binary in zip(platforms, binaries, strict=True)
         ]
         binary_names = {binary.name for binary in binaries}
         files = sorted(path for path in staging.rglob("*") if path.is_file())
@@ -382,7 +387,19 @@ if __name__ == "__main__":
         action="store_true",
         help="build the dev plugin source into dist/dev/ with a commit-tagged version",
     )
-    if parser.parse_args().dev:
-        print(build(DEV_OUTPUT, dev_version()))
+    parser.add_argument(
+        "--platform",
+        action="append",
+        choices=[f"{goos}/{goarch}" for goos, goarch in SHIPPED_PLATFORMS],
+        help="build only this GOOS/GOARCH core binary (repeatable; for local tests, not releases)",
+    )
+    args = parser.parse_args()
+    selected = (
+        tuple((goos, goarch) for goos, goarch in (value.split("/") for value in args.platform))
+        if args.platform
+        else SHIPPED_PLATFORMS
+    )
+    if args.dev:
+        print(build(DEV_OUTPUT, dev_version(), selected))
     else:
-        print(build())
+        print(build(platforms=selected))

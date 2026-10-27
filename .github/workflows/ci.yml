@@ -75,9 +75,21 @@ jobs:
         run: scripts/verify core
 
   integration:
-    name: Integration (Playwright)
+    name: Integration (Playwright, ${{ matrix.shard.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite takes about 3 minutes per shard; the margin absorbs a slow
+    # runner without hiding a hung test for long.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two shards, each with its own Stash: the roulette tests wait on real
+        # animations and take about half the suite on their own.
+        shard:
+          - name: roulette
+            tests: tests/integration/test_roulette.py
+          - name: rest
+            tests: tests/integration/ --ignore=tests/integration/test_roulette.py
     steps:
       - uses: actions/checkout@v6
       - name: Install uv and Python
@@ -116,12 +128,15 @@ jobs:
           # actually changes. No loose restore-key: a mismatched browser version
           # would force a re-download anyway.
           key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      # Only the headless shell, without --with-deps: the runner image already
+      # has its libraries, and the apt step (fonts, xvfb) was the one that
+      # stalled for minutes on a slow mirror.
       - name: Install Playwright browsers
-        run: uv run playwright install chromium --with-deps
+        run: uv run playwright install --only-shell chromium
       - name: Run integration tests
-        run: scripts/verify integration
+        run: scripts/verify integration ${{ matrix.shard.tests }}
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: integration-artifacts
+          name: integration-artifacts-${{ matrix.shard.name }}
           path: /tmp/stash-curator-integration-test-output/
