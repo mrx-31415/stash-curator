@@ -865,6 +865,10 @@ func opGetTagQuestions(pluginDir string, payload jVal) (jVal, error) {
 // carrying the tag).
 func tagQuestionsBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	limit := argsInt(payload.get("args"), "limit", 5)
+	excluded, err := excludeTagIDs(payload.get("args").get("exclude_tag_ids"))
+	if err != nil {
+		return jvNull(), err
+	}
 	if limit < 1 || limit > 10 {
 		return jvNull(), fmt.Errorf("limit must be between 1 and 10")
 	}
@@ -947,6 +951,7 @@ WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))`, json
 		tagID := item.get("tag_id").asString()
 		sceneCount := pythonInt(item.get("scene_count"))
 		if item.get("prompt").kind == jNull ||
+			excluded[tagID] ||
 			len(members[tagID]) < tagQuestionMinReach ||
 			// ponytail: library-wide prevalence is the existing cheap generic-tag signal.
 			(sceneCount >= 5 && float64(sceneCount) >= 0.8*float64(totalScenes)) {

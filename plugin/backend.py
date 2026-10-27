@@ -957,7 +957,12 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 min(3, int(args.get("limit") or 3)),
             )
         if operation == "get_tag_questions":
-            return api.tag_questions(int(args.get("limit") or 5))
+            excluded = args.get("exclude_tag_ids") or []
+            if not isinstance(excluded, list):
+                raise ValueError("exclude_tag_ids must be a list")
+            return api.tag_questions(
+                int(args.get("limit") or 5), exclude_tag_ids={str(value) for value in excluded}
+            )
         if operation == "get_answer_review":
             return api.answer_review(int(args.get("limit") or 5))
         if operation == "get_curation_impact":

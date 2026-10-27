@@ -141,6 +141,33 @@ def test_tag_questions_limit_errors_match(
     assert_slice1_identical(binary, PLUGIN_DIR, raw, question_sidecar)
 
 
+@pytest.mark.parametrize("excluded", [None, [], "not-a-list", 7])
+def test_tag_questions_exclude_argument_matches(
+    binary: Path, stub_stash: str, question_sidecar: Path, excluded: object
+) -> None:
+    raw = payload(
+        "get_tag_questions", question_sidecar, stub_stash, limit=3, exclude_tag_ids=excluded
+    )
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, question_sidecar)
+
+
+def test_tag_questions_exclude_drops_listed_tags(
+    binary: Path, stub_stash: str, question_sidecar: Path
+) -> None:
+    ranked = [item["tag_id"] for item in _questions(question_sidecar)["items"]]
+    assert ranked
+    raw = payload(
+        "get_tag_questions", question_sidecar, stub_stash, limit=10, exclude_tag_ids=ranked[:1]
+    )
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, question_sidecar)
+    connection = connect_database(question_sidecar)
+    try:
+        rest = CuratorAPI(connection).tag_questions(10, exclude_tag_ids={ranked[0]})
+    finally:
+        connection.close()
+    assert [item["tag_id"] for item in rest["items"]] == ranked[1:]
+
+
 def test_tag_questions_without_model_match(binary: Path, stub_stash: str, tmp_path: Path) -> None:
     sidecar = tmp_path / "nomodel.sqlite3"
     _database(sidecar).close()

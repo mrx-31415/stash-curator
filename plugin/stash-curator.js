@@ -1919,7 +1919,12 @@
   // Tag questions: unanswered tags ranked by how much one answer would change
   // what For You shows (leverage x reach, from get_tag_questions). Answers go
   // through the ordinary Tag sentiment path; skips are remembered per browser.
+  // The queue is continuous: it tops up in the background before it runs out,
+  // and every few answers it rebuilds the model and reranks what is left, so a
+  // tag that an earlier answer already settled is not asked next.
   const TAG_QUESTION_BATCH = 5;
+  const TAG_QUESTION_TOP_UP_AT = 2;
+  const TAG_QUESTION_REBUILD_EVERY = 5;
   const TAG_QUESTION_SKIP_KEY = "stash-curator:tag-question-skips:v1";
   const TAG_QUESTION_SKIP_MS = 30 * 86_400_000;
 
@@ -1996,11 +2001,20 @@
     return tiles;
   }
 
-  function keepTagQuestionClipMuted(node) {
-    if (node) {
-      node.muted = true;
-      node.defaultMuted = true;
-    }
+  // Preview clips (the wall, tag questions) never get sound; several play at
+  // once. Mute synchronously at attach (mobile requires muted *before* the
+  // autoplay check) so playback starts silently, and mute again on every play
+  // and volume change, because Stash's SFW switch unmutes and restarts media
+  // outside React. Use as the video's ref.
+  function keepPreviewMuted(node) {
+    if (!node) return;
+    node.muted = true;
+    node.defaultMuted = true;
+    if (node.curatorKeepsMuted) return;
+    node.curatorKeepsMuted = true;
+    const forceMuted = () => { node.muted = true; node.defaultMuted = true; };
+    node.addEventListener("play", forceMuted);
+    node.addEventListener("volumechange", forceMuted);
   }
 
   function TagQuestionMedia({ item }) {
@@ -2026,7 +2040,7 @@
           "a",
           { key: tile.key, className: "curator-tag-question-example scene-card", href: tile.href, title: tile.marker ? "Open scene at this moment" : "Open scene" },
           React.createElement("video", {
-            ref: keepTagQuestionClipMuted,
+            ref: keepPreviewMuted,
             className: "scene-card-image card-section",
             src: tile.video,
             poster: tile.poster,
@@ -2069,46 +2083,91 @@
     const [index, setIndex] = React.useState(0);
     const [choice, setChoice] = React.useState(null);
     const [answered, setAnswered] = React.useState(0);
+    const [unapplied, setUnapplied] = React.useState(0);
+    const [exhausted, setExhausted] = React.useState(false);
     const [error, setError] = React.useState("");
     const [applying, setApplying] = React.useState(false);
     const [notice, setNotice] = React.useState("");
+    // Tags answered or skipped here; they are excluded from every fetch, so
+    // answers still on their way to the sidecar are not asked again.
+    const handled = React.useRef(new Set());
+    const fetching = React.useRef(false);
+    const rebuilding = React.useRef(false);
     useCuratorActivity("tag-questions", items === null && !error, "Finding useful questions…");
 
-    const load = React.useCallback(async () => {
+    // The queue and position as of the latest render, for fetches and
+    // rebuilds that resolve after the user has moved on.
+    const itemsRef = React.useRef(items);
+    const indexRef = React.useRef(index);
+    itemsRef.current = items;
+    indexRef.current = index;
+
+    // Appends the next-best unseen questions. `fresh` (after a rebuild)
+    // replaces the questions not shown yet with the new ranking.
+    const topUp = React.useCallback(async (fresh = false) => {
+      if (fetching.current) return;
+      fetching.current = true;
       setError("");
       try {
-        const result = await operation({ operation: "get_tag_questions", limit: 10 });
-        const skips = readTagQuestionSkips();
-        setItems((result.items || []).filter((item) => !skips[item.tag_id]).slice(0, TAG_QUESTION_BATCH));
-        setIndex(0);
-        setChoice(null);
+        const exclude = new Set([...handled.current, ...Object.keys(readTagQuestionSkips())]);
+        const shown = (itemsRef.current || []).slice(0, fresh ? indexRef.current + 1 : undefined);
+        for (const item of shown) exclude.add(item.tag_id);
+        const result = await operation({ operation: "get_tag_questions", limit: 10, exclude_tag_ids: [...exclude] });
+        const added = (result.items || []).filter((item) => !exclude.has(item.tag_id));
+        setItems((current) => {
+          const kept = (current || []).slice(0, fresh ? indexRef.current + 1 : undefined);
+          const present = new Set(kept.map((item) => item.tag_id));
+          return [...kept, ...added.filter((item) => !present.has(item.tag_id))];
+        });
+        setExhausted(added.length === 0);
       } catch (failure) {
-        setItems([]);
+        setItems((current) => current || []);
         setError(failure.message);
+      } finally {
+        fetching.current = false;
       }
     }, []);
-    React.useEffect(() => { load(); }, [load]);
+    React.useEffect(() => {
+      if (items === null || (!exhausted && !error && items.length - index <= TAG_QUESTION_TOP_UP_AT)) topUp();
+    }, [items, index, exhausted, error, topUp]);
 
-    function next(item) {
-      submitTagPreference(item.tag_id, choice);
-      setAnswered((count) => count + 1);
+    // Builds with the answers so far; a published build reranks the rest.
+    async function rebuild() {
+      if (rebuilding.current) return false;
+      rebuilding.current = true;
+      setUnapplied(0);
+      try {
+        const built = await applyFeedbackAndAwaitBuild();
+        if (built) await topUp(true);
+        return built;
+      } finally {
+        rebuilding.current = false;
+      }
+    }
+
+    function advance(item) {
+      handled.current.add(item.tag_id);
       setChoice(null);
       setNotice("");
       setIndex((current) => current + 1);
     }
+    function next(item) {
+      submitTagPreference(item.tag_id, choice);
+      setAnswered((count) => count + 1);
+      const pending = unapplied + 1;
+      setUnapplied(pending);
+      advance(item);
+      if (pending >= TAG_QUESTION_REBUILD_EVERY) rebuild().catch(() => {});
+    }
     function skip(item) {
       rememberTagQuestionSkip(item.tag_id);
-      setChoice(null);
-      setNotice("");
-      setIndex((current) => current + 1);
+      advance(item);
     }
     async function applyNow() {
       setApplying(true);
       setNotice("");
       try {
-        const built = await applyFeedbackAndAwaitBuild();
-        setAnswered(0);
-        await load();
+        const built = await rebuild();
         setNotice(built
           ? "Recommendations updated with your answers. Impact shows what moved."
           : "Your answers are saved. Curator will include them in the next model update.");
@@ -2122,9 +2181,8 @@
     const controls = React.createElement(
       "div",
       { className: "curator-curate-actions" },
-      answered > 0 && React.createElement(Button, { size: "sm", variant: "primary", disabled: applying, onClick: applyNow },
+      unapplied > 0 && React.createElement(Button, { size: "sm", variant: "primary", disabled: applying, onClick: applyNow },
         applying ? "Applying…" : "Apply my answers now"),
-      React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: load }, "More questions"),
       onShowAllTags && React.createElement(Button, { size: "sm", variant: "link", onClick: onShowAllTags }, "See all tags")
     );
     return React.createElement(
@@ -2139,7 +2197,8 @@
       item && React.createElement(
         "section",
         { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-tag-question-${item.tag_id}` },
-        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" }, `Question ${index + 1} of ${items.length}`),
+        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
+          answered > 0 ? `Question ${index + 1} · ${answered} answered` : `Question ${index + 1}`),
         React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, tagQuestionHeading(item)),
         React.createElement("p", { className: "curator-tag-question-reason" }, tagQuestionReason(item)),
         React.createElement(TagQuestionMedia, { item }),
@@ -2170,10 +2229,12 @@
           React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(item) }, "Skip")
         )
       ),
-      !item && items.length > 0 && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
+      !item && !exhausted && !error && items.length > 0 && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
+        "Finding more questions…"),
+      !item && exhausted && items.length > 0 && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
         answered > 0
-          ? `${answered} answer${answered === 1 ? "" : "s"} queued. They change recommendations after the next model update.`
-          : "You skipped this batch."),
+          ? "That's every useful question for now. Your answers are saved."
+          : "That's every useful question for now."),
       controls
     );
   }
@@ -3049,7 +3110,7 @@
     }, React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, "aria-label": title },
       React.createElement("div", { className: "card-section" },
         hovered
-          ? React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, ref: (node) => { if (node) { node.muted = true; node.defaultMuted = true; } }, muted: true, loop: true, playsInline: true, autoPlay: true })
+          ? React.createElement("video", { className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, ref: keepPreviewMuted, muted: true, loop: true, playsInline: true, autoPlay: true })
           : React.createElement("img", { className: "curator-preview-video", src: `/scene/${scene_id}/screenshot`, alt: "", loading: "lazy" })
       )
     ));
@@ -3065,32 +3126,11 @@
     const laneColor = `var(--curator-hue-${lane}, var(--curator-accent))`;
     function onEnter() { setHovered(true); }
     function onLeave() { setHovered(false); }
-    // Mute synchronously at attach (mobile requires muted *before* the autoplay
-    // check) so playback starts silently; a separate effect re-mutes via
-    // addEventListener if the SFW toggle unmutes/restarts the media outside
-    // React. The media sits in card-section so Stash's SFW switch blurs it.
-    const videoRef = React.useRef(null);
-    function keepMuted(node) {
-      if (!node) return;
-      videoRef.current = node;
-      node.muted = true;
-      node.defaultMuted = true;
-    }
-    React.useEffect(() => {
-      const el = videoRef.current;
-      if (!el) return;
-      const forceMuted = () => { el.muted = true; el.defaultMuted = true; };
-      el.addEventListener("play", forceMuted);
-      el.addEventListener("volumechange", forceMuted);
-      return () => {
-        el.removeEventListener("play", forceMuted);
-        el.removeEventListener("volumechange", forceMuted);
-      };
-    }, []);
+    // The media sits in card-section so Stash's SFW switch blurs it.
     return React.createElement("article", { className: `curator-preview-tile curator-affinity-${sign}`, onMouseEnter: onEnter, onMouseLeave: onLeave, onFocus: onEnter, onBlur: onLeave },
       React.createElement("a", { className: "curator-preview-link", href: `/scenes/${scene_id}`, title },
         React.createElement("div", { className: "card-section" },
-          React.createElement("video", { ref: keepMuted, className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
+          React.createElement("video", { ref: keepPreviewMuted, className: "curator-preview-video", src: `/scene/${scene_id}/preview`, poster: `/scene/${scene_id}/screenshot`, muted: true, defaultMuted: true, loop: true, playsInline: true, autoPlay: index < WALL_CAP, preload: index < WALL_CAP ? "auto" : "none" })
         )
       ),
       React.createElement("span", { className: "curator-preview-lane", style: { color: laneColor }, title: laneLabel, "aria-label": laneLabel }, React.createElement(FontAwesomeIcon, { icon: wallLaneIcon(lane) })),

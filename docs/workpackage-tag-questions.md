@@ -85,6 +85,11 @@ chips (a separate package, see Follow-up).
   range ignored track taps on some phones and its thumb was inset from the end
   stops), with a taller touch strip; the question cards use a full-width,
   thumb-height variant with every stop labelled.
+- **Continuous queue:** the batch of five is gone; nothing measured favoured it.
+  The queue tops up when two questions remain, passing every tag answered or
+  skipped in this browser as `exclude_tag_ids` (so skips can no longer hide the
+  rest of a 10-item fetch), and every five answers it rebuilds in the background
+  and reranks the questions not shown yet.
 - **Keyboard:** no `1`–`5`/`S` shortcuts. Stash binds global single-key
   shortcuts, and the sentiment slider and Skip button are already keyboard
   operable.
@@ -96,7 +101,8 @@ chips (a separate package, see Follow-up).
 
 ### Op `get_tag_questions` (Go runtime + Python oracle)
 
-Request: `{ "limit": 5 }` (1..10, default 5). Read-only: it uses the published
+Request: `{ "limit": 5, "exclude_tag_ids": [...] }` (limit 1..10, default 5;
+the exclusions are optional). Read-only: it uses the published
 model and its artifacts, like `get_taste_profile`.
 
 Candidates are tags in the taste profile with:
@@ -160,7 +166,8 @@ migration.
   in try/catch), then filtered out of the next fetch. Skipping never writes an
   answer.
 - After 5 answers: a short summary, **Apply now** (the existing
-  `applyFeedbackAndAwaitBuild`), and **Five more**.
+  `applyFeedbackAndAwaitBuild`), and **Five more**. (Superseded by the
+  continuous queue above.)
 - Keyboard: `1`–`5` map to the sentiment steps, `S` skips; ARIA live region
   for the progress text. Controls stay outside `card-section` (SFW Switch
   contract).
