@@ -564,6 +564,148 @@ ON CONFLICT(tag_id) DO UPDATE SET
 	), nil
 }
 
+// ── scene reasons (Why these?) ──────────────────────────────────────────────
+
+// sceneReasonSubjects mirrors interactions.py SCENE_REASON_SUBJECTS.
+var sceneReasonSubjects = map[string]bool{
+	"performer": true, "tag": true, "studio": true, "missing_tag": true, "scene": true,
+}
+
+const sceneReasonLimit = 20
+
+type sceneReasonSubject struct{ kind, id string }
+
+type sceneReasonEntry struct {
+	answerID     string
+	sceneID      string
+	polarity     int64
+	flipped      bool
+	reasons      []sceneReasonSubject
+	occurredAtMs int64
+}
+
+// normalizeSceneReasonEntry mirrors InteractionStore._scene_reason_entry.
+func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
+	answerID := pythonStrOrEmpty(entry.get("answer_id"))
+	sceneID := pythonStrOrEmpty(entry.get("scene_id"))
+	occurredAtMs := pythonIntErrOr(entry.get("occurred_at_ms"), -1)
+	if answerID == "" || sceneID == "" || occurredAtMs < 0 {
+		return sceneReasonEntry{}, fmt.Errorf("answer_id, scene_id, and occurred_at_ms are required")
+	}
+	polarity := entry.get("polarity")
+	if !isJSONInt(polarity) || (polarity.num != "1" && polarity.num != "-1") {
+		return sceneReasonEntry{}, fmt.Errorf("polarity must be 1 or -1")
+	}
+	reasons := entry.get("reasons")
+	if !isList(reasons) || len(reasons.arr) > sceneReasonLimit {
+		return sceneReasonEntry{}, fmt.Errorf("reasons must be a list of at most 20 items")
+	}
+	subjects := make([]sceneReasonSubject, 0, len(reasons.arr))
+	for _, reason := range reasons.arr {
+		if reason.kind != jObj {
+			return sceneReasonEntry{}, fmt.Errorf("each reason must be an object")
+		}
+		kind := pythonStrOrEmpty(reason.get("subject_type"))
+		if !sceneReasonSubjects[kind] {
+			return sceneReasonEntry{}, fmt.Errorf("unsupported reason subject: %s", kind)
+		}
+		subject := ""
+		if kind != "scene" {
+			subject = pythonStrOrEmpty(reason.get("subject_id"))
+			if subject == "" {
+				return sceneReasonEntry{}, fmt.Errorf("reason subject_id is required")
+			}
+		}
+		subjects = append(subjects, sceneReasonSubject{kind: kind, id: subject})
+	}
+	flipped := entry.get("flipped").truthy()
+	if len(subjects) == 0 && !flipped {
+		return sceneReasonEntry{}, fmt.Errorf("an answer needs a reason or a flip")
+	}
+	var one int
+	err := db.QueryRow(`SELECT 1 FROM source_scene WHERE scene_id=?`, sceneID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return sceneReasonEntry{}, fmt.Errorf("unknown scene: %s", sceneID)
+	}
+	if err != nil {
+		return sceneReasonEntry{}, err
+	}
+	value := int64(1)
+	if polarity.num == "-1" {
+		value = -1
+	}
+	return sceneReasonEntry{
+		answerID: answerID, sceneID: sceneID, polarity: value, flipped: flipped,
+		reasons: subjects, occurredAtMs: occurredAtMs,
+	}, nil
+}
+
+func opSubmitSceneReasons(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "submit_scene_reasons",
+		func(settings jVal) (jVal, error) { return submitSceneReasonsBody(pluginDir, payload, settings) })
+}
+
+func submitSceneReasonsBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	entries := payload.get("args").get("entries")
+	if !isList(entries) {
+		return jvNull(), fmt.Errorf("entries must be a list")
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	ensureAutoWorker(pluginDir, payload, settings, db)
+	normalized := make([]sceneReasonEntry, len(entries.arr))
+	for i, entry := range entries.arr {
+		item, err := normalizeSceneReasonEntry(db, entry)
+		if err != nil {
+			return jvNull(), err
+		}
+		normalized[i] = item
+	}
+	inserted := int64(0)
+	err = withTxn(db, func(conn *sql.Conn) error {
+		ctx := context.Background()
+		for _, entry := range normalized {
+			res, err := conn.ExecContext(ctx, `
+INSERT OR IGNORE INTO scene_reason_answer(
+    answer_id, scene_id, polarity, flipped, occurred_at_ms
+) VALUES (?, ?, ?, ?, ?)`,
+				entry.answerID, entry.sceneID, entry.polarity, boolToInt(entry.flipped), entry.occurredAtMs)
+			if err != nil {
+				return err
+			}
+			rows, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				continue
+			}
+			inserted++
+			for _, reason := range entry.reasons {
+				if _, err := conn.ExecContext(ctx, `
+INSERT OR IGNORE INTO scene_reason(answer_id, subject_type, subject_id) VALUES (?, ?, ?)`,
+					entry.answerID, reason.kind, reason.id); err != nil {
+					return err
+				}
+			}
+		}
+		if inserted > 0 {
+			return coordinatorRequest(conn, "scene_reason", nowMs())
+		}
+		return nil
+	})
+	if err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("accepted", jvInt(inserted)),
+	), nil
+}
+
 // ── events (qualified impressions + play sessions) ──────────────────────────
 
 // pythonIntErrOr mirrors Python's int(entry.get(key, default)).

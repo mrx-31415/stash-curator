@@ -232,6 +232,24 @@ it checked in this browser until you change it (or for 180 days), another point 
 the scale plus **Save change** replaces it, and **Clear answer** plus **Save change**
 removes it so viewing decides that tag again.
 
+### Why these?
+
+Why these? asks about one scene at a time. **Hits** shows the scenes you have played
+that Curator rates highest and asks what makes them work for you; **Misses** shows the
+scenes Curator rates lowest and asks what puts you off. Each card has a muted preview
+(open it to see the scene) and chips to tap: up to three performers, the four tags on
+the scene that say most about it in that direction, the studio, and **Just this
+scene**. **Something not tagged…** finds a tag the scene shows but is not tagged with.
+If Curator has it backwards, **I don't actually like it** (Hits) or **Actually, I'd
+watch this** (Misses) turns the question around. Press **Next** once something is
+picked, or **Skip**; a skipped scene stays hidden in this browser for 30 days.
+
+Each tapped performer, tag, or studio is evidence for it in the next model update, a
+quarter as strong as a direct tag answer, so a reason that comes up across several
+scenes adds up. A missing tag counts as that tag. **Just this scene** and a turned-around
+question on their own are kept but do not change recommendations. Answered scenes are
+not asked again.
+
 ### Tag sentiment
 
 **Moods** hide selected tags and their descendants from every recommendation

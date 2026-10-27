@@ -195,6 +195,10 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitFeedback(pluginDir, payload)
 	case "correct_feedback":
 		return opCorrectFeedback(pluginDir, payload)
+	case "get_scene_reason_candidates":
+		return opGetSceneReasonCandidates(pluginDir, payload)
+	case "submit_scene_reasons":
+		return opSubmitSceneReasons(pluginDir, payload)
 	case "submit_tag_preferences":
 		return opSubmitTagPreferences(pluginDir, payload)
 	case "submit_events":

@@ -1066,6 +1066,11 @@ class PreferenceModelBuilder:
         }
         sibling_priors = self._sibling_priors(scene_features, supports, numerators)
         lift = self._watch_lift(scene_features)
+        for feature_id, (reason_support, reason_numerator) in self._scene_reason_evidence(
+            scene_features
+        ).items():
+            lift_support, lift_numerator = lift.get(feature_id, (0.0, 0.0))
+            lift[feature_id] = (lift_support + reason_support, lift_numerator + reason_numerator)
         result: dict[str, _Affinity] = {}
         for feature_id, values in accumulators.items():
             lift_support, lift_numerator = lift.get(feature_id, (0.0, 0.0))
@@ -1197,6 +1202,46 @@ class PreferenceModelBuilder:
             mass = max(float(with_tag), watched_count * base)
             pseudo = weight * mass / (mass + k)
             terms[feature_id] = (pseudo, pseudo * math.tanh(lift))
+        return terms
+
+    def _scene_reason_evidence(
+        self, scene_features: dict[str, tuple[StoredFeature, ...]]
+    ) -> dict[str, tuple[float, float]]:
+        """Pseudo-evidence from Why these? answers, per tag, performer, or studio.
+
+        Each tapped subject adds scene_reason_support pseudo-observations at the
+        answer's polarity to its feature; a missing tag counts as that tag. The
+        scene itself ("Just this scene") and subjects without a feature carry
+        nothing. Returns {feature_id: (support, numerator)}; empty when disabled.
+        """
+        weight = self.config.model.scene_reason_support
+        if weight <= 0:
+            return {}
+        subjects: dict[tuple[str, str], str] = {}
+        for features in scene_features.values():
+            for feature in features:
+                if feature.family == "content" and feature.metadata.get("tag_id"):
+                    subjects[("tag", str(feature.metadata["tag_id"]))] = feature.feature_id
+                elif feature.family == "performer_identity":
+                    subjects[("performer", feature.name.removeprefix("performer:"))] = (
+                        feature.feature_id
+                    )
+                elif feature.family == "studio":
+                    subjects[("studio", feature.name.removeprefix("studio:"))] = feature.feature_id
+        terms: dict[str, tuple[float, float]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT r.subject_type, r.subject_id, a.polarity
+            FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+            ORDER BY a.occurred_at_ms, a.answer_id, r.subject_type, r.subject_id
+            """
+        ):
+            kind = "tag" if row["subject_type"] == "missing_tag" else str(row["subject_type"])
+            feature_id = subjects.get((kind, str(row["subject_id"])))
+            if feature_id is None:
+                continue
+            support, numerator = terms.get(feature_id, (0.0, 0.0))
+            terms[feature_id] = (support + weight, numerator + weight * int(row["polarity"]))
         return terms
 
     def _inherit_tag_preferences(

@@ -949,6 +949,20 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(entries, list):
                 raise ValueError("entries must be a list")
             return api.submit_tag_preferences(entries)
+        if operation == "get_scene_reason_candidates":
+            excluded = args.get("exclude_scene_ids") or []
+            if not isinstance(excluded, list):
+                raise ValueError("exclude_scene_ids must be a list")
+            return api.scene_reason_candidates(
+                str(args.get("mode") or ""),
+                int(args.get("limit") or 20),
+                exclude_scene_ids={str(value) for value in excluded},
+            )
+        if operation == "submit_scene_reasons":
+            entries = args.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("entries must be a list")
+            return api.submit_scene_reasons(entries)
         if operation == "get_taste_profile":
             return api.taste_profile()
         if operation == "get_tag_sentiment_follow_up":

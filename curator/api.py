@@ -645,6 +645,46 @@ class CuratorAPI:
             )
         return selected
 
+    def scene_reason_candidates(
+        self, mode: str, limit: int = 20, exclude_scene_ids: Set[str] = frozenset()
+    ) -> dict[str, object]:
+        """Scenes for Why these?: the highest-rated scenes the user has played
+        ("hits") or the lowest-rated scenes overall ("misses"), leaving out
+        scenes already answered and the excluded ones (skipped in the browser).
+        """
+        if mode not in {"hits", "misses"}:
+            raise ValueError("mode must be hits or misses")
+        if not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        played = "AND s.scene_id IN (SELECT scene_id FROM source_play)" if mode == "hits" else ""
+        order = "DESC" if mode == "hits" else "ASC"
+        rows = self.connection.execute(
+            f"""
+            SELECT s.scene_id, s.appeal, s.confidence FROM model_scene_score s
+            WHERE s.model_id=? {played}
+              AND s.scene_id NOT IN (SELECT scene_id FROM scene_reason_answer)
+              AND s.scene_id NOT IN (SELECT value FROM json_each(?))
+            ORDER BY s.appeal {order}, s.scene_id
+            LIMIT ?
+            """,
+            (model_id, json.dumps(sorted(exclude_scene_ids)), limit),
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "mode": mode,
+            "items": [
+                {
+                    "scene_id": row["scene_id"],
+                    "appeal": row["appeal"],
+                    "confidence": row["confidence"],
+                }
+                for row in rows
+            ],
+        }
+
     def scene_affinities(self, scene_ids: object) -> dict[str, object]:
         rows = self.scene_affinity_rows(scene_ids)
         return {
@@ -934,6 +974,10 @@ class CuratorAPI:
 
     def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
+        return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
+
+    def submit_scene_reasons(self, entries: list[dict[str, Any]]) -> dict[str, object]:
+        inserted = InteractionStore(self.connection).submit_scene_reasons(entries)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
     def get_scene_tag_choices(self, scene_id: str) -> dict[str, object]:

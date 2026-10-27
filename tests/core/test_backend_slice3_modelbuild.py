@@ -283,6 +283,73 @@ def test_model_build_artifact_parity_with_inherited_answers(binary: Path, tmp_pa
     assert not any("declared_preference" in item for item in inherited)
 
 
+def _seed_scene_reasons(sidecar: Path) -> None:
+    """One Why these? answer each way: a performer, tag, studio, and missing
+    tag that make a scene work, and a performer, tag, and the scene itself
+    that put the user off another."""
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.executemany(
+            "INSERT INTO scene_reason_answer(answer_id, scene_id, polarity, flipped,"
+            " occurred_at_ms) VALUES (?, ?, ?, ?, ?)",
+            [("a-hit", "unseen-good", 1, 0, 10), ("a-miss", "disliked", -1, 1, 20)],
+        )
+        connection.executemany(
+            "INSERT INTO scene_reason(answer_id, subject_type, subject_id) VALUES (?, ?, ?)",
+            [
+                ("a-hit", "performer", "p3"),
+                ("a-hit", "tag", "unusual"),
+                ("a-hit", "studio", "studio-2"),
+                ("a-hit", "missing_tag", "good"),
+                ("a-miss", "performer", "p2"),
+                ("a-miss", "tag", "bad"),
+                ("a-miss", "scene", ""),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _affinities_by_name(sidecar: Path) -> dict[str, float]:
+    """Published affinities by feature name, read through the attached artifacts."""
+    connection = connect_database(sidecar)
+    try:
+        return {
+            str(row[0]): float(row[1])
+            for row in connection.execute(
+                "SELECT f.name, a.affinity FROM feature_affinity a"
+                " JOIN feature_definition f ON f.feature_id=a.feature_id"
+            )
+        }
+    finally:
+        connection.close()
+
+
+def test_model_build_artifact_parity_with_scene_reasons(binary: Path, tmp_path: Path) -> None:
+    """Why these? reasons enter both builds identically, and they move the
+    named features in the answer's direction."""
+    built = []
+    for name, seed in (("plain", False), ("py", True), ("go", True)):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        if seed:
+            _seed_scene_reasons(db)
+        built.append(_run_go_build(binary, db) if name == "go" else _run_python_build(db))
+    _, (py_model, py_artifact), (go_model, go_artifact) = built
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    before = _affinities_by_name(tmp_path / "plain" / "curator.sqlite3")
+    after = _affinities_by_name(tmp_path / "go" / "curator.sqlite3")
+    for feature in ("performer:p3", "studio:studio-2"):
+        assert after[feature] > before.get(feature, 0.0), feature
+    assert after["performer:p2"] < before.get("performer:p2", 0.0)
+    changed = {name for name in after if after[name] != before.get(name)}
+    assert len(changed) >= 5
+
+
 def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:
     """The smoothing must actually bite: the same corpus with and without a
     taxonomy has to produce different affinities, or the parity test above

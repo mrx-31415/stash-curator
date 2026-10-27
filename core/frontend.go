@@ -1246,3 +1246,81 @@ func recognizedArtifacts(corePath string) []string {
 	}
 	return result
 }
+
+func opGetSceneReasonCandidates(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_scene_reason_candidates",
+		func(settings jVal) (jVal, error) { return sceneReasonCandidatesBody(pluginDir, payload, settings) })
+}
+
+// sceneReasonCandidatesBody mirrors CuratorAPI.scene_reason_candidates: the
+// highest-rated played scenes ("hits") or the lowest-rated scenes ("misses"),
+// without answered or excluded scenes.
+func sceneReasonCandidatesBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	args := payload.get("args")
+	excluded := args.get("exclude_scene_ids")
+	if excluded.truthy() && excluded.kind != jArr {
+		return jvNull(), fmt.Errorf("exclude_scene_ids must be a list")
+	}
+	mode := argsString(args, "mode", "")
+	limit := argsInt(args, "limit", 20)
+	if mode != "hits" && mode != "misses" {
+		return jvNull(), fmt.Errorf("mode must be hits or misses")
+	}
+	if limit < 1 || limit > 50 {
+		return jvNull(), fmt.Errorf("limit must be between 1 and 50")
+	}
+	exclude := map[string]bool{}
+	if excluded.kind == jArr {
+		for _, item := range excluded.arr {
+			exclude[item.asString()] = true
+		}
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	modelID, err := currentModelID(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	if modelID == "" {
+		return jvNull(), fmt.Errorf("no published model")
+	}
+	played, order := "", "ASC"
+	if mode == "hits" {
+		played, order = "AND s.scene_id IN (SELECT scene_id FROM source_play)", "DESC"
+	}
+	rows, err := db.Query(`
+SELECT s.scene_id, s.appeal, s.confidence FROM model_scene_score s
+WHERE s.model_id=? `+played+`
+  AND s.scene_id NOT IN (SELECT scene_id FROM scene_reason_answer)
+  AND s.scene_id NOT IN (SELECT value FROM json_each(?))
+ORDER BY s.appeal `+order+`, s.scene_id
+LIMIT ?`, modelID, jsonIDs(sortedStringKeys(exclude)), limit)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer rows.Close()
+	items := jvArr()
+	for rows.Next() {
+		var sceneID string
+		var appeal, confidence float64
+		if err := rows.Scan(&sceneID, &appeal, &confidence); err != nil {
+			return jvNull(), err
+		}
+		items.arr = append(items.arr, jvObj(
+			jvKey("scene_id", jvStr(sceneID)),
+			jvKey("appeal", jvFloat(appeal)),
+			jvKey("confidence", jvFloat(confidence)),
+		))
+	}
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("mode", jvStr(mode)),
+		jvKey("items", items),
+	), nil
+}
