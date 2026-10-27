@@ -94,6 +94,11 @@ class ModelConfig:
     # its share of the library) adds to the learned affinity; 0.0 disables it.
     # 2.0 won a time-split replay on a real library (AUC 0.62 -> 0.72).
     watch_lift_support: float = 2.0
+    # Pseudo-observations each Why these? reason adds to its tag, performer, or
+    # studio, at +1 (what makes a scene work) or -1 (what puts the user off):
+    # a quarter of a direct tag answer, so a reason that recurs across scenes
+    # counts and a single tap stays modest.
+    scene_reason_support: float = 2.0
     direct_confidence_scale: float = 0.8
     cooldown_center_days: float = 90.0
     cooldown_width_days: float = 15.0

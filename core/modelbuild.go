@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -490,12 +491,38 @@ FROM direct_tag_preference ORDER BY tag_id`)
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
+	// Why these? reasons feed modelSceneReasons, so a new answer must change
+	// the model_id or the build would reuse the previous artifact.
+	sceneReasons := jvArr()
+	rows, err = db.Query(`
+SELECT r.answer_id, r.subject_type, r.subject_id, a.polarity
+FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+ORDER BY r.answer_id, r.subject_type, r.subject_id`)
+	if err != nil {
+		return "", err
+	}
+	for rows.Next() {
+		var answerID, subjectType, subjectID string
+		var polarity int64
+		if err := rows.Scan(&answerID, &subjectType, &subjectID, &polarity); err != nil {
+			rows.Close()
+			return "", err
+		}
+		sceneReasons.arr = append(sceneReasons.arr, jvArr(
+			jvStr(answerID), jvStr(subjectType), jvStr(subjectID), jvInt(polarity),
+		))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
 	doc := jvObj(
 		jvKey("labels", labelRows),
 		jvKey("feedback", feedbackState),
 		jvKey("exclusions", exclusions),
 		jvKey("pruning", pruning),
 		jvKey("tag_preferences", tagPreferences),
+		jvKey("scene_reasons", sceneReasons),
 	)
 	return sha256Hex(doc.marshalSortedKeys()), nil
 }
@@ -834,6 +861,14 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	if err != nil {
 		return nil, err
 	}
+	reasons, err := modelSceneReasons(db, sceneFeatures)
+	if err != nil {
+		return nil, err
+	}
+	for featureID, term := range reasons {
+		current := lift[featureID]
+		lift[featureID] = watchLiftTerm{support: current.support + term.support, numerator: current.numerator + term.numerator}
+	}
 	result := map[string]modelAffinity{}
 	for featureID, values := range accumulators {
 		studios := map[string]bool{}
@@ -1015,6 +1050,63 @@ func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[strin
 		terms[featureID] = watchLiftTerm{support: pseudo, numerator: pseudo * math.Tanh(lift)}
 	}
 	return terms, nil
+}
+
+// sceneReasonSupport mirrors ModelConfig.scene_reason_support.
+const sceneReasonSupport = 2.0
+
+// modelSceneReasons mirrors PreferenceModelBuilder._scene_reason_evidence:
+// each Why these? subject adds sceneReasonSupport pseudo-observations at the
+// answer's polarity to its tag, performer, or studio feature; a missing tag
+// counts as that tag, and the scene itself carries nothing.
+func modelSceneReasons(db dbx, sceneFeatures map[string][]storedFeature) (map[string]watchLiftTerm, error) {
+	terms := map[string]watchLiftTerm{}
+	if sceneReasonSupport <= 0 {
+		return terms, nil
+	}
+	subjects := map[[2]string]string{}
+	for _, features := range sceneFeatures {
+		for _, feature := range features {
+			switch feature.family {
+			case "content":
+				if tagID := feature.metadata.get("tag_id").asString(); tagID != "" {
+					subjects[[2]string{"tag", tagID}] = feature.featureID
+				}
+			case "performer_identity":
+				subjects[[2]string{"performer", strings.TrimPrefix(feature.name, "performer:")}] = feature.featureID
+			case "studio":
+				subjects[[2]string{"studio", strings.TrimPrefix(feature.name, "studio:")}] = feature.featureID
+			}
+		}
+	}
+	rows, err := db.Query(`
+SELECT r.subject_type, r.subject_id, a.polarity
+FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+ORDER BY a.occurred_at_ms, a.answer_id, r.subject_type, r.subject_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, subjectID string
+		var polarity int64
+		if err := rows.Scan(&kind, &subjectID, &polarity); err != nil {
+			return nil, err
+		}
+		if kind == "missing_tag" {
+			kind = "tag"
+		}
+		featureID, ok := subjects[[2]string{kind, subjectID}]
+		if !ok {
+			continue
+		}
+		term := terms[featureID]
+		terms[featureID] = watchLiftTerm{
+			support:   term.support + sceneReasonSupport,
+			numerator: term.numerator + sceneReasonSupport*float64(polarity),
+		}
+	}
+	return terms, rows.Err()
 }
 
 // inheritedSupport is half a direct answer: an unanswered tag takes its nearest

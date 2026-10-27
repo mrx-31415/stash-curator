@@ -106,6 +106,15 @@ TABS: list[tuple[str, list[str]]] = [
         )
         for url in ("?view=curate&section=questions", "?view=curate&section=stream")
     ),
+    (
+        "?view=curate&section=reasons",
+        [
+            "Finding scenes to ask about",
+            "What makes it work for you",
+            "No scenes to ask about right now",
+            "no published model",
+        ],
+    ),
     ("?view=hunt", ["Select a local performer linked to Stash-box"]),
     (
         "?view=feedback",

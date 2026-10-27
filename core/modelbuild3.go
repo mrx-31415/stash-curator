@@ -654,6 +654,7 @@ func modelSubConfig() jVal {
 		jvKey("performer_similarity_novelty_floor", jvFloat(0.05)),
 		jvKey("satiation_bound", jvFloat(0.12)),
 		jvKey("scene_rating_confidence", jvFloat(0.90)),
+		jvKey("scene_reason_support", jvFloat(sceneReasonSupport)),
 		jvKey("structure_bound", jvFloat(0.05)),
 		jvKey("studio_bound", jvFloat(0.12)),
 		jvKey("studio_favorite_prior", jvFloat(0.04)),

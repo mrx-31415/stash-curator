@@ -32,6 +32,8 @@ FEEDBACK_TYPES = {
 }
 TAG_SENTIMENT_VALUES = {-1.0, -0.75, -0.5, 0.0, 0.5, 0.75, 1.0}
 BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
+SCENE_REASON_SUBJECTS = {"performer", "tag", "studio", "missing_tag", "scene"}
+SCENE_REASON_LIMIT = 20
 
 
 class InteractionStore:
@@ -333,6 +335,82 @@ class InteractionStore:
             if inserted:
                 ModelUpdateCoordinator(self.connection).request("direct_tag_preference")
         return inserted
+
+    def submit_scene_reasons(self, entries: list[dict[str, Any]]) -> int:
+        """Store Why these? answers; a retried answer_id is ignored."""
+        normalized = [self._scene_reason_entry(entry) for entry in entries]
+        inserted = 0
+        with transaction(self.connection):
+            for entry in normalized:
+                cursor = self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO scene_reason_answer(
+                        answer_id, scene_id, polarity, flipped, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry["answer_id"],
+                        entry["scene_id"],
+                        entry["polarity"],
+                        int(entry["flipped"]),
+                        entry["occurred_at_ms"],
+                    ),
+                )
+                if not cursor.rowcount:
+                    continue
+                inserted += 1
+                self.connection.executemany(
+                    """
+                    INSERT OR IGNORE INTO scene_reason(answer_id, subject_type, subject_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    [(entry["answer_id"], kind, subject) for kind, subject in entry["reasons"]],
+                )
+            if inserted:
+                ModelUpdateCoordinator(self.connection).request("scene_reason")
+        return inserted
+
+    def _scene_reason_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        answer_id = str(entry.get("answer_id") or "")
+        scene_id = str(entry.get("scene_id") or "")
+        occurred_at_ms = int(entry.get("occurred_at_ms", -1))
+        if not answer_id or not scene_id or occurred_at_ms < 0:
+            raise ValueError("answer_id, scene_id, and occurred_at_ms are required")
+        polarity = entry.get("polarity")
+        if isinstance(polarity, bool) or not isinstance(polarity, int) or polarity not in (-1, 1):
+            raise ValueError("polarity must be 1 or -1")
+        reasons = entry.get("reasons")
+        if not isinstance(reasons, list) or len(reasons) > SCENE_REASON_LIMIT:
+            raise ValueError("reasons must be a list of at most 20 items")
+        subjects: list[tuple[str, str]] = []
+        for reason in reasons:
+            if not isinstance(reason, dict):
+                raise ValueError("each reason must be an object")
+            kind = str(reason.get("subject_type") or "")
+            if kind not in SCENE_REASON_SUBJECTS:
+                raise ValueError(f"unsupported reason subject: {kind}")
+            subject = "" if kind == "scene" else str(reason.get("subject_id") or "")
+            if kind != "scene" and not subject:
+                raise ValueError("reason subject_id is required")
+            subjects.append((kind, subject))
+        flipped = bool(entry.get("flipped", False))
+        if not subjects and not flipped:
+            raise ValueError("an answer needs a reason or a flip")
+        if (
+            self.connection.execute(
+                "SELECT 1 FROM source_scene WHERE scene_id=?", (scene_id,)
+            ).fetchone()
+            is None
+        ):
+            raise ValueError(f"unknown scene: {scene_id}")
+        return {
+            "answer_id": answer_id,
+            "scene_id": scene_id,
+            "polarity": polarity,
+            "flipped": flipped,
+            "reasons": subjects,
+            "occurred_at_ms": occurred_at_ms,
+        }
 
     def submit_sessions(self, entries: list[dict[str, Any]]) -> int:
         sessions = [self._session(entry) for entry in entries]

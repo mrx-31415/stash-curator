@@ -4761,3 +4761,46 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   .curator-taste-item > .curator-sentiment-slider .curator-sentiment-range-wrap { flex: 1 1 auto; min-width: 0; }
   .curator-taste-item > .curator-sentiment-slider .curator-sentiment-track { flex: 1 1 auto; width: auto; }
 }
+
+/* Why these?: one scene, its preview, and one-tap reason
+   chips. Chips wrap, stay thumb-sized on phones, and fill with the card's
+   tone (green for what works, orange for what puts you off) when picked. */
+.curator-reason-card { --tone: #2f9e44; }
+.curator-reason-scene { display: block; max-width: 560px; }
+.curator-reason-scene video { aspect-ratio: 16 / 9; border-radius: 6px; display: block; object-fit: cover; width: 100%; }
+.curator-reason-title { font-weight: 600; margin: 0.5rem 0 0.75rem; }
+.curator-reason-group { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; max-width: 560px; }
+.curator-reason-chip {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--curator-border, #495057);
+  border-radius: 999px;
+  color: var(--curator-text, inherit);
+  display: inline-flex;
+  font-size: 0.85rem;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0.85rem;
+}
+.curator-reason-chip img { border-radius: 50%; height: 1.75rem; margin-left: -0.6rem; object-fit: cover; width: 1.75rem; }
+.curator-reason-hit { --tone: #2f9e44; }
+.curator-reason-miss { --tone: #e8590c; }
+.curator-reason-chip[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--tone) 28%, transparent);
+  border-color: var(--tone);
+}
+.curator-reason-missing { margin-bottom: 0.75rem; max-width: 560px; position: relative; }
+.curator-reason-matches {
+  background: var(--curator-surface, #30404d);
+  border: 1px solid var(--curator-border, #495057);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  padding: 0.25rem 0;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 5;
+}
+.curator-reason-matches .btn { text-align: left; }

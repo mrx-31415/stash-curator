@@ -185,6 +185,12 @@
       description: "A few quick questions about the tags that would change your recommendations most.",
     },
     {
+      value: "reasons",
+      label: "Why these?",
+      icon: faThumbsUp,
+      description: "Tap what makes a scene work for you, or what puts you off.",
+    },
+    {
       value: "sentiment",
       label: "Tag sentiment",
       icon: faTag,
@@ -276,6 +282,7 @@
   const CARD_SIZE_MAX = 32;
   const CARD_SIZE_DEFAULT = 22;
   const TAG_PREFERENCE_QUEUE_KEY = "stash-curator:tag-preference-queue:v1";
+  const SCENE_REASON_QUEUE_KEY = "stash-curator:scene-reason-queue:v1";
   const ORIGIN_KEY = "stash-curator:origin:v1";
   const LANE_PLAYLIST_KEY = "stash-curator:lane-playlist:v1";
   let lanePlaylist = readLanePlaylist();
@@ -1058,7 +1065,7 @@
   // An explicit "apply now": send queued tag answers, then build whenever any
   // feedback is pending, even below the automatic update threshold.
   async function applyFeedbackAndAwaitBuild() {
-    await flushTagPreferenceQueue();
+    await Promise.all([flushTagPreferenceQueue(), flushSceneReasonQueue()]);
     const before = await operation({ operation: "health" }).catch(() => null);
     const previousModelId = before && before.model_id;
     if (!before || (!before.model_pending && !before.model_rebuilding)) {
@@ -1548,6 +1555,55 @@
       clearSlateCache();
       scheduleModelUpdate();
     }
+  }
+
+  // Why these? answers use the same durable queue pattern as tag answers.
+  function readSceneReasonQueue() {
+    try {
+      const value = JSON.parse(localStorage.getItem(SCENE_REASON_QUEUE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  let sceneReasonFlush = null;
+  function flushSceneReasonQueue() {
+    if (!sceneReasonFlush) {
+      sceneReasonFlush = drainSceneReasonQueue().finally(() => { sceneReasonFlush = null; });
+    }
+    return sceneReasonFlush;
+  }
+
+  async function drainSceneReasonQueue() {
+    for (let entries = readSceneReasonQueue(); entries.length; entries = readSceneReasonQueue()) {
+      try {
+        await operation({ operation: "submit_scene_reasons", entries });
+      } catch (_) {
+        // Retry on the next answer, online event, or plugin page load.
+        return;
+      }
+      const sent = new Set(entries.map((entry) => entry.answer_id));
+      try {
+        localStorage.setItem(SCENE_REASON_QUEUE_KEY, JSON.stringify(readSceneReasonQueue().filter((entry) => !sent.has(entry.answer_id))));
+      } catch (_) {
+        return;
+      }
+      clearSlateCache();
+      scheduleModelUpdate();
+    }
+  }
+
+  function submitSceneReason(entry) {
+    const answer = { answer_id: uuid(), occurred_at_ms: Date.now(), ...entry };
+    try {
+      localStorage.setItem(SCENE_REASON_QUEUE_KEY, JSON.stringify([...readSceneReasonQueue(), answer]));
+    } catch (_) {
+      // Without storage, send this answer directly; a failure loses only it.
+      operation({ operation: "submit_scene_reasons", entries: [answer] }).then(scheduleModelUpdate).catch(() => {});
+      return;
+    }
+    flushSceneReasonQueue();
   }
 
   function submitTagPreference(tagId, {value, blocked}) {
@@ -2408,6 +2464,314 @@
     );
   }
 
+  // Why these?: scenes Curator rates highest among the ones you played
+  // ("Hits") or lowest overall ("Misses"), one at a time, with one-tap
+  // reasons: performers, the scene's most telling tags, the studio, a tag the
+  // scene is missing, or "Curator's wrong". Each tapped reason is evidence
+  // for its tag, performer, or studio in the next model update.
+  const SCENE_REASON_SKIP_KEY = "stash-curator:scene-reason-skips:v1";
+  const SCENE_REASON_SKIP_MS = 30 * 86_400_000;
+  const SCENE_REASON_BATCH = 20;
+  const SCENE_REASON_TAGS = 4;
+  const SCENE_REASON_PERFORMERS = 3;
+  const SCENE_REASON_MODES = {
+    hits: {
+      label: "Hits",
+      heading: "Curator rates this highly. What makes it work for you?",
+      flipped: "What puts you off?",
+      flip: "I don't actually like it",
+    },
+    misses: {
+      label: "Misses",
+      heading: "Curator expects this isn't for you. What puts you off?",
+      flipped: "What would make it work for you?",
+      flip: "Actually, I'd watch this",
+    },
+  };
+  const SCENE_REASON_SCENES_QUERY =
+    "query CuratorReasonScenes($ids: [Int!]) { findScenes(scene_ids: $ids, filter: { per_page: -1 }) { scenes { " +
+    "id title play_count paths { preview screenshot } studio { id name } " +
+    "performers { id name image_path } tags { id name } files { basename } } } }";
+  const SCENE_REASON_TAG_SEARCH =
+    "query CuratorReasonTagSearch($q: String!) { findTags(filter: { q: $q, per_page: 8, sort: \"scenes_count\", direction: DESC }) { tags { id name } } }";
+
+  async function stashQuery(query, variables) {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors) throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    return payload.data;
+  }
+
+  function readSceneReasonSkips() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(SCENE_REASON_SKIP_KEY) || "{}");
+      const now = Date.now();
+      return Object.fromEntries(Object.entries(stored).filter(([, at]) => now - Number(at) < SCENE_REASON_SKIP_MS));
+    } catch (_) {
+      return {};
+    }
+  }
+  function rememberSceneReasonSkip(sceneId) {
+    try {
+      localStorage.setItem(SCENE_REASON_SKIP_KEY, JSON.stringify({ ...readSceneReasonSkips(), [sceneId]: Date.now() }));
+    } catch (_) {
+      // Without storage a skipped scene can come back on a later visit.
+    }
+  }
+
+  // The scene's tags that say most about it in this direction: strongest
+  // taste first (likes for Hits, dislikes for Misses). Generic tags carry
+  // little learned taste, so they sort last.
+  function sceneReasonTags(scene, taste, mode) {
+    const sign = mode === "hits" ? 1 : -1;
+    return scene.tags
+      .map((tag) => ({ ...tag, taste: taste.get(tag.id) ?? 0 }))
+      .sort((left, right) => sign * (right.taste - left.taste) || left.name.localeCompare(right.name))
+      .slice(0, SCENE_REASON_TAGS);
+  }
+
+  function ReasonChip({ pressed, onClick, image, children, tone }) {
+    return React.createElement(
+      "button",
+      { type: "button", className: `curator-reason-chip curator-reason-${tone}`, "aria-pressed": pressed, onClick },
+      image && React.createElement("img", { src: image, alt: "", loading: "lazy" }),
+      React.createElement("span", null, children)
+    );
+  }
+
+  function MissingTagPicker({ onPick, picked }) {
+    const [query, setQuery] = React.useState("");
+    const [matches, setMatches] = React.useState([]);
+    React.useEffect(() => {
+      const text = query.trim();
+      if (text.length < 2) { setMatches([]); return undefined; }
+      let current = true;
+      const timer = setTimeout(() => {
+        stashQuery(SCENE_REASON_TAG_SEARCH, { q: text })
+          .then((data) => { if (current) setMatches(data.findTags.tags); })
+          .catch(() => { if (current) setMatches([]); });
+      }, 200);
+      return () => { current = false; clearTimeout(timer); };
+    }, [query]);
+    const taken = new Set(picked.map((tag) => tag.id));
+    return React.createElement(
+      "div",
+      { className: "curator-reason-missing" },
+      React.createElement("input", {
+        className: "form-control form-control-sm",
+        type: "search",
+        placeholder: "Something not tagged… type a tag",
+        "aria-label": "Add a tag this scene is missing",
+        value: query,
+        onChange: (event) => setQuery(event.target.value),
+      }),
+      matches.length > 0 && React.createElement(
+        "div",
+        { className: "curator-reason-matches", role: "listbox" },
+        matches.filter((tag) => !taken.has(tag.id)).map((tag) => React.createElement("button", {
+          key: tag.id, type: "button", role: "option", className: "btn btn-sm btn-link",
+          onClick: () => { onPick(tag); setQuery(""); setMatches([]); },
+        }, tag.name))
+      )
+    );
+  }
+
+  function SceneReasons() {
+    const [mode, setMode] = React.useState("hits");
+    const [queue, setQueue] = React.useState(null);
+    const [index, setIndex] = React.useState(0);
+    const [exhausted, setExhausted] = React.useState(false);
+    const [taste, setTaste] = React.useState(new Map());
+    const [picked, setPicked] = React.useState(new Set());
+    const [missing, setMissing] = React.useState([]);
+    const [flipped, setFlipped] = React.useState(false);
+    const [answered, setAnswered] = React.useState(0);
+    const [error, setError] = React.useState("");
+    // Scenes answered or skipped here, excluded from every fetch until the
+    // sidecar has the answer.
+    const handled = React.useRef(new Set());
+    const fetching = React.useRef(false);
+    const queueRef = React.useRef(queue);
+    const modeRef = React.useRef(mode);
+    queueRef.current = queue;
+    modeRef.current = mode;
+    useCuratorActivity("scene-reasons", queue === null && !error, "Finding scenes to ask about…");
+
+    React.useEffect(() => {
+      operation({ operation: "get_taste_profile" })
+        .then((profile) => setTaste(new Map((profile.items || []).map((item) => [
+          item.tag_id, Number(item.direct_value ?? item.inferred_value) || 0,
+        ]))))
+        .catch(() => {});
+    }, []);
+
+    // Appends the next scenes for the current mode, with Stash's details.
+    const topUp = React.useCallback(async () => {
+      if (fetching.current) return;
+      fetching.current = true;
+      const requested = modeRef.current;
+      let stale = false;
+      setError("");
+      try {
+        const exclude = new Set([...handled.current, ...Object.keys(readSceneReasonSkips())]);
+        for (const scene of queueRef.current || []) exclude.add(scene.id);
+        const result = await operation({
+          operation: "get_scene_reason_candidates", mode: requested,
+          limit: SCENE_REASON_BATCH, exclude_scene_ids: [...exclude],
+        });
+        const ids = (result.items || []).map((item) => item.scene_id).filter((id) => !exclude.has(id));
+        let scenes = [];
+        if (ids.length) {
+          const data = await stashQuery(SCENE_REASON_SCENES_QUERY, { ids: ids.map(Number) });
+          const byId = new Map(data.findScenes.scenes.map((scene) => [scene.id, scene]));
+          scenes = ids.map((id) => byId.get(String(id))).filter(Boolean);
+        }
+        // The mode changed while this was in flight: fetch for the new one.
+        if (requested !== modeRef.current) {
+          stale = true;
+          return;
+        }
+        setQueue((current) => [...(current || []), ...scenes]);
+        setExhausted(scenes.length === 0);
+      } catch (failure) {
+        if (requested !== modeRef.current) {
+          stale = true;
+          return;
+        }
+        setQueue((current) => current || []);
+        setError(failure.message);
+      } finally {
+        fetching.current = false;
+        if (stale) topUp();
+      }
+    }, []);
+    React.useEffect(() => {
+      if (queue === null || (!exhausted && !error && queue.length - index <= 2)) topUp();
+    }, [queue, index, exhausted, error, topUp]);
+
+    function reset() {
+      setPicked(new Set());
+      setMissing([]);
+      setFlipped(false);
+    }
+    function switchMode(value) {
+      if (value === mode) return;
+      reset();
+      setQueue(null);
+      setIndex(0);
+      setExhausted(false);
+      setMode(value);
+    }
+    function toggle(key) {
+      setPicked((current) => {
+        const next = new Set(current);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+    }
+    function next(scene) {
+      const reasons = [...picked].map((key) => {
+        const [subject_type, subject_id = ""] = key.split(":");
+        return { subject_type, subject_id };
+      });
+      for (const tag of missing) reasons.push({ subject_type: "missing_tag", subject_id: tag.id });
+      submitSceneReason({ scene_id: scene.id, polarity: tone === "hit" ? 1 : -1, flipped, reasons });
+      handled.current.add(scene.id);
+      setAnswered((count) => count + 1);
+      reset();
+      setIndex((current) => current + 1);
+    }
+    function skip(scene) {
+      rememberSceneReasonSkip(scene.id);
+      handled.current.add(scene.id);
+      reset();
+      setIndex((current) => current + 1);
+    }
+
+    const settings = SCENE_REASON_MODES[mode];
+    const scene = queue && queue[index];
+    const tone = flipped ? (mode === "hits" ? "miss" : "hit") : (mode === "hits" ? "hit" : "miss");
+    const heading = flipped ? settings.flipped : settings.heading;
+    const chosen = picked.size + missing.length > 0 || flipped;
+    return React.createElement(
+      "div",
+      { className: "curator-scene-reasons" },
+      React.createElement(
+        "div",
+        { className: "btn-group curator-tag-question-modes", role: "group", "aria-label": "Which scenes" },
+        Object.entries(SCENE_REASON_MODES).map(([value, item]) => React.createElement(Button, {
+          key: value, size: "sm", variant: mode === value ? "primary" : "secondary", "aria-pressed": mode === value,
+          onClick: () => switchMode(value),
+        }, item.label))
+      ),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      queue && !scene && !error && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
+        !exhausted
+          ? "Finding more scenes…"
+          : answered > 0
+            ? "That's every scene to ask about for now. Your answers are saved and apply with the next model update."
+            : "No scenes to ask about right now. Hits need played scenes and a built model."),
+      scene && React.createElement(
+        "section",
+        { key: scene.id, className: "curator-tag-question curator-reason-card", "aria-labelledby": `curator-reason-${scene.id}` },
+        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
+          answered > 0 ? `Scene ${index + 1} · ${answered} answered` : `Scene ${index + 1}`),
+        React.createElement("h3", { id: `curator-reason-${scene.id}` }, heading),
+        React.createElement(
+          "a",
+          { className: "curator-reason-scene scene-card", href: `/scenes/${scene.id}`, title: "Open scene" },
+          React.createElement("video", {
+            ref: keepPreviewMuted, className: "scene-card-image card-section",
+            src: scene.paths.preview, poster: scene.paths.screenshot,
+            muted: true, loop: true, playsInline: true, autoPlay: true, preload: "metadata",
+          })
+        ),
+        React.createElement("p", { className: "curator-reason-title" },
+          scene.title || scene.files?.[0]?.basename || `Scene ${scene.id}`,
+          scene.play_count > 0 && React.createElement("small", { className: "text-muted" }, ` · played ${scene.play_count}×`)),
+        scene.performers.length > 0 && React.createElement(
+          "div", { className: "curator-reason-group", role: "group", "aria-label": "People" },
+          scene.performers.slice(0, SCENE_REASON_PERFORMERS).map((performer) => React.createElement(ReasonChip, {
+            key: performer.id, tone, image: performer.image_path,
+            pressed: picked.has(`performer:${performer.id}`), onClick: () => toggle(`performer:${performer.id}`),
+          }, performer.name))
+        ),
+        React.createElement(
+          "div", { className: "curator-reason-group", role: "group", "aria-label": "Tags and studio" },
+          sceneReasonTags(scene, taste, flipped ? (mode === "hits" ? "misses" : "hits") : mode).map((tag) => React.createElement(ReasonChip, {
+            key: tag.id, tone, pressed: picked.has(`tag:${tag.id}`), onClick: () => toggle(`tag:${tag.id}`),
+          }, tag.name)),
+          scene.studio && React.createElement(ReasonChip, {
+            tone, pressed: picked.has(`studio:${scene.studio.id}`), onClick: () => toggle(`studio:${scene.studio.id}`),
+          }, scene.studio.name),
+          missing.map((tag) => React.createElement(ReasonChip, {
+            key: `missing-${tag.id}`, tone, pressed: true,
+            onClick: () => setMissing((current) => current.filter((item) => item.id !== tag.id)),
+          }, `+ ${tag.name}`)),
+          React.createElement(ReasonChip, {
+            tone, pressed: picked.has("scene"), onClick: () => toggle("scene"),
+          }, "Just this scene")
+        ),
+        React.createElement(MissingTagPicker, { picked: missing, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+        React.createElement(
+          "div",
+          { className: "curator-curate-actions" },
+          React.createElement(Button, { size: "sm", variant: "primary", disabled: !chosen, onClick: () => next(scene) }, "Next"),
+          React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(scene) }, "Skip"),
+          React.createElement(Button, {
+            size: "sm", variant: flipped ? "warning" : "outline-secondary", "aria-pressed": flipped,
+            onClick: () => { setPicked(new Set()); setFlipped((value) => !value); },
+          }, settings.flip)
+        )
+      )
+    );
+  }
+
   function CurateProgress({ onFixTag }) {
     const [impact, setImpact] = React.useState(null);
     const [profile, setProfile] = React.useState(null);
@@ -2499,6 +2863,7 @@
     const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
       questions: () => React.createElement(TagQuestionsSection, { onShowAllTags: () => onSelectSection("sentiment") }),
+      reasons: () => React.createElement(SceneReasons),
       sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery }),
       progress: () => React.createElement(CurateProgress, { onFixTag: (tagId) => onSelectSection("sentiment", { sentTag: tagId }) }),
     };
@@ -7892,10 +8257,12 @@
   getPluginSettings().catch((error) => console.warn("Curator could not load card display settings:", error.message));
   window.addEventListener("online", flushQueue);
   window.addEventListener("online", flushTagPreferenceQueue);
+  window.addEventListener("online", flushSceneReasonQueue);
   window.addEventListener("pagehide", () => finishTracker(false));
   attachPlayer(location.pathname);
   flushQueue();
   flushTagPreferenceQueue();
+  flushSceneReasonQueue();
   // Mirror Stash's SFW blur onto the preview wall. Stash's own scene-card
   // classes break custom wall tiles, so detect SFW from whether the wall media
   // is actually blurred and apply a strong Curator-side blur when it is. Stash
