@@ -314,6 +314,8 @@ class ReasonGraphStore:
                     str(metadata.get("tag_id")) if metadata.get("tag_id") else None,
                     "declared_tag_preference"
                     if declared is not None
+                    else "inherited_tag_preference"
+                    if affinity_metadata.get("inherited_preference") is not None
                     else "learned_feature_affinity",
                     {
                         "name": str(metadata.get("tag_name", "this content pattern")),

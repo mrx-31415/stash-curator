@@ -247,7 +247,10 @@ Review tag beliefs and answer with a fixed sentiment from strong dislike to stro
 A direct answer is strong evidence rather than a hard exclusion. The separate
 **Never** setting blocks matching content. **Neutral** is an explicit near-zero
 preference, while **Clear answer** removes your direct answer or block and returns
-the tag to behavior-derived inference. Answers are queued locally during transient failures. Direct answers affect
+the tag to behavior-derived inference. A tag you have not answered starts from its
+nearest answered parent tag's answer (the mean, if several), at half the weight of a
+direct answer; answering the tag itself replaces that. Never blocks are not passed
+down this way. Answers are queued locally during transient failures. Direct answers affect
 tag fit but do not count as separate behavioral corroboration. Search includes classified
 local tags, including performer attributes and tags that currently appear on zero scenes,
 so preferences can be declared before that content enters the library.

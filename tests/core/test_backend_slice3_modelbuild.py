@@ -233,6 +233,56 @@ def test_model_build_artifact_parity_with_tag_hierarchy(binary: Path, tmp_path: 
     )
 
 
+def _seed_tag_answers(sidecar: Path) -> None:
+    """Answer the parent tag and one child so the others inherit."""
+    connection = sqlite3.connect(sidecar)
+    try:
+        for tag_id, value in (("scenario", 0.5), ("bad", -1.0)):
+            connection.execute(
+                "INSERT INTO direct_tag_preference_history(preference_id, tag_id, value,"
+                " occurred_at_ms) VALUES (?, ?, ?, 1)",
+                (f"pref-{tag_id}", tag_id, value),
+            )
+            connection.execute(
+                "INSERT INTO direct_tag_preference(tag_id, preference_id, value, occurred_at_ms)"
+                " VALUES (?, ?, ?, 1)",
+                (tag_id, f"pref-{tag_id}", value),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_model_build_artifact_parity_with_inherited_answers(binary: Path, tmp_path: Path) -> None:
+    """Unanswered children inherit the parent's answer identically in both."""
+    built = []
+    for name, run in (("py", _run_python_build), ("go", lambda db: _run_go_build(binary, db))):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        _seed_tag_hierarchy(db)
+        _seed_tag_answers(db)
+        built.append(run(db))
+    (py_model, py_artifact), (go_model, go_artifact) = built
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    connection = sqlite3.connect(go_artifact)
+    try:
+        metadata = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT metadata_json FROM feature_affinity")
+        ]
+    finally:
+        connection.close()
+    # "good" and "unusual" inherit from "scenario"; "bad" keeps its own answer.
+    inherited = [item for item in metadata if "inherited_preference" in item]
+    assert len(inherited) == 2
+    assert all(item["inherited_preference"] == 0.5 for item in inherited)
+    assert all(item["inherited_from"] == ["scenario"] for item in inherited)
+    assert not any("declared_preference" in item for item in inherited)
+
+
 def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:
     """The smoothing must actually bite: the same corpus with and without a
     taxonomy has to produce different affinities, or the parity test above

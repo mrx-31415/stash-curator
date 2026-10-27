@@ -633,6 +633,109 @@ def test_direct_tag_sentiment_overrides_and_clear_restores_inference(tmp_path: P
     assert affinity(restored.model_id)[0] == pytest.approx(inferred)
 
 
+def test_unanswered_child_tags_inherit_the_nearest_answered_ancestor(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    # good > bad > unusual: "unusual" has an unanswered parent and an
+    # answered grandparent.
+    connection.executemany(
+        "INSERT INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)",
+        (("bad", "good"), ("unusual", "bad")),
+    )
+    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+
+    def metadata(model_id: str) -> dict[str, dict[str, object]]:
+        return {
+            str(name): json.loads(raw)
+            for name, raw in connection.execute(
+                """
+                SELECT d.name, a.metadata_json FROM feature_affinity a
+                JOIN feature_definition d USING(feature_id) WHERE a.model_id=?
+                """,
+                (model_id,),
+            )
+        }
+
+    # Without answers nothing inherits; this build also classifies the tags.
+    baseline = metadata(builder.build().model_id)
+    assert not any("inherited_preference" in item for item in baseline.values())
+    store = InteractionStore(connection)
+    store.submit_tag_preferences(
+        [{"preference_id": "g", "tag_id": "good", "value": 1, "occurred_at_ms": 10}]
+    )
+    first = metadata(builder.build().model_id)
+    assert first["tag:bad"]["inherited_preference"] == 1
+    assert first["tag:unusual"]["inherited_from"] == ["good"]
+    assert "inherited_preference" not in first["tag:good"]
+
+    # The nearest answered generation wins, and an own answer replaces inheritance.
+    store.submit_tag_preferences(
+        [{"preference_id": "b", "tag_id": "bad", "value": -0.5, "occurred_at_ms": 20}]
+    )
+    second = metadata(builder.build().model_id)
+    assert "inherited_preference" not in second["tag:bad"]
+    assert second["tag:unusual"]["inherited_preference"] == -0.5
+    assert second["tag:unusual"]["inherited_from"] == ["bad"]
+
+    # Never answers do not propagate.
+    store.submit_tag_preferences(
+        [
+            {
+                "preference_id": "g2",
+                "tag_id": "good",
+                "value": None,
+                "blocked": True,
+                "occurred_at_ms": 30,
+            },
+            {"preference_id": "b2", "tag_id": "bad", "value": None, "occurred_at_ms": 30},
+        ]
+    )
+    third = metadata(builder.build().model_id)
+    assert not any("inherited_preference" in item for item in third.values())
+
+
+def test_watch_lift_learns_from_what_is_chosen_for_watching(tmp_path: Path) -> None:
+    """Outcome labels cannot see the choice to watch; lift compares a tag's share
+    of watched scenes with its share of the library."""
+
+    def affinities(support: float, directory: str) -> dict[str, tuple[float, float]]:
+        connection = _database(tmp_path / directory / "curator.sqlite3")
+        config = replace(
+            DEFAULT_CONFIG, model=replace(DEFAULT_CONFIG.model, watch_lift_support=support)
+        )
+        model_id = (
+            PreferenceModelBuilder(connection, config, clock_ms=lambda: REFERENCE_MS)
+            .build()
+            .model_id
+        )
+        return {
+            str(name): (float(affinity), float(effective_support))
+            for name, affinity, effective_support in connection.execute(
+                """
+                SELECT d.name, a.affinity, a.effective_support FROM feature_affinity a
+                JOIN feature_definition d USING(feature_id) WHERE a.model_id=?
+                """,
+                (model_id,),
+            )
+        }
+
+    (tmp_path / "off").mkdir()
+    (tmp_path / "on").mkdir()
+    off, on = affinities(0.0, "off"), affinities(2.0, "on")
+    # "unusual" is on 1 of 6 scenes and none of the 3 watched ones: it was
+    # passed over. Without lift no evidence touches it at all.
+    assert "tag:unusual" not in off
+    k, base = 10.0, 1 / 6
+    lift = math.log(((0 + k * base) / (3 + k)) / base)
+    mass = 3 * base
+    pseudo = 2.0 * mass / (mass + k)
+    assert on["tag:unusual"][1] == pytest.approx(pseudo)
+    assert on["tag:unusual"][0] == pytest.approx(pseudo * math.tanh(lift) / (1.0 + pseudo))
+    assert on["tag:unusual"][0] < 0
+    # "bad" is rare in the library but was chosen for watching (then thumbed
+    # down): lift raises it relative to outcomes alone.
+    assert on["tag:bad"][0] > off["tag:bad"][0]
+
+
 def test_direct_tag_sentiment_does_not_rewrite_behavioral_neighbors(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(

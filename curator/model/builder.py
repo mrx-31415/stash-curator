@@ -44,6 +44,10 @@ from curator.storage.retention import prune_snapshots
 # library-specific timing and quality measurements justify the extra surface.
 PERFORMER_SIMILARITY_AFFINITY_CUTOFF = 0.005
 MODEL_BUILD_VERSION = 4
+# Half a direct answer (8): see _inherit_tag_preferences.
+INHERITED_SUPPORT = 4.0
+# Pseudo-watches at the library rate that shrink a thin tag's watch lift.
+WATCH_LIFT_SHRINK = 10.0
 
 
 @dataclass(frozen=True)
@@ -1061,10 +1065,12 @@ class PreferenceModelBuilder:
             for feature_id, values in accumulators.items()
         }
         sibling_priors = self._sibling_priors(scene_features, supports, numerators)
+        lift = self._watch_lift(scene_features)
         result: dict[str, _Affinity] = {}
         for feature_id, values in accumulators.items():
-            support = supports[feature_id]
-            numerator = numerators[feature_id]
+            lift_support, lift_numerator = lift.get(feature_id, (0.0, 0.0))
+            support = supports[feature_id] + lift_support
+            numerator = numerators[feature_id] + lift_numerator
             # Shrink toward what the tag's siblings say rather than toward zero,
             # so a thin tag inherits its category's evidence instead of "no
             # opinion". The prior is scaled by affinity_sibling_prior and enters
@@ -1095,6 +1101,18 @@ class PreferenceModelBuilder:
                 support,
                 len({scene_id for scene_id, _, _ in values}),
                 {"studios": len(studios), "performers": len(performers)},
+            )
+        # Tags never on a labelled scene can still be avoided (or chosen) when
+        # browsing; watch lift alone speaks for them.
+        for feature_id in sorted(lift.keys() - accumulators.keys()):
+            lift_support, lift_numerator = lift[feature_id]
+            result[feature_id] = _Affinity(
+                feature_id,
+                _clamp(lift_numerator / (self.config.model.affinity_prior + lift_support)),
+                1 - math.exp(-lift_support / self.config.model.affinity_confidence_scale),
+                lift_support,
+                0,
+                {"studios": 0, "performers": 0},
             )
         tag_features = {
             str(feature.metadata["tag_id"]): feature.feature_id
@@ -1130,7 +1148,120 @@ class PreferenceModelBuilder:
                     "learned_confidence": learned.confidence,
                 },
             )
+        self._inherit_tag_preferences(tag_features, result)
         return result
+
+    def _watch_lift(
+        self, scene_features: dict[str, tuple[StoredFeature, ...]]
+    ) -> dict[str, tuple[float, float]]:
+        """Pseudo-evidence from what is chosen for watching, per content feature.
+
+        Outcome labels only say how a watched scene went; nearly every chosen
+        scene goes fine, so they cannot see the choice itself. Lift compares a
+        tag's share of watched scenes with its share of the library:
+        lift = log(((watched_with + k * base) / (watched + k)) / base). It enters
+        as watch_lift_support * r pseudo-observations at tanh(lift), where
+        r = m / (m + k) and m = max(watched_with, expected watched_with), so a
+        tag needs either real watches or a real expectation of them to count.
+        Returns {feature_id: (support, numerator)}; empty when disabled.
+        """
+        weight = self.config.model.watch_lift_support
+        if weight <= 0:
+            return {}
+        k = WATCH_LIFT_SHRINK
+        watched = {
+            str(row[0])
+            for row in self.connection.execute("SELECT DISTINCT scene_id FROM source_play")
+        } & scene_features.keys()
+        if not watched:
+            return {}
+        library: dict[str, int] = defaultdict(int)
+        chosen: dict[str, int] = defaultdict(int)
+        for scene_id in sorted(scene_features):
+            for feature_id in sorted(
+                {
+                    feature.feature_id
+                    for feature in scene_features[scene_id]
+                    if feature.family == "content"
+                }
+            ):
+                library[feature_id] += 1
+                if scene_id in watched:
+                    chosen[feature_id] += 1
+        total, watched_count = len(scene_features), len(watched)
+        terms: dict[str, tuple[float, float]] = {}
+        for feature_id in sorted(library):
+            base = library[feature_id] / total
+            with_tag = chosen.get(feature_id, 0)
+            lift = math.log(((with_tag + k * base) / (watched_count + k)) / base)
+            mass = max(float(with_tag), watched_count * base)
+            pseudo = weight * mass / (mass + k)
+            terms[feature_id] = (pseudo, pseudo * math.tanh(lift))
+        return terms
+
+    def _inherit_tag_preferences(
+        self, tag_features: dict[str, str], result: dict[str, _Affinity]
+    ) -> None:
+        """Blend the nearest answered ancestors' mean answer into unanswered tags.
+
+        Half a direct answer's support: a replay on real answers found a
+        parent's answer predicts a child's far better than learned history.
+        Never answers do not propagate here.
+        """
+        answers: dict[str, float] = {}
+        answered: set[str] = set()
+        for row in self.connection.execute(
+            "SELECT tag_id, value, blocked FROM direct_tag_preference ORDER BY tag_id"
+        ):
+            answered.add(str(row["tag_id"]))
+            if not row["blocked"]:
+                answers[str(row["tag_id"])] = float(row["value"])
+        if not answers:
+            return
+        parents: dict[str, list[str]] = defaultdict(list)
+        for row in self.connection.execute(
+            "SELECT tag_id, parent_tag_id FROM tag_parent ORDER BY tag_id, parent_tag_id"
+        ):
+            parents[str(row["tag_id"])].append(str(row["parent_tag_id"]))
+        for tag_id in sorted(tag_features):
+            if tag_id in answered or not parents.get(tag_id):
+                continue
+            seen = {tag_id}
+            frontier = list(parents[tag_id])
+            sources: list[str] = []
+            while frontier and not sources:
+                following: list[str] = []
+                for parent_tag_id in frontier:
+                    if parent_tag_id in seen:
+                        continue
+                    seen.add(parent_tag_id)
+                    if parent_tag_id in answers:
+                        sources.append(parent_tag_id)
+                    following.extend(parents.get(parent_tag_id, ()))
+                frontier = following
+            if not sources:
+                continue
+            sources.sort()
+            inherited = sum(answers[source] for source in sources) / len(sources)
+            feature_id = tag_features[tag_id]
+            learned = result.get(feature_id, _Affinity(feature_id, 0.0, 0.0, 0.0, 0, {}))
+            result[feature_id] = _Affinity(
+                feature_id,
+                _clamp(
+                    (learned.affinity * learned.support + inherited * INHERITED_SUPPORT)
+                    / (learned.support + INHERITED_SUPPORT)
+                ),
+                max(learned.confidence, 0.6),
+                learned.support + INHERITED_SUPPORT,
+                learned.scene_count,
+                {
+                    **learned.contexts,
+                    "inherited_preference": inherited,
+                    "inherited_from": sources,
+                    "learned_affinity": learned.affinity,
+                    "learned_confidence": learned.confidence,
+                },
+            )
 
     @staticmethod
     def _label_mean(labels: dict[str, _SceneLabel]) -> float:
