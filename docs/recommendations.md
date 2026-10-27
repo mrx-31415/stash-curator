@@ -36,12 +36,14 @@ refresh Expand to replace previously computed scores.
 combines bounded evidence from content, performers, studios, similar scenes, and
 direct item history. Strong direct outcomes can override weaker inferences.
 
-Tag evidence has two sources. **Outcomes** say how the scenes you watched went
-compared with your average watched scene. **Watch lift** says which tags you choose:
-a tag on a larger share of the scenes you watched than of your library counts in its
-favour, and a common tag you keep passing over counts against it. Lift is shrunk for
-tags with few watched or expected scenes, and it adds a small amount of evidence
-next to outcomes. Your Tag sentiment answers still outweigh both.
+Tag, performer, and studio evidence has two sources. **Outcomes** say how the scenes
+you watched went compared with your average watched scene. **Watch lift** says what
+you choose: a tag, performer, or studio on a larger share of the scenes you watched
+than of your library counts in its favour, and a common one you keep passing over
+counts against it. Lift is shrunk for those with few watched or expected scenes, and
+it adds a small amount of evidence next to outcomes. Your Tag sentiment answers, Why
+these? reasons, and Stash performer and studio favourites and ratings still apply on
+top.
 
 **Current Fit** is how suitable the item is right now. It starts from Appeal and
 adjusts for exact-scene cooldown, recent performer or content repetition, and **Not

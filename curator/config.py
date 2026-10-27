@@ -94,6 +94,11 @@ class ModelConfig:
     # its share of the library) adds to the learned affinity; 0.0 disables it.
     # 2.0 won a time-split replay on a real library (AUC 0.62 -> 0.72).
     watch_lift_support: float = 2.0
+    # The same watch lift for performers and studios (their share of watched
+    # scenes over their share of the library); 0.0 disables it. Learned
+    # studio affinity ranked later-watched scenes no better than chance, and
+    # 2.0 raised full-model AUC on a time split (0.70-0.76 -> 0.76-0.80).
+    entity_watch_lift_support: float = 2.0
     # Pseudo-observations each Why these? reason adds to its tag, performer, or
     # studio, at +1 (what makes a scene work) or -1 (what puts the user off):
     # a quarter of a direct tag answer, so a reason that recurs across scenes

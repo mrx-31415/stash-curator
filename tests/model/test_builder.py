@@ -243,9 +243,13 @@ def test_pairwise_affinity_skips_shared_features_and_signals_differing_ones(
     'good': its affinity must be completely unaffected by the pair. performer
     p1 (winner-only) must gain support from the comparison, and performer p3
     (loser-only, absent before since neither scene carrying it had any other
-    evidence) must appear with a negative affinity."""
+    evidence) must appear with a negative affinity. Performer watch lift is
+    off here: it would give p3 evidence of its own."""
     connection = _database(tmp_path / "curator.sqlite3")
-    builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+    config = replace(
+        DEFAULT_CONFIG, model=replace(DEFAULT_CONFIG.model, entity_watch_lift_support=0.0)
+    )
+    builder = PreferenceModelBuilder(connection, config, clock_ms=lambda: REFERENCE_MS)
     feature_version = builder.build().feature_version
     feature_ids = {
         str(name): str(feature_id)
@@ -295,6 +299,41 @@ def test_pairwise_affinity_skips_shared_features_and_signals_differing_ones(
     assert after["tag:good"] == pytest.approx(before["tag:good"])
     assert after["performer:p1"][1] > before["performer:p1"][1]
     assert after["performer:p3"][0] < 0
+
+
+def test_watch_lift_reaches_performers_and_studios(tmp_path: Path) -> None:
+    """Performers and studios get lift evidence like tags: support grows for
+    those on watched scenes, and one only on unwatched scenes turns negative."""
+    connection = _database(tmp_path / "curator.sqlite3")
+    feature_version = (
+        PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build().feature_version
+    )
+    names = {
+        str(feature_id): str(name)
+        for feature_id, name in connection.execute(
+            "SELECT feature_id, name FROM feature_definition"
+        )
+    }
+
+    def affinities(entity_support: float) -> dict[str, tuple[float, float]]:
+        config = replace(
+            DEFAULT_CONFIG,
+            model=replace(DEFAULT_CONFIG.model, entity_watch_lift_support=entity_support),
+        )
+        builder = PreferenceModelBuilder(connection, config, clock_ms=lambda: REFERENCE_MS)
+        labels = builder._training_labels(builder._scene_labels())
+        scene_features = FeatureStore(connection).entity_features(feature_version, "scene")
+        result = builder._affinities(scene_features, labels, builder._absolute_label_mean(labels))
+        return {
+            names[feature_id]: (item.affinity, item.support) for feature_id, item in result.items()
+        }
+
+    without, with_lift = affinities(0.0), affinities(2.0)
+    for name in ("performer:p1", "studio:studio-1"):
+        assert with_lift[name][1] > without[name][1], name
+    assert "performer:p3" not in without
+    assert with_lift["performer:p3"][0] < 0
+    assert with_lift["tag:good"] == pytest.approx(without["tag:good"])
 
 
 def test_retired_pair_pick_feedback_is_ignored(tmp_path: Path) -> None:

@@ -1219,7 +1219,7 @@ class PreferenceModelBuilder:
     def _watch_lift(
         self, scene_features: dict[str, tuple[StoredFeature, ...]]
     ) -> dict[str, tuple[float, float]]:
-        """Pseudo-evidence from what is chosen for watching, per content feature.
+        """Pseudo-evidence from what is chosen for watching, per tag, performer, and studio.
 
         Outcome labels only say how a watched scene went; nearly every chosen
         scene goes fine, so they cannot see the choice itself. Lift compares a
@@ -1228,10 +1228,19 @@ class PreferenceModelBuilder:
         as watch_lift_support * r pseudo-observations at tanh(lift), where
         r = m / (m + k) and m = max(watched_with, expected watched_with), so a
         tag needs either real watches or a real expectation of them to count.
+        Performers and studios get the same lift at entity_watch_lift_support.
         Returns {feature_id: (support, numerator)}; empty when disabled.
         """
-        weight = self.config.model.watch_lift_support
-        if weight <= 0:
+        weights = {
+            family: weight
+            for family, weight in (
+                ("content", self.config.model.watch_lift_support),
+                ("performer_identity", self.config.model.entity_watch_lift_support),
+                ("studio", self.config.model.entity_watch_lift_support),
+            )
+            if weight > 0
+        }
+        if not weights:
             return {}
         k = WATCH_LIFT_SHRINK
         watched = {
@@ -1242,12 +1251,16 @@ class PreferenceModelBuilder:
             return {}
         library: dict[str, int] = defaultdict(int)
         chosen: dict[str, int] = defaultdict(int)
+        family_of: dict[str, str] = {}
         for scene_id in sorted(scene_features):
+            for feature in scene_features[scene_id]:
+                if feature.family in weights:
+                    family_of[feature.feature_id] = feature.family
             for feature_id in sorted(
                 {
                     feature.feature_id
                     for feature in scene_features[scene_id]
-                    if feature.family == "content"
+                    if feature.family in weights
                 }
             ):
                 library[feature_id] += 1
@@ -1260,7 +1273,7 @@ class PreferenceModelBuilder:
             with_tag = chosen.get(feature_id, 0)
             lift = math.log(((with_tag + k * base) / (watched_count + k)) / base)
             mass = max(float(with_tag), watched_count * base)
-            pseudo = weight * mass / (mass + k)
+            pseudo = weights[family_of[feature_id]] * mass / (mass + k)
             terms[feature_id] = (pseudo, pseudo * math.tanh(lift))
         return terms
 

@@ -659,6 +659,7 @@ func modelSubConfig() jVal {
 		jvKey("studio_bound", jvFloat(0.12)),
 		jvKey("studio_favorite_prior", jvFloat(0.04)),
 		jvKey("watch_lift_support", jvFloat(watchLiftSupport)),
+		jvKey("entity_watch_lift_support", jvFloat(entityWatchLiftSupport)),
 	)
 }
 
