@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.43.0](https://github.com/mrx-31415/stash-curator/compare/v0.42.2...v0.43.0) (2026-10-27)
+
+
+### Features
+
+* add Like and Dislike steps to the tag sentiment scale ([#405](https://github.com/mrx-31415/stash-curator/issues/405)) ([10f202f](https://github.com/mrx-31415/stash-curator/commit/10f202fb1faf023d7af1594e733a9f2df3ec0019))
+* ask high-value tag questions in Curate ([#400](https://github.com/mrx-31415/stash-curator/issues/400)) ([15a32b9](https://github.com/mrx-31415/stash-curator/commit/15a32b96d70c20cb91bde74f42ba709bae324549))
+* learn tag taste from what you choose to watch ([#403](https://github.com/mrx-31415/stash-curator/issues/403)) ([b6b6e77](https://github.com/mrx-31415/stash-curator/commit/b6b6e770699ff533f0d3289942954bf4a3205f04))
+* publish the plugin source on releases only, with a dev source for main ([#402](https://github.com/mrx-31415/stash-curator/issues/402)) ([5ac29f0](https://github.com/mrx-31415/stash-curator/commit/5ac29f065ca7cfb8197644baf449bdfb05c1e2e6))
+* retire Pair picks ([#398](https://github.com/mrx-31415/stash-curator/issues/398)) ([d4c5a7e](https://github.com/mrx-31415/stash-curator/commit/d4c5a7e1370130db8907a993390cdc8ade62a03a))
+
+
+### Bug Fixes
+
+* keep scene page tabs while playing alongside Stash TV ([#406](https://github.com/mrx-31415/stash-curator/issues/406)) ([8026b2f](https://github.com/mrx-31415/stash-curator/commit/8026b2f605ee7d2058bd2eb01eac941514877afc))
+
+
+### Performance Improvements
+
+* count recommendation lanes without loading every scene ([#399](https://github.com/mrx-31415/stash-curator/issues/399)) ([51aaec1](https://github.com/mrx-31415/stash-curator/commit/51aaec18056f7a7e4c9be694c8f443eb4ec9017e))
+* index available files for lane eligibility checks ([#404](https://github.com/mrx-31415/stash-curator/issues/404)) ([7082396](https://github.com/mrx-31415/stash-curator/commit/70823961d4991f1c5952a56b753bbc8ce6d85e7f))
+* speed up tag-filtered recommendations and Find ([#401](https://github.com/mrx-31415/stash-curator/issues/401)) ([25a7457](https://github.com/mrx-31415/stash-curator/commit/25a74575b0c63373823160977b9f1813948a8d8f))
+* start the plugin launcher faster ([#396](https://github.com/mrx-31415/stash-curator/issues/396)) ([37762df](https://github.com/mrx-31415/stash-curator/commit/37762dfe1d6dfe0bbaab98fad935adf5b5c48f79))
+
 ## [0.42.2](https://github.com/mrx-31415/stash-curator/compare/v0.42.1...v0.42.2) (2026-10-25)
 
 
