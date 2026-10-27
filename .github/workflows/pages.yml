@@ -1,5 +1,9 @@
 name: Documentation and plugin source
 
+# The stable plugin source serves the latest release's own archives, so its
+# index date (all Stash compares to offer updates) only moves on a release.
+# The dev source under /dev/ is rebuilt from main on every push. The release
+# workflow dispatches this one after attaching a new release's archives.
 on:
   push:
     branches: [main]
@@ -22,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # dev_version() counts the commits since the last release.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.21"
@@ -46,8 +53,31 @@ jobs:
           restore-keys: |
             build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
-      - run: uv run --frozen python scripts/build_plugin.py
-      - run: cp dist/stash-curator*.zip dist/index*.yml docs/
+      - run: uv run --frozen python scripts/build_plugin.py --dev
+      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/index*.yml docs/dev/
+      - name: Fetch the latest complete release's plugin source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A release's archives are attached a few minutes after its tag, so
+          # fall back to the newest release whose indexes all verify.
+          for tag in $(gh release list --limit 5 --json tagName --jq '.[].tagName'); do
+            rm -rf stable && mkdir stable
+            gh release download "$tag" --dir stable --pattern 'stash-curator*.zip' --pattern 'index*.yml' || continue
+            complete=true
+            for index in stable/index*.yml; do
+              archive=$(sed -n 's/^  path: //p' "$index")
+              digest=$(sed -n 's/^  sha256: //p' "$index")
+              echo "$digest  stable/$archive" | sha256sum --check --quiet || complete=false
+            done
+            if [ "$complete" = true ] && [ -f stable/index.yml ]; then
+              echo "Stable plugin source: $tag"
+              cp stable/* docs/
+              exit 0
+            fi
+          done
+          echo "No recent release has a complete plugin source" >&2
+          exit 1
       - uses: actions/jekyll-build-pages@v1
         with:
           source: ./docs
