@@ -34,6 +34,7 @@ TAG_SENTIMENT_VALUES = {-1.0, -0.75, -0.5, 0.0, 0.5, 0.75, 1.0}
 BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
 SCENE_REASON_SUBJECTS = {"performer", "tag", "studio", "missing_tag", "scene"}
 SCENE_REASON_LIMIT = 20
+SCENE_REASON_FLIP_STRENGTHS = {"mild", "strong"}
 
 
 class InteractionStore:
@@ -345,14 +346,15 @@ class InteractionStore:
                 cursor = self.connection.execute(
                     """
                     INSERT OR IGNORE INTO scene_reason_answer(
-                        answer_id, scene_id, polarity, flipped, occurred_at_ms
-                    ) VALUES (?, ?, ?, ?, ?)
+                        answer_id, scene_id, polarity, flipped, flip_strength, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         entry["answer_id"],
                         entry["scene_id"],
                         entry["polarity"],
                         int(entry["flipped"]),
+                        entry["flip_strength"],
                         entry["occurred_at_ms"],
                     ),
                 )
@@ -394,6 +396,9 @@ class InteractionStore:
                 raise ValueError("reason subject_id is required")
             subjects.append((kind, subject))
         flipped = bool(entry.get("flipped", False))
+        flip_strength = str(entry.get("flip_strength") or "mild")
+        if flip_strength not in SCENE_REASON_FLIP_STRENGTHS:
+            raise ValueError("flip_strength must be mild or strong")
         if not subjects and not flipped:
             raise ValueError("an answer needs a reason or a flip")
         if (
@@ -408,6 +413,7 @@ class InteractionStore:
             "scene_id": scene_id,
             "polarity": polarity,
             "flipped": flipped,
+            "flip_strength": flip_strength,
             "reasons": subjects,
             "occurred_at_ms": occurred_at_ms,
         }

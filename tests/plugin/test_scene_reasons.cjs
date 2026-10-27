@@ -63,7 +63,14 @@ const scene = (id, extra = {}) => ({
   ...extra,
 });
 
-function harness({ candidates, storage }) {
+const IMPACT = {
+  available: true,
+  tags: { promoted: [{ id: "t1", name: "Lace", delta: 0.05 }], demoted: [{ id: "t2", name: "Gaping", delta: -0.12 }] },
+  performers: { promoted: [{ performer_id: "p1", name: "Performer One", delta: 0.09 }], demoted: [] },
+  scenes: { promoted: [{ scene_id: "s1", title: "Up", delta: 0.2 }], demoted: [{ scene_id: "s2", title: "Down", delta: -0.3 }] },
+};
+
+function harness({ candidates, storage, impact = IMPACT }) {
   const runtime = createRuntime();
   const calls = { operations: [], answers: [], graphql: [] };
   const store = storage || new Map();
@@ -72,10 +79,15 @@ function harness({ candidates, storage }) {
     Button: "button",
     Date, JSON, Set, Map, Error, Object, Math, Number, String, Promise, setTimeout, clearTimeout,
     keepPreviewMuted: () => {},
+    loadPerformerAffinities: async () => ({ affinities: {
+      p4: { affinity: 0.1, confidence: 0.5, affinity_details: { learned: 0.05, learned_confidence: 0.5 } },
+    } }),
     uuid: () => "uuid-1",
     scheduleModelUpdate: () => { calls.scheduled = (calls.scheduled || 0) + 1; },
     useCuratorActivity: () => {},
     submitSceneReason: (entry) => calls.answers.push(entry),
+    applyFeedbackAndAwaitBuild: async () => { calls.applied = (calls.applied || 0) + 1; return true; },
+    formatSigned: (value) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`,
     localStorage: {
       getItem: (key) => store.get(key) ?? null,
       setItem: (key, value) => store.set(key, value),
@@ -83,6 +95,10 @@ function harness({ candidates, storage }) {
     // Like the backend: excluded scenes never come back.
     operation: async (args) => {
       calls.operations.push(args);
+      if (args.operation === "get_curation_impact") return impact;
+      if (args.operation === "get_studio_affinities") {
+        return { affinities: { st4: { affinity: -0.2, confidence: 0.4, affinity_details: { learned: -0.2, prior: 0, learned_confidence: 0.4 } } } };
+      }
       if (args.operation === "get_taste_profile") {
         // "answered" has a Tag sentiment answer, so it is never a chip.
         return { items: [
@@ -107,7 +123,9 @@ function harness({ candidates, storage }) {
     },
   };
   vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf("  // Why these?: scenes Curator rates"), source.indexOf("  function CurateProgress(")), context);
+  // The shared sentiment words (nearestSentimentLabel) the estimates use.
+  vm.runInContext(source.slice(source.indexOf("  const SENTIMENTS ="), source.indexOf("  const BELIEF_PHRASES")), context);
+  vm.runInContext(source.slice(source.indexOf("  // Instant estimates of what an answer does"), source.indexOf("  function CurateProgress(")), context);
   return {
     context, calls, store,
     render: () => runtime.render(() => context.SceneReasons()),
@@ -157,8 +175,18 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
   assert.match(text(tree), /What puts you off\?/);
   assert.deepEqual(nodes(tree).filter((node) => node.type === app.context.ReasonChip).map((node) => text(node).trim()).slice(1, 4),
     ["Disliked", "Plain", "Liked"]);
+  // A flip offers two strengths, mild preselected; the choice is sent.
+  assert.equal(button(tree, "Not that good").props["aria-pressed"], true);
+  assert.equal(button(tree, "Not for me").props["aria-pressed"], false);
+  button(tree, "Not for me").props.onClick();
+  tree = app.render();
+  assert.equal(button(tree, "Not for me").props["aria-pressed"], true);
   button(tree, "Next").props.onClick();
-  assert.equal(JSON.stringify(app.calls.answers[1]), JSON.stringify({ scene_id: "2", polarity: -1, flipped: true, reasons: [] }));
+  assert.equal(JSON.stringify(app.calls.answers[1]),
+    JSON.stringify({ scene_id: "2", polarity: -1, flipped: true, reasons: [], flip_strength: "strong" }));
+  // The next card starts unflipped and mild again; no strength is sent without a flip.
+  tree = app.render();
+  assert.equal(button(tree, "Not for me"), undefined);
 
   // Skip remembers the scene in this browser; nearing the end tops up with
   // every seen scene excluded, and an empty top-up ends the queue.
@@ -290,7 +318,123 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
     const options = nodes(view).filter((node) => node.props?.role === "option").map((node) => text(node).trim());
     assert.equal(JSON.stringify(options), JSON.stringify(["Content tag"]));
   }
-  console.log("PASS: why-these queue, reasons, flip, skips, modes, the thumb follow-up, tag ranking, and the tag search");
+  // Every fifth answer updates the model in the background; a published build
+  // shows "What your answers moved" above the card.
+  {
+    const app = harness({ candidates: { hits: ["1", "2", "3", "4", "5", "6", "7", "8"] } });
+    app.render();
+    await settle();
+    await settle();
+    let view = app.render();
+    assert.ok(!nodes(view).some((node) => node.type === app.context.WhatMoved));
+    for (let answer = 0; answer < 5; answer++) {
+      nodes(app.render()).find((node) => node.type === app.context.ReasonChip).props.onClick();
+      button(app.render(), "Next").props.onClick();
+      if (answer === 0) assert.ok(button(app.render(), "Apply my answers now"));
+    }
+    await settle();
+    view = app.render();
+    assert.equal(app.calls.applied, 1);
+    const card = nodes(view).find((node) => node.type === app.context.WhatMoved);
+    assert.equal(card.props.refreshKey, 1);
+    assert.equal(button(view, "Apply my answers now"), undefined);
+  }
+
+  // The card lists the biggest tag, performer, and scene moves, links the full
+  // report, and stays quiet without a comparison.
+  {
+    const renderCard = async (impact) => {
+      const runtime = createRuntime();
+      const app = harness({ candidates: {}, impact });
+      app.context.React = runtime.React;
+      runtime.render(() => app.context.WhatMoved({ refreshKey: 1, onDismiss: () => {} }));
+      await settle();
+      return runtime.render(() => app.context.WhatMoved({ refreshKey: 1, onDismiss: () => {} }));
+    };
+    const card = await renderCard(IMPACT);
+    assert.match(text(card), /What your answers moved/);
+    assert.match(text(card), /Lace \+0\.05/);
+    assert.match(text(card), /Gaping −0\.12/);
+    assert.match(text(card), /Performer One \+0\.09/);
+    const scenes = nodes(card).filter((node) => node.type === "a" && String(node.props.className).includes("curator-moved-scene"));
+    assert.equal(JSON.stringify(scenes.map((node) => node.props.href)), JSON.stringify(["/scenes/s1", "/scenes/s2"]));
+    assert.ok(nodes(card).some((node) => node.props?.href === "/plugins/stash-curator?view=curate&section=progress"));
+    assert.equal(await renderCard({ available: false }), null);
+    const quiet = await renderCard({ available: true, tags: { promoted: [], demoted: [] }, performers: {}, scenes: {} });
+    assert.match(text(quiet), /Nothing moved noticeably/);
+  }
+  // Instant estimates mirror the model's blends (checked against real
+  // rebuilds): an answer replaces inherited evidence; a reason keeps it.
+  {
+    const app = harness({ candidates: {} });
+    const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} vs ${expected}`);
+    // Own evidence only: (0.2 * 2 + 1 * 8) / 10.
+    near(app.context.estimateTagAnswer({ value: 0.2, support: 2, direct: null, inherited: null }, 1).after, 0.84);
+    // Inherited 0.5 at 4 on own 0.0 at 4 (value 0.25, support 8): the answer drops it: (0 + -0.5 * 8) / 12.
+    near(app.context.estimateTagAnswer({ value: 0.25, support: 8, direct: null, inherited: 0.5 }, -0.5).after, -1 / 3);
+    // A reason keeps it: own (0 + 2) / (6 + 1), then blended with 0.5 at 4.
+    near(app.context.estimateTagReason({ value: 0.25, support: 8, direct: null, inherited: 0.5 }, 1).after,
+      ((2 / 7) * 6 + 0.5 * 4) / 10);
+    // An answered tag: learned part (0.6 * 10 - 1 * 8) / 2 = -1, plus a reason, then the answer again.
+    near(app.context.estimateTagReason({ value: 0.6, support: 10, direct: 1, inherited: null }, 1).after,
+      (((-1 * 2 + 2) / 5) * 4 + 8) / 12);
+  }
+
+  // Picking tag chips shows their estimated effect under the card.
+  {
+    const app = harness({ candidates: { misses: ["4"] } });
+    nodes(app.render()).length;
+    await settle();
+    await settle();
+    button(app.render(), "Misses").props.onClick();
+    app.render();
+    await settle();
+    await settle();
+    nodes(app.render()).find((node) => node.type === app.context.ReasonChip && text(node).trim() === "Disliked").props.onClick();
+    const view = app.render();
+    assert.match(text(view), /Disliked: (stays Dislike|Dislike → Strong dislike)/);
+  }
+  // Performers and studios get the same estimate (checked against real
+  // rebuilds). Picked chips show an arrow; the line under the card says it in
+  // the Tag sentiment scale's words.
+  {
+    const app = harness({ candidates: { misses: ["4"] } });
+    app.render();
+    await settle();
+    await settle();
+    button(app.render(), "Misses").props.onClick();
+    app.render();
+    await settle();
+    await settle();
+    let view = app.render();
+    const chipNamed = (tree, label) => nodes(tree).find((node) => node.type === app.context.ReasonChip && text(node).trim().startsWith(label));
+    assert.equal(chipNamed(view, "Performer 4").props.trend, null, "no arrow before a chip is picked");
+    chipNamed(view, "Performer 4").props.onClick();
+    view = app.render();
+    assert.equal(chipNamed(view, "Performer 4").props.trend, "down", "a miss lowers Curator's view");
+    // +0.10 → about −0.20: still Neutral in words, but clearly lower.
+    assert.match(text(view), /Performer 4: Neutral, a bit lower/);
+    chipNamed(view, "Studio 4").props.onClick();
+    view = app.render();
+    assert.equal(chipNamed(view, "Studio 4").props.trend, "down");
+    assert.match(text(view), /Studio 4: (Neutral|Slight dislike) → (Slight dislike|Dislike)/);
+    // The arrow renders inside the chip with a readable label.
+    const chip = app.context.ReasonChip({ pressed: true, onClick: () => {}, tone: "miss", trend: "down", children: "X" });
+    const arrow = nodes(chip).find((node) => String(node.props?.className).includes("curator-reason-trend-down"));
+    assert.equal(text(arrow).trim(), "↓");
+    assert.equal(arrow.props["aria-label"], "Curator will like it less");
+    // The estimate itself: learned 0.05 at confidence 0.5 (support 3 ln 2).
+    const support = 3 * Math.log(2);
+    const affinity = (0.1 * (1 + support) - 2) / (3 + support);
+    const expected = 0.1 - 0.05 + affinity * (1 - Math.exp(-(support + 2) / 3));
+    const estimate = app.context.estimateLearnedReason({ value: 0.1, learned: 0.05, learnedConfidence: 0.5 }, -1);
+    assert.ok(Math.abs(estimate.after - expected) < 1e-9);
+    // Words: same word means "stays".
+    assert.equal(app.context.estimateText("Lace", { before: 0.5, after: 0.53 }), "Lace: stays Slight like");
+    assert.equal(app.context.estimateText("Lace", { before: 0.5, after: 0.8 }), "Lace: Slight like → Like");
+    assert.equal(app.context.estimateText("Lace", { before: 0.1, after: 0.2 }), "Lace: Neutral, a bit higher");
+  }
+  console.log("PASS: why-these queue, reasons, flip, skips, modes, the thumb follow-up, tag ranking, the tag search, what moved, estimates, and chip bars");
 })().catch((error) => {
   console.error(error);
   process.exit(1);

@@ -655,6 +655,8 @@ func modelSubConfig() jVal {
 		jvKey("satiation_bound", jvFloat(0.12)),
 		jvKey("scene_rating_confidence", jvFloat(0.90)),
 		jvKey("scene_reason_support", jvFloat(sceneReasonSupport)),
+		jvKey("scene_reason_flip_value", jvFloat(sceneReasonFlipValue)),
+		jvKey("scene_reason_flip_confidence", jvFloat(sceneReasonFlipConfidence)),
 		jvKey("structure_bound", jvFloat(0.05)),
 		jvKey("studio_bound", jvFloat(0.12)),
 		jvKey("studio_favorite_prior", jvFloat(0.04)),

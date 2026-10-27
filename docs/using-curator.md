@@ -249,9 +249,9 @@ picked, or **Skip**; a skipped scene stays hidden in this browser for 30 days.
 
 Each tapped performer, tag, or studio is evidence for it in the next model update, a
 quarter as strong as a direct tag answer, so a reason that comes up across several
-scenes adds up. A missing tag counts as that tag. A turned-around question counts for
-the scene itself like a thumb, and Curator learns from it as from a thumb (without
-adding the scene to Prune review). **Just this scene** also counts for the scene itself,
+scenes adds up. A missing tag counts as that tag. A turned-around question is a mild
+correction for the scene itself, about a slight like or dislike rather than a thumb, and
+Curator learns from it that much (without adding the scene to Prune review). **Just this scene** also counts for the scene itself,
 in the answer's direction, but Curator learns nothing about its tags, performers, or
 studio from it. Answered scenes are not asked again.
 

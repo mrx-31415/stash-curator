@@ -109,6 +109,15 @@ VALID_ANSWERS = [
         "reasons": [],
         "occurred_at_ms": 200,
     },
+    {
+        "answer_id": "a3",
+        "scene_id": "s2",
+        "polarity": 1,
+        "flipped": True,
+        "flip_strength": "strong",
+        "reasons": [],
+        "occurred_at_ms": 300,
+    },
 ]
 
 
@@ -143,6 +152,7 @@ def _answer(**changes: object) -> dict[str, object]:
         [_answer(reasons=[{"subject_type": "tag", "subject_id": ""}])],
         [_answer(reasons=[])],
         [_answer(scene_id="missing")],
+        [_answer(flipped=True, flip_strength="fuzzy")],
     ],
 )
 def test_submit_scene_reasons_errors_match(
@@ -165,7 +175,11 @@ def test_answered_scenes_leave_the_queue_and_retries_are_ignored(tmp_path: Path)
         generation = connection.execute(
             "SELECT requested_generation FROM model_update_state"
         ).fetchone()[0]
-        assert api.submit_scene_reasons(VALID_ANSWERS)["accepted"] == 2
+        assert api.submit_scene_reasons(VALID_ANSWERS)["accepted"] == 3
+        strengths = dict(
+            connection.execute("SELECT answer_id, flip_strength FROM scene_reason_answer")
+        )
+        assert strengths == {"a1": "mild", "a2": "mild", "a3": "strong"}
         assert api.submit_scene_reasons(VALID_ANSWERS)["accepted"] == 0
         assert (
             connection.execute("SELECT requested_generation FROM model_update_state").fetchone()[0]
@@ -180,8 +194,6 @@ def test_answered_scenes_leave_the_queue_and_retries_are_ignored(tmp_path: Path)
             ("a1", "tag", "t1"),
         ]
         assert api.scene_reason_candidates("hits")["items"] == []
-        assert [item["scene_id"] for item in api.scene_reason_candidates("misses")["items"]] == [
-            "s2"
-        ]
+        assert api.scene_reason_candidates("misses")["items"] == []
     finally:
         connection.close()

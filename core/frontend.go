@@ -719,7 +719,10 @@ func performerPreference(affinity, confidence float64, hasEvidence bool, prior, 
 	}
 	return jvObj(jvKey("affinity", value), jvKey("confidence", certainty),
 		jvKey("affinity_details", jvObj(jvKey("learned", jvFloat(learned)), jvKey("prior", jvFloat(prior.value)),
-			jvKey("similarity", jvFloat(similarity)), jvKey("similarity_confidence", jvFloat(similarityConfidence)))))
+			jvKey("similarity", jvFloat(similarity)), jvKey("similarity_confidence", jvFloat(similarityConfidence)),
+			// The learned part's own confidence, so a client can recover its
+			// evidence (confidence = 1 - exp(-support / 3)) for estimates.
+			jvKey("learned_confidence", jvFloat(confidence)))))
 }
 
 // The deterministic identity key avoids scanning feature definitions for a name.
@@ -893,6 +896,7 @@ WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))`, json
 			jvKey("inferred_value", c.item.get("inferred_value")),
 			jvKey("confidence", c.item.get("confidence")),
 			jvKey("support", c.item.get("support")),
+			jvKey("inherited_value", c.item.get("inherited_value")),
 			jvKey("scene_count", c.item.get("scene_count")),
 			jvKey("reach", jvFloat(c.reach)),
 			jvKey("leverage", jvFloat(c.leverage)),
@@ -1206,5 +1210,93 @@ LIMIT ?`, modelID, jsonIDs(sortedStringKeys(exclude)), limit)
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
 		jvKey("mode", jvStr(mode)),
 		jvKey("items", items),
+	), nil
+}
+
+func opGetStudioAffinities(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_studio_affinities", func(settings jVal) (jVal, error) {
+		return studioAffinitiesBody(pluginDir, payload, settings)
+	})
+}
+
+// studioAffinitiesBody mirrors CuratorAPI.studio_affinities: learned affinity
+// times its confidence plus the Stash-favourite prior, with the learned
+// confidence for client-side estimates.
+func studioAffinitiesBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	modelID, err := currentModelID(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	if modelID == "" {
+		return jvNull(), fmt.Errorf("no published model")
+	}
+	var featureVersion string
+	if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
+		return jvNull(), err
+	}
+	type learnedStudio struct{ affinity, confidence float64 }
+	learned := map[string]learnedStudio{}
+	rows, err := db.Query(`SELECT fd.name, fa.affinity, fa.confidence
+FROM feature_definition fd CROSS JOIN feature_affinity fa USING(feature_id)
+WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='studio'
+ORDER BY fd.name`, modelID, featureVersion)
+	if err != nil {
+		return jvNull(), err
+	}
+	for rows.Next() {
+		var name string
+		var item learnedStudio
+		if err := rows.Scan(&name, &item.affinity, &item.confidence); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		learned[strings.TrimPrefix(name, "studio:")] = item
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	studios, err := db.Query(`SELECT studio_id, favorite FROM source_studio ORDER BY studio_id`)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer studios.Close()
+	affinities := jvObj()
+	for studios.Next() {
+		var studioID string
+		var favorite bool
+		if err := studios.Scan(&studioID, &favorite); err != nil {
+			return jvNull(), err
+		}
+		item, ok := learned[studioID]
+		if !ok && !favorite {
+			continue
+		}
+		prior, priorConfidence := 0.0, 0.0
+		if favorite {
+			prior, priorConfidence = 0.04, 0.70
+		}
+		affinities.set(studioID, jvObj(
+			jvKey("affinity", jvFloat(item.affinity*item.confidence+prior)),
+			jvKey("confidence", jvFloat(math.Max(item.confidence, priorConfidence))),
+			jvKey("affinity_details", jvObj(
+				jvKey("learned", jvFloat(item.affinity*item.confidence)),
+				jvKey("prior", jvFloat(prior)),
+				jvKey("learned_confidence", jvFloat(item.confidence)),
+			)),
+		))
+	}
+	if err := studios.Err(); err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("model_id", jvStr(modelID)),
+		jvKey("affinities", affinities),
 	), nil
 }

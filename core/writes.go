@@ -580,6 +580,7 @@ type sceneReasonEntry struct {
 	sceneID      string
 	polarity     int64
 	flipped      bool
+	flipStrength string
 	reasons      []sceneReasonSubject
 	occurredAtMs int64
 }
@@ -619,6 +620,10 @@ func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
 		subjects = append(subjects, sceneReasonSubject{kind: kind, id: subject})
 	}
 	flipped := entry.get("flipped").truthy()
+	flipStrength := argsString(entry, "flip_strength", "mild")
+	if flipStrength != "mild" && flipStrength != "strong" {
+		return sceneReasonEntry{}, fmt.Errorf("flip_strength must be mild or strong")
+	}
 	if len(subjects) == 0 && !flipped {
 		return sceneReasonEntry{}, fmt.Errorf("an answer needs a reason or a flip")
 	}
@@ -636,7 +641,7 @@ func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
 	}
 	return sceneReasonEntry{
 		answerID: answerID, sceneID: sceneID, polarity: value, flipped: flipped,
-		reasons: subjects, occurredAtMs: occurredAtMs,
+		flipStrength: flipStrength, reasons: subjects, occurredAtMs: occurredAtMs,
 	}, nil
 }
 
@@ -670,9 +675,9 @@ func submitSceneReasonsBody(pluginDir string, payload, settings jVal) (jVal, err
 		for _, entry := range normalized {
 			res, err := conn.ExecContext(ctx, `
 INSERT OR IGNORE INTO scene_reason_answer(
-    answer_id, scene_id, polarity, flipped, occurred_at_ms
-) VALUES (?, ?, ?, ?, ?)`,
-				entry.answerID, entry.sceneID, entry.polarity, boolToInt(entry.flipped), entry.occurredAtMs)
+    answer_id, scene_id, polarity, flipped, flip_strength, occurred_at_ms
+) VALUES (?, ?, ?, ?, ?, ?)`,
+				entry.answerID, entry.sceneID, entry.polarity, boolToInt(entry.flipped), entry.flipStrength, entry.occurredAtMs)
 			if err != nil {
 				return err
 			}

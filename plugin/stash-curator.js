@@ -1841,6 +1841,7 @@
         : " · no rated scene — from a tag preference";
       return `${contributor.kind} "${contributor.name}" ${directionWord} (${fmtDelta(contributor.delta)})${viaText}`;
     }).join(" · ");
+    const whyTitle = "Which tags and performers moved this scene, and whether your own rated scenes are behind it";
     // The scene's delta is the net of its whole feature set; the breakdown
     // splits it by source so the user can see whether a move came mainly from
     // a tag, a performer, the content/theme it belongs to, or their own
@@ -2144,6 +2145,7 @@
     const [error, setError] = React.useState("");
     const [applying, setApplying] = React.useState(false);
     const [notice, setNotice] = React.useState("");
+    const [moved, setMoved] = React.useState(0);
     // Tags answered or skipped here; they are excluded from every fetch, so
     // answers still on their way to the sidecar are not asked again.
     const handled = React.useRef(new Set());
@@ -2194,7 +2196,10 @@
       setUnapplied(0);
       try {
         const built = await applyFeedbackAndAwaitBuild();
-        if (built) await topUp(true);
+        if (built) {
+          setMoved((count) => count + 1);
+          await topUp(true);
+        }
         return built;
       } finally {
         rebuilding.current = false;
@@ -2244,6 +2249,7 @@
     return React.createElement(
       "div",
       { className: "curator-tag-questions" },
+      moved > 0 && React.createElement(WhatMoved, { refreshKey: moved, onDismiss: () => setMoved(0) }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       notice && React.createElement("div", { className: "alert alert-info", role: "status" }, notice),
       applying && React.createElement("div", { className: "alert alert-info", role: "status" },
@@ -2272,6 +2278,11 @@
             onChange: (picked) => setChoice(picked.value === null && !picked.blocked ? null : picked),
           })
         ),
+        choice && React.createElement("p", { className: "curator-answer-estimate", "aria-live": "polite" },
+          choice.blocked
+            ? `Never hides scenes tagged ${item.name} from recommendations.`
+            : `Curator's view of ${estimateText(item.name, estimateTagAnswer(
+              { value: item.inferred_value, support: item.support, direct: null, inherited: item.inherited_value ?? null }, choice.value))}.`),
         React.createElement(
           "div",
           { className: "curator-curate-actions" },
@@ -2464,6 +2475,95 @@
     );
   }
 
+  // Instant estimates of what an answer does to Curator's view of a tag,
+  // before any model update. They mirror the model's blend: a direct answer
+  // is 8 pseudo-observations at its value (DIRECT_TAG_SUPPORT), a Why these?
+  // reason 2 at +/-1 (scene_reason_support) inside the learned part. Inherited
+  // answers, child tags, and scene scores only change with the next update.
+  const ESTIMATE_DIRECT_SUPPORT = 8;
+  const ESTIMATE_REASON_SUPPORT = 2;
+  const ESTIMATE_INHERITED_SUPPORT = 4;
+  // info: { value (current affinity), support, direct (answer or null),
+  // inherited (a parent's answer passed down, or null) }. An answer replaces
+  // what was inherited, so that part is taken out first.
+  function learnedTagPart(info) {
+    const value = Number(info.value) || 0;
+    const support = Math.max(0, Number(info.support) || 0);
+    if (info.direct === null || info.direct === undefined) {
+      if (info.inherited === null || info.inherited === undefined) return { numerator: value * support, support };
+      const own = Math.max(0, support - ESTIMATE_INHERITED_SUPPORT);
+      return { numerator: own > 0 ? value * support - Number(info.inherited) * ESTIMATE_INHERITED_SUPPORT : 0, support: own };
+    }
+    const learnedSupport = Math.max(0, support - ESTIMATE_DIRECT_SUPPORT);
+    return {
+      numerator: learnedSupport > 0 ? value * support - Number(info.direct) * ESTIMATE_DIRECT_SUPPORT : 0,
+      support: learnedSupport,
+    };
+  }
+  function estimateTagAnswer(info, answer) {
+    const learned = learnedTagPart(info);
+    const after = (learned.numerator + answer * ESTIMATE_DIRECT_SUPPORT) / (learned.support + ESTIMATE_DIRECT_SUPPORT);
+    return { before: Number(info.value) || 0, after: Math.max(-1, Math.min(1, after)) };
+  }
+  function estimateTagReason(info, polarity) {
+    const learned = learnedTagPart(info);
+    const support = learned.support + ESTIMATE_REASON_SUPPORT;
+    let after = (learned.numerator + polarity * ESTIMATE_REASON_SUPPORT) / (support + 1);
+    if (info.direct !== null && info.direct !== undefined) {
+      after = (after * support + Number(info.direct) * ESTIMATE_DIRECT_SUPPORT) / (support + ESTIMATE_DIRECT_SUPPORT);
+    } else if (info.inherited !== null && info.inherited !== undefined) {
+      // Still unanswered, so the parent's answer keeps applying on top.
+      after = (after * support + Number(info.inherited) * ESTIMATE_INHERITED_SUPPORT) / (support + ESTIMATE_INHERITED_SUPPORT);
+    }
+    return { before: Number(info.value) || 0, after: Math.max(-1, Math.min(1, after)) };
+  }
+  // A performer's view is learned + prior + similarity, a studio's learned +
+  // prior; a reason adds to the learned part only, whose evidence follows from
+  // its confidence (1 - exp(-support / 3)).
+  function estimateLearnedReason(info, polarity) {
+    const before = Number(info.value) || 0;
+    const learned = Number(info.learned) || 0;
+    const confidence = Math.min(0.999999, Math.max(0, Number(info.learnedConfidence) || 0));
+    const affinity = confidence > 0 ? learned / confidence : 0;
+    const support = confidence > 0 ? -3 * Math.log(1 - confidence) : 0;
+    const affinityAfter = (affinity * (1 + support) + polarity * ESTIMATE_REASON_SUPPORT) / (1 + support + ESTIMATE_REASON_SUPPORT);
+    const learnedAfter = affinityAfter * (1 - Math.exp(-(support + ESTIMATE_REASON_SUPPORT) / 3));
+    return { before, after: Math.max(-1, Math.min(1, before - learned + learnedAfter)) };
+  }
+  // Which way an estimate moves, for the arrow on a picked chip; tiny moves
+  // that keep the same sentiment word count as no move.
+  function estimateTrend(estimate) {
+    if (nearestSentimentLabel(estimate.after) === nearestSentimentLabel(estimate.before)
+      && Math.abs(estimate.after - estimate.before) < 0.05) return "same";
+    return estimate.after > estimate.before ? "up" : "down";
+  }
+  // In the Tag sentiment scale's words: "Lace: Slight like → Like"; with
+  // the same word, "Lace: Neutral, a bit lower" for a clear move or
+  // "Lace: stays Slight like" for a tiny one (matching estimateTrend).
+  function estimateText(name, estimate) {
+    const before = nearestSentimentLabel(estimate.before);
+    const after = nearestSentimentLabel(estimate.after);
+    if (before !== after) return `${name}: ${before} → ${after}`;
+    const trend = estimateTrend(estimate);
+    return trend === "same" ? `${name}: stays ${before}` : `${name}: ${before}, a bit ${trend === "up" ? "higher" : "lower"}`;
+  }
+  // One line for the performer and tag chips picked on a reason card
+  // (missing tags too).
+  function reasonEstimateLine(scene, picked, missing, taste, polarity) {
+    if (!scene || !taste) return null;
+    const names = new Map([...scene.tags, ...missing].map((tag) => [tag.id, tag.name]));
+    const ids = [...[...picked].filter((key) => key.startsWith("tag:")).map((key) => key.slice(4)), ...missing.map((tag) => tag.id)];
+    const performerParts = scene.performers
+      .filter((performer) => picked.has(`performer:${performer.id}`) && taste.performers?.has(performer.id))
+      .map((performer) => estimateText(performer.name, estimateLearnedReason(taste.performers.get(performer.id), polarity)));
+    const studioParts = scene.studio && picked.has(`studio:${scene.studio.id}`) && taste.studios?.has(scene.studio.id)
+      ? [estimateText(scene.studio.name, estimateLearnedReason(taste.studios.get(scene.studio.id), polarity))]
+      : [];
+    const parts = [...performerParts, ...ids.filter((id) => taste.tags.has(id))
+      .map((id) => estimateText(names.get(id) || id, estimateTagReason(taste.tags.get(id), polarity))), ...studioParts];
+    return parts.length ? React.createElement("p", { className: "curator-answer-estimate", "aria-live": "polite" }, parts.join(" · ")) : null;
+  }
+
   // Why these?: scenes Curator rates highest among the ones you played
   // ("Hits") or lowest overall ("Misses"), one at a time, with one-tap
   // reasons: performers, the scene's most telling tags, the studio, a tag the
@@ -2474,18 +2574,21 @@
   const SCENE_REASON_BATCH = 20;
   const SCENE_REASON_TAGS = 6;
   const SCENE_REASON_PERFORMERS = 3;
+  const SCENE_REASON_REBUILD_EVERY = 5;
   const SCENE_REASON_MODES = {
     hits: {
       label: "Hits",
       heading: "Curator rates this highly. What makes it work for you?",
       flipped: "What puts you off?",
       flip: "I don't actually like it",
+      strengths: [["mild", "Not that good"], ["strong", "Not for me"]],
     },
     misses: {
       label: "Misses",
       heading: "Curator expects this isn't for you. What puts you off?",
       flipped: "What would make it work for you?",
       flip: "Actually, I'd watch this",
+      strengths: [["mild", "Could be OK"], ["strong", "I'd really like this"]],
     },
   };
   const SCENE_REASON_SCENES_QUERY =
@@ -2529,19 +2632,33 @@
   // follow-up.
   const SCENE_COUNT_QUERY = "query CuratorSceneCount { findScenes(filter: { per_page: 0 }) { count } }";
   async function loadReasonTaste() {
-    const [profile, count] = await Promise.all([
+    const [profile, count, performerResult, studioResult] = await Promise.all([
       operation({ operation: "get_taste_profile" }),
       stashQuery(SCENE_COUNT_QUERY, {}).then((data) => data.findScenes.count).catch(() => 0),
+      loadPerformerAffinities().catch(() => ({ affinities: {} })),
+      operation({ operation: "get_studio_affinities" }).catch(() => ({ affinities: {} })),
     ]);
+    const learnedViews = (result) => new Map(Object.entries((result && result.affinities) || {})
+      .filter(([, item]) => item.affinity !== null && item.affinity !== undefined)
+      .map(([id, item]) => [id, {
+        value: Number(item.affinity) || 0,
+        learned: Number(item.affinity_details?.learned) || 0,
+        learnedConfidence: Number(item.affinity_details?.learned_confidence) || 0,
+      }]));
+    const performers = learnedViews(performerResult);
+    const studios = learnedViews(studioResult);
     // Only content tags: workflow, technical, and other roles (a bracketed
     // [Timestamp: Synced], say) say nothing about taste.
     const tags = new Map((profile.items || []).filter((item) => !item.role || item.role === "content").map((item) => [item.tag_id, {
       value: Number(item.inferred_value) || 0,
+      support: Number(item.support) || 0,
+      direct: item.direct_blocked ? null : item.direct_value,
+      inherited: item.inherited_value ?? null,
       scenes: Number(item.scene_count) || 0,
       answered: (item.direct_value !== null && item.direct_value !== undefined) || !!item.direct_blocked,
     }]));
     const total = Math.max(count, ...[...tags.values()].map((tag) => tag.scenes), 1);
-    return { tags, total };
+    return { tags, total, performers, studios };
   }
 
   // The scene's tags worth asking about, ranked so a chip says something
@@ -2588,12 +2705,27 @@
     }, `+ ${hidden} more`);
   }
 
-  function ReasonChip({ pressed, onClick, image, children, tone }) {
+  // The estimated direction for a picked performer, tag, or studio chip
+  // (null when unpicked or unknown).
+  function reasonChipTrend(key, picked, taste, polarity) {
+    if (!taste || !picked.has(key)) return null;
+    const [kind, id] = key.split(":");
+    if (kind === "tag" && taste.tags.has(id)) return estimateTrend(estimateTagReason(taste.tags.get(id), polarity));
+    const views = kind === "performer" ? taste.performers : kind === "studio" ? taste.studios : null;
+    return views?.has(id) ? estimateTrend(estimateLearnedReason(views.get(id), polarity)) : null;
+  }
+
+  const TREND_ARROWS = { up: "↑", down: "↓" };
+  function ReasonChip({ pressed, onClick, image, children, tone, trend }) {
     return React.createElement(
       "button",
       { type: "button", className: `curator-reason-chip curator-reason-${tone}`, "aria-pressed": pressed, onClick },
       image && React.createElement("img", { src: image, alt: "", loading: "lazy" }),
-      React.createElement("span", null, children)
+      React.createElement("span", null, children),
+      TREND_ARROWS[trend] && React.createElement("span", {
+        className: `curator-reason-trend curator-reason-trend-${trend}`,
+        "aria-label": trend === "up" ? "Curator will like it more" : "Curator will like it less",
+      }, TREND_ARROWS[trend])
     );
   }
 
@@ -2647,9 +2779,16 @@
     const [picked, setPicked] = React.useState(new Set());
     const [missing, setMissing] = React.useState([]);
     const [flipped, setFlipped] = React.useState(false);
+    // How strongly a flip disagrees: mild counts as a slight like or dislike,
+    // strong as a thumb.
+    const [flipStrength, setFlipStrength] = React.useState("mild");
     const [allTags, setAllTags] = React.useState(false);
     const [answered, setAnswered] = React.useState(0);
+    const [unapplied, setUnapplied] = React.useState(0);
+    const [applying, setApplying] = React.useState(false);
+    const [moved, setMoved] = React.useState(0);
     const [error, setError] = React.useState("");
+    const rebuilding = React.useRef(false);
     // Scenes answered or skipped here, excluded from every fetch until the
     // sidecar has the answer.
     const handled = React.useRef(new Set());
@@ -2712,6 +2851,7 @@
       setPicked(new Set());
       setMissing([]);
       setFlipped(false);
+      setFlipStrength("mild");
       setAllTags(false);
     }
     function switchMode(value) {
@@ -2735,11 +2875,39 @@
         return { subject_type, subject_id };
       });
       for (const tag of missing) reasons.push({ subject_type: "missing_tag", subject_id: tag.id });
-      submitSceneReason({ scene_id: scene.id, polarity: tone === "hit" ? 1 : -1, flipped, reasons });
+      submitSceneReason({
+        scene_id: scene.id, polarity: tone === "hit" ? 1 : -1, flipped, reasons,
+        ...(flipped ? { flip_strength: flipStrength } : {}),
+      });
       handled.current.add(scene.id);
       setAnswered((count) => count + 1);
+      const pending = unapplied + 1;
+      setUnapplied(pending);
+      if (pending >= SCENE_REASON_REBUILD_EVERY) rebuild().catch(() => {});
       reset();
       setIndex((current) => current + 1);
+    }
+    // Like Tag questions: every few answers the model updates in the
+    // background, and a published build shows what moved.
+    async function rebuild() {
+      if (rebuilding.current) return false;
+      rebuilding.current = true;
+      setUnapplied(0);
+      try {
+        const built = await applyFeedbackAndAwaitBuild();
+        if (built) setMoved((count) => count + 1);
+        return built;
+      } finally {
+        rebuilding.current = false;
+      }
+    }
+    async function applyNow() {
+      setApplying(true);
+      try {
+        await rebuild();
+      } finally {
+        setApplying(false);
+      }
     }
     function skip(scene) {
       rememberSceneReasonSkip(scene.id);
@@ -2757,6 +2925,7 @@
     return React.createElement(
       "div",
       { className: "curator-scene-reasons" },
+      moved > 0 && React.createElement(WhatMoved, { refreshKey: moved, onDismiss: () => setMoved(0) }),
       React.createElement(
         "div",
         { className: "btn-group curator-tag-question-modes", role: "group", "aria-label": "Which scenes" },
@@ -2794,16 +2963,19 @@
           "div", { className: "curator-reason-group", role: "group", "aria-label": "People" },
           scene.performers.slice(0, SCENE_REASON_PERFORMERS).map((performer) => React.createElement(ReasonChip, {
             key: performer.id, tone, image: performer.image_path,
+            trend: reasonChipTrend(`performer:${performer.id}`, picked, taste, tone === "hit" ? 1 : -1),
             pressed: picked.has(`performer:${performer.id}`), onClick: () => toggle(`performer:${performer.id}`),
           }, performer.name))
         ),
         React.createElement(
           "div", { className: "curator-reason-group", role: "group", "aria-label": "Tags and studio" },
           shownReasonTags(rankedTags, allTags).map((tag) => React.createElement(ReasonChip, {
-            key: tag.id, tone, pressed: picked.has(`tag:${tag.id}`), onClick: () => toggle(`tag:${tag.id}`),
+            key: tag.id, tone, trend: reasonChipTrend(`tag:${tag.id}`, picked, taste, tone === "hit" ? 1 : -1),
+            pressed: picked.has(`tag:${tag.id}`), onClick: () => toggle(`tag:${tag.id}`),
           }, tag.name)),
           scene.studio && React.createElement(ReasonChip, {
-            tone, pressed: picked.has(`studio:${scene.studio.id}`), onClick: () => toggle(`studio:${scene.studio.id}`),
+            tone, trend: reasonChipTrend(`studio:${scene.studio.id}`, picked, taste, tone === "hit" ? 1 : -1),
+            pressed: picked.has(`studio:${scene.studio.id}`), onClick: () => toggle(`studio:${scene.studio.id}`),
           }, scene.studio.name),
           missing.map((tag) => React.createElement(ReasonChip, {
             key: `missing-${tag.id}`, tone, pressed: true,
@@ -2815,15 +2987,26 @@
           moreReasonTagsChip(rankedTags, allTags, () => setAllTags(true))
         ),
         React.createElement(MissingTagPicker, { picked: missing, taste, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+        reasonEstimateLine(scene, picked, missing, taste, tone === "hit" ? 1 : -1),
         React.createElement(
           "div",
           { className: "curator-curate-actions" },
           React.createElement(Button, { size: "sm", variant: "primary", disabled: !chosen, onClick: () => next(scene) }, "Next"),
           React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(scene) }, "Skip"),
+          unapplied > 0 && React.createElement(Button, { size: "sm", variant: "link", disabled: applying, onClick: applyNow },
+            applying ? "Applying…" : "Apply my answers now"),
           React.createElement(Button, {
             size: "sm", variant: flipped ? "warning" : "outline-secondary", "aria-pressed": flipped,
-            onClick: () => { setPicked(new Set()); setFlipped((value) => !value); },
+            onClick: () => { setPicked(new Set()); setFlipStrength("mild"); setFlipped((value) => !value); },
           }, settings.flip)
+        ),
+        flipped && React.createElement(
+          "div",
+          { className: "btn-group curator-reason-strength", role: "group", "aria-label": "How strongly" },
+          settings.strengths.map(([value, label]) => React.createElement(Button, {
+            key: value, size: "sm", variant: flipStrength === value ? "warning" : "outline-secondary",
+            "aria-pressed": flipStrength === value, onClick: () => setFlipStrength(value),
+          }, label))
         )
       )
     );
@@ -2891,6 +3074,7 @@
     const rankedTags = scene ? sceneReasonTags(scene, taste, liked ? "hits" : "misses") : [];
     const chip = (key, label, image) => React.createElement(ReasonChip, {
       key, tone, image, pressed: picked.has(key), onClick: () => toggle(key),
+      trend: reasonChipTrend(key, picked, taste, followUp.polarity),
     }, label);
     return React.createElement(
       "aside",
@@ -2913,6 +3097,7 @@
         moreReasonTagsChip(rankedTags, allTags, () => setAllTags(true))
       ),
       scene && React.createElement(MissingTagPicker, { picked: missing, taste, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+      reasonEstimateLine(scene, picked, missing, taste, followUp.polarity),
       React.createElement(
         "div",
         { className: "curator-tag-follow-up-actions" },
@@ -2921,6 +3106,62 @@
         React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Skip")
       ),
       status && React.createElement("small", { role: "status" }, status)
+    );
+  }
+
+  // After a model update started from Tag questions or Why these?: what the
+  // newest build moved compared with the one before (get_curation_impact),
+  // so an answer's effect is visible where it was given. refreshKey changes
+  // with each published build.
+  const WHAT_MOVED_ITEMS = 3;
+  function WhatMoved({ refreshKey, onDismiss }) {
+    const [impact, setImpact] = React.useState(null);
+    React.useEffect(() => {
+      let current = true;
+      operation({ operation: "get_curation_impact" })
+        .then((result) => { if (current) setImpact(result); })
+        .catch(() => { if (current) setImpact(null); });
+      return () => { current = false; };
+    }, [refreshKey]);
+    if (!impact || !impact.available) return null;
+    const moves = (group) => [
+      ...((group && group.promoted) || []).slice(0, WHAT_MOVED_ITEMS),
+      ...((group && group.demoted) || []).slice(0, WHAT_MOVED_ITEMS),
+    ];
+    const chip = (item, key) => React.createElement("span", {
+      key, className: `curator-moved-chip ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+    }, `${item.name} ${formatSigned(item.delta)}`);
+    const tags = moves(impact.tags);
+    const performers = moves(impact.performers);
+    const scenes = moves(impact.scenes);
+    if (!tags.length && !performers.length && !scenes.length) {
+      return React.createElement("aside", { className: "curator-what-moved alert alert-secondary", role: "status" },
+        "Recommendations updated. Nothing moved noticeably this time.");
+    }
+    const row = (label, items, render) => items.length > 0 && React.createElement(
+      "div", { className: "curator-moved-row" },
+      React.createElement("span", { className: "curator-moved-label" }, label),
+      React.createElement("div", { className: "curator-moved-items" }, items.map(render))
+    );
+    return React.createElement(
+      "aside",
+      { className: "curator-what-moved alert alert-secondary", "aria-label": "What your answers moved" },
+      React.createElement("div", { className: "curator-tag-follow-up-heading" },
+        React.createElement("strong", null, "What your answers moved"),
+        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss" }, "×")
+      ),
+      row("Tags", tags, (item) => chip(item, `tag-${item.id}`)),
+      row("Performers", performers, (item) => chip(item, `performer-${item.performer_id}`)),
+      row("Scenes", scenes, (item) => React.createElement(
+        "a",
+        {
+          key: `scene-${item.scene_id}`, href: `/scenes/${item.scene_id}`, title: item.title || `Scene ${item.scene_id}`,
+          className: `curator-moved-scene ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+        },
+        React.createElement("img", { src: `/scene/${item.scene_id}/screenshot`, alt: "", loading: "lazy", className: "card-section" }),
+        React.createElement("span", null, formatSigned(item.delta))
+      )),
+      React.createElement("a", { className: "curator-moved-more", href: "/plugins/stash-curator?view=curate&section=progress" }, "Full Impact report")
     );
   }
 

@@ -859,6 +859,7 @@ def test_performer_affinities_byte_identical(
                     "prior": 0.0,
                     "similarity": 0.0,
                     "similarity_confidence": 0.0,
+                    "learned_confidence": 0.85,
                 },
             }
         }
@@ -1067,7 +1068,7 @@ def test_reset_removes_core_and_artifacts_identically(
     assert py[0] == go[0], f"stdout differs:\npython: {py[0]!r}\ngo:     {go[0]!r}"
     assert py[2] == go[2] == ["curator-derived", "curator.sqlite3"]
     assert py[3] == go[3] == ["junk.txt"]
-    assert py[4] == go[4] == 45
+    assert py[4] == go[4] == 46
     assert py[5] == go[5] == "ok"
 
 

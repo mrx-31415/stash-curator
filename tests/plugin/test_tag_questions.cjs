@@ -87,8 +87,10 @@ function harness({ result, failure, storage, built = true, media = { description
     submitTagPreference: (tagId, choice) => calls.preferences.push([tagId, choice]),
     applyFeedbackAndAwaitBuild: async () => { calls.applied += 1; return built; },
     useCuratorActivity: () => {},
+    formatSigned: (value) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`,
   };
   vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf("  const SENTIMENTS ="), source.indexOf("  const BELIEF_PHRASES")), context);
   vm.runInContext(
     source.slice(source.indexOf("  // Tag questions: unanswered tags"), source.indexOf("  function CurateProgress(")),
     context
@@ -97,7 +99,7 @@ function harness({ result, failure, storage, built = true, media = { description
 }
 
 const item = (tagId, name, extra = {}) => ({
-  tag_id: tagId, name, reach: 0.42, confidence: 0.1, inferred_value: 0.2,
+  tag_id: tagId, name, reach: 0.42, confidence: 0.1, inferred_value: 0.2, support: 2,
   examples: ["s1", "s2"], ...extra,
 });
 
@@ -227,6 +229,9 @@ function createRuntimeFor(app) {
   nodes(tree).find((node) => node.type === "sentiment-control").props.onChange({ value: 1, blocked: false });
   tree = app.render();
   assert.equal(nodes(tree).find((node) => node.type === "sentiment-control").props.value, 1);
+  // The pick shows its estimated effect on Curator's view right away:
+  // (0.2 * 2 support + 1 * 8) / (2 + 8) = 0.84.
+  assert.match(text(tree), /Curator's view of Wide: Neutral → Like\./);
   // Clear returns to no answer.
   nodes(tree).find((node) => node.type === "sentiment-control").props.onChange({ value: null, blocked: false });
   tree = app.render();
@@ -268,6 +273,8 @@ function createRuntimeFor(app) {
   assert.match(text(tree), /Question 3 · 1 answered/);
   assert.match(text(tree), /Recommendations updated with your answers/);
   assert.doesNotMatch(text(tree), /Apply my answers now/);
+  // The published build's moves show above the questions.
+  assert.equal(nodes(tree).find((node) => node.type === app.context.WhatMoved).props.refreshKey, 1);
 
   // The full list is one tap away.
   button(tree, "See all tags").props.onClick();

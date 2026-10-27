@@ -296,7 +296,12 @@ def _seed_scene_reasons(sidecar: Path) -> None:
                 ("a-hit", "unseen-good", 1, 0, 10),
                 ("a-miss", "disliked", -1, 1, 20),
                 ("a-flip", "old-good", -1, 1, 30),
+                ("a-mild", "unusual", -1, 1, 35),
             ],
+        )
+        connection.execute(
+            "INSERT INTO scene_reason_answer(answer_id, scene_id, polarity, flipped, flip_strength,"
+            " occurred_at_ms) VALUES ('a-strong', 'unlabeled', 1, 1, 'strong', 40)"
         )
         connection.executemany(
             "INSERT INTO scene_reason(answer_id, subject_type, subject_id) VALUES (?, ?, ?)",
@@ -382,6 +387,10 @@ def test_scene_level_reasons_label_the_scene(tmp_path: Path) -> None:
     finally:
         connection.close()
     assert labels["old-good"].signal_types[-1] == "scene_reason_flip"
+    # On scenes with no other signal the label is the flip alone: a mild flip
+    # is a slight dislike at half a thumb's confidence, a strong one a thumb.
+    assert (labels["unusual"].outcome, labels["unusual"].effective_evidence) == (-0.5, 0.5)
+    assert (labels["unlabeled"].outcome, labels["unlabeled"].effective_evidence) == (0.9, 1.0)
     assert "scene_reason_flip" in training["old-good"].signal_types
     assert labels["disliked"].signal_types[-1] == "scene_reason_scene"
     assert labels["disliked"].outcome < 0

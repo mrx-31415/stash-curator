@@ -128,6 +128,13 @@ class ModelConfig:
     # below a fresh rating, since it is a verdict on the model's move, not a
     # first-hand rating.
     impact_correction_confidence: float = 0.60
+    # A Why these? flip ("I don't actually like it" / "Actually, I'd watch
+    # this") says Curator overrates or underrates the scene, not that the user
+    # hates or loves it: a slight dislike or like at half a thumb's
+    # confidence. Both are exact binary fractions so the label sums, and so
+    # the evidence fingerprint, agree between the Go and Python builds.
+    scene_reason_flip_value: float = 0.5
+    scene_reason_flip_confidence: float = 0.5
     # Implicit negatives from impressions (#146 Channel A). When a recommended
     # scene is played or thumbed, the passed-over earlier-position cards in the
     # same impression are treated as weak pairwise losers. The base is kept

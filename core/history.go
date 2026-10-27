@@ -342,6 +342,7 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
 		affinity   float64
 		confidence float64
 		support    float64
+		inherited  jVal
 	}
 	var items []profileItem
 	itemRows, err := db.Query(`WITH scene_counts AS (
@@ -349,7 +350,7 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
   FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
 )
 SELECT t.tag_id, COALESCE(NULLIF(t.name, ''), t.tag_id) AS name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
-       a.affinity, a.confidence, a.effective_support
+       a.affinity, a.confidence, a.effective_support, a.metadata_json
 FROM source_tag t
 JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?
 LEFT JOIN scene_counts sc ON sc.tag_id=t.tag_id
@@ -365,14 +366,28 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 		var tagID, name, role string
 		var sceneCount int64
 		var affinity, confidence, effectiveSupport sql.NullFloat64
-		if err := itemRows.Scan(&tagID, &name, &role, &sceneCount, &affinity, &confidence, &effectiveSupport); err != nil {
+		var metadataJSON sql.NullString
+		if err := itemRows.Scan(&tagID, &name, &role, &sceneCount, &affinity, &confidence, &effectiveSupport, &metadataJSON); err != nil {
 			return jvNull(), err
+		}
+		// The answer a parent passed down (_inherit_tag_preferences), so a
+		// client can tell it apart from the tag's own evidence.
+		inherited := jvNull()
+		if metadataJSON.Valid {
+			if parsed, err := parseJSON([]byte(metadataJSON.String)); err == nil {
+				if v := parsed.get("inherited_preference"); v.kind == jNum {
+					if f, err := pythonFloat(v); err == nil {
+						inherited = jvFloat(f)
+					}
+				}
+			}
 		}
 		items = append(items, profileItem{
 			tagID: tagID, name: name, role: role, sceneCount: sceneCount,
 			affinity:   affinity.Float64,
 			confidence: confidence.Float64,
 			support:    effectiveSupport.Float64,
+			inherited:  inherited,
 		})
 	}
 	itemRows.Close()
@@ -390,6 +405,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 		directBlocked bool
 		prompt        jVal
 		role          string
+		inherited     jVal
 	}
 	output := make([]outputItem, 0, len(items))
 	for _, item := range items {
@@ -418,6 +434,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			directBlocked: directBlocked,
 			prompt:        prompt,
 			role:          item.role,
+			inherited:     item.inherited,
 		})
 	}
 	// Python sort key: (prompt is None, prompt == "uncertain",
@@ -461,6 +478,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			jvKey("direct_blocked", jvBool(item.directBlocked)),
 			jvKey("prompt", item.prompt),
 			jvKey("role", jvStr(item.role)),
+			jvKey("inherited_value", item.inherited),
 		))
 	}
 	return jvObj(
