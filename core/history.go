@@ -389,6 +389,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 		directValue   jVal
 		directBlocked bool
 		prompt        jVal
+		role          string
 	}
 	output := make([]outputItem, 0, len(items))
 	for _, item := range items {
@@ -416,6 +417,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			directValue:   directValue,
 			directBlocked: directBlocked,
 			prompt:        prompt,
+			role:          item.role,
 		})
 	}
 	// Python sort key: (prompt is None, prompt == "uncertain",
@@ -458,6 +460,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			jvKey("direct_value", item.directValue),
 			jvKey("direct_blocked", jvBool(item.directBlocked)),
 			jvKey("prompt", item.prompt),
+			jvKey("role", jvStr(item.role)),
 		))
 	}
 	return jvObj(

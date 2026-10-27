@@ -1064,6 +1064,7 @@ class CuratorAPI:
                     "direct_value": direct_value,
                     "direct_blocked": direct_blocked,
                     "prompt": prompt,
+                    "role": str(row["role"]),
                 }
             )
         items.sort(
