@@ -18,7 +18,6 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -53,6 +52,8 @@ def _wait_until_settled(page: Page) -> None:
     The request may finish before the status is seen, so its appearance is
     optional; its disappearance is not.
     """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
     loading = page.locator(".curator-similar .curator-loading")
     with contextlib.suppress(PlaywrightTimeoutError):
         loading.wait_for(state="visible", timeout=3000)
