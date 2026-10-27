@@ -350,6 +350,20 @@ def test_model_build_artifact_parity_with_scene_reasons(binary: Path, tmp_path: 
     assert len(changed) >= 5
 
 
+def test_a_new_scene_reason_changes_the_model_id(binary: Path, tmp_path: Path) -> None:
+    """A reason is model evidence: with everything else unchanged, the next
+    build must not reuse the previous artifact."""
+    for name, run in (("py", _run_python_build), ("go", lambda db: _run_go_build(binary, db))):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        before, _ = run(db)
+        _seed_scene_reasons(db)
+        after, _ = run(db)
+        assert after != before, name
+
+
 def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:
     """The smoothing must actually bite: the same corpus with and without a
     taxonomy has to produce different affinities, or the parity test above

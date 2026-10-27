@@ -491,12 +491,38 @@ FROM direct_tag_preference ORDER BY tag_id`)
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
+	// Why these? reasons feed modelSceneReasons, so a new answer must change
+	// the model_id or the build would reuse the previous artifact.
+	sceneReasons := jvArr()
+	rows, err = db.Query(`
+SELECT r.answer_id, r.subject_type, r.subject_id, a.polarity
+FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+ORDER BY r.answer_id, r.subject_type, r.subject_id`)
+	if err != nil {
+		return "", err
+	}
+	for rows.Next() {
+		var answerID, subjectType, subjectID string
+		var polarity int64
+		if err := rows.Scan(&answerID, &subjectType, &subjectID, &polarity); err != nil {
+			rows.Close()
+			return "", err
+		}
+		sceneReasons.arr = append(sceneReasons.arr, jvArr(
+			jvStr(answerID), jvStr(subjectType), jvStr(subjectID), jvInt(polarity),
+		))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
 	doc := jvObj(
 		jvKey("labels", labelRows),
 		jvKey("feedback", feedbackState),
 		jvKey("exclusions", exclusions),
 		jvKey("pruning", pruning),
 		jvKey("tag_preferences", tagPreferences),
+		jvKey("scene_reasons", sceneReasons),
 	)
 	return sha256Hex(doc.marshalSortedKeys()), nil
 }

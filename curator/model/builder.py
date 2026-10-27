@@ -814,6 +814,18 @@ class PreferenceModelBuilder:
                 """
             )
         ]
+        # Why these? reasons feed _scene_reason_evidence, so a new answer must
+        # change the model_id or the build would reuse the previous artifact.
+        scene_reasons = [
+            tuple(row)
+            for row in self.connection.execute(
+                """
+                SELECT r.answer_id, r.subject_type, r.subject_id, a.polarity
+                FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+                ORDER BY r.answer_id, r.subject_type, r.subject_id
+                """
+            )
+        ]
         return hashlib.sha256(
             json.dumps(
                 {
@@ -822,6 +834,7 @@ class PreferenceModelBuilder:
                     "exclusions": exclusions,
                     "pruning": pruning,
                     "tag_preferences": tag_preferences,
+                    "scene_reasons": scene_reasons,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
