@@ -839,6 +839,48 @@ def test_get_similar_write_state_parity(model_sidecar: Path, binary: Path, stub_
         assert python_row[1] == "similar"
 
 
+def test_get_similar_fill_appeal_cache_parity(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    """Similar caches the model's eligible scenes outside the lane index; a
+    warm cache and one left by another model both reproduce Python's output."""
+    raw = payload(
+        "get_similar",
+        model_sidecar,
+        stub_stash,
+        entity_type="scene",
+        entity_id="recent-good",
+        count=5,
+        page=1,
+        impression_id="fixed-impression-similar-cache",
+    )
+    warm = _run_once_on_copy(binary, PLUGIN_DIR, raw, model_sidecar)
+    connection = sqlite3.connect(warm)
+    try:
+        (cached,) = connection.execute(
+            "SELECT value FROM application_meta WHERE key='similar_fill_appeals'"
+        ).fetchone()
+        (model_id,) = connection.execute(
+            "SELECT model_id FROM model_version WHERE status='published'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert cached.split("\n")[0] == model_id
+    assert len(cached.split("\n")) > 1
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, same_path=warm, timing_fields=("timings_ms",))
+
+    connection = sqlite3.connect(warm)
+    try:
+        connection.execute(
+            "UPDATE application_meta SET value='other-model\nrecent-good\t1' "
+            "WHERE key='similar_fill_appeals'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, same_path=warm, timing_fields=("timings_ms",))
+
+
 # ── profiling parity for the Slice-1 ops ─────────────────────────────────────
 
 
