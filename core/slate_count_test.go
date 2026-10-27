@@ -104,3 +104,30 @@ VALUES ('model', 'for_you', 'varied', %d, '%s', '%s', 0)`, i, scene, lane))
 		t.Fatalf("fixture no longer covers every reason: %v", want)
 	}
 }
+
+// The available-file probe behind lane eligibility must stay a covering
+// index lookup; reading each source_file row cost more than the rest of it.
+func TestAvailableFileProbeUsesPartialIndex(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT 1 FROM source_scene l
+WHERE NOT EXISTS (SELECT 1 FROM source_file f WHERE f.scene_id=l.scene_id AND f.available=1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if !strings.Contains(strings.Join(plan, "\n"), "COVERING INDEX source_file_available_scene_idx") {
+		t.Fatalf("plan does not use the partial index:\n%s", strings.Join(plan, "\n"))
+	}
+}
