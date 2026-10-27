@@ -25,6 +25,58 @@ def test_shortlist_endpoint_migration_preserves_saved_rows(tmp_path: Path) -> No
     connection.close()
 
 
+def test_seven_point_tag_sentiment_migration_keeps_answers(tmp_path: Path) -> None:
+    connection = connect_database(tmp_path / "curator.sqlite3")
+    runner = MigrationRunner(connection)
+    original = runner.migrations
+    runner.migrations = [migration for migration in original if migration.version < 44]
+    runner.migrate(applied_at_ms=1)
+    connection.execute(
+        "INSERT INTO source_tag(tag_id, source_hash) VALUES ('t1', 'h'), ('t2', 'h')"
+    )
+    connection.executemany(
+        "INSERT INTO direct_tag_preference_history VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("old", "t1", 0.5, 10, None, 0),
+            ("new", "t1", 1.0, 20, None, 0),
+            ("block", "t2", -1.0, 30, None, 1),
+        ],
+    )
+    connection.execute(
+        "UPDATE direct_tag_preference_history SET replaced_by_id='new' WHERE preference_id='old'"
+    )
+    connection.executemany(
+        "INSERT INTO direct_tag_preference VALUES (?, ?, ?, ?, ?)",
+        [("t1", "new", 1.0, 20, 0), ("t2", "block", -1.0, 30, 1)],
+    )
+    connection.commit()
+    runner.migrations = original
+    runner.migrate(applied_at_ms=2)
+    history = connection.execute(
+        "SELECT * FROM direct_tag_preference_history ORDER BY preference_id"
+    ).fetchall()
+    assert [tuple(row) for row in history] == [
+        ("block", "t2", -1.0, 30, None, 1),
+        ("new", "t1", 1.0, 20, None, 0),
+        ("old", "t1", 0.5, 10, "new", 0),
+    ]
+    current = connection.execute("SELECT * FROM direct_tag_preference ORDER BY tag_id").fetchall()
+    assert [tuple(row) for row in current] == [
+        ("t1", "new", 1.0, 20, 0),
+        ("t2", "block", -1.0, 30, 1),
+    ]
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    connection.execute(
+        "INSERT INTO direct_tag_preference_history VALUES ('like', 't1', 0.75, 40, NULL, 0)"
+    )
+    connection.execute(
+        "UPDATE direct_tag_preference SET preference_id='like', value=-0.75 WHERE tag_id='t1'"
+    )
+    connection.execute("DELETE FROM source_tag WHERE tag_id='t2'")
+    assert connection.execute("SELECT count(*) FROM direct_tag_preference").fetchone()[0] == 1
+    connection.close()
+
+
 def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> None:
     connection = connect_database(tmp_path / "curator.sqlite3")
     try:
@@ -75,10 +127,11 @@ def test_migrate_empty_database_and_rerun_current_version(tmp_path: Path) -> Non
             41,
             42,
             43,
+            44,
         )
 
         after = runner.migrate(applied_at_ms=1234)
-        assert after.current_version == 43
+        assert after.current_version == 44
         assert after.pending_versions == ()
         assert runner.migrate(applied_at_ms=5678) == after
 
@@ -370,7 +423,7 @@ def test_status_stays_read_only_after_migrations(tmp_path: Path) -> None:
     reader.execute("PRAGMA busy_timeout=1")
     try:
         writer.execute("BEGIN IMMEDIATE")
-        assert MigrationRunner(reader).status().current_version == 43
+        assert MigrationRunner(reader).status().current_version == 44
     finally:
         writer.rollback()
         reader.close()
@@ -396,7 +449,7 @@ def test_stale_concurrent_migrator_rechecks_after_writer_lock(
 
     monkeypatch.setattr(second_runner, "status", status)
     try:
-        assert second_runner.migrate(applied_at_ms=2).current_version == 43
+        assert second_runner.migrate(applied_at_ms=2).current_version == 44
     finally:
         second.close()
         first.close()

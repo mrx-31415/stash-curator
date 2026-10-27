@@ -1352,19 +1352,30 @@
 
   const SENTIMENTS = [
     [-1, "Strong dislike", "curator-sentiment-danger"],
+    [-0.75, "Dislike", "curator-sentiment-dislike"],
     [-0.5, "Slight dislike", "curator-sentiment-warning"],
     [0, "Neutral", "curator-sentiment-neutral"],
     [0.5, "Slight like", "curator-sentiment-like"],
+    [0.75, "Like", "curator-sentiment-fond"],
     [1, "Strong like", "curator-sentiment-love"],
   ];
 
-  // The 5-point spectrum spans stops 1-5 of the 6-stop track (stop 0 is
-  // "Never"), i.e. positions 20%/40%/60%/80%/100% — a continuous value in
-  // [-1, 1] (Taste Profile's model-inferred sentiment) maps onto that same
-  // linear scale, skipping the "Never" slot since inference has no opinion
-  // on hard exclusion.
+  // The sentiment levels span stops 1..N of an evenly spaced track whose
+  // stop 0 is "Never". A continuous value in [-1, 1] (Taste Profile's
+  // model-inferred sentiment) is placed between the two levels around it,
+  // since the levels' values are not evenly spaced; the "Never" slot is
+  // skipped because inference has no opinion on hard exclusion.
+  const SENTIMENT_STOPS = SENTIMENTS.length;
+  const NEUTRAL_STOP = SENTIMENTS.findIndex(([score]) => score === 0) + 1;
+  function sentimentStopPct(stop) {
+    return (stop / SENTIMENT_STOPS) * 100;
+  }
   function sentimentValueToTrackPct(value) {
-    return 20 + (Math.max(-1, Math.min(1, value)) + 1) * 40;
+    const clamped = Math.max(-1, Math.min(1, value));
+    let index = 1;
+    while (index < SENTIMENTS.length - 1 && SENTIMENTS[index][0] < clamped) index++;
+    const [low, high] = [SENTIMENTS[index - 1][0], SENTIMENTS[index][0]];
+    return sentimentStopPct(index + (clamped - low) / (high - low));
   }
   function nearestSentiment(value) {
     let best = SENTIMENTS[0];
@@ -1383,9 +1394,11 @@
   }
   const BELIEF_PHRASES = {
     "Strong dislike": "strongly dislike",
+    "Dislike": "dislike",
     "Slight dislike": "slightly dislike",
     "Neutral": "feel neutral about",
     "Slight like": "slightly like",
+    "Like": "like",
     "Strong like": "strongly like",
   };
   function beliefSentence(value) {
@@ -1411,7 +1424,7 @@
   function SentimentScale() {
     return React.createElement("div", { className: "curator-sentiment-scale", "aria-hidden": true },
       ["Never (block)", ...SENTIMENTS.map(([, label]) => label)].map((label, index) =>
-        React.createElement("span", { key: label, className: index === 0 ? "curator-sentiment-scale-never" : undefined, style: { left: `${index * 20}%` } }, label)
+        React.createElement("span", { key: label, className: index === 0 ? "curator-sentiment-scale-never" : undefined, style: { left: `${sentimentStopPct(index)}%` } }, label)
       )
     );
   }
@@ -1429,7 +1442,7 @@
   // track so the two can be compared at a glance.
   function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null, showScale = compact, large = false }) {
     const rated = (value !== null && value !== undefined) || blocked;
-    const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
+    const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : NEUTRAL_STOP;
     const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
     const tierClass = blocked ? "curator-sentiment-never" : rated ? SENTIMENTS[stopIndex - 1][2] : "";
     function commit(index) {
@@ -1447,7 +1460,7 @@
     // input stays for keyboards and screen readers.
     function stopAt(event) {
       const rect = event.currentTarget.getBoundingClientRect();
-      return Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 5);
+      return Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * SENTIMENT_STOPS);
     }
     function handlePointerDown(event) {
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -1472,22 +1485,22 @@
           React.createElement(
             "span",
             { className: "curator-sentiment-rail", "aria-hidden": "true" },
-            [0, 1, 2, 3, 4, 5].map((stop) => React.createElement("span", {
+            Array.from({ length: SENTIMENT_STOPS + 1 }, (_, stop) => stop).map((stop) => React.createElement("span", {
               key: stop,
               className: `curator-sentiment-stop${stop === 0 ? " curator-sentiment-stop-never" : ""}${rated && stopIndex === stop ? " curator-sentiment-stop-active" : ""}`,
-              style: { left: `${(stop / 5) * 100}%` },
+              style: { left: `${sentimentStopPct(stop)}%` },
             })),
             hasModelEstimate && React.createElement("span", {
               className: "curator-sentiment-model-dot",
               style: { left: `${sentimentValueToTrackPct(inferredValue)}%` },
               title: `Model estimate: ${nearestSentimentLabel(inferredValue)} (${inferredValue.toFixed(2)})`,
             }),
-            rated && React.createElement("span", { className: "curator-sentiment-thumb", style: { left: `${(stopIndex / 5) * 100}%` } })
+            rated && React.createElement("span", { className: "curator-sentiment-thumb", style: { left: `${sentimentStopPct(stopIndex)}%` } })
           ),
           React.createElement("input", {
             type: "range",
             min: "0",
-            max: "5",
+            max: String(SENTIMENT_STOPS),
             step: "1",
             className: "curator-sentiment-input",
             value: stopIndex,

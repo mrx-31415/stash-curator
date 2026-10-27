@@ -244,6 +244,8 @@ Empty lanes keep the exclusions enforced. This filter applies to recommendations
 Similar, discovery, and ordinary Stash browsing keep their existing behavior.
 
 Review tag beliefs and answer with a fixed sentiment from strong dislike to strong like.
+The scale has seven steps: strong dislike, dislike, slight dislike, neutral, slight
+like, like, and strong like. On a phone the labels above the tag questions slider are tilted to fit.
 A direct answer is strong evidence rather than a hard exclusion. The separate
 **Never** setting blocks matching content. **Neutral** is an explicit near-zero
 preference, while **Clear answer** removes your direct answer or block and returns

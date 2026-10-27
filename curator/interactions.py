@@ -30,7 +30,7 @@ FEEDBACK_TYPES = {
     "prune",
     "metadata_wrong",
 }
-TAG_SENTIMENT_VALUES = {-1.0, -0.5, 0.0, 0.5, 1.0}
+TAG_SENTIMENT_VALUES = {-1.0, -0.75, -0.5, 0.0, 0.5, 0.75, 1.0}
 BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
 
 
@@ -558,7 +558,7 @@ class InteractionStore:
                 raise ValueError("tag sentiment must be numeric or null")
             value = float(value)
             if value not in TAG_SENTIMENT_VALUES:
-                raise ValueError("tag sentiment must use the fixed five-point scale")
+                raise ValueError("tag sentiment must use the fixed seven-point scale")
         if blocked:
             value = BLOCKED_TAG_VALUE
         if not preference_id or not tag_id or occurred_at_ms < 0:
