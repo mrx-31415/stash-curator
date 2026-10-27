@@ -28,13 +28,13 @@ assert.equal(input.props["aria-label"], "Sentiment for Example tag");
 assert.equal(find(unrated, "select"), undefined, "keep one slider format everywhere");
 const scale = context.SentimentScale();
 assert.deepEqual(nodes(scale).filter(node => node.type === "span").map(node => node.props.children[0]), [
-  "Never (block)", "Strong dislike", "Slight dislike", "Neutral",
-  "Slight like", "Strong like",
+  "Never (block)", "Strong dislike", "Dislike", "Slight dislike", "Neutral",
+  "Slight like", "Like", "Strong like",
 ]);
-for (let index = 0; index <= 5; index++) {
+for (let index = 0; index <= 7; index++) {
   input.props.onChange({ target: { value: String(index) } });
   const answer = index === 0 ? { value: null, blocked: true }
-    : { value: [-1, -0.5, 0, 0.5, 1][index - 1], blocked: false };
+    : { value: [-1, -0.75, -0.5, 0, 0.5, 0.75, 1][index - 1], blocked: false };
   assert.deepEqual(changes.at(-1), answer);
   const rated = render(answer);
   assert.equal(find(rated, "input").props.value, index);

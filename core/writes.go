@@ -26,7 +26,7 @@ var feedbackTypes = map[string]bool{
 }
 
 // tagSentimentValues mirrors interactions.py TAG_SENTIMENT_VALUES.
-var tagSentimentValues = map[float64]bool{-1.0: true, -0.5: true, 0.0: true, 0.5: true, 1.0: true}
+var tagSentimentValues = map[float64]bool{-1.0: true, -0.75: true, -0.5: true, 0.0: true, 0.5: true, 0.75: true, 1.0: true}
 
 const blockedTagValue = -1.0
 
@@ -425,7 +425,7 @@ func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error)
 		}
 		f, err := pythonFloat(value)
 		if err != nil || !tagSentimentValues[f] {
-			return tagPreferenceEntry{}, fmt.Errorf("tag sentiment must use the fixed five-point scale")
+			return tagPreferenceEntry{}, fmt.Errorf("tag sentiment must use the fixed seven-point scale")
 		}
 		value = jvFloat(f)
 	}

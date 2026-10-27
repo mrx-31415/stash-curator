@@ -1582,13 +1582,13 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "RatingSection" in source
     assert "Collapse matching local tag ratings" in source
     assert "compact: true" in source
-    # Card panels share a named scale header while retaining the same six-stop
+    # Card panels share a named scale header while retaining the same eight-stop
     # slider and model-comparison semantics as the full page.
     assert "function TagSentimentControl({ tag, value, blocked, onChange, compact = false" in source
     assert "inferredValue = null, showScale = compact" in source
     assert 'type: "range"' in source
     assert 'min: "0"' in source
-    assert 'max: "5"' in source
+    assert "max: String(SENTIMENT_STOPS)" in source
     assert 'step: "1"' in source
     assert "curator-sentiment-compact" in css
     assert ".curator-sentiment-input" in css

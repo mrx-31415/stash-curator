@@ -1051,7 +1051,7 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
 
 .curator-sentiment-scale > span {
   bottom: 0.2rem;
-  max-width: 19%;
+  max-width: 14%;
   position: absolute;
   text-align: center;
   transform: translateX(-50%);
@@ -1152,9 +1152,11 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
 
 .curator-sentiment-never,
 .curator-sentiment-danger,
+.curator-sentiment-dislike,
 .curator-sentiment-warning,
 .curator-sentiment-neutral,
 .curator-sentiment-like,
+.curator-sentiment-fond,
 .curator-sentiment-love {
   background: transparent;
   color: var(--curator-text);
@@ -1162,24 +1164,28 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
 
 .curator-sentiment-never            { --sc: #212529; border-color: var(--sc); }
 .curator-sentiment-danger           { --sc: #dc3545; border-color: var(--sc); }
+.curator-sentiment-dislike          { --sc: #e8590c; border-color: var(--sc); }
 .curator-sentiment-warning          { --sc: #fd7e14; border-color: var(--sc); }
 .curator-sentiment-neutral          { --sc: #6c757d; border-color: var(--sc); }
 .curator-sentiment-like             { --sc: #6b8e23; border-color: var(--sc); }
+.curator-sentiment-fond             { --sc: #2f9e44; border-color: var(--sc); }
 .curator-sentiment-love             { --sc: #198754; border-color: var(--sc); }
 
 /* Taste Profile's belief badge ("I think you slightly/strongly like/
    dislike this" / "I'm unsure") reuses these same tier classes for their
    --sc value instead of Bootstrap's one-size-fits-all badge-info cyan,
-   which gave every tier identical color. All 5 sentiment tiers are listed
+   which gave every tier identical color. All 7 sentiment tiers are listed
    (not just love/danger/neutral) since the badge text is now the specific
    nearest tier, not a plain like/dislike binary — warning/like badges were
    only getting the tier's border-color (from the button-oriented rule
    above) without this rule's tinted background/text, reading as half-
    colored next to the fully-colored strong tiers. */
 .badge.curator-sentiment-love,
+.badge.curator-sentiment-fond,
 .badge.curator-sentiment-like,
 .badge.curator-sentiment-neutral,
 .badge.curator-sentiment-warning,
+.badge.curator-sentiment-dislike,
 .badge.curator-sentiment-danger {
   background: color-mix(in srgb, var(--sc) 18%, transparent);
   border: 1px solid var(--sc);
@@ -4128,7 +4134,7 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 
 .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale { font-size: 0.72rem; grid-column: 1 / -1; }
 .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span,
-.curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span:not(:first-child):not(:last-child) { display: block; max-width: 17%; }
+.curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span:not(:first-child):not(:last-child) { display: block; max-width: 14%; }
 .curator-sentiment-large.curator-sentiment-labelled .curator-sentiment-track { grid-column: 1 / -1; height: 2.75rem; }
 .curator-sentiment-large.curator-sentiment-labelled .curator-sentiment-current { font-size: 0.85rem; grid-column: 1; grid-row: 3; }
 .curator-sentiment-large.curator-sentiment-labelled > .btn { grid-column: 2; grid-row: 3; }
@@ -4730,4 +4736,28 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   .curator-roulette-hud > .curator-roulette-controls { flex-basis: 100%; order: 1; justify-content: flex-start; }
   .curator-roulette-actions { justify-content: flex-start; }
   .curator-roulette-status { left: .75rem; right: .75rem; text-align: left; }
+}
+
+/* Phones: eight stop labels do not fit on one line above the large slider,
+   so each one is tilted 45 degrees and starts at its stop, the way plots fit
+   crowded tick labels; the right padding leaves room for the last label's
+   tail. The Tag sentiment page's slider takes its own full-width line in the
+   card instead of a fixed 10rem. */
+@media (max-width: 576px) {
+  .curator-sentiment-large.curator-sentiment-labelled { padding-right: 2.75rem; }
+  .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale { height: 4.4rem; }
+  .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span,
+  .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span:not(:first-child):not(:last-child) {
+    bottom: 0.1rem;
+    max-width: none;
+    text-align: left;
+    transform: translateX(-0.2rem) rotate(-45deg);
+    transform-origin: left bottom;
+    white-space: nowrap;
+    width: auto;
+  }
+  .curator-sentiment-large.curator-sentiment-labelled > .curator-sentiment-scale > span:first-child { transform: translateX(0.35rem) rotate(-45deg); }
+  .curator-taste-item > .curator-sentiment-slider { flex: 1 1 100%; flex-wrap: nowrap; }
+  .curator-taste-item > .curator-sentiment-slider .curator-sentiment-range-wrap { flex: 1 1 auto; min-width: 0; }
+  .curator-taste-item > .curator-sentiment-slider .curator-sentiment-track { flex: 1 1 auto; width: auto; }
 }

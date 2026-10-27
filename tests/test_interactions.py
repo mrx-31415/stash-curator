@@ -80,7 +80,7 @@ def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_pat
         == 3
     )
 
-    with pytest.raises(ValueError, match="five-point"):
+    with pytest.raises(ValueError, match="seven-point"):
         store.submit_tag_preferences([{**positive, "preference_id": "bad", "value": 0.25}])
     with pytest.raises(ValueError, match="unsupported"):
         store.submit_tag_preferences([{**positive, "preference_id": "unknown", "tag_id": "x"}])
@@ -99,6 +99,21 @@ def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_pat
     assert row is not None
     assert float(row[0]) == -1.0
     assert bool(row[1]) is True
+
+
+def test_tag_preferences_accept_like_and_dislike_steps(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+    store = InteractionStore(connection)
+    for occurred_at_ms, value in ((REFERENCE_MS + 10, 0.75), (REFERENCE_MS + 20, -0.75)):
+        entry = {"preference_id": f"p{occurred_at_ms}", "tag_id": "good", "value": value}
+        assert store.submit_tag_preferences([{**entry, "occurred_at_ms": occurred_at_ms}]) == 1
+        assert (
+            connection.execute(
+                "SELECT value FROM direct_tag_preference WHERE tag_id='good'"
+            ).fetchone()[0]
+            == value
+        )
 
 
 def test_direct_sessions_record_views_and_quick_replacement(tmp_path: Path) -> None:
