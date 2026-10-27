@@ -101,7 +101,7 @@ context.Api.patch.instead = (name, callback) => {
   cardPatch = callback;
 };
 vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("), source.indexOf('  const SCENE_AFFINITY_SORT ='))
-  + source.slice(source.indexOf("  function CuratorPerformerCardBadge("), source.indexOf('  Api.patch.instead("ScenePage"')), context);
+  + source.slice(source.indexOf("  function CuratorPerformerCardBadge("), source.indexOf('  // Pages use after, not instead')), context);
 function pageControls(type, details) {
   state = [details, false];
   const page = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
