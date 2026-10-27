@@ -4834,3 +4834,33 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 
 /* "+ N more" reveals the rest of a scene's ranked tags. */
 .curator-reason-chip.curator-reason-more { border-style: dashed; color: var(--curator-text-muted, inherit); }
+
+/* What your answers moved: the newest build's biggest moves, shown where the
+   answers were given. Green moved up, orange moved down. */
+.curator-what-moved { max-width: 560px; }
+.curator-moved-row { align-items: baseline; display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+.curator-moved-label { flex: 0 0 5.5rem; font-size: 0.8rem; opacity: 0.8; }
+.curator-moved-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.curator-moved-chip { border: 1px solid var(--mc); border-radius: 999px; font-size: 0.8rem; padding: 0.1rem 0.6rem; }
+.curator-moved-up { --mc: #2f9e44; }
+.curator-moved-down { --mc: #e8590c; }
+.curator-moved-scene { border: 2px solid var(--mc); border-radius: 4px; display: inline-block; overflow: hidden; position: relative; width: 5.5rem; }
+.curator-moved-scene img,
+.curator-moved-scene img.card-section { aspect-ratio: 16 / 9; display: block; margin: 0; object-fit: cover; padding: 0; width: 100%; }
+.curator-moved-scene span { background: rgba(0, 0, 0, 0.7); bottom: 0; color: #fff; font-size: 0.7rem; padding: 0 0.3rem; position: absolute; right: 0; }
+.curator-moved-more { display: inline-block; font-size: 0.8rem; margin-top: 0.5rem; }
+@media (max-width: 576px) {
+  .curator-moved-row { flex-direction: column; gap: 0.2rem; }
+  .curator-moved-label { flex: none; }
+}
+
+/* Instant "Curator's view of X: before -> about after" under an answer. */
+.curator-answer-estimate { font-size: 0.85rem; margin: 0.25rem 0 0.5rem; max-width: 560px; opacity: 0.85; }
+
+/* The arrow on a picked chip: which way Curator's view of it will move. */
+.curator-reason-trend { font-weight: 700; margin-left: 0.1rem; }
+.curator-reason-trend-up { color: #51cf66; }
+.curator-reason-trend-down { color: #ff8a3d; }
+
+/* After a flip: how strongly Curator has it wrong. */
+.curator-reason-strength { margin-top: 0.5rem; }

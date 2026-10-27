@@ -109,6 +109,13 @@ func clamp(value float64) float64 {
 }
 
 // modelSceneLabels mirrors PreferenceModelBuilder._scene_labels.
+// sceneReasonFlipValue and sceneReasonFlipConfidence mirror
+// ModelConfig.scene_reason_flip_value and scene_reason_flip_confidence.
+const (
+	sceneReasonFlipValue      = 0.5
+	sceneReasonFlipConfidence = 0.5
+)
+
 // sceneOnlySignal mirrors builder.py SCENE_ONLY_SIGNAL: a "Just this scene"
 // answer, which moves the scene's own appeal but never reaches training.
 const sceneOnlySignal = "scene_reason_scene"
@@ -255,7 +262,7 @@ ORDER BY scene_id, occurred_at_ms`)
 	// Why these? answers about the scene itself (mirrors _scene_labels): a
 	// thumb's value and confidence; "Just this scene" stays out of training.
 	rows, err = db.Query(`
-SELECT a.scene_id, a.polarity, a.flipped,
+SELECT a.scene_id, a.polarity, a.flipped, a.flip_strength,
        EXISTS (SELECT 1 FROM scene_reason r
                WHERE r.answer_id=a.answer_id AND r.subject_type='scene') AS only_scene
 FROM scene_reason_answer a
@@ -264,24 +271,34 @@ ORDER BY a.scene_id, a.occurred_at_ms, a.answer_id`)
 		return nil, nil, err
 	}
 	for rows.Next() {
-		var sceneID string
+		var sceneID, flipStrength string
 		var polarity, flipped, onlyScene int64
-		if err := rows.Scan(&sceneID, &polarity, &flipped, &onlyScene); err != nil {
+		if err := rows.Scan(&sceneID, &polarity, &flipped, &flipStrength, &onlyScene); err != nil {
 			rows.Close()
 			return nil, nil, err
 		}
 		if onlyScene == 0 && flipped == 0 {
 			continue
 		}
-		value := -1.0
-		if polarity > 0 {
-			value = 0.90
+		// "Just this scene" is a thumb about this scene; a flip is a mild
+		// correction (mirrors scene_reason_flip_value/confidence).
+		var item signal
+		if onlyScene != 0 || flipStrength == "strong" {
+			// A strong flip ("Not for me" / "I'd really like this") is a thumb.
+			item = signal{-1.0, 1.0, "scene_reason_flip"}
+			if onlyScene != 0 {
+				item.signalType = sceneOnlySignal
+			}
+			if polarity > 0 {
+				item.value = 0.90
+			}
+		} else {
+			item = signal{-sceneReasonFlipValue, sceneReasonFlipConfidence, "scene_reason_flip"}
+			if polarity > 0 {
+				item.value = sceneReasonFlipValue
+			}
 		}
-		signalType := "scene_reason_flip"
-		if onlyScene != 0 {
-			signalType = sceneOnlySignal
-		}
-		signals[sceneID] = append(signals[sceneID], signal{value, 1.0, signalType})
+		signals[sceneID] = append(signals[sceneID], item)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

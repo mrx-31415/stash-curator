@@ -1099,6 +1099,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             }
         if operation == "get_performer_affinities":
             return api.performer_affinities()
+        if operation == "get_studio_affinities":
+            return api.studio_affinities()
         if operation == "get_scene_affinities":
             return api.scene_affinities(args.get("scene_ids"))
         if operation == "get_scene_affinity_page":

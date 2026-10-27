@@ -241,6 +241,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetSceneTagChoices(pluginDir, payload)
 	case "get_inspector_entity":
 		return opGetInspectorEntity(pluginDir, payload)
+	case "get_studio_affinities":
+		return opGetStudioAffinities(pluginDir, payload)
 	case "get_performer_affinities":
 		return opGetPerformerAffinities(pluginDir, payload)
 	case "get_scene_affinities", "get_scene_affinity_page":

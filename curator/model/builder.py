@@ -739,10 +739,12 @@ class PreferenceModelBuilder:
         # confidence (without a thumb's Prune side effects). "Just this scene"
         # is about this scene only: it moves the scene's own appeal but is left
         # out of the training labels, so nothing generalizes from it. A flip
-        # ("Curator has it backwards") without it generalizes like a thumb.
+        # ("Curator has it backwards") without it generalizes: a mild one as a
+        # slight correction (scene_reason_flip_value/confidence), a strong one
+        # like a thumb.
         for row in self.connection.execute(
             """
-            SELECT a.scene_id, a.polarity, a.flipped,
+            SELECT a.scene_id, a.polarity, a.flipped, a.flip_strength,
                    EXISTS (SELECT 1 FROM scene_reason r
                            WHERE r.answer_id=a.answer_id AND r.subject_type='scene') AS only_scene
             FROM scene_reason_answer a
@@ -751,15 +753,24 @@ class PreferenceModelBuilder:
         ):
             if not row["only_scene"] and not row["flipped"]:
                 continue
-            signals[str(row["scene_id"])].append(
-                (
+            positive = int(row["polarity"]) > 0
+            # A strong flip ("Not for me" / "I'd really like this") is a thumb.
+            if row["only_scene"] or row["flip_strength"] == "strong":
+                signal = (
                     DEFAULT_CALIBRATION.thumb_up_value
-                    if int(row["polarity"]) > 0
+                    if positive
                     else DEFAULT_CALIBRATION.thumb_down_value,
                     DEFAULT_CALIBRATION.explicit_feedback_confidence,
                     SCENE_ONLY_SIGNAL if row["only_scene"] else "scene_reason_flip",
                 )
-            )
+            else:
+                flip = self.config.model.scene_reason_flip_value
+                signal = (
+                    flip if positive else -flip,
+                    self.config.model.scene_reason_flip_confidence,
+                    "scene_reason_flip",
+                )
+            signals[str(row["scene_id"])].append(signal)
         labels: dict[str, _SceneLabel] = {}
         self._training_overrides: dict[str, _SceneLabel | None] = {}
         for scene_id, scene_signals in signals.items():

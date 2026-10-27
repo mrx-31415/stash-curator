@@ -168,6 +168,61 @@ def test_tag_questions_exclude_drops_listed_tags(
     assert [item["tag_id"] for item in rest["items"]] == ranked[1:]
 
 
+def test_taste_profile_reports_inherited_answers_identically(
+    binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """inherited_value lets the plugin estimate an answer's effect without
+    counting a parent's answer twice; both runtimes must report it alike."""
+    from tests.core.test_backend_slice3_featurebuild import make_feature_sidecar
+    from tests.core.test_backend_slice3_modelbuild import (
+        _run_python_build,
+        _seed_tag_answers,
+        _seed_tag_hierarchy,
+    )
+
+    sidecar = tmp_path / "curator.sqlite3"
+    make_feature_sidecar(sidecar)
+    _seed_tag_hierarchy(sidecar)
+    _seed_tag_answers(sidecar)
+    _run_python_build(sidecar)
+    raw = payload("get_taste_profile", sidecar, stub_stash)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, sidecar)
+    connection = connect_database(sidecar)
+    try:
+        items = {item["tag_id"]: item for item in CuratorAPI(connection).taste_profile()["items"]}
+    finally:
+        connection.close()
+    assert items["good"]["inherited_value"] == 0.5
+    assert items["scenario"]["inherited_value"] is None
+    assert items["scenario"]["role"] == "content"
+
+
+def test_studio_affinities_match_and_follow_the_model(
+    binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """get_studio_affinities reports what the model scores a studio with
+    (learned x confidence + favourite prior) identically in both runtimes."""
+    from tests.core.test_backend_slice3_featurebuild import make_feature_sidecar
+    from tests.core.test_backend_slice3_modelbuild import _run_python_build
+
+    sidecar = tmp_path / "curator.sqlite3"
+    make_feature_sidecar(sidecar)
+    _run_python_build(sidecar)
+    raw = payload("get_studio_affinities", sidecar, stub_stash)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, sidecar)
+    connection = connect_database(sidecar)
+    try:
+        studios = CuratorAPI(connection).studio_affinities()["affinities"]
+    finally:
+        connection.close()
+    # studio-1 is a Stash favourite; studio-2 is not.
+    assert studios["studio-1"]["affinity_details"]["prior"] == 0.04
+    assert studios["studio-2"]["affinity_details"]["prior"] == 0.0
+    for item in studios.values():
+        details = item["affinity_details"]
+        assert item["affinity"] == pytest.approx(details["learned"] + details["prior"])
+
+
 def test_tag_questions_without_model_match(binary: Path, stub_stash: str, tmp_path: Path) -> None:
     sidecar = tmp_path / "nomodel.sqlite3"
     _database(sidecar).close()

@@ -80,6 +80,9 @@ def _performer_preference(
             "prior": prior,
             "similarity": similarity,
             "similarity_confidence": similarity_confidence,
+            # The learned part's own confidence, so a client can recover its
+            # evidence (confidence = 1 - exp(-support / 3)) for estimates.
+            "learned_confidence": confidence or 0.0,
         },
     }
 
@@ -575,6 +578,51 @@ class CuratorAPI:
             },
         }
 
+    def studio_affinities(self) -> dict[str, object]:
+        """Each studio's view as the model scores it: learned affinity times
+        its confidence plus the Stash-favourite prior, with the learned
+        confidence so a client can estimate a reason's effect."""
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = self.connection.execute(
+            "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+        ).fetchone()[0]
+        learned = {
+            row[0].removeprefix("studio:"): (float(row[1]), float(row[2]))
+            for row in self.connection.execute(
+                """
+                SELECT fd.name, fa.affinity, fa.confidence
+                FROM feature_definition fd CROSS JOIN feature_affinity fa USING(feature_id)
+                WHERE fa.model_id=? AND fd.feature_version=? AND fd.family='studio'
+                ORDER BY fd.name
+                """,
+                (model_id, feature_version),
+            )
+        }
+        affinities: dict[str, object] = {}
+        for studio_id, favorite in self.connection.execute(
+            "SELECT studio_id, favorite FROM source_studio ORDER BY studio_id"
+        ):
+            if studio_id not in learned and not favorite:
+                continue
+            affinity, confidence = learned.get(studio_id, (0.0, 0.0))
+            prior = DEFAULT_CONFIG.model.studio_favorite_prior if favorite else 0.0
+            affinities[studio_id] = {
+                "affinity": affinity * confidence + prior,
+                "confidence": max(confidence, 0.70 if favorite else 0.0),
+                "affinity_details": {
+                    "learned": affinity * confidence,
+                    "prior": prior,
+                    "learned_confidence": confidence,
+                },
+            }
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "model_id": model_id,
+            "affinities": affinities,
+        }
+
     def scene_affinity_rows(
         self,
         scene_ids: object,
@@ -1033,7 +1081,7 @@ class CuratorAPI:
               FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
             )
             SELECT t.tag_id, t.name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
-                   a.affinity, a.confidence, a.effective_support
+                   a.affinity, a.confidence, a.effective_support, a.metadata_json
             FROM source_tag t
             JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?
             LEFT JOIN scene_counts sc ON sc.tag_id=t.tag_id
@@ -1050,6 +1098,10 @@ class CuratorAPI:
             affinity = float(row["affinity"] or 0)
             confidence = float(row["confidence"] or 0)
             direct_value, direct_blocked = direct.get(tag_id, (None, False))
+            # The answer a parent passed down (_inherit_tag_preferences), so a
+            # client can tell it apart from the tag's own evidence.
+            passed_down = json.loads(row["metadata_json"] or "{}").get("inherited_preference")
+            inherited = float(passed_down) if passed_down is not None else None
             prompt = None
             if direct_value is None and row["role"] == "content" and scene_count >= 2:
                 prompt = "belief" if confidence >= 0.35 and abs(affinity) >= 0.15 else "uncertain"
@@ -1065,6 +1117,7 @@ class CuratorAPI:
                     "direct_blocked": direct_blocked,
                     "prompt": prompt,
                     "role": str(row["role"]),
+                    "inherited_value": inherited,
                 }
             )
         items.sort(
@@ -1263,6 +1316,7 @@ class CuratorAPI:
                     "inferred_value": item["inferred_value"],
                     "confidence": item["confidence"],
                     "support": item["support"],
+                    "inherited_value": item["inherited_value"],
                     "scene_count": scene_count,
                     "reach": reach,
                     "leverage": leverage,
