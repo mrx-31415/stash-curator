@@ -737,11 +737,12 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	var trainingLabels map[string]sceneLabel
 	err = rec.stage("labels", "model.labels", func() error {
 		var err error
-		labels, err = modelSceneLabels(db)
+		var overrides map[string]*sceneLabel
+		labels, overrides, err = modelSceneLabels(db)
 		if err != nil {
 			return err
 		}
-		trainingLabels, err = modelTrainingLabels(db, labels)
+		trainingLabels, err = modelTrainingLabels(db, labels, overrides)
 		return err
 	})
 	if err != nil {
