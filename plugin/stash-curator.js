@@ -173,27 +173,11 @@
     (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
   );
   const FIND_SECTION_VALUES = new Set(FIND_SECTIONS.map((item) => item.value));
-  // Curate's own sections. Before this split the view offered "Random round"
-  // and "Pick-test a hypothesis" side by side, which are the same activity with
-  // a different pair-selection filter — presenting a selection policy as if it
-  // were a mode is what made "which one do I use?" unanswerable. These are
-  // Curate's own sections. Before the split the view offered "Random round"
-  // and "Pick-test a hypothesis" side by side, which are the same activity
-  // with a different pair-selection filter — presenting a selection policy as
-  // if it were a mode is what made "which one do I use?" unanswerable. The
-  // "Test an idea" section (a tag-focused pair filter on the same stream
-  // machinery) was dropped as a distinct surface (issue #191): Stream already
-  // covers pair comparison. Tag sentiment is a real section here (issue
-  // #241): direct tag teaching lives under Curate, not Manage. Section URL
-  // values stay stable (stream / sentiment / progress) so old links keep
-  // working; only labels and order changed.
+  // Curate's own sections. Tag sentiment is a real section here (issue
+  // #241): direct tag teaching lives under Curate, not Manage. Pair picks
+  // were retired; an old section=stream link falls back to the first section.
+  // Section URL values stay stable (sentiment / progress) so links keep working.
   const CURATE_SECTIONS = [
-    {
-      value: "stream",
-      label: "Pair picks",
-      icon: faBullseye,
-      description: "Endless two-scene comparisons; every pick teaches the model.",
-    },
     {
       value: "sentiment",
       label: "Tag sentiment",
@@ -1748,47 +1732,6 @@
     );
   }
 
-  function CurationVerdictBar({ label, rate, wins, appearances }) {
-    return React.createElement(
-      "div",
-      { className: "curator-pick-verdict-card" },
-      React.createElement("span", { className: "curator-pick-verdict-label" }, label),
-      React.createElement(
-        "div",
-        { className: "curator-pick-verdict-track" },
-        React.createElement("div", { className: "curator-pick-verdict-fill", style: { width: `${Math.max(0, Math.min(100, Math.round(rate * 100)))}%` } })
-      ),
-      React.createElement("span", { className: "curator-pick-verdict-count" }, `${wins}/${appearances}`)
-    );
-  }
-
-  function PickSceneCard({ meta, picked, onPick, onFlag }) {
-    return React.createElement(
-      "button",
-      { type: "button", className: `curator-pick-card${picked ? " curator-pick-selected" : ""}`, onClick: onPick, "aria-pressed": !!picked },
-      React.createElement(
-        "div",
-        { className: "curator-pick-media" },
-        React.createElement("video", { className: "curator-pick-video", src: `/scene/${meta.scene_id}/preview`, poster: `/scene/${meta.scene_id}/screenshot`, muted: true, loop: true, playsInline: true, autoPlay: true, preload: "auto" })
-      ),
-      React.createElement(
-        "div",
-        { className: "curator-pick-info" },
-        React.createElement("img", { className: "curator-pick-cover", src: `/scene/${meta.scene_id}/screenshot`, alt: "" }),
-        React.createElement(
-          "div",
-          { className: "curator-pick-info-body" },
-          meta.title && React.createElement("div", { className: "curator-pick-title" }, meta.title),
-          (meta.studio || meta.date) && React.createElement("div", { className: "curator-pick-meta" }, [meta.studio, meta.date].filter(Boolean).join(" · ")),
-          meta.performers && meta.performers.length > 0 && React.createElement("div", { className: "curator-pick-performers" }, meta.performers.map((performer) => React.createElement("span", { key: performer.performer_id, className: "badge badge-secondary" }, performer.name))),
-          meta.details && React.createElement("div", { className: "curator-pick-details" }, meta.details),
-          meta.tags.length > 0 && React.createElement("div", { className: "curator-pick-tags" }, meta.tags.slice(0, 4).map((tag) => React.createElement("span", { key: tag.tag_id, className: "badge badge-light" }, tag.name))),
-          React.createElement("span", { role: "button", className: "curator-pick-flag", onClick: (event) => { event.stopPropagation(); onFlag && onFlag(); }, title: "This scene's metadata is wrong — exclude it from the round and the model" }, "Metadata wrong")
-        )
-      )
-    );
-  }
-
   function fmtDelta(value) {
     const abs = Math.abs(value);
     const digits = abs >= 0.01 ? 3 : abs >= 0.001 ? 4 : 5;
@@ -1798,7 +1741,7 @@
   function ImpactSceneCard({ entry, onCorrect }) {
     // Explain each mover in plain terms: what kind of thing changed, which way
     // the model's preference for it moved, and whether it connects to the
-    // user's own feedback (via_feedback = rated/compared scenes carrying it).
+    // user's own feedback (via_feedback = rated scenes carrying it).
     const why = (entry.contributors || []).map((contributor) => {
       if (contributor.kind === "direct") {
         return `your own feedback on this scene (${fmtDelta(contributor.delta)})`;
@@ -1807,7 +1750,7 @@
       const via = typeof contributor.via_feedback === "number" ? contributor.via_feedback : 0;
       const viaText = via > 0
         ? ` · from ${via} of your ${via === 1 ? "scene" : "scenes"}`
-        : " · no rated scene — from a pick or tag preference";
+        : " · no rated scene — from a tag preference";
       return `${contributor.kind} "${contributor.name}" ${directionWord} (${fmtDelta(contributor.delta)})${viaText}`;
     }).join(" · ");
     // The scene's delta is the net of its whole feature set; the breakdown
@@ -1893,14 +1836,14 @@
       ...(group.promoted || []).map((entry) => Math.abs(entry.delta)),
       ...(group.demoted || []).map((entry) => Math.abs(entry.delta))
     );
-    const weakNote = (group, label) => maxMove(group) < 0.005 && React.createElement("p", { className: "curator-impact-weak" }, `${label} barely moved this build — new picks since the previous build will show up here.`);
+    const weakNote = (group, label) => maxMove(group) < 0.005 && React.createElement("p", { className: "curator-impact-weak" }, `${label} barely moved this build — new feedback since the previous build will show up here.`);
     return React.createElement(
       "div",
       { className: "curator-impact" },
-      React.createElement("h4", { className: "curator-impact-heading" }, "What your picks moved"),
+      React.createElement("h4", { className: "curator-impact-heading" }, "What your feedback moved"),
       React.createElement("p", { className: "curator-impact-ago" }, `Newest model built ${new Date(impact.published_at_ms).toLocaleString()} — the feedback since the previous build is what moved these.`),
       React.createElement("p", { className: "curator-impact-legend" },
-        "A scene's delta is how much its appeal moved (−1 to 1). “Because” lists the tags/performers whose learned preference changed, tied back to how many of your rated/compared scenes carry each one."
+        "A scene's delta is how much its appeal moved (−1 to 1). “Because” lists the tags/performers whose learned preference changed, tied back to how many of your rated scenes carry each one."
       ),
       React.createElement(
         "div",
@@ -1909,7 +1852,7 @@
           "div",
           { className: "curator-impact-group" },
           React.createElement("div", { className: "curator-impact-group-label" }, "Scenes"),
-            impact.scenes.promoted.length === 0 && impact.scenes.demoted.length === 0 && React.createElement("p", { className: "curator-impact-weak" }, "No scene moves came from your feedback this build — new picks since the previous build will show up here."),
+            impact.scenes.promoted.length === 0 && impact.scenes.demoted.length === 0 && React.createElement("p", { className: "curator-impact-weak" }, "No scene moves came from your feedback this build — new feedback since the previous build will show up here."),
           React.createElement("div", { className: "curator-impact-columns" },
             React.createElement(ImpactList, { title: "Promoted", entries: impact.scenes.promoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry, onCorrect }), tone: "up" }),
             React.createElement(ImpactList, { title: "Demoted", entries: impact.scenes.demoted, renderer: (entry) => React.createElement(ImpactSceneCard, { key: entry.scene_id, entry, onCorrect }), tone: "down" })
@@ -1941,327 +1884,15 @@
 
   // ── Curate ────────────────────────────────────────────────────────────────
 
-  const CURATE_STREAM_BUDGET = 10;
-  // Fetch the next round this many pairs before the current one runs out, so
-  // the stream never stalls on a round trip mid-flow.
-  const CURATE_PREFETCH_MARGIN = 3;
-  // An answer commits when the next one is given, or after this idle gap.
-  // Buffering exactly one keeps single-step undo without needing a reversal
-  // path for feedback that has already been written.
-  const CURATE_COMMIT_IDLE_MS = 4000;
-  // Long enough to read as a confirmation, short enough not to gate input:
-  // the old 500ms lock cost five seconds of dead time every ten picks.
-  const CURATE_FLASH_MS = 260;
-  const LAST_ROUND_KEY = "stash-curator:last-pick-round:v1";
-
-  function readLastRound() {
-    try {
-      const value = JSON.parse(localStorage.getItem(LAST_ROUND_KEY) || "null");
-      return value && value.round_id ? value : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function writeLastRound(roundId, dimension) {
-    try {
-      localStorage.setItem(LAST_ROUND_KEY, JSON.stringify({ round_id: roundId, dimension }));
-    } catch (_) {
-      // Progress falls back to "no comparisons yet" if storage is unavailable.
-    }
-  }
-
-  // The tags carried by the pair currently on screen, offered as a compact
-  // rate-strip so sentiment can be taught in context instead of only from the
-  // separate Tag sentiment list.
-  function PairTagSentiment({ pair }) {
-    const [selected, setSelected] = React.useState(null);
-    const [answers, setAnswers] = React.useState({});
-    const tags = [];
-    const seen = new Set();
-    for (const scene of [pair.scene_a, pair.scene_b]) {
-      for (const tag of scene.tags || []) {
-        if (!seen.has(tag.tag_id)) {
-          seen.add(tag.tag_id);
-          tags.push(tag);
-        }
-      }
-    }
-    if (!tags.length) return null;
-    function answer(tag, { value, blocked }) {
-      submitTagPreference(tag.tag_id, { value, blocked });
-      setAnswers((current) => ({ ...current, [tag.tag_id]: { value, blocked } }));
-      setSelected(null);
-    }
-    return React.createElement(
-      "div",
-      { className: "curator-pick-tag-strip" },
-      React.createElement("span", { className: "curator-pick-tag-strip-label" }, "Rate a tag while you're here"),
-      React.createElement(
-        "div",
-        { className: "curator-pick-tag-strip-items" },
-        tags.slice(0, 8).map((tag) => React.createElement(
-          "div",
-          { key: tag.tag_id, className: "curator-pick-tag-strip-item" },
-          React.createElement(
-            Button,
-            {
-              size: "sm",
-              variant: selected === tag.tag_id ? "primary" : "secondary",
-              onClick: () => setSelected(selected === tag.tag_id ? null : tag.tag_id),
-            },
-            tag.name,
-            Object.hasOwn(answers, tag.tag_id) && React.createElement(FontAwesomeIcon, { icon: faCheckCircle })
-          ),
-          selected === tag.tag_id && React.createElement(TagSentimentControl, {
-            tag,
-            value: answers[tag.tag_id]?.value,
-            blocked: answers[tag.tag_id]?.blocked,
-            compact: true,
-            onChange: (value) => answer(tag, value),
-          })
-        ))
-      )
-    );
-  }
-
-  // The comparison surface itself: two cards, the answer controls, and the
-  // in-context tag strip. Shared by Stream and Test-an-idea so both flows
-  // behave identically once a pair is on screen.
-  function PickStage({ pair, flash, onAnswer, onBack, canGoBack, status }) {
-    const flashWinner = flash && flash.pairId === pair.pair_id ? flash.winner : null;
-    return React.createElement(
-      "div",
-      { className: "curator-pick-compare" },
-      React.createElement("div", { className: "curator-pick-tally" }, status),
-      React.createElement(
-        "div",
-        { className: "curator-pick-cards" },
-        React.createElement(PickSceneCard, {
-          meta: pair.scene_a,
-          picked: flashWinner === "a",
-          onPick: () => onAnswer("a"),
-          onFlag: () => onAnswer("flag_a"),
-        }),
-        React.createElement("span", { className: "curator-pick-vs", "aria-hidden": "true" }, "vs"),
-        React.createElement(PickSceneCard, {
-          meta: pair.scene_b,
-          picked: flashWinner === "b",
-          onPick: () => onAnswer("b"),
-          onFlag: () => onAnswer("flag_b"),
-        })
-      ),
-      React.createElement(
-        "div",
-        { className: "curator-pick-controls" },
-        React.createElement(
-          "div",
-          { className: "curator-pick-nav-group", role: "group", "aria-label": "Navigate picks" },
-          React.createElement(Button, { size: "sm", variant: "secondary", disabled: !canGoBack, onClick: onBack, title: "Undo the previous answer (Backspace)" }, "Back")
-        ),
-        React.createElement(
-          "div",
-          { className: "curator-pick-answer-group", role: "group", "aria-label": "Rate this comparison", title: "Keys: ←/→ pick · ↑ equal · ↓ skip" },
-          React.createElement(Button, { size: "sm", variant: "primary", title: "← pick", onClick: () => onAnswer("a") }, "← Left"),
-          React.createElement(Button, { size: "sm", variant: "primary", title: "→ pick", onClick: () => onAnswer("b") }, "Right →"),
-          React.createElement(Button, { size: "sm", variant: "secondary", title: "↑ equally appealing", onClick: () => onAnswer("tie") }, "Equal ↑"),
-          React.createElement(Button, { size: "sm", variant: "secondary", title: "↓ no opinion", onClick: () => onAnswer("skip") }, "Skip ↓")
-        )
-      ),
-      React.createElement(PairTagSentiment, { key: pair.pair_id, pair })
-    );
-  }
-
-  // Shared answer plumbing for both pick flows: flash, keyboard, and a
-  // single-pick commit buffer. Answers post as they happen — there is no
-  // submit gate — but the most recent one stays uncommitted briefly so Back
-  // can take it away without reversing feedback that already landed.
-  function usePickAnswers({ onCommitted }) {
-    const [flash, setFlash] = React.useState(null);
-    const [pending, setPending] = React.useState(null);
-    const [error, setError] = React.useState("");
-    const pendingRef = React.useRef(null);
-    pendingRef.current = pending;
-
-    const commit = React.useCallback(async (entry) => {
-      if (!entry) return;
-      try {
-        await operation({
-          operation: "submit_curation_picks",
-          round_id: entry.roundId,
-          picks: [entry.pick],
-        });
-        writeLastRound(entry.roundId, entry.dimension);
-        if (onCommitted) onCommitted(entry);
-      } catch (failure) {
-        setError(failure.message);
-      }
-    }, [onCommitted]);
-
-    // Idle commit: an answer left alone is no longer being second-guessed.
-    React.useEffect(() => {
-      if (!pending) return;
-      const timer = setTimeout(() => {
-        commit(pending);
-        setPending((current) => (current === pending ? null : current));
-      }, CURATE_COMMIT_IDLE_MS);
-      return () => clearTimeout(timer);
-    }, [pending, commit]);
-
-    // Navigating away must not silently drop the buffered answer.
-    React.useEffect(() => () => commit(pendingRef.current), [commit]);
-
-    return { flash, setFlash, pending, setPending, error, setError, commit };
-  }
-
-  function pickEntry(roundId, dimension, pairId, answer) {
-    const pick = answer === "flag_a" || answer === "flag_b"
-      ? { pair_id: pairId, winner: "flag", scene: answer === "flag_a" ? "a" : "b" }
-      : { pair_id: pairId, winner: answer };
-    return { roundId, dimension, pairId, answer, pick };
-  }
-
-  function CurateStream() {
-    const [queue, setQueue] = React.useState([]);
-    const [index, setIndex] = React.useState(0);
-    const [tally, setTally] = React.useState({ left: 0, right: 0, tie: 0, skip: 0 });
-    const [loading, setLoading] = React.useState(true);
-    const [exhausted, setExhausted] = React.useState(false);
-    const fetching = React.useRef(false);
-    const { flash, setFlash, pending, setPending, error, setError, commit } = usePickAnswers({});
-    useCuratorActivity("curate-stream", loading, "Finding comparisons…");
-
-    const fetchMore = React.useCallback(async () => {
-      if (fetching.current) return;
-      fetching.current = true;
-      try {
-        const round = await operation({
-          operation: "get_curation_picks",
-          dimension: "orthogonal",
-          budget: CURATE_STREAM_BUDGET,
-          base_tag_id: "",
-          context_tag_id: "",
-        });
-        const fetched = (round.pairs || []).map((pair) => ({ roundId: round.round_id, pair }));
-        if (!fetched.length) setExhausted(true);
-        else setQueue((current) => [...current, ...fetched]);
-      } catch (failure) {
-        setError(failure.message);
-      } finally {
-        fetching.current = false;
-        setLoading(false);
-      }
-    }, [setError]);
-
-    React.useEffect(() => { fetchMore(); }, [fetchMore]);
-    React.useEffect(() => {
-      if (!exhausted && !loading && queue.length - index <= CURATE_PREFETCH_MARGIN) fetchMore();
-    }, [queue.length, index, exhausted, loading, fetchMore]);
-
-    const entry = queue[index];
-
-    function answer(value) {
-      if (flash || !entry) return;
-      setFlash({ pairId: entry.pair.pair_id, winner: value });
-    }
-
-    function back() {
-      if (!pending || index === 0) return;
-      setPending(null);
-      setIndex((current) => current - 1);
-      setTally((current) => {
-        const key = { a: "left", b: "right", tie: "tie" }[pending.answer] || "skip";
-        return { ...current, [key]: Math.max(0, current[key] - 1) };
-      });
-    }
-
-    React.useEffect(() => {
-      if (!flash) return;
-      const timer = setTimeout(() => {
-        const current = queue[index];
-        setFlash(null);
-        if (!current) return;
-        // The previous answer is now settled; this one becomes the undoable one.
-        commit(pending);
-        setPending(pickEntry(current.roundId, "orthogonal", current.pair.pair_id, flash.winner));
-        setTally((counts) => {
-          const key = { a: "left", b: "right", tie: "tie" }[flash.winner] || "skip";
-          return { ...counts, [key]: counts[key] + 1 };
-        });
-        setIndex((value) => value + 1);
-      }, CURATE_FLASH_MS);
-      return () => clearTimeout(timer);
-    }, [flash]);
-
-    React.useEffect(() => {
-      function onKey(event) {
-        if (flash || !entry) return;
-        const key = { ArrowLeft: "a", ArrowRight: "b", ArrowUp: "tie", ArrowDown: "skip" }[event.key];
-        if (key) {
-          event.preventDefault();
-          answer(key);
-        } else if (event.key === "Backspace") {
-          event.preventDefault();
-          back();
-        }
-      }
-      window.addEventListener("keydown", onKey);
-      return () => window.removeEventListener("keydown", onKey);
-    }, [entry, flash, pending, index]);
-
-    const answered = tally.left + tally.right + tally.tie + tally.skip;
-    return React.createElement(
-      "div",
-      { className: "curator-pick" },
-      error && React.createElement("div", { className: "alert alert-danger" }, error),
-      loading && !entry && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding comparisons…")),
-      !loading && !entry && exhausted && React.createElement(
-        "div",
-        { className: "alert alert-info" },
-        React.createElement("p", null, answered > 0
-          ? `That is every comparison your library can offer right now — ${answered} answered this session.`
-          : "No useful comparisons are available yet. Rate a few scenes in Stash, sync your library, then try again."),
-        React.createElement("p", null, "New scenes, and the next model build, open up more.")
-      ),
-      entry && React.createElement(PickStage, {
-        pair: entry.pair,
-        flash,
-        onAnswer: answer,
-        onBack: back,
-        canGoBack: Boolean(pending) && index > 0,
-        status: `${answered} answered · left ${tally.left} · right ${tally.right} · equal ${tally.tie} · skipped ${tally.skip}`,
-      }),
-      // Warm the next pair's stills so advancing does not flash empty cards.
-      queue[index + 1] && React.createElement(
-        "div",
-        { className: "curator-pick-prefetch", "aria-hidden": "true" },
-        [queue[index + 1].pair.scene_a, queue[index + 1].pair.scene_b].map((scene) =>
-          React.createElement("img", { key: scene.scene_id, src: `/scene/${scene.scene_id}/screenshot`, alt: "", loading: "eager" })
-        )
-      )
-    );
-  }
-
   function CurateProgress({ onFixTag }) {
-    const [verdict, setVerdict] = React.useState(null);
     const [impact, setImpact] = React.useState(null);
     const [profile, setProfile] = React.useState(null);
     const [error, setError] = React.useState("");
     const [applying, setApplying] = React.useState(false);
-    const last = React.useRef(readLastRound()).current;
-    useCuratorActivity("curate-progress", !verdict && !error && Boolean(last), "Loading your impact…");
+    const [loaded, setLoaded] = React.useState(false);
+    useCuratorActivity("curate-progress", !loaded && !error, "Loading your impact…");
 
     const refresh = React.useCallback(async () => {
-      if (last) {
-        try {
-          setVerdict(await operation({
-            operation: "get_curation_pair_verdict",
-            round_id: last.round_id,
-          }));
-        } catch (failure) {
-          setError(failure.message);
-        }
-      }
       try {
         setImpact(await operation({ operation: "get_curation_impact" }));
       } catch (_) {
@@ -2270,9 +1901,10 @@
       try {
         setProfile(await operation({ operation: "get_taste_profile" }));
       } catch (_) {
-        // Needs a published model; the verdict and impact sections still work.
+        // Needs a published model; the impact section still works.
       }
-    }, [last]);
+      setLoaded(true);
+    }, []);
 
     React.useEffect(() => { refresh(); }, [refresh]);
 
@@ -2286,7 +1918,6 @@
       }
     }
 
-    const items = (verdict && verdict.items) || [];
     const profileItems = (profile && profile.items) || [];
     const answeredTags = profileItems.filter((tag) => tag.direct_value !== null).length;
     const blockedTags = profileItems.filter((tag) => tag.direct_blocked).length;
@@ -2304,31 +1935,12 @@
       "div",
       { className: "curator-curate-verdict" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      !last && profileItems.length === 0 && !(impact && impact.available) && React.createElement("div", { className: "alert alert-info" }, "No comparisons yet. Answer a few in Pair picks and this fills in."),
-      (verdict || profileItems.length > 0 || (impact && impact.available)) && React.createElement(
+      loaded && profileItems.length === 0 && !(impact && impact.available) && React.createElement("div", { className: "alert alert-info" }, "Nothing to report yet. Answer a few tags in Tag sentiment and this fills in."),
+      (profileItems.length > 0 || (impact && impact.available)) && React.createElement(
         "div",
         { className: "curator-impact-summary" },
-        verdict && React.createElement("span", null, `${verdict.n_answered} comparisons answered`),
         profileItems.length > 0 && React.createElement("span", null, `${answeredTags} tags answered${blockedTags > 0 ? ` · ${blockedTags} blocked` : ""}`),
         impact && impact.available && React.createElement("span", null, `Model built ${formatTimeAgo(impact.published_at_ms)}`)
-      ),
-      verdict && React.createElement("p", { className: "curator-pick-verdict-summary" },
-        `${verdict.n_answered} comparisons answered so far · win rates for the tags that differed between scenes`
-      ),
-      items.length > 0 && React.createElement(
-        "div",
-        { className: "curator-pick-verdict-grid" },
-        items.slice(0, 12).map((item) => React.createElement(CurationVerdictBar, {
-          key: item.tag_id || item.name,
-          label: item.name,
-          rate: item.win_rate,
-          wins: item.wins,
-          appearances: item.appearances,
-        }))
-      ),
-      verdict && items.length === 0 && React.createElement("p", null, "No tag has appeared in enough comparisons to report on yet."),
-      items.length > 0 && React.createElement("p", { className: "curator-pick-verdict-note" },
-        "Rates start near 50% and separate as comparisons accumulate, so an early lead is a hint rather than a verdict."
       ),
       divergences.length > 0 && React.createElement(
         "section",
@@ -2347,7 +1959,7 @@
       ),
       React.createElement(
         "div",
-        { className: "curator-pick-controls" },
+        { className: "curator-curate-actions" },
         React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: applyNow },
           applying ? "Applying…" : "Apply my answers to the model now"
         )
@@ -2362,7 +1974,6 @@
   function CuratePanel({ section, onSelectSection, sentimentQuery }) {
     const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
-      stream: () => React.createElement(CurateStream),
       sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery }),
       progress: () => React.createElement(CurateProgress, { onFixTag: (tagId) => onSelectSection("sentiment", { sentTag: tagId }) }),
     };

@@ -1184,31 +1184,6 @@ class CuratorAPI:
             "items": candidates[:limit],
         }
 
-    def curation_picks(
-        self,
-        dimension: str,
-        budget: int = 10,
-        base_tag_id: str | None = None,
-        context_tag_id: str | None = None,
-        performer_id: str | None = None,
-    ) -> dict[str, object]:
-        return curation.create_pair_round(
-            self.connection,
-            dimension,
-            budget,
-            base_tag_id,
-            context_tag_id,
-            performer_id,
-        )
-
-    def submit_curation_picks(
-        self, round_id: str, picks: list[dict[str, Any]]
-    ) -> dict[str, object]:
-        return curation.submit_picks(self.connection, round_id, picks)
-
-    def curation_pair_verdict(self, round_id: str) -> dict[str, object]:
-        return curation.pair_verdict(self.connection, round_id)
-
     def curation_impact(self) -> dict[str, object]:
         return curation.curation_impact(self.connection)
 

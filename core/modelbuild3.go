@@ -632,9 +632,6 @@ func modelSubConfig() jVal {
 		jvKey("content_bound", jvFloat(0.35)),
 		jvKey("cooldown_center_days", jvFloat(90.0)),
 		jvKey("cooldown_width_days", jvFloat(15.0)),
-		jvKey("curation_pair_confidence", jvFloat(curationPairConfidence)),
-		jvKey("curation_pair_ips_cap", jvFloat(curationPairIPSCap)),
-		jvKey("curation_pair_surprise_bonus", jvFloat(curationPairSurpriseBonus)),
 		jvKey("curation_rating_confidence", jvFloat(0.80)),
 		jvKey("impact_correction_confidence", jvFloat(impactCorrectionConfidence)),
 		jvKey("direct_confidence_scale", jvFloat(0.8)),
@@ -835,10 +832,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		}
 		labelMean = modelLabelMean(trainingLabels)
 		// modelAffinities' general per-scene loop is scoped to the absolute
-		// channel, so its own baseline must be too, or a pairwise pick
-		// anywhere in the corpus would still nudge every shared feature's
-		// affinity via labelMean even though the loop itself no longer
-		// touches that feature for a given comparison.
+		// channel, so its own baseline is too.
 		absoluteLabelMean := modelAbsoluteLabelMean(trainingLabels)
 		affinities, err = modelAffinities(db, sceneFeatures, trainingLabels, absoluteLabelMean)
 		return err

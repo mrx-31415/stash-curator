@@ -1000,8 +1000,6 @@ func (c *scoringContext) scoreScene(sceneID string) buildModelScore {
 	componentTotal := sumFloats(componentValues)
 	general := softBound(componentTotal, 1.0)
 	direct := c.labels[sceneID]
-	// Absolute channel only: a pairwise pick is evidence about the features
-	// that differed, not a verdict on this scene's own appeal.
 	exactConfidence := directConfidenceOf(direct.absoluteEvidence)
 	appeal := blendAppealOf(general, direct.absoluteOutcome, exactConfidence)
 	last, played := c.lastPlayed[sceneID]

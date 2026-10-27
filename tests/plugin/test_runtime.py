@@ -519,28 +519,25 @@ def test_taste_profile_uses_fixed_durable_tag_sentiment_control() -> None:
     assert 'value: "taste"' not in source
 
 
-def test_curate_lane_renders_sectioned_stream() -> None:
+def test_curate_lane_renders_sections_without_pair_picks() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
     assert 'value: "curate"' in source
-    # Curate is a sectioned view now: the old landing screen forced a choice
-    # between "Random round" and "Pick-test a hypothesis", which are the same
-    # activity with a different pair-selection filter.
     assert "const CURATE_SECTIONS = [" in source
-    for section in ("stream", "sentiment", "progress"):
-        assert f'value: "{section}"' in source
-    # Section values stay stable; labels moved to Pair picks / Impact and
-    # Tag sentiment became a real section (issue #241) — no Manage goto.
-    assert 'label: "Pair picks"' in source
-    assert 'label: "Impact"' in source
     curate_sections_block = source.split("const CURATE_SECTIONS = [", 1)[1].split("];", 1)[0]
+    # Tag sentiment is the first section, so an old section=stream link (the
+    # retired Pair picks) falls back to it.
+    assert curate_sections_block.index('value: "sentiment"') < curate_sections_block.index(
+        'value: "progress"'
+    )
+    assert 'value: "stream"' not in curate_sections_block
+    assert 'label: "Impact"' in curate_sections_block
     assert 'value: "hypothesis"' not in curate_sections_block
     assert "goto" not in curate_sections_block
+    assert "|| CURATE_SECTIONS[0]" in source
     # The Manage "Sentiment review" maintenance item is a different surface and
     # must survive the Curate section changes.
     assert 'label: "Sentiment review"' in source
-    assert 'React.createElement("strong", null, "Random round")' not in source
-    assert 'variant: "primary", disabled: picksBusy, onClick: () => generatePicks' not in source
     assert "curateTab" not in source
     assert "function SectionShell(" in source
     assert '"aria-label": "Curate sections"' in source
@@ -551,8 +548,8 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     # Curate and Manage share ?section=, so switching views must clear it.
     assert '["performer", "label", "id", "type", "section"]' in source
 
-    # Impact view (renamed from Progress): full-curate-outcome summary plus
-    # declared-vs-inferred divergence with a jump into Tag sentiment.
+    # Impact view: full-curate-outcome summary plus declared-vs-inferred
+    # divergence with a jump into Tag sentiment.
     assert "function CurateProgress({ onFixTag })" in source
     assert "curator-impact-summary" in source
     assert "curator-sentiment-divergence" in source
@@ -560,69 +557,32 @@ def test_curate_lane_renders_sectioned_stream() -> None:
     assert "Fix in Tag sentiment" in source
     assert "Math.abs(Number(tag.direct_value) - Number(tag.inferred_value)) >= 0.3" in source
     assert "sentTag" in source
-
-    # The stream: answers post as they happen, with one buffered for undo.
-    assert "function CurateStream()" in source
-    assert "function usePickAnswers(" in source
-    assert "CURATE_COMMIT_IDLE_MS" in source
-    assert "CURATE_PREFETCH_MARGIN" in source
-    assert "Submit picks" not in source
-    assert "picksUndo" not in source
-    assert "forwardPicks" not in source
-    assert 'event.key === "Backspace"' in source
-    assert "curator-pick-prefetch" in source
-
-    assert "PickSceneCard" in source
-    assert "function PickStage(" in source
-    for key in ("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"):
-        assert f'{key}: "' in source
-    assert "← Left" in source
-    assert "Equal ↑" in source
-    assert "Skip ↓" in source
-    assert "CURATE_FLASH_MS" in source
-    assert "setFlash" in source
-    assert "curator-pick-video" in source
-    assert "curator-pick-info" in source
-    assert "curator-pick-cover" in source
-    assert "poster: `/scene/${meta.scene_id}/screenshot`" in source
-    assert "meta.performers" in source
-    assert "Metadata wrong" in source
-    assert "curator-pick-flag" in source
-    assert 'winner: "flag"' in source
-    assert "curator-pick-selected" in source
-
-    # A tie is an answer, not a discard.
-    assert 'onAnswer("tie")' in source
-    assert '{ ArrowUp: "tie"' not in source or 'ArrowUp: "tie"' in source
-
-    # In-context tag sentiment on the comparison screen (GH #153 problem 2).
-    assert "function PairTagSentiment(" in source
-    assert "curator-pick-tag-strip" in source
-    assert "TagSentimentControl" in source
-
-    assert 'operation: "get_curation_picks"' in source
-    assert 'operation: "submit_curation_picks"' in source
-    assert 'operation: "get_curation_pair_verdict"' in source
     assert 'operation: "get_curation_impact"' in source
     assert "ImpactReport" in source
-    # The dropped "Test an idea" section's suggestion plumbing is gone.
-    assert 'operation: "get_tag_context_candidates"' not in source
-    assert "loadSuggestions" not in source
-    assert "Ideas Curator is unsure about" not in source
+    assert "What your feedback moved" in source
 
-    # The Curate nudge banner on For You is removed; the lane nav already
-    # surfaces Curate, and the banner retired only via buried signals.
+    # Pair picks are retired end to end: no stream, verdicts, or pick ops.
+    for retired in (
+        'label: "Pair picks"',
+        "function CurateStream(",
+        "function PickStage(",
+        "PickSceneCard",
+        "PairTagSentiment",
+        "usePickAnswers",
+        "CurationVerdictBar",
+        "curator-pick",
+        "get_curation_picks",
+        "submit_curation_picks",
+        "get_curation_pair_verdict",
+        "last-pick-round",
+    ):
+        assert retired not in source, retired
+    # Earlier retirements stay retired.
+    assert 'operation: "get_tag_context_candidates"' not in source
     assert "CurateNudge" not in source
-    assert "CURATE_NUDGE_KEY" not in source
-    assert "MAX_NUDGE_ROUNDS" not in source
-    assert "curator-curate-nudge" not in source
-    # The scene-batch rating flow stays retired, and the round-scoped picks
-    # cache is gone with the submit gate.
     assert "get_curation_batch" not in source
     assert "submit_curation_ratings" not in source
     assert "CurationSceneCard" not in source
-    assert "CURATION_STATE_KEY" not in source
-    assert "PICKS_STATE_KEY" not in source
 
 
 def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_traces() -> None:

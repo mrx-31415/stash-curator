@@ -10,6 +10,7 @@ import curator.model.builder as builder_module
 from curator.cli import run
 from curator.config import DEFAULT_CONFIG
 from curator.explanations import ReasonGraphStore
+from curator.features import FeatureStore
 from curator.interactions import InteractionStore
 from curator.model import PreferenceModelBuilder, RecommendationModelStore
 from curator.storage import MigrationRunner, connect_database
@@ -233,220 +234,92 @@ def test_soft_bound_keeps_saturated_components_comparable() -> None:
     assert builder_module._soft_bound(5.0, 0.0) == pytest.approx(0.0)
 
 
-def test_curation_pair_labels_surprise_confidence(tmp_path: Path) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    # 'unseen-good' beats 'unlabeled'; both carry tag 'good' (the shared-tag
-    # cancellation precondition: +1 and -1 with equal confidence net to zero
-    # in the affinity accumulation). The pick contradicts the model ordering
-    # (pred_loser 0.3 > pred_winner 0.1), so surprise = 0.2.
-    connection.execute(
-        """
-        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
-            occurred_at_ms, payload_json)
-        VALUES ('cpw-1', 'unseen-good', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "p1", "round_id": "r1", "dimension": "tag",
-                  "predicted_winner": 0.1, "predicted_loser": 0.3,
-                  "selection_probability": 1.0}'),
-               ('cpl-1', 'unlabeled', 'curation_pair_loser', '0', 1,
-                '{"pair_id": "p1", "round_id": "r1", "dimension": "tag",
-                  "predicted_winner": 0.1, "predicted_loser": 0.3,
-                  "selection_probability": 1.0}')
-        """
-    )
-    labels = PreferenceModelBuilder(
-        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
-    )._scene_labels()
-    winner, loser = labels["unseen-good"], labels["unlabeled"]
-    assert winner.outcome == pytest.approx(1.0)
-    assert loser.outcome == pytest.approx(-1.0)
-    assert winner.signal_types == ("curation_pair_winner",)
-    assert loser.signal_types == ("curation_pair_loser",)
-    # 0.10 * (1 + 2*0.2) * min(1, 1/1.0) = 0.14.
-    assert winner.effective_evidence == pytest.approx(0.14)
-    assert loser.effective_evidence == pytest.approx(0.14)
-    assert winner.confidence == pytest.approx(1 - math.exp(-0.14))
-
-
-def test_pair_confidence_does_not_saturate_at_realistic_probabilities(
-    tmp_path: Path,
-) -> None:
-    """A pick's confidence must stay off the 1.0 ceiling for the selection
-    probabilities rounds actually produce.
-
-    Pairs are drawn from a large candidate pool, so 1/selection_probability
-    always exceeds the IPS cap and the cap term is effectively constant. If
-    base * cap reaches 1.0, every comparison clamps: the surprise bonus stops
-    differentiating informative picks from confirmatory ones, and each pick
-    enters affinity learning at maximum weight regardless of what it told us.
-    """
-    connection = _database(tmp_path / "curator.sqlite3")
-    # p=0.01 is typical: 1/p = 100, far above the cap, so the cap binds.
-    connection.execute(
-        """
-        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
-            occurred_at_ms, payload_json)
-        VALUES ('cpw-sat', 'unseen-good', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "psat", "predicted_winner": 0.1,
-                  "predicted_loser": 0.1, "selection_probability": 0.01}'),
-               ('cpl-sat', 'unlabeled', 'curation_pair_loser', '0', 1,
-                '{"pair_id": "psat", "predicted_winner": 0.1,
-                  "predicted_loser": 0.1, "selection_probability": 0.01}'),
-               ('cpw-sur', 'old-good', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "psur", "predicted_winner": 0.1,
-                  "predicted_loser": 0.9, "selection_probability": 0.01}'),
-               ('cpl-sur', 'disliked', 'curation_pair_loser', '0', 1,
-                '{"pair_id": "psur", "predicted_winner": 0.1,
-                  "predicted_loser": 0.9, "selection_probability": 0.01}')
-        """
-    )
-    events = {
-        event.winner_scene: event.confidence
-        for event in PreferenceModelBuilder(
-            connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
-        )._pair_events()
-    }
-    unsurprising = events["unseen-good"]
-    surprising = events["old-good"]
-    assert unsurprising == pytest.approx(0.10)
-    assert surprising == pytest.approx(0.26)
-    assert surprising < 1.0
-    # Surprise still moves the number: at the ceiling it could not.
-    assert surprising > unsurprising
-    # The guarantee in config terms, independent of these fixtures: a
-    # zero-surprise pick at any realistic probability stays off the ceiling.
-    assert (
-        DEFAULT_CONFIG.model.curation_pair_confidence * DEFAULT_CONFIG.model.curation_pair_ips_cap
-    ) < 1.0
-
-
 def test_pairwise_affinity_skips_shared_features_and_signals_differing_ones(
     tmp_path: Path,
 ) -> None:
-    """A comparison's Bradley-Terry gradient must land only on what differed
+    """An implicit comparison's gradient must land only on what differed
     between the two scenes. old-good (tag good, performer p1, studio studio-1)
     and unseen-good (tag good, performer p3, studio studio-2) share tag
     'good': its affinity must be completely unaffected by the pair. performer
     p1 (winner-only) must gain support from the comparison, and performer p3
-    (loser-only, previously absent from feature_affinity since neither scene
-    carrying it had any other evidence) must appear with a negative affinity."""
+    (loser-only, absent before since neither scene carrying it had any other
+    evidence) must appear with a negative affinity."""
     connection = _database(tmp_path / "curator.sqlite3")
     builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
-    baseline = builder.build()
+    feature_version = builder.build().feature_version
+    feature_ids = {
+        str(name): str(feature_id)
+        for name, feature_id in connection.execute(
+            "SELECT name, feature_id FROM feature_definition"
+        )
+    }
 
-    def affinity(model_id: str, name: str) -> tuple[float, float] | None:
-        row = connection.execute(
-            """
-            SELECT a.affinity, a.effective_support FROM feature_affinity a
-            JOIN feature_definition d USING(feature_id)
-            WHERE a.model_id=? AND d.name=?
-            """,
-            (model_id, name),
-        ).fetchone()
-        return (float(row[0]), float(row[1])) if row is not None else None
+    def affinities() -> dict[str, tuple[float, float]]:
+        labels = builder._training_labels(builder._scene_labels())
+        scene_features = FeatureStore(connection).entity_features(feature_version, "scene")
+        result = builder._affinities(scene_features, labels, builder._absolute_label_mean(labels))
+        return {
+            name: (result[feature_id].affinity, result[feature_id].support)
+            for name, feature_id in feature_ids.items()
+            if feature_id in result
+        }
 
-    tag_good_before = affinity(baseline.model_id, "tag:good")
-    performer_p1_before = affinity(baseline.model_id, "performer:p1")
-    assert tag_good_before is not None
-    assert performer_p1_before is not None
-    assert affinity(baseline.model_id, "performer:p3") is None
+    before = affinities()
+    assert "tag:good" in before
+    assert "performer:p1" in before
+    assert "performer:p3" not in before
 
+    # old-good played from position 1 beats unseen-good shown above it.
     connection.execute(
         """
-        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
-            occurred_at_ms, payload_json)
-        VALUES ('cpw-shared', 'old-good', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "pfx1", "predicted_winner": 0.1, "predicted_loser": 0.1,
-                  "selection_probability": 1.0}'),
-               ('cpl-shared', 'unseen-good', 'curation_pair_loser', '0', 1,
-                '{"pair_id": "pfx1", "predicted_winner": 0.1, "predicted_loser": 0.1,
-                  "selection_probability": 1.0}')
+        INSERT INTO impression(impression_id, requested_at_ms, lane, config_version)
+        VALUES ('imp-shared', 1, 'for_you', 'builtin')
         """
     )
-    after = builder.build()
-    assert after.model_id != baseline.model_id
+    connection.executemany(
+        """
+        INSERT INTO impression_item(impression_id, scene_id, position, policy_score,
+            reason_snapshot_json) VALUES (?, ?, ?, ?, '[]')
+        """,
+        (("imp-shared", "unseen-good", 0, 0.1), ("imp-shared", "old-good", 1, 0.1)),
+    )
+    connection.execute(
+        """
+        INSERT INTO play_session(session_id, scene_id, started_at_ms, ended_at_ms,
+            active_seconds, provenance, confidence, impression_id, summary_json)
+        VALUES ('ps-shared', 'old-good', 100, 200, 10.0, 'direct_player', 1,
+                'imp-shared', '{}')
+        """
+    )
+    after = affinities()
+    assert after["tag:good"] == pytest.approx(before["tag:good"])
+    assert after["performer:p1"][1] > before["performer:p1"][1]
+    assert after["performer:p3"][0] < 0
 
-    tag_good_after = affinity(after.model_id, "tag:good")
-    performer_p1_after = affinity(after.model_id, "performer:p1")
-    performer_p3_after = affinity(after.model_id, "performer:p3")
-    assert tag_good_after == pytest.approx(tag_good_before)
-    assert performer_p1_after is not None
-    assert performer_p1_after[1] > performer_p1_before[1]
-    assert performer_p3_after is not None
-    assert performer_p3_after[0] < 0
 
-
-def test_curation_pair_labels_never_become_absolute_sentiment(tmp_path: Path) -> None:
-    """A pick is relative evidence about the features that differed. It trains
-    affinities through the full-signal channel, but must not materialize as the
-    scene's own appeal — otherwise losing one comparison against a better scene
-    marks a scene strongly disliked in Sentiment review and Prune."""
+def test_retired_pair_pick_feedback_is_ignored(tmp_path: Path) -> None:
+    """Answered pair picks stay in feedback as history but no longer teach the
+    model: they add no scene label and no pair event."""
     connection = _database(tmp_path / "curator.sqlite3")
+    builder = PreferenceModelBuilder(connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS)
+    labels_before = builder._scene_labels()
     connection.execute(
         """
         INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
             occurred_at_ms, payload_json)
-        VALUES ('cpw-3', 'unseen-good', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "p3", "round_id": "r3", "dimension": "tag",
-                  "predicted_winner": 0.1, "predicted_loser": 0.3,
-                  "selection_probability": 1.0}'),
-               ('cpl-3', 'disliked', 'curation_pair_loser', '0', 1,
-                '{"pair_id": "p3", "round_id": "r3", "dimension": "tag",
-                  "predicted_winner": 0.1, "predicted_loser": 0.3,
-                  "selection_probability": 1.0}')
+        VALUES ('cpw-old', 'unlabeled', 'curation_pair_winner', '10', 1,
+                '{"pair_id": "p-old", "predicted_winner": 0.1,
+                  "predicted_loser": 0.3, "selection_probability": 1.0}'),
+               ('cpl-old', 'disliked', 'curation_pair_loser', '0', 1,
+                '{"pair_id": "p-old", "predicted_winner": 0.1,
+                  "predicted_loser": 0.3, "selection_probability": 1.0}'),
+               ('cpt-old', 'unusual', 'curation_pair_tie', '5', 1, '{"pair_id": "p-tie"}')
         """
     )
-    labels = PreferenceModelBuilder(
-        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
-    )._scene_labels()
-    winner = labels["unseen-good"]
-    # Learning channel keeps the ±1 gradient and its evidence.
-    assert winner.outcome == pytest.approx(1.0)
-    assert winner.effective_evidence > 0
-    # Absolute channel sees no non-pair signal at all, so the scene keeps the
-    # model's own prediction rather than a fabricated 10/10.
-    assert winner.absolute_outcome == pytest.approx(0.0)
-    assert winner.absolute_evidence == pytest.approx(0.0)
-    # A scene carrying its own feedback keeps that as its absolute sentiment,
-    # with only the learning channel moved by the pick it took part in.
-    thumbed = labels["disliked"]
-    assert "curation_pair_loser" in thumbed.signal_types
-    assert thumbed.absolute_outcome == pytest.approx(-1.0)
-    assert thumbed.absolute_evidence < thumbed.effective_evidence
-
-
-def test_curation_pair_confidence_clamps_only_at_extreme_surprise(
-    tmp_path: Path,
-) -> None:
-    """The 1.0 ceiling is a bound for outliers, not the value every pick takes.
-
-    A confirming pick at a low selection probability sits well under it: the
-    IPS term is capped, so the result is base * cap. Even a maximally
-    surprising pick — the model predicted the opposite outcome outright —
-    stays under the ceiling at the weak deliberate-pick base, so picks never
-    clamp and the surprise term always differentiates them.
-    """
-    connection = _database(tmp_path / "curator.sqlite3")
-    connection.execute(
-        """
-        INSERT INTO feedback(feedback_id, scene_id, feedback_type, value,
-            occurred_at_ms, payload_json)
-        VALUES ('cpw-2', 'unusual', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "p2", "round_id": "r2", "dimension": "performer",
-                  "predicted_winner": 0.3, "predicted_loser": 0.1,
-                  "selection_probability": 0.25}'),
-               ('cpw-x', 'unlabeled', 'curation_pair_winner', '10', 1,
-                '{"pair_id": "px", "round_id": "rx", "dimension": "performer",
-                  "predicted_winner": -1.0, "predicted_loser": 1.0,
-                  "selection_probability": 0.25}')
-        """
-    )
-    labels = PreferenceModelBuilder(
-        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
-    )._scene_labels()
-    # surprise 0, IPS capped: 0.10 * 1 * min(1, 1/0.25) = 0.10 — no clamp.
-    assert labels["unusual"].effective_evidence == pytest.approx(0.10)
-    # surprise 2.0: 0.10 * (1 + 2*2.0) * 1 = 0.50 — still well under the ceiling.
-    assert labels["unlabeled"].effective_evidence == pytest.approx(0.50)
+    labels_after = builder._scene_labels()
+    assert labels_after == labels_before
+    assert "unlabeled" not in labels_after
+    assert builder._implicit_skip_events() == []
 
 
 def test_satiation_content_dots_match_naive_recent_loop() -> None:
@@ -1004,7 +877,7 @@ def test_implicit_skip_events_emit_virtual_pairs(tmp_path: Path) -> None:
     """Issue #146 Channel A: a play at position P in an impression makes every
     earlier-position card a loser and the played card the winner. Confidence
     uses the stored policy_score gap (contradiction > 0, confirmation ~ 0) with
-    the implicit base (half the deliberate-pick base)."""
+    the implicit base."""
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(
         """
@@ -1049,10 +922,9 @@ def test_implicit_skip_events_emit_virtual_pairs(tmp_path: Path) -> None:
         DEFAULT_CONFIG.model.implicit_skip_confidence
         * (1 + DEFAULT_CONFIG.model.implicit_skip_surprise_bonus * 0.5)
     )
-    # Implicit signal never outranks explicit: the base is half the deliberate
-    # pick base, so at equal surprise implicit confidence stays below explicit.
+    # Implicit signal never outranks explicit feedback.
     assert DEFAULT_CONFIG.model.implicit_skip_confidence < (
-        DEFAULT_CONFIG.model.curation_pair_confidence
+        DEFAULT_CONFIG.model.curation_rating_confidence
     )
 
 

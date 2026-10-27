@@ -108,9 +108,6 @@ class ModelConfig:
     studio_favorite_prior: float = 0.04
     scene_rating_confidence: float = 0.90
     curation_rating_confidence: float = 0.80
-    curation_pair_confidence: float = 0.10
-    curation_pair_surprise_bonus: float = 2.0
-    curation_pair_ips_cap: float = 1.0
     # Deliberate "this impact move is wrong" correction: a per-scene signal the
     # user posts from the impact report to pull a wrongly promoted/demoted
     # scene back toward its true appeal. Stronger than an implicit signal but
@@ -119,10 +116,10 @@ class ModelConfig:
     impact_correction_confidence: float = 0.60
     # Implicit negatives from impressions (#146 Channel A). When a recommended
     # scene is played or thumbed, the passed-over earlier-position cards in the
-    # same impression are treated as weak pairwise losers. The base is half the
-    # deliberate-pick base (curation_pair_confidence) so implicit signal never
-    # outranks explicit feedback; the issue author flagged it may need to be
-    # even weaker after live measurement. Config-backed so it can be tuned.
+    # same impression are treated as weak pairwise losers. The base is kept
+    # far below explicit feedback (thumbs, ratings) so implicit signal never
+    # outranks it; the issue author flagged it may need to be even weaker
+    # after live measurement. Config-backed so it can be tuned.
     implicit_skip_confidence: float = 0.075
     implicit_skip_surprise_bonus: float = 2.0
     implicit_skip_ips_cap: float = 2.0

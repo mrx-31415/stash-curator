@@ -1,6 +1,9 @@
 # Workpackage: Pairwise picks (ELO-style comparison + smooth decomposition)
 
-Status: planned. Builds on the curation loop
+Status: **retired (2026-10-26)**, see `docs/decisions/005-retire-pair-picks.md`.
+Kept as the design record of the delivered feature.
+
+Original status: planned. Builds on the curation loop
 (`docs/workpackage-curation-loop.md`, shipped): the new piece is a "Pick"
 interaction where the user compares two scenes (left/right) instead of rating
 them, plus the pair-selection and label-conversion machinery that turns those

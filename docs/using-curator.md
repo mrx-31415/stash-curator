@@ -202,18 +202,9 @@ evidence strength, not the probability of enjoyment.
 
 ## Curate
 
-Curate brings together Pair picks, Tag sentiment, and Impact.
-
-### Pair picks
-
-<figure class="capture guide-capture">
-  <img src="{{ '/assets/showcase-curate-poster.jpg' | relative_url }}" alt="Pair picks showing two scenes and the Left, Right, Equal, and Skip choices" width="960" height="524" loading="lazy">
-  <figcaption>Pair picks puts two scenes side by side for a quick choice.</figcaption>
-</figure>
-
-Choosing between two scenes teaches shared preferences across their tags, performers,
-and studios. Pick **Left** or **Right**, choose **Equal**, or **Skip** if you have no
-opinion. The arrow keys do the same; **Back** or Backspace undoes the previous answer.
+Curate brings together Tag sentiment and Impact. Pair picks have been retired;
+answers you gave earlier stay in **Manage → Feedback history** but no longer change
+recommendations.
 
 ### Tag sentiment
 
