@@ -182,13 +182,13 @@ const load = (tree) => tree.children[1].children.at(-1).props.onClick();
   top = 0;
   props.cards = true;
   props.onRemove = () => {};
-  props.onThumbDown = () => {};
+  props.onReaction = () => {};
   tree = render();
   assert.equal(tree.children[0].type, "section");
   assert.equal(tree.children[0].props.className, "curator-grid curator-endless-cards");
   const firstCard = tree.children[0].children[0][0];
   assert.equal(firstCard.props.onRemove, props.onRemove);
-  assert.equal(firstCard.props.onThumbDown, props.onThumbDown);
+  assert.equal(firstCard.props.onReaction, props.onReaction);
   assert.equal(listeners.size, 2); // Cards track scroll and pagehide; they do not measure rows.
   next = { ...slate, page: 2, items: [{ scene_id: "121", impression_id: "second" }], has_more: false };
   await load(tree);

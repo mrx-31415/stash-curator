@@ -2526,10 +2526,13 @@
 
   // The scene's tags that say most about it in this direction: strongest
   // taste first (likes for Hits, dislikes for Misses). Generic tags carry
-  // little learned taste, so they sort last.
+  // little learned taste, so they sort last. Only content tags (the ones in
+  // the taste profile) are offered, so utility tags like a sync marker never
+  // show up; without a profile every tag is offered.
   function sceneReasonTags(scene, taste, mode) {
     const sign = mode === "hits" ? 1 : -1;
     return scene.tags
+      .filter((tag) => !taste.size || taste.has(tag.id))
       .map((tag) => ({ ...tag, taste: taste.get(tag.id) ?? 0 }))
       .sort((left, right) => sign * (right.taste - left.taste) || left.name.localeCompare(right.name))
       .slice(0, SCENE_REASON_TAGS);
@@ -2772,6 +2775,100 @@
     );
   }
 
+  // After a thumbs up or down: the same one-tap reasons as Why these?, for
+  // the scene just rated. Optional; Done saves a scene reason, and a thumbs
+  // down can still say the scene's metadata is wrong instead.
+  function SceneReasonFollowUp({ followUp, onDismiss }) {
+    const [scene, setScene] = React.useState(null);
+    const [taste, setTaste] = React.useState(new Map());
+    const [picked, setPicked] = React.useState(new Set());
+    const [missing, setMissing] = React.useState([]);
+    const [status, setStatus] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const liked = followUp.polarity > 0;
+    React.useEffect(() => {
+      let current = true;
+      stashQuery(SCENE_REASON_SCENES_QUERY, { ids: [Number(followUp.scene_id)] })
+        .then((data) => { if (current) setScene(data.findScenes.scenes[0] || false); })
+        .catch(() => { if (current) setScene(false); });
+      operation({ operation: "get_taste_profile" })
+        .then((profile) => { if (current) setTaste(new Map((profile.items || []).map((item) => [item.tag_id, Number(item.direct_value ?? item.inferred_value) || 0]))); })
+        .catch(() => {});
+      return () => { current = false; };
+    }, [followUp.scene_id]);
+    function toggle(key) {
+      setPicked((current) => {
+        const next = new Set(current);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+    }
+    function done() {
+      const reasons = [...picked].map((key) => {
+        const [subject_type, subject_id = ""] = key.split(":");
+        return { subject_type, subject_id };
+      });
+      for (const tag of missing) reasons.push({ subject_type: "missing_tag", subject_id: tag.id });
+      submitSceneReason({ scene_id: followUp.scene_id, polarity: followUp.polarity, flipped: false, reasons });
+      onDismiss();
+    }
+    async function metadataWrong() {
+      setBusy(true);
+      try {
+        await operation({
+          operation: "submit_feedback",
+          entries: [{
+            feedback_id: uuid(),
+            scene_id: followUp.scene_id,
+            feedback_type: "metadata_wrong",
+            value: "Do not train from this metadata",
+            occurred_at_ms: Date.now(),
+          }],
+        });
+        scheduleModelUpdate();
+        onDismiss();
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    if (scene === false) return null;
+    const tone = liked ? "hit" : "miss";
+    const chip = (key, label, image) => React.createElement(ReasonChip, {
+      key, tone, image, pressed: picked.has(key), onClick: () => toggle(key),
+    }, label);
+    return React.createElement(
+      "aside",
+      { className: "curator-tag-follow-up curator-reason-follow-up alert alert-secondary", "aria-label": liked ? "What made it work?" : "What put you off?" },
+      React.createElement("div", { className: "curator-tag-follow-up-heading" },
+        React.createElement("strong", null, liked ? "What made it work?" : "What put you off?"),
+        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss" }, "×")
+      ),
+      React.createElement("p", null, scene ? `${scene.title || scene.files?.[0]?.basename || `Scene ${scene.id}`} · optional, tap any that apply.` : "Loading the scene…"),
+      scene && React.createElement(
+        "div", { className: "curator-reason-group", role: "group", "aria-label": "Reasons" },
+        scene.performers.slice(0, SCENE_REASON_PERFORMERS).map((performer) => chip(`performer:${performer.id}`, performer.name, performer.image_path)),
+        sceneReasonTags(scene, taste, liked ? "hits" : "misses").map((tag) => chip(`tag:${tag.id}`, tag.name)),
+        scene.studio && chip(`studio:${scene.studio.id}`, scene.studio.name),
+        missing.map((tag) => React.createElement(ReasonChip, {
+          key: `missing-${tag.id}`, tone, pressed: true,
+          onClick: () => setMissing((current) => current.filter((item) => item.id !== tag.id)),
+        }, `+ ${tag.name}`)),
+        chip("scene", "Just this scene")
+      ),
+      scene && React.createElement(MissingTagPicker, { picked: missing, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+      React.createElement(
+        "div",
+        { className: "curator-tag-follow-up-actions" },
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: picked.size + missing.length === 0, onClick: done }, "Done"),
+        !liked && React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: metadataWrong }, "Metadata is wrong"),
+        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Skip")
+      ),
+      status && React.createElement("small", { role: "status" }, status)
+    );
+  }
+
   function CurateProgress({ onFixTag }) {
     const [impact, setImpact] = React.useState(null);
     const [profile, setProfile] = React.useState(null);
@@ -2897,67 +2994,6 @@
         React.createElement("p", null, active.description)
       ),
       bodies[active.value]()
-    );
-  }
-
-  function TagSentimentFollowUp({ followUp, onDismiss }) {
-    const [selected, setSelected] = React.useState(null);
-    const [answers, setAnswers] = React.useState({});
-    const [status, setStatus] = React.useState("");
-    const [busy, setBusy] = React.useState(false);
-    function answer(tag, {value, blocked}) {
-      submitTagPreference(tag.tag_id, {value, blocked});
-      setAnswers((current) => ({ ...current, [tag.tag_id]: {value, blocked} }));
-      setSelected(null);
-      setStatus(`${tag.name} answer queued`);
-    }
-    async function metadataWrong() {
-      setBusy(true);
-      try {
-        await operation({
-          operation: "submit_feedback",
-          entries: [{
-            feedback_id: uuid(),
-            scene_id: followUp.scene_id,
-            feedback_type: "metadata_wrong",
-            value: "Do not train from this metadata",
-            occurred_at_ms: Date.now(),
-          }],
-        });
-        scheduleModelUpdate();
-        onDismiss();
-      } catch (error) {
-        setStatus(error.message);
-      } finally {
-        setBusy(false);
-      }
-    }
-    return React.createElement(
-      "aside",
-      { className: "curator-tag-follow-up alert alert-secondary", "aria-label": "Help Curator understand why" },
-      React.createElement("div", { className: "curator-tag-follow-up-heading" },
-        React.createElement("strong", null, "Help Curator understand why"),
-        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss tag follow-up" }, "×")
-      ),
-      React.createElement("p", null, "Was a content tag part of the problem? This is optional."),
-      followUp.items.map((tag) =>
-        React.createElement(
-          "div",
-          { key: tag.tag_id, className: "curator-tag-follow-up-item" },
-          React.createElement(Button, { size: "sm", variant: selected === tag.tag_id ? "primary" : "secondary", onClick: () => setSelected(selected === tag.tag_id ? null : tag.tag_id) }, tag.name),
-          Object.hasOwn(answers, tag.tag_id) && React.createElement("small", null, `Answered: ${answers[tag.tag_id]?.blocked ? "Blocked" : SENTIMENTS.find(([value]) => value === answers[tag.tag_id]?.value)?.[1]}`),
-          selected === tag.tag_id && React.createElement(TagSentimentControl, { tag, value: answers[tag.tag_id]?.value, blocked: answers[tag.tag_id]?.blocked, compact: true, onChange: (value) => answer(tag, value) })
-        )
-      ),
-      React.createElement(
-        "div",
-        { className: "curator-tag-follow-up-actions" },
-        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "None of these"),
-        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Something scene-specific"),
-        React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: metadataWrong }, "Metadata is wrong"),
-        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Skip")
-      ),
-      status && React.createElement("small", { role: "status" }, status)
     );
   }
 
@@ -3255,7 +3291,7 @@
     );
   });
 
-  function Feedback({ item, onRemove, onThumbDown, compact = false }) {
+  function Feedback({ item, onRemove, onReaction, compact = false }) {
     const [saved, setSaved] = React.useState("");
     const [reaction, setReaction] = React.useState("");
     const [busy, setBusy] = React.useState(false);
@@ -3276,13 +3312,8 @@
           ],
         });
         scheduleModelUpdate();
-        if (feedbackType === "thumb_down" && onThumbDown) {
-          const followUp = await operation({
-            operation: "get_tag_sentiment_follow_up",
-            scene_id: item.scene_id,
-            limit: 3,
-          }).catch(() => ({ scene_id: item.scene_id, items: [] }));
-          onThumbDown(followUp);
+        if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction) {
+          onReaction({ scene_id: String(item.scene_id), polarity: feedbackType === "thumb_up" ? 1 : -1 });
         }
         setSaved(feedbackType === "thumb_up" || !onRemove ? "Saved" : "Removed from this view");
         setReaction(feedbackType);
@@ -3709,7 +3740,7 @@
       if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: entry.scene_id, impression_id: entry.item.impression_id, lane: entry.slate.lane, impression_position: entry.item.position, model_id: entry.slate.model_id }));
     } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
   }
-  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onThumbDown }) {
+  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onReaction }) {
     // Key by the lane the slate was served for: on a lane switch this renders
     // once with the new lane prop but the previous lane's slate, and keying by
     // the prop saved those items as the new lane's restore point.
@@ -3873,7 +3904,7 @@
     const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
     return React.createElement("div", { style: { position: "relative", paddingTop: startPage > slate.page ? "2.5rem" : 0 } },
       cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
-        entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onThumbDown }))
+        entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction }))
       ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
         React.createElement("div", { ref: grid, className: "curator-preview-wall", style: { position: "absolute", top: range.offset, width: "100%" } },
           entries.slice(range.first, range.last).map((entry, index) => React.createElement(EndlessRecommendationTile, { key: String(entry.scene_id), entry, index, thumbnails, seen: seen.current }))
@@ -3888,7 +3919,7 @@
       startPage > slate.page && React.createElement("div", { ref: earlier, style: { position: "absolute", top: 0 } }, React.createElement(Button, { disabled: loading || restoring, onClick: () => loadMore(false, -1) }, "Load earlier results"))
     );
   }
-  function RecommendationCard({ item, scene, slate, onRemove, onThumbDown, evidenceScenes }) {
+  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
     const [explanation, setExplanation] = React.useState(
@@ -3990,7 +4021,7 @@
               React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation?.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
             ),
             descriptionContent: scene?.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, scene.details),
-            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove, onThumbDown })),
+            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove, onReaction })),
             scoreHeadline: scene ? null : "Appeal",
             scoreHeadlineValue: scene ? null : formatAppealValue(item.appeal),
             scoreHeadlineBar: scene ? null : scoreBar(item.appeal, true),
@@ -4307,7 +4338,7 @@
       return React.createElement("span", { className: "curator-chips" }, ...chips);
     }
 
-  function SimilarLibraryResults({ result, entityType, findView, wall, endless, onRemove, onThumbDown, onReady }) {
+  function SimilarLibraryResults({ result, entityType, findView, wall, endless, onRemove, onReaction, onReady }) {
     const { SceneCard, PerformerCard } = Api.components;
     const items = result.items || [];
     const ids = items.map((item) => item.entity_id);
@@ -4327,7 +4358,7 @@
       if (!entity) return null;
       if (entityType === "performer" && findView === "thumbnails") return React.createElement(FindThumbnail, { key: item.entity_id, image: entity.image_path, title: entity.name || String(item.entity_id), href: `/performers/${item.entity_id}`, kind: "performer", external: false });
       const feedbackItem = { ...item, scene_id: item.entity_id, impression_id: result.impression_id };
-      const body = React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { descriptionContent: entityType === "scene" && entity.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, entity.details), actionsContent: entityType === "scene" && React.createElement(React.Fragment, null, React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement(Feedback, { item: feedbackItem, onRemove, onThumbDown })), scoreHeadline: entityType === "scene" ? null : "Appeal", scoreHeadlineValue: entityType === "scene" ? null : formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: entityType === "scene" ? null : scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement(React.Fragment, null, entityType === "scene" && React.createElement(FindSceneReason, { item }), relationshipChips(item)), scoreBarContent: null, scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} (0..1) · Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
+      const body = React.createElement("div", { className: "curator-card-body" }, React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { descriptionContent: entityType === "scene" && entity.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, entity.details), actionsContent: entityType === "scene" && React.createElement(React.Fragment, null, React.createElement(LocalRatingPanel, { sceneId: item.entity_id }), React.createElement(Feedback, { item: feedbackItem, onRemove, onReaction })), scoreHeadline: entityType === "scene" ? null : "Appeal", scoreHeadlineValue: entityType === "scene" ? null : formatAppealValue((item.appeal * 2) - 1), scoreHeadlineBar: entityType === "scene" ? null : scoreBar((item.appeal * 2) - 1, true), evidenceContent: item.explanation ? React.createElement(ExplanationView, { explanation: item.explanation, item }) : React.createElement(React.Fragment, null, entityType === "scene" && React.createElement(FindSceneReason, { item }), relationshipChips(item)), scoreBarContent: null, scoreLabel: "Similarity", scoreSummary: item.similarity.toFixed(2), scoreContent: React.createElement("p", null, `Similarity ${item.similarity.toFixed(2)} (0..1) · Appeal ${formatSigned((item.appeal * 2) - 1)} (−1..1)`) })));
       if (entityType === "performer") return React.createElement("article", { key: item.entity_id, className: "curator-card curator-compact-card" }, React.createElement(PerformerCard, { performer: entity }), body);
       function rememberOrigin(event) {
         if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
@@ -4546,7 +4577,7 @@
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     function renderSimilarPage(batch, onReady) {
-      if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView, wall, endless, onRemove: removeSimilar, onThumbDown: showFollowUp, onReady });
+      if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
       return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: findView === "thumbnails", onShortlist: shortlistExternal, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
     }
     return React.createElement(
@@ -4597,7 +4628,7 @@
       selected && React.createElement("div", { className: "curator-similar-reference" }, React.createElement("strong", null, "Comparing from"), React.createElement(SourceReference, { entity: sourceEntity, type: entityType, fallback: selected })),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       result && (endless
         ? !loading && React.createElement(EndlessFindResults, { key: requestKey, cacheKey: endlessBatchKey(result, ["similar", continuationRequest.current, findView, wall, pageSize]), first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
         : renderSimilarPage({ ...result, page, items })),
@@ -5971,11 +6002,11 @@
       ),
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading sentiment review…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
-      followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       data && !loading && data.items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No scenes below the current appeal threshold."),
       data && !loading && (wall
         ? React.createElement(RecommendationWall, { visibleItems, scenes, lane: "score_review" })
-        : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), evidenceScenes: scenes, slate, onRemove: remove, onThumbDown: showFollowUp })))
+        : React.createElement("section", { className: "curator-grid", "aria-live": "polite" }, visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), evidenceScenes: scenes, slate, onRemove: remove, onReaction: showFollowUp })))
       ),
       data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: "Sentiment review pages" })
     );
@@ -7512,7 +7543,7 @@
         gender: filterGender, onGenderChange: (event) => setFilterGender(event.target.value),
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),
-      followUps.map((followUp) => React.createElement(TagSentimentFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { endless: endlessEnabled }),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
       configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand", endless: endlessEnabled }),
@@ -7530,13 +7561,13 @@
           null,
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
           endless
-            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onThumbDown: showFollowUp })
+            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp })
             : recommendationView !== "cards"
               ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
               { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },
-              visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onThumbDown: showFollowUp }))
+              visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp }))
             ),
           !endless && React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )

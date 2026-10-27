@@ -613,20 +613,18 @@ def test_diagnostics_can_be_previewed_copied_and_downloaded_separately_from_trac
     assert "Profiling traces are separate and are not included." in source
 
 
-def test_thumb_down_follow_up_is_optional_and_survives_card_removal() -> None:
+def test_thumb_follow_up_is_optional_and_survives_card_removal() -> None:
     source = (Path(__file__).parents[2] / "plugin" / "stash-curator.js").read_text()
 
-    assert 'operation: "get_tag_sentiment_follow_up"' in source
-    assert 'if (feedbackType === "thumb_down" && onThumbDown)' in source
-    assert "onThumbDown(followUp);" in source
+    # Both thumbs offer the reason card; the old tag-slider follow-up is gone.
+    assert (
+        'if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction)'
+        in source
+    )
     assert 'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);' in source
-    assert "TagSentimentFollowUp" in source
-    assert '"None of these"' in source
-    assert '"Something scene-specific"' in source
-    assert '"Metadata is wrong"' in source
-    assert '"Skip"' in source
-    assert "onClick: onDismiss" in source
-    assert "submitTagPreference(tag.tag_id, {value, blocked});" in source
+    assert source.count("React.createElement(SceneReasonFollowUp, {") == 3
+    assert "TagSentimentFollowUp" not in source
+    assert 'operation: "get_tag_sentiment_follow_up"' not in source
 
 
 def test_feedback_history_can_undo_or_replace_append_only_actions() -> None:
@@ -661,7 +659,7 @@ def test_external_scene_cards_can_rate_matching_local_tags() -> None:
     assert 'operation: "get_external_tag_choices"' in source
     assert '"Rate tags"' in source
     assert '"No matching local tags."' in source
-    assert "submitTagPreference(tag.tag_id, {value, blocked});" in source
+    assert "submitTagPreference(row.tag_id, {value, blocked});" in source
 
 
 def test_recommendation_and_similar_cards_can_rate_local_tags() -> None:
@@ -1240,7 +1238,7 @@ def test_external_card_actions_are_a_named_shared_component() -> None:
     assert "tagsActive: tagChoices !== null" in source
     # Feedback (thumbs up/down + More menu) is the other variant; still its
     # own function, untouched by this extraction.
-    assert "function Feedback({ item, onRemove, onThumbDown, compact = false })" in source
+    assert "function Feedback({ item, onRemove, onReaction, compact = false })" in source
     assert 'className: "curator-more-menu"' in source
 
 
