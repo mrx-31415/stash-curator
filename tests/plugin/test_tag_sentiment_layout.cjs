@@ -78,3 +78,32 @@ assert.equal(footer.props.className, "curator-rating-footer");
 assert.equal(find(footer, "button").props.onClick, close);
 assert.doesNotMatch(source, /curator-external-tag-rating-close/);
 console.log("PASS: shared slider semantics, one label header per section, and anchored dismissible panel");
+
+// Every slider snaps a tap or drag anywhere on the track to the nearest
+// drawn stop, including the end stops, and ignores moves without a press.
+for (const props of [{}, { large: true, compact: false, showScale: true }]) {
+  const track = nodes(render(props)).find((node) => node.props?.className === "curator-sentiment-track");
+  let captured = false;
+  const at = (x) => ({
+    clientX: x, pointerId: 1,
+    currentTarget: {
+      getBoundingClientRect: () => ({ left: 100, width: 300 }),
+      setPointerCapture: () => { captured = true; },
+      hasPointerCapture: () => captured,
+    },
+  });
+  changes.length = 0;
+  track.props.onPointerMove(at(400));
+  assert.equal(changes.length, 0, "a hover is not an answer");
+  track.props.onPointerDown(at(95));
+  track.props.onPointerMove(at(160));
+  track.props.onPointerMove(at(405));
+  assert.deepEqual(changes, [
+    { value: null, blocked: true }, { value: -1, blocked: false }, { value: 1, blocked: false },
+  ]);
+  // A tap on the stop an unrated item rests on still answers.
+  changes.length = 0;
+  captured = false;
+  track.props.onPointerDown(at(280));
+  assert.deepEqual(changes, [{ value: 0, blocked: false }]);
+}

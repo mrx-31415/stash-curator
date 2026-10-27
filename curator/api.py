@@ -29,6 +29,24 @@ from curator.similarity import SimilarityService
 from curator.storage import transaction
 
 API_SCHEMA_VERSION = 2
+# Tag questions: the For You pool an answer is measured against, the fewest
+# pool scenes a tag must reach to be asked about, and the example scenes shown
+# with each question. DIRECT_TAG_SUPPORT mirrors the model build's blend weight
+# for a direct tag answer.
+TAG_QUESTION_POOL_SIZE = 300
+TAG_QUESTION_MIN_REACH = 2
+TAG_QUESTION_EXAMPLES = 6
+DIRECT_TAG_SUPPORT = 8.0
+# A tag's inferred value of at least TAG_QUESTION_GUESS is asked as "Curator
+# thinks you like/dislike X. Right?". Questions are ranked toward strong
+# guesses (a replay on real answers found the model's confident guesses were
+# mostly wrong); TAG_QUESTION_MIN_STRENGTH keeps zero-guess tags rankable.
+TAG_QUESTION_GUESS = 0.15
+TAG_QUESTION_MIN_STRENGTH = 0.05
+# Answer review: direct answers whose viewing-only (learned) affinity is at
+# least ANSWER_REVIEW_MIN_CONFIDENCE confident, ranked by
+# |answer - learned| x learned confidence.
+ANSWER_REVIEW_MIN_CONFIDENCE = 0.35
 
 
 def _performer_preference(
@@ -1182,6 +1200,178 @@ class CuratorAPI:
             "schema_version": API_SCHEMA_VERSION,
             "scene_id": scene_id,
             "items": candidates[:limit],
+        }
+
+    def tag_questions(self, limit: int = 5) -> dict[str, object]:
+        """Unanswered content tags ranked by how much one answer would change
+        what For You shows.
+
+        value = leverage x reach x strength. leverage is the share of the tag's
+        blended affinity a direct answer would control; reach is the
+        rank-discounted share of the For You pool carrying the tag; strength is
+        how far the current guess is from neutral (at least
+        TAG_QUESTION_MIN_STRENGTH), so confident guesses get checked first.
+        """
+        if not 1 <= limit <= 10:
+            raise ValueError("limit must be between 1 and 10")
+        profile_items = self.taste_profile()["items"]
+        assert isinstance(profile_items, list)
+        config = self.config()["config"]
+        assert isinstance(config, dict)
+        slate = SlateBuilder(
+            self.connection, diversity_enabled=bool(config["diversity_enabled"])
+        ).recommend("for_you", TAG_QUESTION_POOL_SIZE)
+        pool = [item.scene_id for item in slate.items]
+        weights = {scene_id: 1 / math.log2(rank + 1) for rank, scene_id in enumerate(pool, 1)}
+        total_weight = sum(weights.values())
+        scene_tags: dict[str, set[str]] = defaultdict(set)
+        for row in self.connection.execute(
+            """
+            SELECT scene_id, tag_id FROM scene_tag
+            WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))
+            """,
+            (json.dumps(pool),),
+        ):
+            scene_tags[str(row["scene_id"])].add(str(row["tag_id"]))
+        reach_weight: dict[str, float] = defaultdict(float)
+        members: dict[str, list[str]] = defaultdict(list)
+        for scene_id in pool:
+            for tag_id in sorted(scene_tags[scene_id]):
+                reach_weight[tag_id] += weights[scene_id]
+                members[tag_id].append(scene_id)
+        total_scenes = int(
+            self.connection.execute("SELECT count(*) FROM source_scene").fetchone()[0]
+        )
+        candidates: list[dict[str, object]] = []
+        for item in profile_items:
+            assert isinstance(item, dict)
+            tag_id = str(item["tag_id"])
+            scene_count = int(item["scene_count"])
+            if (
+                item["prompt"] is None
+                or len(members[tag_id]) < TAG_QUESTION_MIN_REACH
+                # ponytail: library-wide prevalence is the existing cheap generic-tag signal.
+                or (scene_count >= 5 and scene_count >= 0.8 * total_scenes)
+            ):
+                continue
+            reach = reach_weight[tag_id] / total_weight
+            leverage = DIRECT_TAG_SUPPORT / (float(str(item["support"])) + DIRECT_TAG_SUPPORT)
+            inferred = float(str(item["inferred_value"]))
+            strength = max(abs(inferred), TAG_QUESTION_MIN_STRENGTH)
+            guess = (
+                ("like" if inferred > 0 else "dislike")
+                if abs(inferred) >= TAG_QUESTION_GUESS
+                else None
+            )
+            candidates.append(
+                {
+                    "tag_id": tag_id,
+                    "name": item["name"],
+                    "inferred_value": item["inferred_value"],
+                    "confidence": item["confidence"],
+                    "support": item["support"],
+                    "scene_count": scene_count,
+                    "reach": reach,
+                    "leverage": leverage,
+                    "value": leverage * reach * strength,
+                    "guess": guess,
+                    "examples": members[tag_id][:TAG_QUESTION_EXAMPLES],
+                }
+            )
+        candidates.sort(
+            key=lambda item: (
+                -float(str(item["value"])),
+                abs(float(str(item["inferred_value"]))),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "pool_size": len(pool),
+            "items": candidates[:limit],
+        }
+
+    def answer_review(self, limit: int = 5) -> dict[str, object]:
+        """Direct tag answers that most disagree with what viewing alone suggests.
+
+        The model keeps each answered tag's learned (history-only) affinity in
+        its metadata; the blended affinity already contains the answer.
+        """
+        if not 1 <= limit <= 10:
+            raise ValueError("limit must be between 1 and 10")
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model")
+        feature_version = str(
+            self.connection.execute(
+                "SELECT feature_version FROM model_version WHERE model_id=?", (model_id,)
+            ).fetchone()[0]
+        )
+        candidates: list[dict[str, object]] = []
+        for row in self.connection.execute(
+            """
+            SELECT p.tag_id, t.name, p.value, p.occurred_at_ms, a.metadata_json,
+                   (SELECT count(DISTINCT st.scene_id) FROM scene_tag st
+                    WHERE st.tag_id=p.tag_id AND st.provenance='scene') AS scene_count
+            FROM direct_tag_preference p
+            JOIN source_tag t ON t.tag_id=p.tag_id
+            JOIN tag_role r ON r.tag_id=p.tag_id AND r.config_version=? AND r.role='content'
+            JOIN feature_definition d
+              ON d.feature_version=? AND d.family='content' AND d.name='tag:' || p.tag_id
+            JOIN feature_affinity a ON a.feature_id=d.feature_id AND a.model_id=?
+            WHERE p.blocked=0
+            """,
+            (effective_tag_role_config_version(self.connection), feature_version, model_id),
+        ):
+            metadata = json.loads(str(row["metadata_json"]))
+            learned = metadata.get("learned_affinity")
+            learned_confidence = metadata.get("learned_confidence")
+            if learned is None or learned_confidence is None:
+                continue
+            learned_value = float(learned)
+            confidence = float(learned_confidence)
+            if confidence < ANSWER_REVIEW_MIN_CONFIDENCE:
+                continue
+            answer = float(row["value"])
+            candidates.append(
+                {
+                    "tag_id": str(row["tag_id"]),
+                    "name": str(row["name"] or row["tag_id"]),
+                    "answer": answer,
+                    "answered_at_ms": int(row["occurred_at_ms"]),
+                    "learned_value": learned_value,
+                    "learned_confidence": confidence,
+                    "scene_count": int(row["scene_count"]),
+                    "disagreement": abs(answer - learned_value) * confidence,
+                }
+            )
+        candidates.sort(
+            key=lambda item: (
+                -float(str(item["disagreement"])),
+                -int(str(item["scene_count"])),
+                str(item["name"]).casefold(),
+                str(item["tag_id"]),
+            )
+        )
+        items = candidates[:limit]
+        for item in items:
+            item["examples"] = [
+                str(row[0])
+                for row in self.connection.execute(
+                    """
+                    SELECT st.scene_id FROM scene_tag st
+                    JOIN model_scene_score s ON s.scene_id=st.scene_id AND s.model_id=?
+                    WHERE st.tag_id=? AND st.provenance='scene'
+                    ORDER BY s.current_fit DESC, st.scene_id LIMIT ?
+                    """,
+                    (model_id, item["tag_id"], TAG_QUESTION_EXAMPLES),
+                )
+            ]
+        return {
+            "schema_version": API_SCHEMA_VERSION,
+            "candidate_count": len(candidates),
+            "items": items,
         }
 
     def curation_impact(self) -> dict[str, object]:

@@ -956,6 +956,10 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(args.get("scene_id") or ""),
                 min(3, int(args.get("limit") or 3)),
             )
+        if operation == "get_tag_questions":
+            return api.tag_questions(int(args.get("limit") or 5))
+        if operation == "get_answer_review":
+            return api.answer_review(int(args.get("limit") or 5))
         if operation == "get_curation_impact":
             return api.curation_impact()
         if operation == "submit_impact_correction":

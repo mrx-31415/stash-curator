@@ -1,6 +1,8 @@
 # Workpackage: Tag questions (high-value Tag sentiment prompts)
 
-Status: proposed. Follows `docs/decisions/005-retire-pair-picks.md`: the user
+Status: **implemented** on `feat/tag-questions` (stacked on the Pair picks
+retirement). Deviations from the proposal below are listed under
+"As built". Follows `docs/decisions/005-retire-pair-picks.md`: the user
 attention that went into Pair picks moves to direct feature answers, asked in
 the order that changes recommendations most.
 
@@ -26,6 +28,55 @@ chips (a separate package, see Follow-up).
   confidence and inferred-value sorts). It works for a user who knows what
   to fix, but it does not say where an answer matters. Most tags are rare or
   already well supported, so a random answer usually moves nothing visible.
+
+## As built
+
+- **Pool:** `recommend("for_you", 300)` with the user's diversity setting, the
+  same path `get_slate` serves. Every eligibility rule the lane applies holds
+  for free. A tag only becomes a question once it appears in that feed, which
+  is the intent: tags you are never shown can't change what you're shown.
+- **Candidates:** the taste profile's `prompt` field (non-null for an
+  unanswered `content` tag on at least 2 scenes) plus the generic and minimum
+  reach rules. `performer_attribute` tags are left out, because a direct answer
+  only blends into content-tag features.
+- **Constants:** `TAG_QUESTION_POOL_SIZE = 300`, `TAG_QUESTION_MIN_REACH = 2`,
+  `TAG_QUESTION_EXAMPLES = 6` are module constants mirrored in Go, like the
+  follow-up op's thresholds, not a config class. They never affect model
+  fingerprints.
+- **Response:** also returns `value` per item and `pool_size`; `examples` are
+  scene ids.
+- **Media (after live feedback):** six tiles of muted, looping clips instead
+  of three stills, since a still often misses the tagged act. The browser reads
+  the tag's description and markers carrying the tag from Stash (read-only
+  GraphQL); marker clips come first, one per scene, example scenes' markers
+  before others, then the example scenes' previews.
+- **Replay on recorded answers (2026-10):** replaying question strategies against
+  a set of existing answers showed history-learned tag affinity was close to
+  uncorrelated with those answers, and the model's strong guesses on little support
+  mostly had the wrong sign. So questions rank by
+  `leverage × reach × max(|inferred|, 0.05)`, asking confident guesses
+  (`|inferred| ≥ 0.15`) as "Right?" checks, which cut early score error most. "Is
+  it A or B?" pair questions found no support (co-occurring tags were not worse
+  inferred) and were dropped.
+- **Answer review:** `get_answer_review` ranks direct (non-Never) answers by
+  `|answer − learned| × learned confidence`, using the viewing-only affinity the
+  model keeps beside each answer, for answers with learned confidence ≥ 0.35.
+  Keep is per browser for 180 days or until the answer changes; changes and
+  clears go through `submit_tag_preferences`.
+- **Answering (after live feedback):** a pick is shown until **Next**, so a
+  mistap can be corrected; Apply builds whenever feedback is pending, below the
+  automatic threshold too, and drains answers queued during an in-flight save.
+  On phones the slider was hard to hit: every tag slider now takes pointer input
+  on its track and snaps a tap or drag to the nearest drawn stop (the native
+  range ignored track taps on some phones and its thumb was inset from the end
+  stops), with a taller touch strip; the question cards use a full-width,
+  thumb-height variant with every stop labelled.
+- **Keyboard:** no `1`–`5`/`S` shortcuts. Stash binds global single-key
+  shortcuts, and the sentiment slider and Skip button are already keyboard
+  operable.
+- **Measurement:** deferred. Impact already reports per-build tag affinity
+  moves and declared-versus-inferred divergences; a dedicated "Answered
+  questions" line remains a follow-up.
 
 ## Package: backend
 
