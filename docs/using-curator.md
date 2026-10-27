@@ -218,8 +218,11 @@ the tag come first, labelled **Marker**, because they show the moment itself; th
 rest are previews of scenes from your recommendations. Pick a point on the sentiment scale, check it, and press **Next**, or
 press **Skip**; a skipped tag stays hidden in this browser for 30 days. Answers are
 ordinary Tag sentiment answers, so you can review or clear them there (**See all
-tags**). **Apply my answers now** runs a model update straight away, even for a few
-answers; otherwise they apply with the next one.
+tags**). The questions keep coming until none are left that would change much: the
+queue tops itself up in the background, and every five answers Curator updates
+recommendations and reorders the remaining questions, so a tag your earlier answers
+already settled is not asked next. Every answer is saved on **Next**, so you can stop
+at any point. **Apply my answers now** runs a model update straight away.
 
 **Review my answers** goes through your own answers that most disagree with what
 your viewing alone suggests, ranked by the size of the gap and how confident the

@@ -46,6 +46,23 @@ func excludeSceneIDs(v jVal) (map[string]bool, error) {
 	return result, nil
 }
 
+// excludeTagIDs mirrors backend.py's get_tag_questions handling:
+// `args.get("exclude_tag_ids") or []` must be a list, and the exclusion set is
+// {str(value) for value in excluded}.
+func excludeTagIDs(v jVal) (map[string]bool, error) {
+	if !v.truthy() {
+		return map[string]bool{}, nil
+	}
+	if v.kind != jArr {
+		return nil, fmt.Errorf("exclude_tag_ids must be a list")
+	}
+	result := make(map[string]bool, len(v.arr))
+	for _, item := range v.arr {
+		result[item.asString()] = true
+	}
+	return result, nil
+}
+
 // argsInt mirrors Python's `int(args.get(key) or fallback)`.
 func argsInt(args jVal, key string, fallback int64) int64 {
 	v := args.get(key)

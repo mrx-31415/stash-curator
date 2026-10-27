@@ -9,6 +9,7 @@ import operator
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Set
 from dataclasses import asdict, replace
 from typing import Any
 from uuid import uuid4
@@ -1202,7 +1203,9 @@ class CuratorAPI:
             "items": candidates[:limit],
         }
 
-    def tag_questions(self, limit: int = 5) -> dict[str, object]:
+    def tag_questions(
+        self, limit: int = 5, exclude_tag_ids: Set[str] = frozenset()
+    ) -> dict[str, object]:
         """Unanswered content tags ranked by how much one answer would change
         what For You shows.
 
@@ -1211,6 +1214,8 @@ class CuratorAPI:
         rank-discounted share of the For You pool carrying the tag; strength is
         how far the current guess is from neutral (at least
         TAG_QUESTION_MIN_STRENGTH), so confident guesses get checked first.
+        exclude_tag_ids drops tags the browser has already answered or
+        skipped, so a continuous queue can keep fetching past them.
         """
         if not 1 <= limit <= 10:
             raise ValueError("limit must be between 1 and 10")
@@ -1249,6 +1254,7 @@ class CuratorAPI:
             scene_count = int(item["scene_count"])
             if (
                 item["prompt"] is None
+                or tag_id in exclude_tag_ids
                 or len(members[tag_id]) < TAG_QUESTION_MIN_REACH
                 # ponytail: library-wide prevalence is the existing cheap generic-tag signal.
                 or (scene_count >= 5 and scene_count >= 0.8 * total_scenes)

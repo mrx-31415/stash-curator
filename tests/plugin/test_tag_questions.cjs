@@ -15,6 +15,11 @@ function createRuntime() {
       if (!(index in hooks)) hooks[index] = typeof initial === "function" ? initial() : initial;
       return [hooks[index], (value) => { hooks[index] = typeof value === "function" ? value(hooks[index]) : value; }];
     },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in hooks)) hooks[index] = { current: initial };
+      return hooks[index];
+    },
     useCallback(callback, deps) {
       const index = cursor++;
       const previous = hooks[index];
@@ -72,10 +77,12 @@ function harness({ result, failure, storage, built = true, media = { description
       getItem: (key) => (store.throws ? (() => { throw new Error("blocked"); })() : store.get(key) ?? null),
       setItem: (key, value) => { if (store.throws) throw new Error("blocked"); store.set(key, value); },
     },
+    // Like the backend, leave out the excluded tags.
     operation: async (args) => {
       calls.operations.push(args);
       if (failure) throw new Error(failure);
-      return result;
+      const excluded = new Set(args.exclude_tag_ids || []);
+      return { ...result, items: (result.items || []).filter((entry) => !excluded.has(entry.tag_id)) };
     },
     submitTagPreference: (tagId, choice) => calls.preferences.push([tagId, choice]),
     applyFeedbackAndAwaitBuild: async () => { calls.applied += 1; return built; },
@@ -150,6 +157,18 @@ function createRuntimeFor(app) {
       assert.equal(clip.type, "video");
       assert.equal(clip.props.className, "scene-card-image card-section");
       assert.equal(clip.props.muted, true);
+      // Unmuting from outside (Stash's SFW switch restarting the media) is undone.
+      const listeners = {};
+      const video = { muted: false, defaultMuted: false, addEventListener: (name, listener) => { listeners[name] = [...(listeners[name] || []), listener]; } };
+      clip.props.ref(video);
+      clip.props.ref(video);
+      assert.equal(video.muted, true);
+      assert.equal(listeners.play.length, 1, "listeners attach once per element");
+      for (const name of ["volumechange", "play"]) {
+        video.muted = false;
+        listeners[name][0]();
+        assert.equal(video.muted, true);
+      }
       assert.equal(clip.props.playsInline, true);
     }
     assert.equal(examples[0].props.children[1].props.className, "curator-tag-question-marker");
@@ -164,8 +183,8 @@ function createRuntimeFor(app) {
     assert.equal(examples[0].props.children[0].props.src, "/scene/s1/preview");
   }
 
-  // Loading asks for ten, drops tags skipped in the last 30 days (not older
-  // skips), and caps the batch at five.
+  // Loading asks for ten and excludes tags skipped in the last 30 days (not
+  // older skips). There is no batch: the queue shows everything fetched.
   const now = Date.now();
   const storage = new Map([[
     "stash-curator:tag-question-skips:v1",
@@ -177,8 +196,10 @@ function createRuntimeFor(app) {
   assert.equal(app.render(), null, "renders nothing until the first fetch resolves");
   await settle();
   let tree = app.render();
-  assert.equal(JSON.stringify(app.calls.operations), JSON.stringify([{ operation: "get_tag_questions", limit: 10 }]));
-  assert.match(text(tree), /Question 1 of 5/);
+  assert.equal(JSON.stringify(app.calls.operations),
+    JSON.stringify([{ operation: "get_tag_questions", limit: 10, exclude_tag_ids: ["skipped"] }]));
+  assert.match(text(tree), /Question 1\b/);
+  assert.doesNotMatch(text(tree), /Question 1 of/);
   assert.match(text(tree), /More or less of “Wide”\?/);
   assert.match(text(tree), /On about 42% of what For You would show you\. Curator has little evidence about it yet\./);
   // Without a confident guess there is no Yes shortcut.
@@ -201,7 +222,7 @@ function createRuntimeFor(app) {
   assert.equal(button(tree, "Next").props.disabled, true);
   control.props.onChange({ value: 0.5, blocked: false });
   tree = app.render();
-  assert.match(text(tree), /Question 1 of 5/);
+  assert.match(text(tree), /Question 1\b/);
   assert.equal(app.calls.preferences.length, 0);
   nodes(tree).find((node) => node.type === "sentiment-control").props.onChange({ value: 1, blocked: false });
   tree = app.render();
@@ -215,7 +236,7 @@ function createRuntimeFor(app) {
   button(tree, "Next").props.onClick();
   tree = app.render();
   assert.equal(JSON.stringify(app.calls.preferences), JSON.stringify([["wide", { value: 1, blocked: false }]]));
-  assert.match(text(tree), /Question 2 of 5/);
+  assert.match(text(tree), /Question 2 · 1 answered/);
   assert.equal(nodes(tree).find((node) => node.type === "sentiment-control").props.value, null);
   // A skip older than 30 days no longer hides its tag.
   assert.match(text(tree), /More or less of “Expired”\?/);
@@ -225,14 +246,15 @@ function createRuntimeFor(app) {
   const skip = nodes(tree).find((node) => node.type === "button" && text(node) === "Skip");
   skip.props.onClick();
   tree = app.render();
-  assert.match(text(tree), /Question 3 of 5/);
+  assert.match(text(tree), /Question 3 · 1 answered/);
   assert.equal(app.calls.preferences.length, 1);
   // The new skip is stored with a fresh timestamp next to the live one.
   const stored = JSON.parse(app.store.get("stash-curator:tag-question-skips:v1"));
   assert.equal(Object.keys(stored).sort().join(","), "expired,skipped");
   assert.ok(stored.expired > now - 31 * 86_400_000 + 86_400_000);
 
-  // Apply now runs the shared apply path and refetches.
+  // Apply now runs the shared apply path, then refetches the questions not
+  // shown yet with the new ranking, excluding everything already seen.
   const apply = nodes(tree).find((node) => node.type === "button" && text(node) === "Apply my answers now");
   const applied = apply.props.onClick();
   assert.match(text(app.render()), /Rebuilding recommendations with your answers/);
@@ -240,13 +262,51 @@ function createRuntimeFor(app) {
   await settle();
   assert.equal(app.calls.applied, 1);
   assert.equal(app.calls.operations.length, 2);
+  assert.equal(JSON.stringify([...app.calls.operations[1].exclude_tag_ids].sort()),
+    JSON.stringify(["a", "expired", "skipped", "wide"]));
   tree = app.render();
+  assert.match(text(tree), /Question 3 · 1 answered/);
   assert.match(text(tree), /Recommendations updated with your answers/);
   assert.doesNotMatch(text(tree), /Apply my answers now/);
 
   // The full list is one tap away.
   button(tree, "See all tags").props.onClick();
   assert.equal(app.calls.showAll, 1);
+
+  // Nearing the end of the queue tops it up in the background; when nothing
+  // new comes back, the end of the queue says so.
+  for (let shown = 3; shown <= 6; shown++) {
+    assert.match(text(tree), new RegExp(`Question ${shown}\\b`));
+    button(tree, "Skip").props.onClick();
+    app.render();
+    await settle();
+    tree = app.render();
+  }
+  assert.equal(app.calls.operations.length, 3, "one top-up, then the queue is exhausted");
+  button(tree, "Skip").props.onClick();
+  tree = app.render();
+  assert.match(text(tree), /That's every useful question for now\. Your answers are saved\./);
+
+  // Every fifth answer rebuilds in the background without stopping the
+  // queue, and the questions not shown yet are reranked.
+  {
+    const many = harness({ result: { items: ["a", "b", "c", "d", "e", "f", "g", "h", "i"].map((id) => item(id, id.toUpperCase())) } });
+    many.render();
+    await settle();
+    let view = many.render();
+    for (let answer = 1; answer <= 5; answer++) {
+      nodes(view).find((node) => node.type === "sentiment-control").props.onChange({ value: 0.5, blocked: false });
+      button(many.render(), "Next").props.onClick();
+      view = many.render();
+    }
+    assert.equal(many.calls.applied, 1);
+    await settle();
+    view = many.render();
+    assert.match(text(view), /Question 6 · 5 answered/);
+    assert.doesNotMatch(text(view), /Apply my answers now/);
+    assert.equal(JSON.stringify([...many.calls.operations.at(-1).exclude_tag_ids].sort()),
+      JSON.stringify(["a", "b", "c", "d", "e", "f"]));
+  }
 
   // A confident guess is asked as a check; Yes selects the matching slight
   // step without sending it, and Next sends it.
@@ -284,11 +344,13 @@ function createRuntimeFor(app) {
   tree = blocked.render();
   nodes(tree).find((node) => node.type === "button" && text(node) === "Skip").props.onClick();
   tree = blocked.render();
-  assert.match(text(tree), /Question 2 of 2/);
+  assert.match(text(tree), /Question 2\b/);
 
-  // Finishing a batch without answers says so.
+  // Running out without answers says so.
   nodes(tree).find((node) => node.type === "button" && text(node) === "Skip").props.onClick();
-  assert.match(text(blocked.render()), /You skipped this batch/);
+  blocked.render();
+  await settle();
+  assert.match(text(blocked.render()), /That's every useful question for now\.  See all/);
 
   // Empty and failed fetches explain themselves.
   const empty = harness({ result: { items: [] } });
