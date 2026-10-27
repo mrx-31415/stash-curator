@@ -1,5 +1,5 @@
 // Slice-4 frontend-parity ops: get_external_tag_choices, get_inspector_entity,
-// get_tag_sentiment_follow_up, and reset — the last ops the Python fallback
+// and reset — the last ops the Python fallback
 // served. Each mirrors plugin/backend.py's _api branch and the CuratorAPI
 // method it calls, including the exact error messages and output key order.
 package main
@@ -737,110 +737,6 @@ FROM feature_affinity fa WHERE fa.model_id = ? AND fa.feature_id = ?`,
 	return affinity, confidence, true, nil
 }
 
-// ── get_tag_sentiment_follow_up ────────────────────────────────────────────
-
-// opGetTagSentimentFollowUp mirrors backend.py's get_tag_sentiment_follow_up
-// branch: the scene's tags that the taste profile has no direct preference
-// for, ranked by inference strength, limited to 3.
-func opGetTagSentimentFollowUp(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "get_tag_sentiment_follow_up",
-		func(settings jVal) (jVal, error) { return tagSentimentFollowUpBody(pluginDir, payload, settings) })
-}
-
-func tagSentimentFollowUpBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	args := payload.get("args")
-	sceneID := pythonStrOrEmpty(args.get("scene_id"))
-	limit := minInt64(3, argsInt(args, "limit", 3))
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	if sceneID == "" || limit < 1 || limit > 3 {
-		return jvNull(), fmt.Errorf("scene_id and a limit from 1 to 3 are required")
-	}
-	sceneTags := make(map[string]bool)
-	tagRows, err := db.Query(`
-SELECT tag_id FROM scene_tag
-WHERE scene_id=? AND provenance='scene'`, sceneID)
-	if err != nil {
-		return jvNull(), err
-	}
-	for tagRows.Next() {
-		var tagID string
-		if err := tagRows.Scan(&tagID); err != nil {
-			tagRows.Close()
-			return jvNull(), err
-		}
-		sceneTags[tagID] = true
-	}
-	tagRows.Close()
-	if err := tagRows.Err(); err != nil {
-		return jvNull(), err
-	}
-	if len(sceneTags) == 0 {
-		var probe int
-		err := db.QueryRow(`SELECT 1 FROM source_scene WHERE scene_id=?`, sceneID).Scan(&probe)
-		if errors.Is(err, sql.ErrNoRows) {
-			return jvNull(), fmt.Errorf("unknown scene: %s", sceneID)
-		}
-		if err != nil {
-			return jvNull(), err
-		}
-	}
-	var totalScenes int64
-	if err := db.QueryRow(`SELECT count(*) FROM source_scene`).Scan(&totalScenes); err != nil {
-		return jvNull(), err
-	}
-	taste, err := getTasteProfileBody(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	candidates := jvArr()
-	for _, item := range taste.get("items").arr {
-		tagID := item.get("tag_id")
-		if tagID.kind != jStr || !sceneTags[tagID.s] {
-			continue
-		}
-		if item.get("direct_value").kind != jNull {
-			continue
-		}
-		sceneCount := pythonInt(item.get("scene_count"))
-		// ponytail: library-wide prevalence is the existing cheap generic-tag signal.
-		if sceneCount >= 5 && float64(sceneCount) >= 0.8*float64(totalScenes) {
-			continue
-		}
-		candidates.arr = append(candidates.arr, item)
-	}
-	sort.SliceStable(candidates.arr, func(i, j int) bool {
-		a, b := candidates.arr[i], candidates.arr[j]
-		aInferred := pythonFloatValue(a.get("inferred_value"))
-		bInferred := pythonFloatValue(b.get("inferred_value"))
-		aKey := sentimentKey(aInferred, pythonFloatValue(a.get("confidence")))
-		bKey := sentimentKey(bInferred, pythonFloatValue(b.get("confidence")))
-		if aKey != bKey {
-			return aKey < bKey
-		}
-		if mathAbs(aInferred) != mathAbs(bInferred) {
-			return mathAbs(aInferred) > mathAbs(bInferred)
-		}
-		aname, bname := strings.ToLower(a.get("name").asString()), strings.ToLower(b.get("name").asString())
-		if aname != bname {
-			return aname < bname
-		}
-		return a.get("tag_id").asString() < b.get("tag_id").asString()
-	})
-	out := jvArr()
-	for i := int64(0); i < limit && i < int64(len(candidates.arr)); i++ {
-		out.arr = append(out.arr, candidates.arr[i])
-	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("scene_id", jvStr(sceneID)),
-		jvKey("items", out),
-	), nil
-}
-
 // Tag questions constants mirror curator/api.py's TAG_QUESTION_* values;
 // directTagSupport mirrors the model build's blend weight for a direct answer.
 const (
@@ -1158,18 +1054,6 @@ func tagQuestionGuessOf(inferred float64) jVal {
 		return jvStr("like")
 	}
 	return jvStr("dislike")
-}
-
-// sentimentKey mirrors the tag_sentiment_follow_up sort's first component:
-// 0 for a positive inference above 0.05, 1 for weak evidence, else 2.
-func sentimentKey(inferred, confidence float64) int64 {
-	if inferred > 0.05 {
-		return 0
-	}
-	if confidence < 0.35 || mathAbs(inferred) < 0.15 {
-		return 1
-	}
-	return 2
 }
 
 func pythonFloatValue(v jVal) float64 {

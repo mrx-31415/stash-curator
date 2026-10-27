@@ -109,7 +109,14 @@ func clamp(value float64) float64 {
 }
 
 // modelSceneLabels mirrors PreferenceModelBuilder._scene_labels.
-func modelSceneLabels(db dbx) (map[string]sceneLabel, error) {
+// sceneOnlySignal mirrors builder.py SCENE_ONLY_SIGNAL: a "Just this scene"
+// answer, which moves the scene's own appeal but never reaches training.
+const sceneOnlySignal = "scene_reason_scene"
+
+// modelSceneLabels mirrors _scene_labels. The second map mirrors
+// _training_overrides: for scenes with a "Just this scene" signal, the label
+// without it (absent when nothing else is left).
+func modelSceneLabels(db dbx) (map[string]sceneLabel, map[string]*sceneLabel, error) {
 	type signal struct {
 		value      float64
 		confidence float64
@@ -120,14 +127,14 @@ func modelSceneLabels(db dbx) (map[string]sceneLabel, error) {
 SELECT scene_id, event_type, outcome, confidence, payload_json FROM behavior_event
 WHERE scene_id IS NOT NULL AND outcome IS NOT NULL ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var sceneID, eventType, payloadJSON string
 		var outcome, confidence float64
 		if err := rows.Scan(&sceneID, &eventType, &outcome, &confidence, &payloadJSON); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		signalType := eventType
 		if parsed, err := parseJSON([]byte(payloadJSON)); err == nil {
@@ -139,21 +146,21 @@ WHERE scene_id IS NOT NULL AND outcome IS NOT NULL ORDER BY scene_id, occurred_a
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err = db.Query(`
 SELECT scene_id, feedback_type, occurred_at_ms FROM feedback
 WHERE reversed_by_id IS NULL AND feedback_type IN ('thumb_up', 'thumb_down')
 ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var sceneID, feedbackType string
 		var occurredAtMs int64
 		if err := rows.Scan(&sceneID, &feedbackType, &occurredAtMs); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		value := -1.0
 		if feedbackType == "thumb_up" {
@@ -163,21 +170,21 @@ ORDER BY scene_id, occurred_at_ms`)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err = db.Query(`
 SELECT scene_id, value FROM feedback
 WHERE reversed_by_id IS NULL AND feedback_type='curation_rating'
 ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var sceneID string
 		var value sql.NullString
 		if err := rows.Scan(&sceneID, &value); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		if !value.Valid {
 			continue
@@ -192,18 +199,18 @@ ORDER BY scene_id, occurred_at_ms`)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err = db.Query(`SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var sceneID string
 		var rating100 int64
 		if err := rows.Scan(&sceneID, &rating100); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		signals[sceneID] = append(signals[sceneID], signal{
 			clamp((float64(rating100) - 50) / 50), 0.90, "scene_rating",
@@ -211,21 +218,21 @@ ORDER BY scene_id, occurred_at_ms`)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rows, err = db.Query(`
 SELECT scene_id, value FROM feedback
 WHERE reversed_by_id IS NULL AND feedback_type='impact_correction'
 ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var sceneID string
 		var value sql.NullString
 		if err := rows.Scan(&sceneID, &value); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		if !value.Valid {
 			continue
@@ -243,10 +250,44 @@ ORDER BY scene_id, occurred_at_ms`)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	labels := map[string]sceneLabel{}
-	for sceneID, sceneSignals := range signals {
+	// Why these? answers about the scene itself (mirrors _scene_labels): a
+	// thumb's value and confidence; "Just this scene" stays out of training.
+	rows, err = db.Query(`
+SELECT a.scene_id, a.polarity, a.flipped,
+       EXISTS (SELECT 1 FROM scene_reason r
+               WHERE r.answer_id=a.answer_id AND r.subject_type='scene') AS only_scene
+FROM scene_reason_answer a
+ORDER BY a.scene_id, a.occurred_at_ms, a.answer_id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var sceneID string
+		var polarity, flipped, onlyScene int64
+		if err := rows.Scan(&sceneID, &polarity, &flipped, &onlyScene); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		if onlyScene == 0 && flipped == 0 {
+			continue
+		}
+		value := -1.0
+		if polarity > 0 {
+			value = 0.90
+		}
+		signalType := "scene_reason_flip"
+		if onlyScene != 0 {
+			signalType = sceneOnlySignal
+		}
+		signals[sceneID] = append(signals[sceneID], signal{value, 1.0, signalType})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	aggregate := func(sceneSignals []signal) (sceneLabel, bool) {
 		confidences := make([]float64, 0, len(sceneSignals))
 		products := make([]float64, 0, len(sceneSignals))
 		absoluteConfidences := make([]float64, 0, len(sceneSignals))
@@ -259,7 +300,7 @@ ORDER BY scene_id, occurred_at_ms`)
 		}
 		evidence := sumFloats(confidences)
 		if evidence <= 0 {
-			continue
+			return sceneLabel{}, false
 		}
 		weighted := sumFloats(products)
 		types := make([]string, 0, len(sceneSignals))
@@ -271,16 +312,39 @@ ORDER BY scene_id, occurred_at_ms`)
 		if absoluteEvidence > 0 {
 			absoluteOutcome = sumFloats(absoluteProducts) / absoluteEvidence
 		}
-		labels[sceneID] = sceneLabel{
+		return sceneLabel{
 			outcome:           clamp(weighted / evidence),
 			confidence:        1 - math.Exp(-evidence),
 			effectiveEvidence: evidence,
 			signalTypes:       types,
 			absoluteOutcome:   clamp(absoluteOutcome),
 			absoluteEvidence:  absoluteEvidence,
+		}, true
+	}
+	labels := map[string]sceneLabel{}
+	overrides := map[string]*sceneLabel{}
+	for sceneID, sceneSignals := range signals {
+		if label, ok := aggregate(sceneSignals); ok {
+			labels[sceneID] = label
+		}
+		sceneOnly := false
+		kept := make([]signal, 0, len(sceneSignals))
+		for _, item := range sceneSignals {
+			if item.signalType == sceneOnlySignal {
+				sceneOnly = true
+			} else {
+				kept = append(kept, item)
+			}
+		}
+		if sceneOnly {
+			if label, ok := aggregate(kept); ok {
+				overrides[sceneID] = &label
+			} else {
+				overrides[sceneID] = nil
+			}
 		}
 	}
-	return labels, nil
+	return labels, overrides, nil
 }
 
 // metadataWrongScenes mirrors _metadata_wrong_scenes.
@@ -307,17 +371,25 @@ WHERE feedback_type='metadata_wrong' AND reversed_by_id IS NULL`)
 	return metadataWrong, nil
 }
 
-// modelTrainingLabels mirrors _training_labels.
-func modelTrainingLabels(db dbx, labels map[string]sceneLabel) (map[string]sceneLabel, error) {
+// modelTrainingLabels mirrors _training_labels: no "metadata is wrong" scene,
+// and a scene's "Just this scene" answers left out.
+func modelTrainingLabels(db dbx, labels map[string]sceneLabel, overrides map[string]*sceneLabel) (map[string]sceneLabel, error) {
 	metadataWrong, err := metadataWrongScenes(db)
 	if err != nil {
 		return nil, err
 	}
 	result := map[string]sceneLabel{}
 	for sceneID, label := range labels {
-		if !metadataWrong[sceneID] {
-			result[sceneID] = label
+		if metadataWrong[sceneID] {
+			continue
 		}
+		if override, ok := overrides[sceneID]; ok {
+			if override != nil {
+				result[sceneID] = *override
+			}
+			continue
+		}
+		result[sceneID] = label
 	}
 	return result, nil
 }

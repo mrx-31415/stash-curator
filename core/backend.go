@@ -245,8 +245,6 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetPerformerAffinities(pluginDir, payload)
 	case "get_scene_affinities", "get_scene_affinity_page":
 		return opGetSceneAffinities(pluginDir, payload)
-	case "get_tag_sentiment_follow_up":
-		return opGetTagSentimentFollowUp(pluginDir, payload)
 	case "get_tag_questions":
 		return opGetTagQuestions(pluginDir, payload)
 	case "get_answer_review":

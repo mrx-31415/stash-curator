@@ -1,7 +1,7 @@
 """Slice-4 backend differential harness: the last frontend-parity ops and the
 entity-sync hook mode.
 
-get_external_tag_choices, get_inspector_entity, get_tag_sentiment_follow_up,
+get_external_tag_choices, get_inspector_entity,
 reset, and the entity-sync hook run through the Go binary and
 plugin/backend.py on fresh sidecar copies. Stdout must be byte-identical per
 the tolerance policy (structure exact, floats within rel 1e-9); the reset and
@@ -978,63 +978,6 @@ def test_inspector_requires_published_model(
     sidecar = tmp_path / "nomodel.sqlite3"
     make_sidecar(sidecar, with_jobs=True)
     raw = payload(operation, sidecar, stub_stash, entity_type="scene", entity_id="s1")
-    assert_slice4_identical(binary, raw, sidecar)
-
-
-# ── get_tag_sentiment_follow_up ─────────────────────────────────────────────
-
-
-def test_tag_sentiment_follow_up_byte_identical(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    # s1 tags: t1 (direct preference -> excluded), t2 (weak negative),
-    # t4 (strong positive). limit caps at 3.
-    raw = payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s1", limit=3)
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-    raw = payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s1", limit=1)
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-    raw = payload(
-        "get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s1", limit=99
-    )
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-    # A scene with no tags but present in the library returns an empty list.
-    raw = payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s5", limit=3)
-    assert_slice4_identical(binary, raw, slice4_sidecar)
-
-
-def test_tag_sentiment_follow_up_error_paths(
-    tmp_path: Path, binary: Path, stub_stash: str, slice4_sidecar: Path
-) -> None:
-    assert_slice4_identical(
-        binary,
-        payload(
-            "get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="missing", limit=3
-        ),
-        slice4_sidecar,
-    )
-    assert_slice4_identical(
-        binary,
-        payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="", limit=3),
-        slice4_sidecar,
-    )
-    assert_slice4_identical(
-        binary,
-        payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s1", limit=0),
-        slice4_sidecar,
-    )
-    assert_slice4_identical(
-        binary,
-        payload("get_tag_sentiment_follow_up", slice4_sidecar, stub_stash, scene_id="s1", limit=-1),
-        slice4_sidecar,
-    )
-
-
-def test_tag_sentiment_follow_up_requires_model(
-    tmp_path: Path, binary: Path, stub_stash: str
-) -> None:
-    sidecar = tmp_path / "nomodel2.sqlite3"
-    make_sidecar(sidecar, with_jobs=True)
-    raw = payload("get_tag_sentiment_follow_up", sidecar, stub_stash, scene_id="s1", limit=3)
     assert_slice4_identical(binary, raw, sidecar)
 
 

@@ -286,13 +286,17 @@ def test_model_build_artifact_parity_with_inherited_answers(binary: Path, tmp_pa
 def _seed_scene_reasons(sidecar: Path) -> None:
     """One Why these? answer each way: a performer, tag, studio, and missing
     tag that make a scene work, and a performer, tag, and the scene itself
-    that put the user off another."""
+    that put the user off another; plus a bare flip on a played scene."""
     connection = sqlite3.connect(sidecar)
     try:
         connection.executemany(
             "INSERT INTO scene_reason_answer(answer_id, scene_id, polarity, flipped,"
             " occurred_at_ms) VALUES (?, ?, ?, ?, ?)",
-            [("a-hit", "unseen-good", 1, 0, 10), ("a-miss", "disliked", -1, 1, 20)],
+            [
+                ("a-hit", "unseen-good", 1, 0, 10),
+                ("a-miss", "disliked", -1, 1, 20),
+                ("a-flip", "old-good", -1, 1, 30),
+            ],
         )
         connection.executemany(
             "INSERT INTO scene_reason(answer_id, subject_type, subject_id) VALUES (?, ?, ?)",
@@ -362,6 +366,29 @@ def test_a_new_scene_reason_changes_the_model_id(binary: Path, tmp_path: Path) -
         _seed_scene_reasons(db)
         after, _ = run(db)
         assert after != before, name
+
+
+def test_scene_level_reasons_label_the_scene(tmp_path: Path) -> None:
+    """A flip labels the scene like a thumb and trains features; "Just this
+    scene" labels the scene's own appeal only and never reaches training."""
+    db = tmp_path / "curator.sqlite3"
+    make_feature_sidecar(db)
+    _seed_scene_reasons(db)
+    connection = connect_database(db, attach_artifacts=False)
+    try:
+        builder = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)
+        labels = builder._scene_labels()
+        training = builder._training_labels(labels)
+    finally:
+        connection.close()
+    assert labels["old-good"].signal_types[-1] == "scene_reason_flip"
+    assert "scene_reason_flip" in training["old-good"].signal_types
+    assert labels["disliked"].signal_types[-1] == "scene_reason_scene"
+    assert labels["disliked"].outcome < 0
+    assert "scene_reason_scene" not in training["disliked"].signal_types
+    assert training["disliked"].signal_types == labels["disliked"].signal_types[:-1]
+    # A hit without a flip or "Just this scene" is not a scene label.
+    assert "unseen-good" not in labels
 
 
 def test_tag_hierarchy_changes_the_model(binary: Path, tmp_path: Path) -> None:

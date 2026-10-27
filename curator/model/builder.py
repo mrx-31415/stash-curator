@@ -60,6 +60,10 @@ class ModelBuildResult:
     stage_timings_ms: dict[str, int]
 
 
+# The label signal for a "Just this scene" answer; it never reaches training.
+SCENE_ONLY_SIGNAL = "scene_reason_scene"
+
+
 @dataclass(frozen=True)
 class _SceneLabel:
     """A scene's aggregated feedback, split into two channels.
@@ -731,31 +735,66 @@ class PreferenceModelBuilder:
             signals[str(row["scene_id"])].append(
                 (outcome, self.config.model.impact_correction_confidence, "impact_correction")
             )
-        labels: dict[str, _SceneLabel] = {}
-        for scene_id, scene_signals in signals.items():
-            evidence = sum(confidence for _, confidence, _ in scene_signals)
-            if evidence <= 0:
+        # Why these? answers about the scene itself, at a thumb's value and
+        # confidence (without a thumb's Prune side effects). "Just this scene"
+        # is about this scene only: it moves the scene's own appeal but is left
+        # out of the training labels, so nothing generalizes from it. A flip
+        # ("Curator has it backwards") without it generalizes like a thumb.
+        for row in self.connection.execute(
+            """
+            SELECT a.scene_id, a.polarity, a.flipped,
+                   EXISTS (SELECT 1 FROM scene_reason r
+                           WHERE r.answer_id=a.answer_id AND r.subject_type='scene') AS only_scene
+            FROM scene_reason_answer a
+            ORDER BY a.scene_id, a.occurred_at_ms, a.answer_id
+            """
+        ):
+            if not row["only_scene"] and not row["flipped"]:
                 continue
-            outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
-            absolute_signals = scene_signals
-            # float(): sum() over no absolute signals returns int 0, which the
-            # fingerprint would serialize as "0" where the Go core writes "0.0".
-            absolute_evidence = float(sum(confidence for _, confidence, _ in absolute_signals))
-            absolute_outcome = (
-                sum(value * confidence for value, confidence, _ in absolute_signals)
-                / absolute_evidence
-                if absolute_evidence > 0
-                else 0.0
+            signals[str(row["scene_id"])].append(
+                (
+                    DEFAULT_CALIBRATION.thumb_up_value
+                    if int(row["polarity"]) > 0
+                    else DEFAULT_CALIBRATION.thumb_down_value,
+                    DEFAULT_CALIBRATION.explicit_feedback_confidence,
+                    SCENE_ONLY_SIGNAL if row["only_scene"] else "scene_reason_flip",
+                )
             )
-            labels[scene_id] = _SceneLabel(
-                _clamp(outcome),
-                1 - math.exp(-evidence),
-                evidence,
-                tuple(signal for _, _, signal in scene_signals),
-                _clamp(absolute_outcome),
-                absolute_evidence,
-            )
+        labels: dict[str, _SceneLabel] = {}
+        self._training_overrides: dict[str, _SceneLabel | None] = {}
+        for scene_id, scene_signals in signals.items():
+            label = self._aggregate_label(scene_signals)
+            if label is not None:
+                labels[scene_id] = label
+            if any(signal == SCENE_ONLY_SIGNAL for _, _, signal in scene_signals):
+                self._training_overrides[scene_id] = self._aggregate_label(
+                    [item for item in scene_signals if item[2] != SCENE_ONLY_SIGNAL]
+                )
         return labels
+
+    @staticmethod
+    def _aggregate_label(scene_signals: list[tuple[float, float, str]]) -> _SceneLabel | None:
+        evidence = sum(confidence for _, confidence, _ in scene_signals)
+        if evidence <= 0:
+            return None
+        outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
+        absolute_signals = scene_signals
+        # float(): sum() over no absolute signals returns int 0, which the
+        # fingerprint would serialize as "0" where the Go core writes "0.0".
+        absolute_evidence = float(sum(confidence for _, confidence, _ in absolute_signals))
+        absolute_outcome = (
+            sum(value * confidence for value, confidence, _ in absolute_signals) / absolute_evidence
+            if absolute_evidence > 0
+            else 0.0
+        )
+        return _SceneLabel(
+            _clamp(outcome),
+            1 - math.exp(-evidence),
+            evidence,
+            tuple(signal for _, _, signal in scene_signals),
+            _clamp(absolute_outcome),
+            absolute_evidence,
+        )
 
     def _metadata_wrong_scenes(self) -> set[str]:
         return {
@@ -769,10 +808,18 @@ class PreferenceModelBuilder:
         }
 
     def _training_labels(self, labels: dict[str, _SceneLabel]) -> dict[str, _SceneLabel]:
+        """Labels features learn from: no scene marked "metadata is wrong", and
+        a scene's "Just this scene" answers left out (see _scene_labels)."""
         metadata_wrong = self._metadata_wrong_scenes()
-        return {
-            scene_id: label for scene_id, label in labels.items() if scene_id not in metadata_wrong
-        }
+        overrides = getattr(self, "_training_overrides", {})
+        result: dict[str, _SceneLabel] = {}
+        for scene_id, label in labels.items():
+            if scene_id in metadata_wrong:
+                continue
+            training = overrides.get(scene_id, label)
+            if training is not None:
+                result[scene_id] = training
+        return result
 
     def _evidence_fingerprint(self, labels: dict[str, _SceneLabel]) -> str:
         payload = [

@@ -965,11 +965,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.submit_scene_reasons(entries)
         if operation == "get_taste_profile":
             return api.taste_profile()
-        if operation == "get_tag_sentiment_follow_up":
-            return api.tag_sentiment_follow_up(
-                str(args.get("scene_id") or ""),
-                min(3, int(args.get("limit") or 3)),
-            )
         if operation == "get_tag_questions":
             excluded = args.get("exclude_tag_ids") or []
             if not isinstance(excluded, list):
