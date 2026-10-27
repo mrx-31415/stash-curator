@@ -108,6 +108,27 @@ for (const [name, props] of Object.entries(cases)) {
   }
 }
 
+// Stash's runInstead, verbatim: next() wraps each later instead patch in a new
+// Proxy per render. A prior plugin rendering its continuation as <Original />
+// (Stash TV) remounts the page, resetting its tabs, unless that continuation is
+// Stash's stable component.
+for (const name of ["ScenePage", "PerformerPage"]) {
+  const target = () => element("native");
+  const fns = [(props, ...args) => element(args[args.length - 1], props),
+    ...hooks.filter((hook) => hook.name === name && hook.kind === "instead").map((hook) => hook.callback)];
+  function runInstead(argArray) {
+    let i = 1;
+    function next() {
+      if (i >= fns.length) return target;
+      const thisTarget = fns[i++];
+      return new Proxy(thisTarget, { apply: (fn, ctx, args) => fn.apply(ctx, args.concat(next())) });
+    }
+    return fns[0].apply(undefined, argArray.concat(next()));
+  }
+  const [first, second] = [0, 1].map(() => runInstead([cases[name]]).type);
+  assert.equal(first, second, `${name}: a JSX continuation keeps its component type across renders`);
+}
+
 // A prior after-hook can add menu children not present in the original props.
 const themeItem = element("theme-menu");
 const menu = element("nav", {}, nativeChild, themeItem);

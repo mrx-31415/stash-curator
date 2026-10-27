@@ -7834,14 +7834,15 @@
       React.createElement(CuratorPerformerCardBadge, { key: "curator-performer-affinity", performer: props.performer })
     );
   });
-  Api.patch.instead("ScenePage", function (props, ...args) {
-    const next = args.pop();
-    const result = next.call(this, props, ...args);
+  // Pages use after, not instead: Stash wraps each later instead patch in a new
+  // Proxy per render, so a plugin rendering its continuation as <Original />
+  // would remount the page (and reset its tabs) whenever it re-renders.
+  Api.patch.after("ScenePage", function (props, ...args) {
+    const result = args[args.length - 1];
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, scene: props.scene }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
   });
-  Api.patch.instead("PerformerPage", function (props, ...args) {
-    const next = args.pop();
-    const result = next.call(this, props, ...args);
+  Api.patch.after("PerformerPage", function (props, ...args) {
+    const result = args[args.length - 1];
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}` }));
   });
   Api.Event.addEventListener("stash:location", (event) => {
