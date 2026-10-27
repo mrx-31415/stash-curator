@@ -2472,7 +2472,7 @@
   const SCENE_REASON_SKIP_KEY = "stash-curator:scene-reason-skips:v1";
   const SCENE_REASON_SKIP_MS = 30 * 86_400_000;
   const SCENE_REASON_BATCH = 20;
-  const SCENE_REASON_TAGS = 4;
+  const SCENE_REASON_TAGS = 6;
   const SCENE_REASON_PERFORMERS = 3;
   const SCENE_REASON_MODES = {
     hits: {
@@ -2493,7 +2493,7 @@
     "id title play_count paths { preview screenshot } studio { id name } " +
     "performers { id name image_path } tags { id name } files { basename } } } }";
   const SCENE_REASON_TAG_SEARCH =
-    "query CuratorReasonTagSearch($q: String!) { findTags(filter: { q: $q, per_page: 8, sort: \"scenes_count\", direction: DESC }) { tags { id name } } }";
+    "query CuratorReasonTagSearch($q: String!) { findTags(filter: { q: $q, per_page: 20, sort: \"scenes_count\", direction: DESC }) { tags { id name } } }";
 
   async function stashQuery(query, variables) {
     const response = await fetch("/graphql", {
@@ -2524,18 +2524,68 @@
     }
   }
 
-  // The scene's tags that say most about it in this direction: strongest
-  // taste first (likes for Hits, dislikes for Misses). Generic tags carry
-  // little learned taste, so they sort last. Only content tags (the ones in
-  // the taste profile) are offered, so utility tags like a sync marker never
-  // show up; without a profile every tag is offered.
+  // What the chips know about each tag, from the taste profile, plus the
+  // library size for how rare a tag is. Shared by Why these? and the thumb
+  // follow-up.
+  const SCENE_COUNT_QUERY = "query CuratorSceneCount { findScenes(filter: { per_page: 0 }) { count } }";
+  async function loadReasonTaste() {
+    const [profile, count] = await Promise.all([
+      operation({ operation: "get_taste_profile" }),
+      stashQuery(SCENE_COUNT_QUERY, {}).then((data) => data.findScenes.count).catch(() => 0),
+    ]);
+    // Only content tags: workflow, technical, and other roles (a bracketed
+    // [Timestamp: Synced], say) say nothing about taste.
+    const tags = new Map((profile.items || []).filter((item) => !item.role || item.role === "content").map((item) => [item.tag_id, {
+      value: Number(item.inferred_value) || 0,
+      scenes: Number(item.scene_count) || 0,
+      answered: (item.direct_value !== null && item.direct_value !== undefined) || !!item.direct_blocked,
+    }]));
+    const total = Math.max(count, ...[...tags.values()].map((tag) => tag.scenes), 1);
+    return { tags, total };
+  }
+
+  // The scene's tags worth asking about, ranked so a chip says something
+  // about this scene. Content tags you have not answered in Tag sentiment come
+  // first: half by taste in this direction (likes for Hits, dislikes for
+  // Misses) times how rare the tag is in the library, the rest by rarity
+  // alone, where Curator learns most. Answered tags (Curator already knows
+  // them) only fill what is left, rarest first, so a common favourite does not
+  // appear on every card. Without a profile every tag is offered, alphabetically.
+  // Returns every candidate in order; cards show SCENE_REASON_TAGS, then "more".
   function sceneReasonTags(scene, taste, mode) {
+    if (!taste || !taste.tags.size) {
+      return [...scene.tags].sort((left, right) => left.name.localeCompare(right.name));
+    }
     const sign = mode === "hits" ? 1 : -1;
-    return scene.tags
-      .filter((tag) => !taste.size || taste.has(tag.id))
-      .map((tag) => ({ ...tag, taste: taste.get(tag.id) ?? 0 }))
-      .sort((left, right) => sign * (right.taste - left.taste) || left.name.localeCompare(right.name))
-      .slice(0, SCENE_REASON_TAGS);
+    const content = scene.tags
+      .filter((tag) => taste.tags.has(tag.id))
+      .map((tag) => {
+        const info = taste.tags.get(tag.id);
+        const rarity = Math.log((taste.total + 1) / (info.scenes + 1));
+        return { ...tag, rarity, answered: info.answered, fit: Math.max(0, sign * info.value) * rarity };
+      });
+    const candidates = content.filter((tag) => !tag.answered);
+    const byName = (left, right) => left.name.localeCompare(right.name);
+    const telling = candidates.filter((tag) => tag.fit > 0)
+      .sort((left, right) => right.fit - left.fit || byName(left, right))
+      .slice(0, Math.ceil(SCENE_REASON_TAGS / 2));
+    const chosen = new Set(telling.map((tag) => tag.id));
+    const byRarity = (left, right) => right.rarity - left.rarity || byName(left, right);
+    const rare = candidates.filter((tag) => !chosen.has(tag.id)).sort(byRarity);
+    const known = content.filter((tag) => tag.answered).sort(byRarity);
+    return [...telling, ...rare, ...known];
+  }
+
+  // The first SCENE_REASON_TAGS ranked tags, or all of them once expanded.
+  function shownReasonTags(ranked, expanded) {
+    return expanded ? ranked : ranked.slice(0, SCENE_REASON_TAGS);
+  }
+  // The "+ N more" chip, last in the row, while some ranked tags are hidden.
+  function moreReasonTagsChip(ranked, expanded, onExpand) {
+    const hidden = ranked.length - shownReasonTags(ranked, expanded).length;
+    return hidden > 0 && React.createElement("button", {
+      key: "more-tags", type: "button", className: "curator-reason-chip curator-reason-more", onClick: onExpand,
+    }, `+ ${hidden} more`);
   }
 
   function ReasonChip({ pressed, onClick, image, children, tone }) {
@@ -2547,7 +2597,10 @@
     );
   }
 
-  function MissingTagPicker({ onPick, picked }) {
+  // Only content tags can be reasons the model uses, so with a taste profile
+  // the search offers only those (performer attributes and workflow tags
+  // would be stored but ignored).
+  function MissingTagPicker({ onPick, picked, taste }) {
     const [query, setQuery] = React.useState("");
     const [matches, setMatches] = React.useState([]);
     React.useEffect(() => {
@@ -2562,6 +2615,7 @@
       return () => { current = false; clearTimeout(timer); };
     }, [query]);
     const taken = new Set(picked.map((tag) => tag.id));
+    const usable = (tag) => !taken.has(tag.id) && (!taste || !taste.tags.size || taste.tags.has(tag.id));
     return React.createElement(
       "div",
       { className: "curator-reason-missing" },
@@ -2573,10 +2627,10 @@
         value: query,
         onChange: (event) => setQuery(event.target.value),
       }),
-      matches.length > 0 && React.createElement(
+      matches.some(usable) && React.createElement(
         "div",
         { className: "curator-reason-matches", role: "listbox" },
-        matches.filter((tag) => !taken.has(tag.id)).map((tag) => React.createElement("button", {
+        matches.filter(usable).slice(0, 8).map((tag) => React.createElement("button", {
           key: tag.id, type: "button", role: "option", className: "btn btn-sm btn-link",
           onClick: () => { onPick(tag); setQuery(""); setMatches([]); },
         }, tag.name))
@@ -2589,10 +2643,11 @@
     const [queue, setQueue] = React.useState(null);
     const [index, setIndex] = React.useState(0);
     const [exhausted, setExhausted] = React.useState(false);
-    const [taste, setTaste] = React.useState(new Map());
+    const [taste, setTaste] = React.useState(null);
     const [picked, setPicked] = React.useState(new Set());
     const [missing, setMissing] = React.useState([]);
     const [flipped, setFlipped] = React.useState(false);
+    const [allTags, setAllTags] = React.useState(false);
     const [answered, setAnswered] = React.useState(0);
     const [error, setError] = React.useState("");
     // Scenes answered or skipped here, excluded from every fetch until the
@@ -2606,11 +2661,7 @@
     useCuratorActivity("scene-reasons", queue === null && !error, "Finding scenes to ask about…");
 
     React.useEffect(() => {
-      operation({ operation: "get_taste_profile" })
-        .then((profile) => setTaste(new Map((profile.items || []).map((item) => [
-          item.tag_id, Number(item.direct_value ?? item.inferred_value) || 0,
-        ]))))
-        .catch(() => {});
+      loadReasonTaste().then(setTaste).catch(() => {});
     }, []);
 
     // Appends the next scenes for the current mode, with Stash's details.
@@ -2661,6 +2712,7 @@
       setPicked(new Set());
       setMissing([]);
       setFlipped(false);
+      setAllTags(false);
     }
     function switchMode(value) {
       if (value === mode) return;
@@ -2700,6 +2752,7 @@
     const scene = queue && queue[index];
     const tone = flipped ? (mode === "hits" ? "miss" : "hit") : (mode === "hits" ? "hit" : "miss");
     const heading = flipped ? settings.flipped : settings.heading;
+    const rankedTags = scene ? sceneReasonTags(scene, taste, flipped ? (mode === "hits" ? "misses" : "hits") : mode) : [];
     const chosen = picked.size + missing.length > 0 || flipped;
     return React.createElement(
       "div",
@@ -2746,7 +2799,7 @@
         ),
         React.createElement(
           "div", { className: "curator-reason-group", role: "group", "aria-label": "Tags and studio" },
-          sceneReasonTags(scene, taste, flipped ? (mode === "hits" ? "misses" : "hits") : mode).map((tag) => React.createElement(ReasonChip, {
+          shownReasonTags(rankedTags, allTags).map((tag) => React.createElement(ReasonChip, {
             key: tag.id, tone, pressed: picked.has(`tag:${tag.id}`), onClick: () => toggle(`tag:${tag.id}`),
           }, tag.name)),
           scene.studio && React.createElement(ReasonChip, {
@@ -2758,9 +2811,10 @@
           }, `+ ${tag.name}`)),
           React.createElement(ReasonChip, {
             tone, pressed: picked.has("scene"), onClick: () => toggle("scene"),
-          }, "Just this scene")
+          }, "Just this scene"),
+          moreReasonTagsChip(rankedTags, allTags, () => setAllTags(true))
         ),
-        React.createElement(MissingTagPicker, { picked: missing, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+        React.createElement(MissingTagPicker, { picked: missing, taste, onPick: (tag) => setMissing((current) => [...current, tag]) }),
         React.createElement(
           "div",
           { className: "curator-curate-actions" },
@@ -2780,20 +2834,19 @@
   // down can still say the scene's metadata is wrong instead.
   function SceneReasonFollowUp({ followUp, onDismiss }) {
     const [scene, setScene] = React.useState(null);
-    const [taste, setTaste] = React.useState(new Map());
+    const [taste, setTaste] = React.useState(null);
     const [picked, setPicked] = React.useState(new Set());
     const [missing, setMissing] = React.useState([]);
     const [status, setStatus] = React.useState("");
     const [busy, setBusy] = React.useState(false);
+    const [allTags, setAllTags] = React.useState(false);
     const liked = followUp.polarity > 0;
     React.useEffect(() => {
       let current = true;
       stashQuery(SCENE_REASON_SCENES_QUERY, { ids: [Number(followUp.scene_id)] })
         .then((data) => { if (current) setScene(data.findScenes.scenes[0] || false); })
         .catch(() => { if (current) setScene(false); });
-      operation({ operation: "get_taste_profile" })
-        .then((profile) => { if (current) setTaste(new Map((profile.items || []).map((item) => [item.tag_id, Number(item.direct_value ?? item.inferred_value) || 0]))); })
-        .catch(() => {});
+      loadReasonTaste().then((value) => { if (current) setTaste(value); }).catch(() => {});
       return () => { current = false; };
     }, [followUp.scene_id]);
     function toggle(key) {
@@ -2835,6 +2888,7 @@
     }
     if (scene === false) return null;
     const tone = liked ? "hit" : "miss";
+    const rankedTags = scene ? sceneReasonTags(scene, taste, liked ? "hits" : "misses") : [];
     const chip = (key, label, image) => React.createElement(ReasonChip, {
       key, tone, image, pressed: picked.has(key), onClick: () => toggle(key),
     }, label);
@@ -2849,15 +2903,16 @@
       scene && React.createElement(
         "div", { className: "curator-reason-group", role: "group", "aria-label": "Reasons" },
         scene.performers.slice(0, SCENE_REASON_PERFORMERS).map((performer) => chip(`performer:${performer.id}`, performer.name, performer.image_path)),
-        sceneReasonTags(scene, taste, liked ? "hits" : "misses").map((tag) => chip(`tag:${tag.id}`, tag.name)),
+        shownReasonTags(rankedTags, allTags).map((tag) => chip(`tag:${tag.id}`, tag.name)),
         scene.studio && chip(`studio:${scene.studio.id}`, scene.studio.name),
         missing.map((tag) => React.createElement(ReasonChip, {
           key: `missing-${tag.id}`, tone, pressed: true,
           onClick: () => setMissing((current) => current.filter((item) => item.id !== tag.id)),
         }, `+ ${tag.name}`)),
-        chip("scene", "Just this scene")
+        chip("scene", "Just this scene"),
+        moreReasonTagsChip(rankedTags, allTags, () => setAllTags(true))
       ),
-      scene && React.createElement(MissingTagPicker, { picked: missing, onPick: (tag) => setMissing((current) => [...current, tag]) }),
+      scene && React.createElement(MissingTagPicker, { picked: missing, taste, onPick: (tag) => setMissing((current) => [...current, tag]) }),
       React.createElement(
         "div",
         { className: "curator-tag-follow-up-actions" },

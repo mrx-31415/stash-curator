@@ -59,7 +59,7 @@ const scene = (id, extra = {}) => ({
   performers: [{ id: `p${id}`, name: `Performer ${id}`, image_path: `/i/${id}` }],
   // "utility" is not a content tag (absent from the taste profile).
   tags: [{ id: "liked", name: "Liked" }, { id: "disliked", name: "Disliked" }, { id: "plain", name: "Plain" },
-    { id: "utility", name: "[Utility]" }],
+    { id: "utility", name: "[Utility]" }, { id: "answered", name: "Answered" }],
   ...extra,
 });
 
@@ -84,14 +84,24 @@ function harness({ candidates, storage }) {
     operation: async (args) => {
       calls.operations.push(args);
       if (args.operation === "get_taste_profile") {
-        return { items: [{ tag_id: "liked", inferred_value: 0.6 }, { tag_id: "disliked", inferred_value: -0.7, direct_value: null },
-          { tag_id: "plain", inferred_value: 0 }] };
+        // "answered" has a Tag sentiment answer, so it is never a chip.
+        return { items: [
+          { tag_id: "liked", inferred_value: 0.6, scene_count: 50, direct_value: null },
+          { tag_id: "disliked", inferred_value: -0.7, scene_count: 10, direct_value: null },
+          { tag_id: "plain", inferred_value: 0, scene_count: 5, direct_value: null },
+          { tag_id: "answered", inferred_value: 0.9, scene_count: 2, direct_value: 1 },
+          // A workflow tag (a bracketed sync marker, say) is in the profile but never a chip.
+          { tag_id: "utility", inferred_value: 0, scene_count: 1, direct_value: null, role: "workflow_administrative" },
+        ].map((item) => ({ role: "content", ...item })) };
       }
       const excluded = new Set(args.exclude_scene_ids);
       return { items: (candidates[args.mode] || []).filter((id) => !excluded.has(id)).map((id) => ({ scene_id: id })) };
     },
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body);
+      if (body.query.includes("CuratorSceneCount")) {
+        return { ok: true, json: async () => ({ data: { findScenes: { count: 100 } } }) };
+      }
       calls.graphql.push(body.variables);
       return { ok: true, json: async () => ({ data: { findScenes: { scenes: body.variables.ids.map((id) => scene(String(id))) } } }) };
     },
@@ -121,7 +131,7 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
   // Hits rank the scene's liked tags first; Next stays off until something is picked.
   const chips = nodes(tree).filter((node) => node.type === app.context.ReasonChip);
   assert.deepEqual(chips.map((node) => text(node).trim()),
-    ["Performer 1", "Liked", "Plain", "Disliked", "Studio 1", "Just this scene"]);
+    ["Performer 1", "Liked", "Plain", "Disliked", "Answered", "Studio 1", "Just this scene"]);
   assert.equal(button(tree, "Next").props.disabled, true);
   const pick = (label) => nodes(app.render()).find((node) => node.type === app.context.ReasonChip && text(node).trim() === label).props.onClick();
   pick("Performer 1");
@@ -199,7 +209,7 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
     assert.match(text(view), /What put you off\?/);
     assert.match(text(view), /Scene 8 · optional/);
     const labels = nodes(view).filter((node) => node.type === app.context.ReasonChip).map((node) => text(node).trim());
-    assert.deepEqual(labels, ["Performer 8", "Disliked", "Plain", "Liked", "Studio 8", "Just this scene"]);
+    assert.deepEqual(labels, ["Performer 8", "Disliked", "Plain", "Liked", "Answered", "Studio 8", "Just this scene"]);
     assert.equal(button(view, "Done").props.disabled, true);
     assert.ok(button(view, "Metadata is wrong"));
     nodes(view).find((node) => node.type === app.context.ReasonChip && text(node).trim() === "Disliked").props.onClick();
@@ -231,7 +241,56 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
       ["Liked", "Plain", "Disliked"]);
     assert.equal(button(view, "Metadata is wrong"), undefined);
   }
-  console.log("PASS: why-these queue, reasons, flip, skips, modes, and the thumb follow-up");
+  // Ranking: a rare liked tag beats a common one with stronger taste; then the
+  // rarest unanswered tags; answered tags last; non-content tags never.
+  {
+    const app = harness({ candidates: {} });
+    const info = (value, scenes, answered = false) => ({ value, scenes, answered });
+    const taste = {
+      total: 1000,
+      tags: new Map([
+        ["common-like", info(0.8, 400)], ["rare-like", info(0.4, 5)], ["answered", info(0.9, 3, true)],
+        ["rare-plain", info(0, 2)], ["mid-plain", info(0, 50)], ["common-plain", info(0, 600)],
+      ]),
+    };
+    const tags = ["common-like", "rare-like", "answered", "rare-plain", "mid-plain", "common-plain", "utility"]
+      .map((id) => ({ id, name: id }));
+    const picked = app.context.sceneReasonTags({ tags }, taste, "hits").map((tag) => tag.id);
+    assert.equal(JSON.stringify(picked),
+      JSON.stringify(["rare-like", "common-like", "rare-plain", "mid-plain", "common-plain", "answered"]));
+    // When unanswered tags run out, answered ones fill the rest, rarest first.
+    const few = ["rare-like", "answered", "common-answered", "utility"].map((id) => ({ id, name: id }));
+    taste.tags.set("common-answered", info(0.9, 500, true));
+    assert.equal(JSON.stringify(app.context.sceneReasonTags({ tags: few }, taste, "hits").map((tag) => tag.id)),
+      JSON.stringify(["rare-like", "answered", "common-answered"]));
+    // Without a profile, every tag is offered alphabetically.
+    assert.equal(app.context.sceneReasonTags({ tags }, null, "hits").length, tags.length);
+    // Cards show six, then "+ N more" until expanded.
+    const ranked = Array.from({ length: 9 }, (_, i) => ({ id: `t${i}`, name: `T${i}` }));
+    assert.equal(app.context.shownReasonTags(ranked, false).length, 6);
+    assert.equal(text(app.context.moreReasonTagsChip(ranked, false, () => {})).trim(), "+ 3 more");
+    assert.equal(app.context.shownReasonTags(ranked, true).length, 9);
+    assert.equal(app.context.moreReasonTagsChip(ranked, true, () => {}), false);
+  }
+  // The missing-tag search offers only content tags when a profile is loaded.
+  {
+    const runtime = createRuntime();
+    const app = harness({ candidates: {} });
+    app.context.React = { ...runtime.React, Fragment: "fragment" };
+    app.context.fetch = async () => ({ ok: true, json: async () => ({ data: { findTags: { tags: [
+      { id: "content-tag", name: "Content tag" }, { id: "attribute-tag", name: "Attribute tag" },
+    ] } } }) });
+    const taste = { total: 10, tags: new Map([["content-tag", { value: 0, scenes: 1, answered: false }]]) };
+    const render = () => runtime.render(() => app.context.MissingTagPicker({ picked: [], taste, onPick: () => {} }));
+    let view = render();
+    nodes(view).find((node) => node.type === "input").props.onChange({ target: { value: "tag" } });
+    render();
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    view = render();
+    const options = nodes(view).filter((node) => node.props?.role === "option").map((node) => text(node).trim());
+    assert.equal(JSON.stringify(options), JSON.stringify(["Content tag"]));
+  }
+  console.log("PASS: why-these queue, reasons, flip, skips, modes, the thumb follow-up, tag ranking, and the tag search");
 })().catch((error) => {
   console.error(error);
   process.exit(1);

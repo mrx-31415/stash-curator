@@ -4831,3 +4831,6 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
     width: auto;
   }
 }
+
+/* "+ N more" reveals the rest of a scene's ranked tags. */
+.curator-reason-chip.curator-reason-more { border-style: dashed; color: var(--curator-text-muted, inherit); }

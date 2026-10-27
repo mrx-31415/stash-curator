@@ -1057,22 +1057,32 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	return result, nil
 }
 
-// watchLiftSupport mirrors ModelConfig.watch_lift_support and watchLiftShrink
-// mirrors WATCH_LIFT_SHRINK.
+// watchLiftSupport mirrors ModelConfig.watch_lift_support,
+// entityWatchLiftSupport mirrors ModelConfig.entity_watch_lift_support, and
+// watchLiftShrink mirrors WATCH_LIFT_SHRINK.
 const (
-	watchLiftSupport = 2.0
-	watchLiftShrink  = 10.0
+	watchLiftSupport       = 2.0
+	entityWatchLiftSupport = 2.0
+	watchLiftShrink        = 10.0
 )
 
 type watchLiftTerm struct{ support, numerator float64 }
 
-// modelWatchLift mirrors PreferenceModelBuilder._watch_lift: per content
-// feature, pseudo-evidence from how much more often the tag is on watched
-// scenes than in the library. Outcome labels only say how a chosen scene went;
-// lift sees the choice itself.
+// modelWatchLift mirrors PreferenceModelBuilder._watch_lift: per tag,
+// performer, and studio feature, pseudo-evidence from how much more often it
+// is on watched scenes than in the library. Outcome labels only say how a
+// chosen scene went; lift sees the choice itself.
 func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[string]watchLiftTerm, error) {
 	terms := map[string]watchLiftTerm{}
-	if watchLiftSupport <= 0 {
+	weights := map[string]float64{}
+	for family, weight := range map[string]float64{
+		"content": watchLiftSupport, "performer_identity": entityWatchLiftSupport, "studio": entityWatchLiftSupport,
+	} {
+		if weight > 0 {
+			weights[family] = weight
+		}
+	}
+	if len(weights) == 0 {
 		return terms, nil
 	}
 	watched := map[string]bool{}
@@ -1099,13 +1109,15 @@ func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[strin
 	}
 	library := map[string]int{}
 	chosen := map[string]int{}
+	familyOf := map[string]string{}
 	for sceneID, features := range sceneFeatures {
 		seen := map[string]bool{}
 		for _, feature := range features {
-			if feature.family != "content" || seen[feature.featureID] {
+			if _, lifted := weights[feature.family]; !lifted || seen[feature.featureID] {
 				continue
 			}
 			seen[feature.featureID] = true
+			familyOf[feature.featureID] = feature.family
 			library[feature.featureID]++
 			if watched[sceneID] {
 				chosen[feature.featureID]++
@@ -1118,7 +1130,7 @@ func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[strin
 		withTag := float64(chosen[featureID])
 		lift := math.Log(((withTag + watchLiftShrink*base) / (watchedCount + watchLiftShrink)) / base)
 		mass := math.Max(withTag, watchedCount*base)
-		pseudo := watchLiftSupport * mass / (mass + watchLiftShrink)
+		pseudo := weights[familyOf[featureID]] * mass / (mass + watchLiftShrink)
 		terms[featureID] = watchLiftTerm{support: pseudo, numerator: pseudo * math.Tanh(lift)}
 	}
 	return terms, nil
