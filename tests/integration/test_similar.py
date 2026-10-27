@@ -18,6 +18,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -44,6 +45,18 @@ def _dismiss_modals(page: Page) -> None:
         page.wait_for_timeout(300)
         if page.locator("div.modal.show").count() == 0:
             break
+
+
+def _wait_until_settled(page: Page) -> None:
+    """Wait for the panel's "Finding close matches…" status to come and go.
+
+    The request may finish before the status is seen, so its appearance is
+    optional; its disappearance is not.
+    """
+    loading = page.locator(".curator-similar .curator-loading")
+    with contextlib.suppress(PlaywrightTimeoutError):
+        loading.wait_for(state="visible", timeout=3000)
+    loading.wait_for(state="hidden", timeout=30000)
 
 
 def _collect_errors(page: Page) -> list[str]:
@@ -92,16 +105,15 @@ def test_similar_stashdb_never_crashes(
     search = page.get_by_role("textbox", name=f"Search for a {entity_type}")
     search.fill(search_text)
     page.get_by_role("button", name="Search").click()
-    page.wait_for_timeout(1500)
     candidate_button = page.get_by_role("button", name=candidate).first
     candidate_button.wait_for(state="visible", timeout=10000)
     candidate_button.click()
     # Library similarity runs the backend before the grid renders.
-    page.wait_for_timeout(8000)
+    _wait_until_settled(page)
 
     # Switch to the Stash-box source; this reloads similarity against the remote pool.
     page.get_by_role("button", name="Stash-box").click()
-    page.wait_for_timeout(10000)
+    _wait_until_settled(page)
 
     _assert_panel_survived(page, f"similar {entity_type} StashDB")
 
@@ -118,10 +130,9 @@ def test_similar_library_performers_render_cards(page: Page, base_url: str) -> N
     search = page.get_by_role("textbox", name="Search for a performer")
     search.fill("Test Performer")
     page.get_by_role("button", name="Search").click()
-    page.wait_for_timeout(1500)
     candidate = page.get_by_role("button", name="Test Performer One").first
     candidate.wait_for(state="visible", timeout=10000)
     candidate.click()
-    page.wait_for_timeout(8000)
+    _wait_until_settled(page)
 
     _assert_panel_survived(page, "similar performer library")

@@ -142,6 +142,20 @@ def stash_request(
     return cast(dict[str, Any], data["data"])
 
 
+def mark_release_notes_seen(stash_url: str) -> None:
+    """Keep Stash's Release Notes dialog closed.
+
+    A fresh Stash opens it once, a moment after the first page load, and it
+    covers whatever the test clicks next. Stash shows notes dated after the UI
+    setting lastNoteSeen (yyyymmdd), so a far-future date hides them all.
+    """
+    stash_request(
+        stash_url,
+        "mutation SeenNotes($partial: Map!) { configureUI(partial: $partial) }",
+        {"partial": {"lastNoteSeen": 99991231}},
+    )
+
+
 def create_tags(stash_url: str) -> dict[str, str]:
     """Find-or-create seed tags and return a {name: id} mapping.
 
@@ -285,6 +299,7 @@ def main() -> None:
     stash_url = args.stash_url.rstrip("/")
 
     print(f"Seeding {stash_url} …")
+    mark_release_notes_seen(stash_url)
     print("Creating tags …")
     tag_ids = create_tags(stash_url)
     print("Creating performers …")

@@ -107,8 +107,18 @@ case "${1:-}" in
     git diff --check
     ;;
   integration)
+    # Optional pytest arguments select the tests (CI runs two shards);
+    # the default is the whole integration suite.
+    shift
+    (( $# )) || set -- tests/integration/
     # ── build plugin ──
-    uv run --frozen python scripts/build_plugin.py
+    # The test Stash container only needs the host architecture's Linux core;
+    # skipping the other four cross-compiles saves most of the build.
+    case "$(uname -m)" in
+      aarch64 | arm64) core_platform=linux/arm64 ;;
+      *) core_platform=linux/amd64 ;;
+    esac
+    uv run --frozen python scripts/build_plugin.py --platform "$core_platform"
     compose_file="tests/integration/docker-compose.yml"
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
@@ -140,7 +150,7 @@ case "${1:-}" in
     uv run --frozen python tests/integration/seed.py --stash-url "$STASH_URL"
     # ── run playwright tests ──
     echo "[verify] running integration tests …"
-    uv run --group integration --frozen pytest tests/integration/ -m integration -v \
+    uv run --group integration --frozen pytest "$@" -m integration -v \
       --base-url "$STASH_URL" \
       --video=retain-on-failure \
       --screenshot=only-on-failure \
