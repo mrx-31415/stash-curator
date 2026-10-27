@@ -46,9 +46,6 @@ assert.equal(find(full, "select"), undefined, "keep the model-comparison slider 
 assert.equal(find(full, "input").props.type, "range");
 assert.equal(find(full, "input").props["aria-valuetext"], "Slight dislike");
 assert.ok(nodes(full).some((node) => node.props?.className === "curator-sentiment-model-dot"));
-const followUp = source.slice(source.indexOf("  function TagSentimentFollowUp("),
-  source.indexOf("  function ExternalActions("));
-assert.match(followUp, /TagSentimentControl, \{[^}]*compact: true/);
 vm.runInContext(source.slice(source.indexOf("  function RatingRows("),
   source.indexOf("  // LocalRatingPanel is")), context);
 const rows = [{ key: "a", name: "Example tag" }, { key: "b", name: "Second tag" }];

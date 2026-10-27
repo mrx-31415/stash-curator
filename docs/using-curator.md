@@ -170,10 +170,13 @@ On phones, shorter sliders show just the two end labels; the current answer stay
 visible on the right. Long tag names are shortened to keep each rating on one row.
 **Never (block)** excludes matching content; it is stronger than dislike.
 
-After an accepted thumbs down, Curator may offer an optional, dismissible follow-up
-with up to three relevant content tags. Answer only the tags that contributed to the
-problem, or choose a scene-specific or metadata explanation; the original thumbs down
-remains independent.
+After a thumbs up or thumbs down, Curator offers an optional, dismissible follow-up:
+**What made it work?** or **What put you off?** It shows the same chips as
+[Why these?](#why-these): the scene's performers, its most telling tags in that
+direction, the studio, **Just this scene**, and **Something not tagged…**. Tap any that
+apply and press **Done**; they are saved as a scene reason. After a thumbs down,
+**Metadata is wrong** tells Curator not to learn from the scene's current metadata
+instead. **Skip** or × closes it; the thumb itself is already saved either way.
 
 ### Affinity on detail pages
 

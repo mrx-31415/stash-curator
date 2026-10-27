@@ -4804,3 +4804,30 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   z-index: 5;
 }
 .curator-reason-matches .btn { text-align: left; }
+
+/* The thumb follow-up floats at the bottom of the viewport so it is seen
+   wherever the rated card was: a corner panel on desktop, a bottom sheet
+   above Stash's bottom navigation bar on phones. Only the latest shows. */
+.curator-reason-follow-up.curator-tag-follow-up {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  bottom: 1rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  margin: 0;
+  max-height: 70vh;
+  max-width: 460px;
+  overflow-y: auto;
+  position: fixed;
+  right: 1rem;
+  width: calc(100% - 2rem);
+  z-index: 1040;
+}
+@media (max-width: 576px) {
+  .curator-reason-follow-up.curator-tag-follow-up {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 3.75rem);
+    left: 0.5rem;
+    max-width: none;
+    right: 0.5rem;
+    width: auto;
+  }
+}

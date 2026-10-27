@@ -57,7 +57,9 @@ const scene = (id, extra = {}) => ({
   id, title: `Scene ${id}`, play_count: 2, paths: { preview: `/p/${id}`, screenshot: `/s/${id}` },
   studio: { id: `st${id}`, name: `Studio ${id}` },
   performers: [{ id: `p${id}`, name: `Performer ${id}`, image_path: `/i/${id}` }],
-  tags: [{ id: "liked", name: "Liked" }, { id: "disliked", name: "Disliked" }, { id: "plain", name: "Plain" }],
+  // "utility" is not a content tag (absent from the taste profile).
+  tags: [{ id: "liked", name: "Liked" }, { id: "disliked", name: "Disliked" }, { id: "plain", name: "Plain" },
+    { id: "utility", name: "[Utility]" }],
   ...extra,
 });
 
@@ -70,6 +72,8 @@ function harness({ candidates, storage }) {
     Button: "button",
     Date, JSON, Set, Map, Error, Object, Math, Number, String, Promise, setTimeout, clearTimeout,
     keepPreviewMuted: () => {},
+    uuid: () => "uuid-1",
+    scheduleModelUpdate: () => { calls.scheduled = (calls.scheduled || 0) + 1; },
     useCuratorActivity: () => {},
     submitSceneReason: (entry) => calls.answers.push(entry),
     localStorage: {
@@ -80,7 +84,8 @@ function harness({ candidates, storage }) {
     operation: async (args) => {
       calls.operations.push(args);
       if (args.operation === "get_taste_profile") {
-        return { items: [{ tag_id: "liked", inferred_value: 0.6 }, { tag_id: "disliked", inferred_value: -0.7, direct_value: null }] };
+        return { items: [{ tag_id: "liked", inferred_value: 0.6 }, { tag_id: "disliked", inferred_value: -0.7, direct_value: null },
+          { tag_id: "plain", inferred_value: 0 }] };
       }
       const excluded = new Set(args.exclude_scene_ids);
       return { items: (candidates[args.mode] || []).filter((id) => !excluded.has(id)).map((id) => ({ scene_id: id })) };
@@ -93,7 +98,11 @@ function harness({ candidates, storage }) {
   };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf("  // Why these?: scenes Curator rates"), source.indexOf("  function CurateProgress(")), context);
-  return { context, calls, store, render: () => runtime.render(() => context.SceneReasons()) };
+  return {
+    context, calls, store,
+    render: () => runtime.render(() => context.SceneReasons()),
+    renderFollowUp: (followUp) => runtime.render(() => context.SceneReasonFollowUp({ followUp, onDismiss: () => { calls.dismissed = (calls.dismissed || 0) + 1; } })),
+  };
 }
 
 const button = (tree, label) => nodes(tree).find((node) => node.type === "button" && text(node).trim() === label);
@@ -178,7 +187,51 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
   await settle();
   await settle();
   assert.equal(JSON.stringify(skipped.calls.operations.find((call) => call.mode).exclude_scene_ids), JSON.stringify(["7"]));
-  console.log("PASS: why-these queue, reasons, flip, skips, and modes");
+  // After a thumbs down: the same chips, dislikes first; Done needs a pick,
+  // saves a scene reason at the thumb's polarity, and closes the panel.
+  {
+    const app = harness({ candidates: {} });
+    const followUp = { scene_id: "8", polarity: -1 };
+    app.renderFollowUp(followUp);
+    await settle();
+    await settle();
+    let view = app.renderFollowUp(followUp);
+    assert.match(text(view), /What put you off\?/);
+    assert.match(text(view), /Scene 8 · optional/);
+    const labels = nodes(view).filter((node) => node.type === app.context.ReasonChip).map((node) => text(node).trim());
+    assert.deepEqual(labels, ["Performer 8", "Disliked", "Plain", "Liked", "Studio 8", "Just this scene"]);
+    assert.equal(button(view, "Done").props.disabled, true);
+    assert.ok(button(view, "Metadata is wrong"));
+    nodes(view).find((node) => node.type === app.context.ReasonChip && text(node).trim() === "Disliked").props.onClick();
+    view = app.renderFollowUp(followUp);
+    button(view, "Done").props.onClick();
+    assert.equal(JSON.stringify(app.calls.answers.at(-1)), JSON.stringify({
+      scene_id: "8", polarity: -1, flipped: false, reasons: [{ subject_type: "tag", subject_id: "disliked" }],
+    }));
+    assert.equal(app.calls.dismissed, 1);
+    // Metadata is wrong records that feedback instead of a reason.
+    await button(app.renderFollowUp(followUp), "Metadata is wrong").props.onClick();
+    const metadata = app.calls.operations.find((call) => call.operation === "submit_feedback");
+    assert.equal(metadata.entries[0].feedback_type, "metadata_wrong");
+    assert.equal(metadata.entries[0].scene_id, "8");
+    assert.equal(app.calls.dismissed, 2);
+  }
+
+  // After a thumbs up the panel asks what made it work, likes first, and has
+  // no metadata action.
+  {
+    const app = harness({ candidates: {} });
+    const followUp = { scene_id: "6", polarity: 1 };
+    app.renderFollowUp(followUp);
+    await settle();
+    await settle();
+    const view = app.renderFollowUp(followUp);
+    assert.match(text(view), /What made it work\?/);
+    assert.deepEqual(nodes(view).filter((node) => node.type === app.context.ReasonChip).map((node) => text(node).trim()).slice(1, 4),
+      ["Liked", "Plain", "Disliked"]);
+    assert.equal(button(view, "Metadata is wrong"), undefined);
+  }
+  console.log("PASS: why-these queue, reasons, flip, skips, modes, and the thumb follow-up");
 })().catch((error) => {
   console.error(error);
   process.exit(1);
