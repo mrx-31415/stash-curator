@@ -433,6 +433,8 @@ func contentReasons(score *fullSceneScore, featureVersion string, ctx *neighborC
 		provenance := "learned_feature_affinity"
 		if declared.kind != jNull {
 			provenance = "declared_tag_preference"
+		} else if affinityMetadata.get("inherited_preference").kind != jNull {
+			provenance = "inherited_tag_preference"
 		}
 		dir := direction(value)
 		related := jvArr()

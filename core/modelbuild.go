@@ -830,6 +830,10 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	if err != nil {
 		return nil, err
 	}
+	lift, err := modelWatchLift(db, sceneFeatures)
+	if err != nil {
+		return nil, err
+	}
 	result := map[string]modelAffinity{}
 	for featureID, values := range accumulators {
 		studios := map[string]bool{}
@@ -850,8 +854,9 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 				}
 			}
 		}
-		support := supports[featureID]
-		numerator := numerators[featureID]
+		liftTerm := lift[featureID]
+		support := supports[featureID] + liftTerm.support
+		numerator := numerators[featureID] + liftTerm.numerator
 		// Shrink toward what the tag's siblings say rather than toward zero;
 		// mirrors PreferenceModelBuilder._sibling_priors' use in _affinities.
 		priorPseudo := affinityPrior * affinitySiblingPrior * siblingPriors[featureID]
@@ -865,6 +870,25 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 			contexts: jvObj(
 				jvKey("studios", jvInt(int64(len(studios)))),
 				jvKey("performers", jvInt(int64(len(performers)))),
+			),
+		}
+	}
+	// Tags never on a labelled scene can still be avoided (or chosen) when
+	// browsing; watch lift alone speaks for them.
+	for _, featureID := range sortedStringKeys(lift) {
+		if _, labelled := accumulators[featureID]; labelled {
+			continue
+		}
+		term := lift[featureID]
+		result[featureID] = modelAffinity{
+			featureID:  featureID,
+			affinity:   clamp(term.numerator / (affinityPrior + term.support)),
+			confidence: 1 - math.Exp(-term.support/3.0),
+			support:    term.support,
+			sceneCount: 0,
+			contexts: jvObj(
+				jvKey("studios", jvInt(0)),
+				jvKey("performers", jvInt(0)),
 			),
 		}
 	}
@@ -920,7 +944,189 @@ func modelAffinities(db dbx, sceneFeatures map[string][]storedFeature,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := inheritTagPreferences(db, tagFeatures, result); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+// watchLiftSupport mirrors ModelConfig.watch_lift_support and watchLiftShrink
+// mirrors WATCH_LIFT_SHRINK.
+const (
+	watchLiftSupport = 2.0
+	watchLiftShrink  = 10.0
+)
+
+type watchLiftTerm struct{ support, numerator float64 }
+
+// modelWatchLift mirrors PreferenceModelBuilder._watch_lift: per content
+// feature, pseudo-evidence from how much more often the tag is on watched
+// scenes than in the library. Outcome labels only say how a chosen scene went;
+// lift sees the choice itself.
+func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[string]watchLiftTerm, error) {
+	terms := map[string]watchLiftTerm{}
+	if watchLiftSupport <= 0 {
+		return terms, nil
+	}
+	watched := map[string]bool{}
+	rows, err := db.Query(`SELECT DISTINCT scene_id FROM source_play`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sceneID string
+		if err := rows.Scan(&sceneID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if _, ok := sceneFeatures[sceneID]; ok {
+			watched[sceneID] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(watched) == 0 {
+		return terms, nil
+	}
+	library := map[string]int{}
+	chosen := map[string]int{}
+	for sceneID, features := range sceneFeatures {
+		seen := map[string]bool{}
+		for _, feature := range features {
+			if feature.family != "content" || seen[feature.featureID] {
+				continue
+			}
+			seen[feature.featureID] = true
+			library[feature.featureID]++
+			if watched[sceneID] {
+				chosen[feature.featureID]++
+			}
+		}
+	}
+	total, watchedCount := float64(len(sceneFeatures)), float64(len(watched))
+	for _, featureID := range sortedStringKeys(library) {
+		base := float64(library[featureID]) / total
+		withTag := float64(chosen[featureID])
+		lift := math.Log(((withTag + watchLiftShrink*base) / (watchedCount + watchLiftShrink)) / base)
+		mass := math.Max(withTag, watchedCount*base)
+		pseudo := watchLiftSupport * mass / (mass + watchLiftShrink)
+		terms[featureID] = watchLiftTerm{support: pseudo, numerator: pseudo * math.Tanh(lift)}
+	}
+	return terms, nil
+}
+
+// inheritedSupport is half a direct answer: an unanswered tag takes its nearest
+// answered ancestors' mean answer as a weaker prior. A replay on real answers
+// found a parent's answer predicts a child's far better than learned history.
+const inheritedSupport = 4.0
+
+// inheritTagPreferences mirrors PreferenceModelBuilder._inherit_tag_preferences.
+// Only tags without their own answer inherit, from the nearest generation of
+// ancestors holding any non-Never answer.
+func inheritTagPreferences(db dbx, tagFeatures map[string]string, result map[string]modelAffinity) error {
+	answers := map[string]float64{}
+	answered := map[string]bool{}
+	rows, err := db.Query(`SELECT tag_id, value, blocked FROM direct_tag_preference ORDER BY tag_id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var tagID string
+		var value float64
+		var blocked int64
+		if err := rows.Scan(&tagID, &value, &blocked); err != nil {
+			rows.Close()
+			return err
+		}
+		answered[tagID] = true
+		if blocked == 0 {
+			answers[tagID] = value
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(answers) == 0 {
+		return nil
+	}
+	parents := map[string][]string{}
+	rows, err = db.Query(`SELECT tag_id, parent_tag_id FROM tag_parent ORDER BY tag_id, parent_tag_id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var tagID, parentTagID string
+		if err := rows.Scan(&tagID, &parentTagID); err != nil {
+			rows.Close()
+			return err
+		}
+		parents[tagID] = append(parents[tagID], parentTagID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, tagID := range sortedStringKeys(tagFeatures) {
+		if answered[tagID] || len(parents[tagID]) == 0 {
+			continue
+		}
+		seen := map[string]bool{tagID: true}
+		frontier := parents[tagID]
+		var sources []string
+		for len(frontier) > 0 && len(sources) == 0 {
+			var next []string
+			for _, parentTagID := range frontier {
+				if seen[parentTagID] {
+					continue
+				}
+				seen[parentTagID] = true
+				if _, ok := answers[parentTagID]; ok {
+					sources = append(sources, parentTagID)
+				}
+				next = append(next, parents[parentTagID]...)
+			}
+			frontier = next
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		sort.Strings(sources)
+		var total float64
+		for _, source := range sources {
+			total += answers[source]
+		}
+		inherited := total / float64(len(sources))
+		featureID := tagFeatures[tagID]
+		learned, exists := result[featureID]
+		if !exists {
+			learned = modelAffinity{featureID: featureID}
+		}
+		contextJSON := jvObj()
+		for _, pair := range learned.contexts.obj {
+			contextJSON.set(pair.key, pair.val)
+		}
+		from := jvArr()
+		for _, source := range sources {
+			from.arr = append(from.arr, jvStr(source))
+		}
+		contextJSON.set("inherited_preference", jvFloat(inherited))
+		contextJSON.set("inherited_from", from)
+		contextJSON.set("learned_affinity", jvFloat(learned.affinity))
+		contextJSON.set("learned_confidence", jvFloat(learned.confidence))
+		result[featureID] = modelAffinity{
+			featureID: featureID,
+			affinity: clamp((learned.affinity*learned.support + inherited*inheritedSupport) /
+				(learned.support + inheritedSupport)),
+			confidence: math.Max(learned.confidence, 0.6),
+			support:    learned.support + inheritedSupport,
+			sceneCount: learned.sceneCount,
+			contexts:   contextJSON,
+		}
+	}
+	return nil
 }
 
 // The content-neighbors kernel builds its own vectors; scoring only needs

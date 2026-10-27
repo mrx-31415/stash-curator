@@ -58,6 +58,20 @@ chips (a separate package, see Follow-up).
   (`|inferred| ≥ 0.15`) as "Right?" checks, which cut early score error most. "Is
   it A or B?" pair questions found no support (co-occurring tags were not worse
   inferred) and were dropped.
+- **Inheritance (model):** in the same replay a parent tag's answer predicted
+  its child's answer far better than learned history did, so unanswered tags
+  inherit the nearest answered ancestors' mean non-Never answer at half a direct
+  answer's support (4, confidence ≥ 0.6). Held-out tag error and score error both
+  fell. Explanations name the inherited source (`inherited_tag_preference`).
+- **Watch lift (model):** learned tag affinity used only outcomes of watched
+  scenes, which nearly all "go fine", so common tags averaged to ~0 and missed the
+  choice to watch. Watch lift (`log` of a tag's watched share over its library
+  share, shrunk with 10 pseudo-scenes, entering as `watch_lift_support · m/(m+10)`
+  pseudo-observations at `tanh(lift)`, where `m = max(watched-with, expected)`) was
+  swept on a full-model time split (train on earlier first plays, rank the scenes
+  first played later among every unplayed scene): weight 2 clearly raised AUC and
+  top recall over no lift, and heavier weights saturated the content bound.
+  Agreement with recorded answers also rose.
 - **Answer review:** `get_answer_review` ranks direct (non-Never) answers by
   `|answer − learned| × learned confidence`, using the viewing-only affinity the
   model keeps beside each answer, for answers with learned confidence ≥ 0.35.
