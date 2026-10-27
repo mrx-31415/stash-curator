@@ -1035,54 +1035,39 @@ func availableCount(db dbx, modelID, lane string, diversityEnabled bool, exclude
 			return 0, err
 		}
 	}
-	var rows *sql.Rows
+	laneSQL := `SELECT scene_id, source_lane FROM model_lane_order WHERE model_id=? AND lane=? AND ordering=?`
+	laneArgs := []any{modelID, lane, ordering}
 	if queryScoreFirst {
-		rows, err = db.Query(`SELECT scene_id, lane AS source_lane FROM model_scene_lane
-WHERE model_id=? AND lane=?`, modelID, lane)
-	} else {
-		rows, err = db.Query(`SELECT scene_id, source_lane FROM model_lane_order
-WHERE model_id=? AND lane=? AND ordering=?`, modelID, lane, ordering)
+		laneSQL = `SELECT scene_id, lane AS source_lane FROM model_scene_lane WHERE model_id=? AND lane=?`
+		laneArgs = []any{modelID, lane}
 	}
-	if err != nil {
-		return 0, err
-	}
-	type laneRow struct{ sceneID, sourceLane string }
-	var chunk []laneRow
-	for rows.Next() {
-		var r laneRow
-		if err := rows.Scan(&r.sceneID, &r.sourceLane); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		chunk = append(chunk, r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	sceneIDs := make(map[string]bool, len(chunk))
-	for _, r := range chunk {
-		sceneIDs[r.sceneID] = true
-	}
-	now := nowMs()
-	eligibility, err := sceneEligibility(db, now, sceneIDs)
-	if err != nil {
-		return 0, err
-	}
-	filter, err := directPlayFilters(db, now)
+	ineligible, err := ineligibleLaneScenes(db, laneSQL, laneArgs, nowMs())
 	if err != nil {
 		return 0, err
 	}
 	total := int64(0)
-	for _, r := range chunk {
-		if materializedRowIsEligible(r.sceneID, r.sourceLane, eligibility, filter) &&
-			(sceneFilter == nil || sceneFilter(r.sceneID) && !excluded[r.sceneID]) {
-			total++
-		}
-	}
 	if sceneFilter != nil {
-		return total, nil
+		rows, err := db.Query(laneSQL, laneArgs...)
+		if err != nil {
+			return 0, err
+		}
+		for rows.Next() {
+			var sceneID, sourceLane string
+			if err := rows.Scan(&sceneID, &sourceLane); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			if !ineligible[sceneID] && sceneFilter(sceneID) && !excluded[sceneID] {
+				total++
+			}
+		}
+		rows.Close()
+		return total, rows.Err()
 	}
+	if err := db.QueryRow(`SELECT count(*) FROM (`+laneSQL+`)`, laneArgs...).Scan(&total); err != nil {
+		return 0, err
+	}
+	total -= int64(len(ineligible))
 	payload := jvObj(jvKey("fingerprint", jvStr(fingerprint)), jvKey("count", jvInt(total)))
 	if err := execImmediate(db, `INSERT INTO application_meta(key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, cacheKey, payload.marshalCompact()); err != nil {
@@ -1093,6 +1078,57 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value`, cacheKey, payload.marshalC
 		total = 0
 	}
 	return total, nil
+}
+
+// ineligibleLaneScenes returns the lane's scenes that fail
+// materializedRowIsEligible. Every ineligibility reason needs a row in one of
+// the eligibility tables (or a missing available file), so SQLite narrows the
+// lane to those suspects and only they get the full check; lanes span the
+// library, and loading every row into Go dominated the uncached count.
+func ineligibleLaneScenes(db dbx, laneSQL string, laneArgs []any, now int64) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT l.scene_id, l.source_lane FROM (`+laneSQL+`) l
+WHERE NOT EXISTS (SELECT 1 FROM source_file f WHERE f.scene_id=l.scene_id AND f.available=1)
+   OR l.scene_id IN (SELECT scene_id FROM feedback WHERE reversed_by_id IS NULL)
+   OR l.scene_id IN (SELECT entity_id FROM exclusion WHERE entity_type='scene' AND reversed_at_ms IS NULL)
+   OR l.scene_id IN (SELECT scene_id FROM pruning_candidate)
+   OR l.scene_id IN (SELECT t.scene_id FROM direct_tag_preference d
+                     CROSS JOIN scene_tag t ON t.tag_id=d.tag_id WHERE d.blocked=1)
+   OR (l.source_lane IN ('best_bets', 'revisit')
+       AND l.scene_id IN (SELECT scene_id FROM play_session WHERE provenance='direct_player'))`, laneArgs...)
+	if err != nil {
+		return nil, err
+	}
+	type laneRow struct{ sceneID, sourceLane string }
+	var suspects []laneRow
+	sceneIDs := make(map[string]bool)
+	for rows.Next() {
+		var r laneRow
+		if err := rows.Scan(&r.sceneID, &r.sourceLane); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		suspects = append(suspects, r)
+		sceneIDs[r.sceneID] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	eligibility, err := sceneEligibility(db, now, sceneIDs)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := directPlayFilters(db, now)
+	if err != nil {
+		return nil, err
+	}
+	ineligible := make(map[string]bool)
+	for _, r := range suspects {
+		if !materializedRowIsEligible(r.sceneID, r.sourceLane, eligibility, filter) {
+			ineligible[r.sceneID] = true
+		}
+	}
+	return ineligible, nil
 }
 
 // eligibilityFingerprint mirrors SlateBuilder._eligibility_fingerprint: a
@@ -1267,9 +1303,15 @@ func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs 
 	if len(includeTags) == 0 && len(excludeTags) == 0 && len(performerIDs) == 0 && len(studioIDs) == 0 && gender == "" {
 		return nil, nil
 	}
-	performers, err := scenePerformers(db)
-	if err != nil {
-		return nil, err
+	// Scene performers are only consulted by the gender and performer
+	// filters; loading them for a tag-only filter cost more than the filter.
+	var performers map[string][]string
+	var err error
+	if gender != "" || len(performerIDs) > 0 {
+		performers, err = scenePerformers(db)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var genders map[string]string
 	if gender != "" {

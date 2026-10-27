@@ -112,9 +112,25 @@ release, opens a `chore(main): release vX.Y.Z` pull request that bumps
 `pyproject.toml` and `curator/__init__.py`, and regenerates `CHANGELOG.md`. Merging
 that pull request creates the version tag and the GitHub Release; a follow-up job
 builds the plugin archive and attaches `dist/stash-curator.zip` and `dist/index.yml`
-to the release. GitHub Pages already rebuilds on every push to `main`, so the new
-version becomes the update available in Stash's plugin manager the moment the
-release pull request lands.
+to the release, then dispatches the Pages workflow.
+
+GitHub Pages rebuilds on every push to `main` and serves two plugin sources. The
+development source under `/dev/` is built from `main` by
+`scripts/build_plugin.py --dev`, versioned `X.Y.Z+dev.N.<sha>` (N commits after
+release X.Y.Z; the release commit itself is plain `X.Y.Z`). The regular source
+serves the latest release's attached archives unchanged. Stash offers a plugin
+update only when the index `date` is newer, so regular-source users see an update
+only when a release lands. The development source is for maintainers and is
+deliberately not in the user guide.
+
+To test what the next release will contain, point an existing installation's plugin
+source at `https://mrx-31415.github.io/stash-curator/dev/index.yml`, keeping its
+**Local Path**, and update Curator. Edit the source rather than adding a second one: a
+second source with another Local Path installs a second copy of the plugin. The
+development source also carries every release, so an installation can stay on it.
+To return to the regular source, switch it back and reinstall. Going back to a
+release older than a development build that added a migration is not supported, so
+back up the plugin folder first.
 
 The version is defined once in `pyproject.toml` (`[project] version`) and again in
 `curator/__init__.py`; release-please updates both together. Everything else derives
