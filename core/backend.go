@@ -245,6 +245,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetTagSentimentFollowUp(pluginDir, payload)
 	case "get_tag_questions":
 		return opGetTagQuestions(pluginDir, payload)
+	case "get_answer_review":
+		return opGetAnswerReview(pluginDir, payload)
 	case "get_curation_impact":
 		return opGetCurationImpact(pluginDir, payload)
 	case "submit_impact_correction":

@@ -846,8 +846,12 @@ WHERE scene_id=? AND provenance='scene'`, sceneID)
 const (
 	tagQuestionPoolSize = 300
 	tagQuestionMinReach = 2
-	tagQuestionExamples = 3
+	tagQuestionExamples = 6
 	directTagSupport    = 8.0
+	// tagQuestionGuess and tagQuestionMinStrength mirror TAG_QUESTION_GUESS
+	// and TAG_QUESTION_MIN_STRENGTH.
+	tagQuestionGuess       = 0.15
+	tagQuestionMinStrength = 0.05
 )
 
 func opGetTagQuestions(pluginDir string, payload jVal) (jVal, error) {
@@ -950,10 +954,12 @@ WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))`, json
 		}
 		reach := reachWeight[tagID] / totalWeight
 		leverage := directTagSupport / (pythonFloatValue(item.get("support")) + directTagSupport)
+		inferred := pythonFloatValue(item.get("inferred_value"))
+		strength := math.Max(mathAbs(inferred), tagQuestionMinStrength)
 		candidates = append(candidates, question{
 			item: item, tagID: tagID, name: item.get("name").asString(),
-			inferred: pythonFloatValue(item.get("inferred_value")),
-			reach:    reach, leverage: leverage, value: leverage * reach,
+			inferred: inferred,
+			reach:    reach, leverage: leverage, value: leverage * reach * strength,
 		})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -990,6 +996,7 @@ WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))`, json
 			jvKey("reach", jvFloat(c.reach)),
 			jvKey("leverage", jvFloat(c.leverage)),
 			jvKey("value", jvFloat(c.value)),
+			jvKey("guess", tagQuestionGuessOf(c.inferred)),
 			jvKey("examples", examples),
 		))
 	}
@@ -998,6 +1005,154 @@ WHERE provenance='scene' AND scene_id IN (SELECT value FROM json_each(?))`, json
 		jvKey("pool_size", jvInt(int64(len(pool)))),
 		jvKey("items", out),
 	), nil
+}
+
+// answerReviewMinConfidence mirrors ANSWER_REVIEW_MIN_CONFIDENCE.
+const answerReviewMinConfidence = 0.35
+
+func opGetAnswerReview(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_answer_review",
+		func(settings jVal) (jVal, error) { return answerReviewBody(pluginDir, payload, settings) })
+}
+
+// answerReviewBody mirrors CuratorAPI.answer_review: direct tag answers ranked
+// by |answer - learned| x learned confidence, where learned is the
+// viewing-only affinity the model keeps beside each answer.
+func answerReviewBody(pluginDir string, payload, settings jVal) (jVal, error) {
+	limit := argsInt(payload.get("args"), "limit", 5)
+	if limit < 1 || limit > 10 {
+		return jvNull(), fmt.Errorf("limit must be between 1 and 10")
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	modelID, err := currentModelID(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	if modelID == "" {
+		return jvNull(), fmt.Errorf("no published model")
+	}
+	var featureVersion string
+	if err := db.QueryRow(`SELECT feature_version FROM model_version WHERE model_id=?`, modelID).Scan(&featureVersion); err != nil {
+		return jvNull(), err
+	}
+	configVersion, err := effectiveTagRoleConfigVersion(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	type review struct {
+		tagID, name                 string
+		answer, learned, confidence float64
+		answeredAtMs, sceneCount    int64
+		disagreement                float64
+	}
+	rows, err := db.Query(`
+SELECT p.tag_id, coalesce(nullif(t.name, ''), p.tag_id), p.value, p.occurred_at_ms, a.metadata_json,
+       (SELECT count(DISTINCT st.scene_id) FROM scene_tag st
+        WHERE st.tag_id=p.tag_id AND st.provenance='scene') AS scene_count
+FROM direct_tag_preference p
+JOIN source_tag t ON t.tag_id=p.tag_id
+JOIN tag_role r ON r.tag_id=p.tag_id AND r.config_version=? AND r.role='content'
+JOIN feature_definition d
+  ON d.feature_version=? AND d.family='content' AND d.name='tag:' || p.tag_id
+JOIN feature_affinity a ON a.feature_id=d.feature_id AND a.model_id=?
+WHERE p.blocked=0`, configVersion, featureVersion, modelID)
+	if err != nil {
+		return jvNull(), err
+	}
+	var candidates []review
+	for rows.Next() {
+		var item review
+		var metadataJSON string
+		if err := rows.Scan(&item.tagID, &item.name, &item.answer, &item.answeredAtMs, &metadataJSON, &item.sceneCount); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		metadata := parseJSONOr(metadataJSON)
+		learned, learnedConfidence := metadata.get("learned_affinity"), metadata.get("learned_confidence")
+		if learned.kind != jNum || learnedConfidence.kind != jNum {
+			continue
+		}
+		item.learned, item.confidence = numberValue(learned), numberValue(learnedConfidence)
+		if item.confidence < answerReviewMinConfidence {
+			continue
+		}
+		item.disagreement = mathAbs(item.answer-item.learned) * item.confidence
+		candidates = append(candidates, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if a.disagreement != b.disagreement {
+			return a.disagreement > b.disagreement
+		}
+		if a.sceneCount != b.sceneCount {
+			return a.sceneCount > b.sceneCount
+		}
+		aname, bname := strings.ToLower(a.name), strings.ToLower(b.name)
+		if aname != bname {
+			return aname < bname
+		}
+		return a.tagID < b.tagID
+	})
+	out := jvArr()
+	for i := 0; i < int(limit) && i < len(candidates); i++ {
+		c := candidates[i]
+		examples := jvArr()
+		exampleRows, err := db.Query(`
+SELECT st.scene_id FROM scene_tag st
+JOIN model_scene_score s ON s.scene_id=st.scene_id AND s.model_id=?
+WHERE st.tag_id=? AND st.provenance='scene'
+ORDER BY s.current_fit DESC, st.scene_id LIMIT ?`, modelID, c.tagID, tagQuestionExamples)
+		if err != nil {
+			return jvNull(), err
+		}
+		for exampleRows.Next() {
+			var sceneID string
+			if err := exampleRows.Scan(&sceneID); err != nil {
+				exampleRows.Close()
+				return jvNull(), err
+			}
+			examples.arr = append(examples.arr, jvStr(sceneID))
+		}
+		exampleRows.Close()
+		if err := exampleRows.Err(); err != nil {
+			return jvNull(), err
+		}
+		out.arr = append(out.arr, jvObj(
+			jvKey("tag_id", jvStr(c.tagID)),
+			jvKey("name", jvStr(c.name)),
+			jvKey("answer", jvFloat(c.answer)),
+			jvKey("answered_at_ms", jvInt(c.answeredAtMs)),
+			jvKey("learned_value", jvFloat(c.learned)),
+			jvKey("learned_confidence", jvFloat(c.confidence)),
+			jvKey("scene_count", jvInt(c.sceneCount)),
+			jvKey("disagreement", jvFloat(c.disagreement)),
+			jvKey("examples", examples),
+		))
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("candidate_count", jvInt(int64(len(candidates)))),
+		jvKey("items", out),
+	), nil
+}
+
+// tagQuestionGuessOf names a confident current guess, or null.
+func tagQuestionGuessOf(inferred float64) jVal {
+	if mathAbs(inferred) < tagQuestionGuess {
+		return jvNull()
+	}
+	if inferred > 0 {
+		return jvStr("like")
+	}
+	return jvStr("dislike")
 }
 
 // sentimentKey mirrors the tag_sentiment_follow_up sort's first component:

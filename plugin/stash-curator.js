@@ -1050,16 +1050,19 @@
   }
 
   // Curate's impact report diffs the two newest model builds, so it is only
-  // meaningful once a build has actually consumed the picks just submitted.
+  // meaningful once a build has actually consumed the answers just submitted.
   // Kick the update immediately (no debounce — the user is waiting on it) and
   // resolve when a different model is published, or when the wait times out.
   const MODEL_REFRESH_POLL_MS = 2000;
   const MODEL_REFRESH_TIMEOUT_MS = 180000;
+  // An explicit "apply now": send queued tag answers, then build whenever any
+  // feedback is pending, even below the automatic update threshold.
   async function applyFeedbackAndAwaitBuild() {
+    await flushTagPreferenceQueue();
     const before = await operation({ operation: "health" }).catch(() => null);
     const previousModelId = before && before.model_id;
-    if (!before || (!before.model_update_ready && !before.model_rebuilding)) {
-      // Below the update threshold: nothing will build, so don't stall on it.
+    if (!before || (!before.model_pending && !before.model_rebuilding)) {
+      // Nothing new to apply, so don't stall on a build that won't start.
       return false;
     }
     if (!before.model_rebuilding) {
@@ -1424,7 +1427,7 @@
   // model's own continuous estimate, distinct from the user's discrete
   // direct rating), renders as a small differently-colored tick on the same
   // track so the two can be compared at a glance.
-  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null, showScale = compact }) {
+  function TagSentimentControl({ tag, value, blocked, onChange, compact = false, inferredValue = null, showScale = compact, large = false }) {
     const rated = (value !== null && value !== undefined) || blocked;
     const stopIndex = blocked ? 0 : rated ? SENTIMENTS.findIndex(([score]) => score === value) + 1 : 3;
     const currentLabel = blocked ? "Never" : rated ? SENTIMENTS[stopIndex - 1][1] : "Not rated";
@@ -1436,32 +1439,36 @@
     function handleChange(event) {
       commit(Number(event.target.value));
     }
-    // An unrated item is displayed with the thumb parked at stop 3
-    // ("Neutral")'s position, purely as a resting point — there's no real
-    // value yet. A native range input only fires input/change when its
-    // value actually changes, so a click that resolves to that SAME stop
-    // (i.e. clicking dead-center on "Neutral") is indistinguishable from a
-    // no-op to the browser and silently does nothing. Recompute the
-    // intended stop from click position and commit directly whenever it
-    // matches the value already showing, which is exactly the case the
-    // native event won't fire for.
-    function handleClick(event) {
+    // The track takes pointer input itself: a tap or drag anywhere on it
+    // snaps to the nearest drawn stop and always commits, so tapping the
+    // stop an unrated item rests on (Neutral) still answers. A native range
+    // ignores taps on its track on some phones, and its thumb sits half a
+    // thumb in from each end, away from the drawn end stops. The native
+    // input stays for keyboards and screen readers.
+    function stopAt(event) {
       const rect = event.currentTarget.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-      const index = Math.round(ratio * 5);
-      if (index === stopIndex) commit(index);
+      return Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 5);
+    }
+    function handlePointerDown(event) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      commit(stopAt(event));
+    }
+    function handlePointerMove(event) {
+      if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) return;
+      const index = stopAt(event);
+      if (index !== stopIndex) commit(index);
     }
     const hasModelEstimate = inferredValue !== null && inferredValue !== undefined;
     return React.createElement(
       "div",
-      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}${showScale ? " curator-sentiment-labelled" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
+      { className: `curator-sentiment curator-sentiment-slider${compact ? " curator-sentiment-compact" : ""}${showScale ? " curator-sentiment-labelled" : ""}${large ? " curator-sentiment-large" : ""}`, role: "group", "aria-label": `Sentiment for ${tag.name}` },
       showScale && React.createElement(SentimentScale),
       React.createElement(
         "label",
         { className: `curator-sentiment-range-wrap${tierClass ? ` ${tierClass}` : ""}` },
         React.createElement(
           "span",
-          { className: "curator-sentiment-track" },
+          { className: "curator-sentiment-track", onPointerDown: handlePointerDown, onPointerMove: handlePointerMove },
           React.createElement(
             "span",
             { className: "curator-sentiment-rail", "aria-hidden": "true" },
@@ -1487,7 +1494,6 @@
             "aria-label": `Sentiment for ${tag.name}`,
             "aria-valuetext": currentLabel,
             onChange: handleChange,
-            onClick: handleClick,
           })
         ),
         React.createElement("span", { className: "curator-sentiment-current" }, currentLabel)
@@ -1505,22 +1511,29 @@
     }
   }
 
-  let flushingTagPreferences = false;
-  async function flushTagPreferenceQueue() {
-    if (flushingTagPreferences) return;
-    const entries = readTagPreferenceQueue();
-    if (!entries.length) return;
-    flushingTagPreferences = true;
-    try {
-      await operation({ operation: "submit_tag_preferences", entries });
+  // One flush runs at a time and drains answers queued while it was in
+  // flight, so quick successive answers are not left behind until the next
+  // page load. Callers can await the returned promise.
+  let tagPreferenceFlush = null;
+  function flushTagPreferenceQueue() {
+    if (!tagPreferenceFlush) {
+      tagPreferenceFlush = drainTagPreferenceQueue().finally(() => { tagPreferenceFlush = null; });
+    }
+    return tagPreferenceFlush;
+  }
+
+  async function drainTagPreferenceQueue() {
+    for (let entries = readTagPreferenceQueue(); entries.length; entries = readTagPreferenceQueue()) {
+      try {
+        await operation({ operation: "submit_tag_preferences", entries });
+      } catch (_) {
+        // Retry on the next route, online event, or plugin page load.
+        return;
+      }
       const sent = new Set(entries.map((entry) => entry.preference_id));
       localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(readTagPreferenceQueue().filter((entry) => !sent.has(entry.preference_id))));
       clearSlateCache();
       scheduleModelUpdate();
-    } catch (_) {
-      // Retry on the next route, online event, or plugin page load.
-    } finally {
-      flushingTagPreferences = false;
     }
   }
 
@@ -1915,20 +1928,137 @@
     }
   }
 
+  // What a tag means and what it looks like, read from Stash: the tag's
+  // description and any markers carrying it. A marker clip shows the moment
+  // itself, which a scene thumbnail often misses. Markers in the example
+  // scenes come first, then markers elsewhere in the library.
+  const TAG_QUESTION_MEDIA_QUERY =
+    "query CuratorTagQuestionMedia($id: ID!, $tags: [ID!]) { " +
+    "findTag(id: $id) { description } " +
+    "findSceneMarkers(scene_marker_filter: { tags: { value: $tags, modifier: INCLUDES } }, " +
+    "filter: { per_page: 40, sort: \"random\" }) { scene_markers { id seconds stream screenshot scene { id } } } }";
+
+  async function fetchTagQuestionMedia(tagId) {
+    const response = await fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: TAG_QUESTION_MEDIA_QUERY, variables: { id: tagId, tags: [tagId] } }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors) {
+      throw new Error(payload.errors?.[0]?.message || `HTTP ${response.status}`);
+    }
+    return {
+      description: (payload.data.findTag?.description || "").trim(),
+      markers: payload.data.findSceneMarkers?.scene_markers || [],
+    };
+  }
+
+  // Up to TAG_QUESTION_TILES clips: marker moments first (one per scene,
+  // example scenes before others), then the example scenes' own previews.
+  const TAG_QUESTION_TILES = 6;
+  function tagQuestionTiles(examples, markers) {
+    const exampleSet = new Set(examples);
+    const seen = new Set();
+    const tiles = [];
+    const ordered = [...markers].sort((left, right) =>
+      Number(!exampleSet.has(left.scene.id)) - Number(!exampleSet.has(right.scene.id)));
+    for (const marker of ordered) {
+      if (tiles.length >= TAG_QUESTION_TILES || seen.has(marker.scene.id)) continue;
+      seen.add(marker.scene.id);
+      tiles.push({
+        key: `marker-${marker.id}`,
+        href: `/scenes/${marker.scene.id}?t=${Math.floor(Number(marker.seconds) || 0)}`,
+        video: marker.stream,
+        poster: marker.screenshot,
+        marker: true,
+      });
+    }
+    for (const sceneId of examples) {
+      if (tiles.length >= TAG_QUESTION_TILES || seen.has(sceneId)) continue;
+      seen.add(sceneId);
+      tiles.push({ key: `scene-${sceneId}`, href: `/scenes/${sceneId}`, video: `/scene/${sceneId}/preview`, poster: `/scene/${sceneId}/screenshot`, marker: false });
+    }
+    return tiles;
+  }
+
+  function keepTagQuestionClipMuted(node) {
+    if (node) {
+      node.muted = true;
+      node.defaultMuted = true;
+    }
+  }
+
+  function TagQuestionMedia({ item }) {
+    const [media, setMedia] = React.useState(null);
+    React.useEffect(() => {
+      let current = true;
+      setMedia(null);
+      fetchTagQuestionMedia(item.tag_id)
+        .then((result) => { if (current) setMedia(result); })
+        // Without Stash's answer the scene previews alone still work.
+        .catch(() => { if (current) setMedia({ description: "", markers: [] }); });
+      return () => { current = false; };
+    }, [item.tag_id]);
+    const tiles = tagQuestionTiles(item.examples || [], (media && media.markers) || []);
+    return React.createElement(
+      React.Fragment,
+      null,
+      media && media.description && React.createElement("p", { className: "curator-tag-question-description" }, media.description),
+      React.createElement(
+        "div",
+        { className: "curator-tag-question-examples" },
+        tiles.map((tile) => React.createElement(
+          "a",
+          { key: tile.key, className: "curator-tag-question-example scene-card", href: tile.href, title: tile.marker ? "Open scene at this moment" : "Open scene" },
+          React.createElement("video", {
+            ref: keepTagQuestionClipMuted,
+            className: "scene-card-image card-section",
+            src: tile.video,
+            poster: tile.poster,
+            muted: true,
+            loop: true,
+            playsInline: true,
+            autoPlay: true,
+            preload: "metadata",
+          }),
+          tile.marker && React.createElement("span", { className: "curator-tag-question-marker" }, "Marker")
+        ))
+      )
+    );
+  }
+
+  // A confident guess is asked as a check ("Right?"), with Yes picking the
+  // matching slight step; the scale stays available to correct it.
+  const TAG_QUESTION_GUESS_VALUE = { like: 0.5, dislike: -0.5 };
+
+  function tagQuestionHeading(item) {
+    return item.guess
+      ? `Curator thinks you ${item.guess} “${item.name}”. Right?`
+      : `More or less of “${item.name}”?`;
+  }
+
   function tagQuestionReason(item) {
     const share = Math.max(1, Math.round(Number(item.reach) * 100));
-    const belief = Number(item.confidence) < 0.35
-      ? "Curator has little evidence about it yet"
-      : `Curator currently thinks you ${Number(item.inferred_value) >= 0 ? "like" : "dislike"} it`;
+    const belief = item.guess
+      ? "If not, pick where you stand on the scale"
+      : Number(item.confidence) < 0.35
+        ? "Curator has little evidence about it yet"
+        : "Curator has no clear view of it yet";
     return `On about ${share}% of what For You would show you. ${belief}.`;
   }
 
-  function TagQuestions() {
+  // A chosen answer stays on screen until Next, so a tap that landed on the
+  // wrong stop can be corrected before it is sent.
+  function TagQuestions({ onShowAllTags }) {
     const [items, setItems] = React.useState(null);
     const [index, setIndex] = React.useState(0);
+    const [choice, setChoice] = React.useState(null);
     const [answered, setAnswered] = React.useState(0);
     const [error, setError] = React.useState("");
     const [applying, setApplying] = React.useState(false);
+    const [notice, setNotice] = React.useState("");
     useCuratorActivity("tag-questions", items === null && !error, "Finding useful questions…");
 
     const load = React.useCallback(async () => {
@@ -1938,6 +2068,7 @@
         const skips = readTagQuestionSkips();
         setItems((result.items || []).filter((item) => !skips[item.tag_id]).slice(0, TAG_QUESTION_BATCH));
         setIndex(0);
+        setChoice(null);
       } catch (failure) {
         setItems([]);
         setError(failure.message);
@@ -1945,20 +2076,29 @@
     }, []);
     React.useEffect(() => { load(); }, [load]);
 
-    function answer(item, choice) {
+    function next(item) {
       submitTagPreference(item.tag_id, choice);
       setAnswered((count) => count + 1);
+      setChoice(null);
+      setNotice("");
       setIndex((current) => current + 1);
     }
     function skip(item) {
       rememberTagQuestionSkip(item.tag_id);
+      setChoice(null);
+      setNotice("");
       setIndex((current) => current + 1);
     }
     async function applyNow() {
       setApplying(true);
+      setNotice("");
       try {
-        await applyFeedbackAndAwaitBuild();
+        const built = await applyFeedbackAndAwaitBuild();
+        setAnswered(0);
         await load();
+        setNotice(built
+          ? "Recommendations updated with your answers. Impact shows what moved."
+          : "Your answers are saved. Curator will include them in the next model update.");
       } finally {
         setApplying(false);
       }
@@ -1971,33 +2111,49 @@
       { className: "curator-curate-actions" },
       answered > 0 && React.createElement(Button, { size: "sm", variant: "primary", disabled: applying, onClick: applyNow },
         applying ? "Applying…" : "Apply my answers now"),
-      React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: load }, "More questions")
+      React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: load }, "More questions"),
+      onShowAllTags && React.createElement(Button, { size: "sm", variant: "link", onClick: onShowAllTags }, "See all tags")
     );
     return React.createElement(
       "div",
       { className: "curator-tag-questions" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
+      notice && React.createElement("div", { className: "alert alert-info", role: "status" }, notice),
+      applying && React.createElement("div", { className: "alert alert-info", role: "status" },
+        "Rebuilding recommendations with your answers. This usually takes under a minute."),
       !error && items.length === 0 && React.createElement("div", { className: "alert alert-info" },
         "No questions right now. Every tag in your current recommendations is either answered, skipped, or too rare to matter. Tag sentiment lists all tags."),
       item && React.createElement(
         "section",
         { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-tag-question-${item.tag_id}` },
         React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" }, `Question ${index + 1} of ${items.length}`),
-        React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, `More or less of “${item.name}”?`),
+        React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, tagQuestionHeading(item)),
         React.createElement("p", { className: "curator-tag-question-reason" }, tagQuestionReason(item)),
-        React.createElement(
-          "div",
-          { className: "curator-tag-question-examples" },
-          (item.examples || []).map((sceneId) => React.createElement(
-            "a",
-            { key: sceneId, className: "curator-tag-question-example scene-card", href: `/scenes/${sceneId}`, title: "Open scene" },
-            React.createElement("img", { className: "scene-card-image card-section", src: `/scene/${sceneId}/screenshot`, alt: "", loading: "lazy" })
-          ))
-        ),
+        React.createElement(TagQuestionMedia, { item }),
         React.createElement(
           "div",
           { className: "curator-tag-question-answer" },
-          React.createElement(TagSentimentControl, { tag: item, value: null, blocked: false, inferredValue: item.inferred_value, showScale: true, onChange: (choice) => answer(item, choice) }),
+          React.createElement(TagSentimentControl, {
+            tag: item,
+            value: choice && choice.value,
+            blocked: !!(choice && choice.blocked),
+            inferredValue: item.inferred_value,
+            showScale: true,
+            large: true,
+            // Clear goes back to no answer; it is not sent.
+            onChange: (picked) => setChoice(picked.value === null && !picked.blocked ? null : picked),
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-curate-actions" },
+          item.guess && React.createElement(Button, {
+            size: "sm",
+            variant: "outline-primary",
+            "aria-pressed": !!choice && !choice.blocked && choice.value === TAG_QUESTION_GUESS_VALUE[item.guess],
+            onClick: () => setChoice({ value: TAG_QUESTION_GUESS_VALUE[item.guess], blocked: false }),
+          }, "Yes"),
+          React.createElement(Button, { size: "sm", variant: "primary", disabled: !choice, onClick: () => next(item) }, "Next"),
           React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(item) }, "Skip")
         )
       ),
@@ -2009,6 +2165,174 @@
     );
   }
 
+  // Answer review: your own tag answers that most disagree with what your
+  // viewing alone suggests (get_answer_review). Keep remembers the answer as
+  // checked in this browser until it changes or 180 days pass; a change is an
+  // ordinary Tag sentiment answer, and Clear hands the tag back to viewing.
+  const ANSWER_REVIEW_KEPT_KEY = "stash-curator:answer-review-kept:v1";
+  const ANSWER_REVIEW_KEPT_MS = 180 * 86_400_000;
+
+  function readAnswerReviewKept() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(ANSWER_REVIEW_KEPT_KEY) || "{}");
+      const now = Date.now();
+      return Object.fromEntries(Object.entries(stored).filter(([, at]) => now - Number(at) < ANSWER_REVIEW_KEPT_MS));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function rememberAnswerReviewKept(tagId) {
+    try {
+      localStorage.setItem(ANSWER_REVIEW_KEPT_KEY, JSON.stringify({ ...readAnswerReviewKept(), [tagId]: Date.now() }));
+    } catch (_) {
+      // Without storage a kept answer can come back on the next batch.
+    }
+  }
+
+  function answerReviewReason(item) {
+    const confidence = Number(item.learned_confidence) >= 0.8 ? "fairly sure" : "a tentative read";
+    return `Your viewing on its own points to ${nearestSentimentLabel(Number(item.learned_value))} (${confidence}). You answered ${formatTimeAgo(Number(item.answered_at_ms))}.`;
+  }
+
+  function AnswerReview({ onShowAllTags }) {
+    const [items, setItems] = React.useState(null);
+    const [total, setTotal] = React.useState(0);
+    const [index, setIndex] = React.useState(0);
+    const [choice, setChoice] = React.useState(null);
+    const [changed, setChanged] = React.useState(0);
+    const [error, setError] = React.useState("");
+    const [applying, setApplying] = React.useState(false);
+    const [notice, setNotice] = React.useState("");
+    useCuratorActivity("answer-review", items === null && !error, "Finding answers to review…");
+
+    const load = React.useCallback(async () => {
+      setError("");
+      try {
+        const result = await operation({ operation: "get_answer_review", limit: 10 });
+        const kept = readAnswerReviewKept();
+        // A kept answer returns once it has been changed since.
+        const fresh = (result.items || []).filter((item) => !(kept[item.tag_id] > Number(item.answered_at_ms)));
+        setItems(fresh.slice(0, TAG_QUESTION_BATCH));
+        setTotal(Number(result.candidate_count) || 0);
+        setIndex(0);
+        setChoice(fresh.length ? { value: fresh[0].answer, blocked: false } : null);
+      } catch (failure) {
+        setItems([]);
+        setError(failure.message);
+      }
+    }, []);
+    React.useEffect(() => { load(); }, [load]);
+
+    function advance() {
+      const following = items[index + 1];
+      setNotice("");
+      setChoice(following ? { value: following.answer, blocked: false } : null);
+      setIndex(index + 1);
+    }
+    function keep(item) {
+      rememberAnswerReviewKept(item.tag_id);
+      advance();
+    }
+    function save(item) {
+      submitTagPreference(item.tag_id, choice);
+      setChanged((count) => count + 1);
+      advance();
+    }
+    async function applyNow() {
+      setApplying(true);
+      setNotice("");
+      try {
+        const built = await applyFeedbackAndAwaitBuild();
+        setChanged(0);
+        await load();
+        setNotice(built
+          ? "Recommendations updated with your changes. Impact shows what moved."
+          : "Your changes are saved. Curator will include them in the next model update.");
+      } finally {
+        setApplying(false);
+      }
+    }
+
+    if (items === null) return null;
+    const item = items[index];
+    const differs = item && choice && (choice.blocked || choice.value !== item.answer);
+    return React.createElement(
+      "div",
+      { className: "curator-tag-questions" },
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      notice && React.createElement("div", { className: "alert alert-info", role: "status" }, notice),
+      applying && React.createElement("div", { className: "alert alert-info", role: "status" },
+        "Rebuilding recommendations with your changes. This usually takes under a minute."),
+      !error && items.length === 0 && React.createElement("div", { className: "alert alert-info" },
+        "Nothing to review right now. Your answers either agree with your viewing, or viewing has too little evidence to compare."),
+      item && React.createElement(
+        "section",
+        { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-answer-review-${item.tag_id}` },
+        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
+          `Answer ${index + 1} of ${items.length} · ${total} answer${total === 1 ? "" : "s"} can be compared with your viewing`),
+        React.createElement("h3", { id: `curator-answer-review-${item.tag_id}` },
+          `You said “${nearestSentimentLabel(Number(item.answer))}” for “${item.name}”. Still right?`),
+        React.createElement("p", { className: "curator-tag-question-reason" }, answerReviewReason(item)),
+        React.createElement(TagQuestionMedia, { item }),
+        React.createElement(
+          "div",
+          { className: "curator-tag-question-answer" },
+          React.createElement(TagSentimentControl, {
+            tag: item,
+            value: choice && !choice.blocked ? choice.value : null,
+            blocked: !!(choice && choice.blocked),
+            inferredValue: item.learned_value,
+            showScale: true,
+            large: true,
+            // Clear here means "let viewing decide": the answer is removed on Save.
+            onChange: (picked) => setChoice(picked),
+          })
+        ),
+        choice && !choice.blocked && choice.value === null && React.createElement("p", { className: "curator-tag-question-reason" },
+          "Saving clears your answer, so viewing decides this tag again."),
+        React.createElement(
+          "div",
+          { className: "curator-curate-actions" },
+          React.createElement(Button, { size: "sm", variant: "primary", disabled: !differs, onClick: () => save(item) }, "Save change"),
+          React.createElement(Button, { size: "sm", variant: "outline-primary", disabled: differs, onClick: () => keep(item) }, "Keep"),
+          React.createElement(Button, { size: "sm", variant: "secondary", onClick: advance }, "Skip")
+        )
+      ),
+      !item && items.length > 0 && React.createElement("p", { className: "curator-tag-question-done", "aria-live": "polite" },
+        changed > 0
+          ? `${changed} change${changed === 1 ? "" : "s"} queued. They change recommendations after the next model update.`
+          : "Nothing changed in this batch."),
+      React.createElement(
+        "div",
+        { className: "curator-curate-actions" },
+        changed > 0 && React.createElement(Button, { size: "sm", variant: "primary", disabled: applying, onClick: applyNow },
+          applying ? "Applying…" : "Apply my changes now"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: applying, onClick: load }, "More answers"),
+        onShowAllTags && React.createElement(Button, { size: "sm", variant: "link", onClick: onShowAllTags }, "See all tags")
+      )
+    );
+  }
+
+  // Tag questions has two modes: new questions about unanswered tags, and a
+  // review of answers already given.
+  function TagQuestionsSection({ onShowAllTags }) {
+    const [mode, setMode] = React.useState("new");
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        "div",
+        { className: "btn-group curator-tag-question-modes", role: "group", "aria-label": "Tag questions mode" },
+        [["new", "New questions"], ["review", "Review my answers"]].map(([value, label]) => React.createElement(Button, {
+          key: value, size: "sm", variant: mode === value ? "primary" : "secondary", "aria-pressed": mode === value, onClick: () => setMode(value),
+        }, label))
+      ),
+      mode === "review"
+        ? React.createElement(AnswerReview, { onShowAllTags })
+        : React.createElement(TagQuestions, { onShowAllTags })
+    );
+  }
 
   function CurateProgress({ onFixTag }) {
     const [impact, setImpact] = React.useState(null);
@@ -2100,7 +2424,7 @@
   function CuratePanel({ section, onSelectSection, sentimentQuery }) {
     const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
     const bodies = {
-      questions: () => React.createElement(TagQuestions),
+      questions: () => React.createElement(TagQuestionsSection, { onShowAllTags: () => onSelectSection("sentiment") }),
       sentiment: () => React.createElement(TasteProfilePanel, { embedded: true, initialQuery: sentimentQuery }),
       progress: () => React.createElement(CurateProgress, { onFixTag: (tagId) => onSelectSection("sentiment", { sentTag: tagId }) }),
     };

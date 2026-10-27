@@ -210,11 +210,24 @@ longer change recommendations.
 
 Tag questions asks about the few tags where one answer would change your
 recommendations most: tags common in what For You would show you, about which
-Curator has little evidence. Each question shows up to three of those scenes and a
-short reason. Answer with the sentiment scale, or **Skip**; a skipped tag stays
-hidden in this browser for 30 days. Answers are ordinary Tag sentiment answers, so
-you can review or clear them there. **Apply my answers now** runs a model update;
-otherwise they apply with the next one.
+Curator has little evidence or a confident guess worth checking. A guess is asked
+as "Curator thinks you like this. Right?": **Yes** picks the matching slight step,
+or pick another point on the scale. Each question shows the tag's Stash description, a
+short reason, and up to six muted preview clips. Clips from scene markers carrying
+the tag come first, labelled **Marker**, because they show the moment itself; the
+rest are previews of scenes from your recommendations. Pick a point on the sentiment scale, check it, and press **Next**, or
+press **Skip**; a skipped tag stays hidden in this browser for 30 days. Answers are
+ordinary Tag sentiment answers, so you can review or clear them there (**See all
+tags**). **Apply my answers now** runs a model update straight away, even for a few
+answers; otherwise they apply with the next one.
+
+**Review my answers** goes through your own answers that most disagree with what
+your viewing alone suggests, ranked by the size of the gap and how confident the
+viewing evidence is. Answers with little viewing evidence are not compared. Each card
+shows your answer, what viewing points to, and when you answered. **Keep** marks
+it checked in this browser until you change it (or for 180 days), another point on
+the scale plus **Save change** replaces it, and **Clear answer** plus **Save change**
+removes it so viewing decides that tag again.
 
 ### Tag sentiment
 

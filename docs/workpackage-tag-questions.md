@@ -40,11 +40,37 @@ chips (a separate package, see Follow-up).
   reach rules. `performer_attribute` tags are left out, because a direct answer
   only blends into content-tag features.
 - **Constants:** `TAG_QUESTION_POOL_SIZE = 300`, `TAG_QUESTION_MIN_REACH = 2`,
-  `TAG_QUESTION_EXAMPLES = 3` are module constants mirrored in Go, like the
+  `TAG_QUESTION_EXAMPLES = 6` are module constants mirrored in Go, like the
   follow-up op's thresholds, not a config class. They never affect model
   fingerprints.
 - **Response:** also returns `value` per item and `pool_size`; `examples` are
   scene ids.
+- **Media (after live feedback):** six tiles of muted, looping clips instead
+  of three stills, since a still often misses the tagged act. The browser reads
+  the tag's description and markers carrying the tag from Stash (read-only
+  GraphQL); marker clips come first, one per scene, example scenes' markers
+  before others, then the example scenes' previews.
+- **Replay on recorded answers (2026-10):** replaying question strategies against
+  a set of existing answers showed history-learned tag affinity was close to
+  uncorrelated with those answers, and the model's strong guesses on little support
+  mostly had the wrong sign. So questions rank by
+  `leverage × reach × max(|inferred|, 0.05)`, asking confident guesses
+  (`|inferred| ≥ 0.15`) as "Right?" checks, which cut early score error most. "Is
+  it A or B?" pair questions found no support (co-occurring tags were not worse
+  inferred) and were dropped.
+- **Answer review:** `get_answer_review` ranks direct (non-Never) answers by
+  `|answer − learned| × learned confidence`, using the viewing-only affinity the
+  model keeps beside each answer, for answers with learned confidence ≥ 0.35.
+  Keep is per browser for 180 days or until the answer changes; changes and
+  clears go through `submit_tag_preferences`.
+- **Answering (after live feedback):** a pick is shown until **Next**, so a
+  mistap can be corrected; Apply builds whenever feedback is pending, below the
+  automatic threshold too, and drains answers queued during an in-flight save.
+  On phones the slider was hard to hit: every tag slider now takes pointer input
+  on its track and snaps a tap or drag to the nearest drawn stop (the native
+  range ignored track taps on some phones and its thumb was inset from the end
+  stops), with a taller touch strip; the question cards use a full-width,
+  thumb-height variant with every stop labelled.
 - **Keyboard:** no `1`–`5`/`S` shortcuts. Stash binds global single-key
   shortcuts, and the sentiment slider and Skip button are already keyboard
   operable.

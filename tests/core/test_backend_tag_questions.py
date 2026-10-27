@@ -19,7 +19,7 @@ from curator.ranking import SlateBuilder
 from curator.storage import connect_database
 from tests.core.test_backend import PLUGIN_DIR, _StubStash, payload, run_backend
 from tests.core.test_backend_slice1 import assert_slice1_identical, make_model_sidecar
-from tests.model.test_builder import REFERENCE_MS, _database
+from tests.model.test_builder import DAY_MS, REFERENCE_MS, _database
 
 # (scene, tags): every extra scene carries "good" so it qualifies for For You.
 # "wide" reaches most of the pool, "narrow" a few scenes, "single" one scene
@@ -182,10 +182,18 @@ def test_tag_questions_rank_by_reach_and_skip_ineligible_tags(question_sidecar: 
     assert values == sorted(values, reverse=True)
     for item in items:
         assert 0 < float(item["reach"]) <= 1
-        assert float(item["value"]) == pytest.approx(float(item["reach"]) * float(item["leverage"]))
+        # Strong guesses rank first: value scales with how far the guess is
+        # from neutral, with a floor so zero-guess tags stay rankable.
+        inferred = float(item["inferred_value"])
+        strength = max(abs(inferred), 0.05)
+        assert float(item["value"]) == pytest.approx(
+            float(item["reach"]) * float(item["leverage"]) * strength
+        )
+        expected_guess = None if abs(inferred) < 0.15 else ("like" if inferred > 0 else "dislike")
+        assert item["guess"] == expected_guess
         # Examples are pool scenes, highest-ranked first.
         examples = item["examples"]
-        assert 2 <= len(examples) <= 3
+        assert 2 <= len(examples) <= 6
         assert examples == sorted(examples, key=pool.index)
 
 
@@ -195,3 +203,92 @@ def test_tag_question_leverage_falls_with_support(question_sidecar: Path) -> Non
     assert isinstance(items, list)
     for item in items:
         assert float(item["leverage"]) == pytest.approx(8.0 / (float(item["support"]) + 8.0))
+
+
+def make_answer_review_sidecar(path: Path) -> None:
+    """Answers that agree and disagree with what viewing suggests."""
+    connection = _database(path)
+    try:
+        # One more liked watch so viewing is confident about "good".
+        connection.execute(
+            "INSERT INTO source_play(scene_id, played_at_ms, ordinal) VALUES ('unseen-good', ?, 0)",
+            (REFERENCE_MS - 30 * DAY_MS,),
+        )
+        connection.execute(
+            "INSERT INTO behavior_event(event_id, event_type, scene_id, occurred_at_ms, outcome,"
+            " confidence, provenance, payload_json) VALUES ('event-more', 'occasion_outcome',"
+            " 'unseen-good', ?, 1.0, 1, 'synthetic', '{\"primary_signal\":\"o\"}')",
+            (REFERENCE_MS - 30 * DAY_MS,),
+        )
+        # Classify the tags, then answer: "good" (watched and liked) as a
+        # strong dislike, "bad" (thumbed down) as a slight dislike.
+        PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+        for tag_id, value in (("good", -1.0), ("bad", -0.5)):
+            connection.execute(
+                "INSERT INTO direct_tag_preference_history(preference_id, tag_id, value,"
+                " occurred_at_ms) VALUES (?, ?, ?, 5)",
+                (f"pref-{tag_id}", tag_id, value),
+            )
+            connection.execute(
+                "INSERT INTO direct_tag_preference(tag_id, preference_id, value, occurred_at_ms)"
+                " VALUES (?, ?, ?, 5)",
+                (tag_id, f"pref-{tag_id}", value),
+            )
+        PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.fixture(scope="module")
+def review_sidecar(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("answer-review") / "curator.sqlite3"
+    make_answer_review_sidecar(path)
+    return path
+
+
+@pytest.mark.parametrize("limit", [1, 5, 0, 11])
+def test_answer_review_matches_across_backends(
+    binary: Path, stub_stash: str, review_sidecar: Path, limit: int
+) -> None:
+    raw = payload("get_answer_review", review_sidecar, stub_stash, limit=limit)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, review_sidecar)
+
+
+def test_answer_review_without_model_matches(binary: Path, stub_stash: str, tmp_path: Path) -> None:
+    sidecar = tmp_path / "nomodel.sqlite3"
+    _database(sidecar).close()
+    raw = payload("get_answer_review", sidecar, stub_stash, limit=5)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, sidecar)
+
+
+def test_answer_review_ranks_by_confident_disagreement(review_sidecar: Path) -> None:
+    connection = connect_database(review_sidecar)
+    try:
+        result = CuratorAPI(connection).answer_review(10)
+        items = result["items"]
+        assert isinstance(items, list)
+        # Liked-by-viewing "good" answered as a strong dislike leads.
+        assert items[0]["tag_id"] == "good"
+        assert items[0]["answer"] == -1.0
+        assert float(items[0]["learned_value"]) > 0
+        assert result["candidate_count"] == len(items)
+        scores = [float(item["disagreement"]) for item in items]
+        assert scores == sorted(scores, reverse=True)
+        for item in items:
+            assert float(item["learned_confidence"]) >= 0.35
+            assert float(item["disagreement"]) == pytest.approx(
+                abs(float(item["answer"]) - float(item["learned_value"]))
+                * float(item["learned_confidence"])
+            )
+            examples = item["examples"]
+            assert 1 <= len(examples) <= 6
+            tagged = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT scene_id FROM scene_tag WHERE tag_id=?", (item["tag_id"],)
+                )
+            }
+            assert set(examples) <= tagged
+    finally:
+        connection.close()

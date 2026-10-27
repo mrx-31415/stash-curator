@@ -533,7 +533,10 @@ def test_curate_lane_renders_sections_without_pair_picks() -> None:
     ]
     assert order == sorted(order)
     assert 'label: "Tag questions"' in curate_sections_block
-    assert "questions: () => React.createElement(TagQuestions)" in source
+    assert (
+        "questions: () => React.createElement(TagQuestionsSection, { onShowAllTags: () => "
+        'onSelectSection("sentiment") })'
+    ) in source
     assert 'operation: "get_tag_questions", limit: 10' in source
     assert 'value: "stream"' not in curate_sections_block
     assert 'label: "Impact"' in curate_sections_block
