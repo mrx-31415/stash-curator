@@ -178,36 +178,6 @@ WHERE scene_id IN (SELECT value FROM json_each(?)) AND studio_id IS NOT NULL`, s
 	if err := studioRows.Err(); err != nil {
 		return err
 	}
-	tagSets := make(map[string]map[string]bool)
-	tagRows, err := m.db.Query(`SELECT st.scene_id, st.tag_id FROM scene_tag st
-WHERE st.scene_id IN (SELECT value FROM json_each(?)) ORDER BY st.scene_id, st.tag_id`, sceneIDs)
-	if err != nil {
-		return err
-	}
-	for tagRows.Next() {
-		var sceneID, tagID string
-		if err := tagRows.Scan(&sceneID, &tagID); err != nil {
-			return err
-		}
-		set := tagSets[sceneID]
-		if set == nil {
-			set = map[string]bool{}
-			tagSets[sceneID] = set
-		}
-		set[tagID] = true
-	}
-	tagRows.Close()
-	if err := tagRows.Err(); err != nil {
-		return err
-	}
-	for sceneID, set := range tagSets {
-		ids := make([]string, 0, len(set))
-		for id := range set {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		m.sceneTags[sceneID] = ids
-	}
 	return nil
 }
 
@@ -286,6 +256,9 @@ func (m *multiHop) walk(seedID string) (map[string]float64, error) {
 // membership graph; a performer seed is walked the same way from its scenes.
 func (m *multiHop) graphFor(seedID string) (map[string]map[string]float64, string, error) {
 	if _, ok := m.scenePerformers[seedID]; ok {
+		if err := m.loadSceneTags(seedID); err != nil {
+			return nil, "", err
+		}
 		return m.graph(seedID), seedID, nil
 	}
 	weight, ok := m.affinity[seedID]
@@ -316,6 +289,30 @@ func (m *multiHop) graphFor(seedID string) (map[string]map[string]float64, strin
 		}
 	}
 	return m.finalizeGraph(adjacency, seedID), seedID, nil
+}
+
+// loadSceneTags reads a walkable seed scene's tags. Python loads every
+// walkable scene's tags up front, but only the seed's are ever bridged, and
+// reading them all cost more than the rest of the walk.
+func (m *multiHop) loadSceneTags(sceneID string) error {
+	if _, ok := m.sceneTags[sceneID]; ok {
+		return nil
+	}
+	rows, err := m.db.Query(`SELECT DISTINCT tag_id FROM scene_tag WHERE scene_id=? ORDER BY tag_id`, sceneID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	tags := []string{}
+	for rows.Next() {
+		var tagID string
+		if err := rows.Scan(&tagID); err != nil {
+			return err
+		}
+		tags = append(tags, tagID)
+	}
+	m.sceneTags[sceneID] = tags
+	return rows.Err()
 }
 
 // graph mirrors MultiHopAffinity._graph for a scene seed.

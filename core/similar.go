@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -37,6 +38,52 @@ type similarityResult struct {
 	details       jVal
 	appealRaw     float64
 	explanation   jVal
+	scene         *sceneSimilarityParts
+}
+
+// sceneSimilarityParts holds what a scene result's details and explanation
+// are rendered from. Similar scores every candidate but shows a page, so the
+// JSON is built only for the selected results (renderSceneResult).
+type sceneSimilarityParts struct {
+	content, performer, structure float64
+	performerUnscored             bool // Python's int 0: no shared or scored performer
+	sameStudio                    bool
+	sharedPerformerIDs            []string
+	explained                     []string // relationships before the multi-hop blend, which the explanation omits
+	blended                       bool     // multi-hop reach was blended into the ranking
+	reached                       bool
+	reach                         float64
+	via                           string
+}
+
+func renderSceneResult(item *similarityResult) {
+	parts := item.scene
+	var performerVal jVal = jvFloat(parts.performer)
+	if parts.performerUnscored {
+		performerVal = jvInt(0)
+	}
+	sharedIDsJSON := jvArr()
+	for _, id := range parts.sharedPerformerIDs {
+		sharedIDsJSON.arr = append(sharedIDsJSON.arr, jvStr(id))
+	}
+	breakdown := jvObj(
+		jvKey("similarity", jvFloat(math.Round(0.7*item.similarity*1e4)/1e4)),
+		jvKey("appeal", jvFloat(math.Round(0.3*item.appeal*1e4)/1e4)),
+	)
+	if parts.blended {
+		breakdown.set("multi_hop", jvFloat(math.Round(multiHopBlendWeight*parts.reach*1e4)/1e4))
+	}
+	item.details = jvObj(
+		jvKey("content", jvFloat(parts.content)), jvKey("performer", performerVal),
+		jvKey("structure", jvFloat(parts.structure)), jvKey("studio", jvFloat(boolFloat(parts.sameStudio))),
+		jvKey("shared_tags", jvArr()), jvKey("shared_performer_ids", sharedIDsJSON),
+		jvKey("score_breakdown", breakdown),
+	)
+	if parts.reached {
+		item.details.set("multi_hop_reach", jvFloat(parts.reach))
+		item.details.set("multi_hop_via", jvStr(parts.via))
+	}
+	item.explanation = similarExplanation(item.similarity, parts.content, parts.performer, parts.structure, parts.sameStudio, item.appealRaw, parts.explained)
 }
 
 func similarityResultJSON(r *similarityResult) jVal {
@@ -127,32 +174,20 @@ WHERE model_id=? AND appeal IS NOT NULL GROUP BY scene_id`, modelID)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	{
-		// The lane index is a fast path, not a complete one: Stretch and Blind
-		// Spots both gate (unlike the Adventure lane they replaced, which
-		// admitted every eligible scene and so made the index complete by
-		// construction). An eligible scene that misses every lane still needs
-		// an appeal for Similar to surface it, so anything the index is
-		// missing is filled in here rather than only falling back when the
-		// index is empty outright.
-		rows, err := db.Query(`SELECT scene_id, appeal FROM model_scene_score
-WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1`, modelID)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var sceneID string
-			var appeal float64
-			if err := rows.Scan(&sceneID, &appeal); err != nil {
-				return nil, err
-			}
-			if _, ok := appeals[sceneID]; !ok {
-				appeals[sceneID] = appeal
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
+	// The lane index is a fast path, not a complete one: Stretch and Blind
+	// Spots both gate (unlike the Adventure lane they replaced, which
+	// admitted every eligible scene and so made the index complete by
+	// construction). An eligible scene that misses every lane still needs
+	// an appeal for Similar to surface it, so anything the index is
+	// missing is filled in here rather than only falling back when the
+	// index is empty outright.
+	fill, err := similarFillAppeals(db, modelID)
+	if err != nil {
+		return nil, err
+	}
+	for sceneID, appeal := range fill {
+		if _, ok := appeals[sceneID]; !ok {
+			appeals[sceneID] = appeal
 		}
 	}
 	return &similarityService{
@@ -163,6 +198,62 @@ WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1`, modelID)
 		appeals:        appeals,
 		timingsMs:      jvObj(jvKey("initialization", jvInt(0))),
 	}, nil
+}
+
+// similarFillAppealsKey holds the current model's eligible scenes that miss
+// the lane index, as "<model id>" then "<scene id>\t<appeal>" lines. Finding
+// them reads eligibility_json behind every score row's components, which
+// cost more than the rest of Similar; the model is immutable, so the result
+// is computed once per model and a new model overwrites it.
+const similarFillAppealsKey = "similar_fill_appeals"
+
+func similarFillAppeals(db dbx, modelID string) (map[string]float64, error) {
+	var cached string
+	err := db.QueryRow(`SELECT value FROM application_meta WHERE key=?`, similarFillAppealsKey).Scan(&cached)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if lines := strings.Split(cached, "\n"); err == nil && lines[0] == modelID {
+		fill := make(map[string]float64, len(lines)-1)
+		for _, line := range lines[1:] {
+			sceneID, value, ok := strings.Cut(line, "\t")
+			appeal, perr := strconv.ParseFloat(value, 64)
+			if !ok || perr != nil {
+				return nil, fmt.Errorf("corrupt %s cache line %q", similarFillAppealsKey, line)
+			}
+			fill[sceneID] = appeal
+		}
+		return fill, nil
+	}
+	rows, err := db.Query(`SELECT scene_id, appeal FROM model_scene_score
+WHERE model_id=? AND json_extract(eligibility_json, '$.eligible')=1
+  AND scene_id NOT IN (SELECT scene_id FROM model_scene_lane WHERE model_id=? AND appeal IS NOT NULL)
+ORDER BY scene_id`, modelID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	fill := make(map[string]float64)
+	var b strings.Builder
+	b.WriteString(modelID)
+	for rows.Next() {
+		var sceneID string
+		var appeal float64
+		if err := rows.Scan(&sceneID, &appeal); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		fill[sceneID] = appeal
+		b.WriteString("\n" + sceneID + "\t" + strconv.FormatFloat(appeal, 'g', -1, 64))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := execImmediate(db, `INSERT INTO application_meta(key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, similarFillAppealsKey, b.String()); err != nil {
+		return nil, err
+	}
+	return fill, nil
 }
 
 func opGetSimilar(pluginDir string, payload jVal) (jVal, error) {
@@ -699,33 +790,19 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 		}
 		appeal := (candidateAppeal + 1) / 2
 		rankScore := 0.7*similarity + 0.3*appeal
-		sharedIDs := make([]string, 0, len(same))
+		var sharedIDs []string
 		for id := range same {
 			sharedIDs = append(sharedIDs, id)
 		}
 		sort.Strings(sharedIDs)
-		sharedIDsJSON := jvArr()
-		for _, id := range sharedIDs {
-			sharedIDsJSON.arr = append(sharedIDsJSON.arr, jvStr(id))
-		}
-		var performerVal jVal = jvFloat(performerValue)
-		if len(same) == 0 && !profileFound {
-			performerVal = jvInt(0)
-		}
-		details := jvObj(
-			jvKey("content", jvFloat(contentValue)), jvKey("performer", performerVal),
-			jvKey("structure", jvFloat(structure)), jvKey("studio", jvFloat(boolFloat(sameStudio))),
-			jvKey("shared_tags", jvArr()), jvKey("shared_performer_ids", sharedIDsJSON),
-			jvKey("score_breakdown", jvObj(
-				jvKey("similarity", jvFloat(math.Round(0.7*similarity*1e4)/1e4)),
-				jvKey("appeal", jvFloat(math.Round(0.3*appeal*1e4)/1e4)),
-			)),
-		)
 		results = append(results, &similarityResult{
 			entityID: candidateID, similarity: similarity, appeal: appeal,
-			rankScore: rankScore, relationships: relationships, details: details,
-			appealRaw:   candidateAppeal,
-			explanation: similarExplanation(similarity, contentValue, performerValue, structure, sameStudio, candidateAppeal, relationships),
+			rankScore: rankScore, relationships: relationships, appealRaw: candidateAppeal,
+			scene: &sceneSimilarityParts{
+				content: contentValue, performer: performerValue, structure: structure,
+				performerUnscored: len(same) == 0 && !profileFound, sameStudio: sameStudio,
+				sharedPerformerIDs: sharedIDs, explained: relationships,
+			},
 		})
 	}
 	sort.Slice(results, func(i, j int) bool {
@@ -743,32 +820,20 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 	if len(reach) > 0 {
 		blended := make([]*similarityResult, 0, len(results))
 		for _, item := range results {
-			reached := false
-			reachScore := 0.0
-			if value, ok := reach[item.entityID]; ok {
-				reached = true
-				reachScore = value
-			}
 			cp := *item
-			if reached {
+			parts := *item.scene
+			parts.blended = true
+			if value, ok := reach[item.entityID]; ok {
+				parts.reached = true
+				parts.reach = value
 				cp.relationships = append(append([]string{}, item.relationships...), "multi_hop")
-			}
-			cp.rankScore = item.rankScore + multiHopBlendWeight*reachScore
-			details := jVal{kind: jObj, obj: append([]jPair(nil), item.details.obj...)}
-			details.set("score_breakdown", jvObj(
-				jvKey("similarity", jvFloat(math.Round(0.7*item.similarity*1e4)/1e4)),
-				jvKey("appeal", jvFloat(math.Round(0.3*item.appeal*1e4)/1e4)),
-				jvKey("multi_hop", jvFloat(math.Round(multiHopBlendWeight*reachScore*1e4)/1e4)),
-			))
-			if reached {
-				via, err := mh.multiHopVia(sceneID, item.entityID)
+				parts.via, err = mh.multiHopVia(sceneID, item.entityID)
 				if err != nil {
 					return nil, err
 				}
-				details.set("multi_hop_reach", jvFloat(reachScore))
-				details.set("multi_hop_via", jvStr(via))
 			}
-			cp.details = details
+			cp.rankScore = item.rankScore + multiHopBlendWeight*parts.reach
+			cp.scene = &parts
 			blended = append(blended, &cp)
 		}
 		results = blended
@@ -778,6 +843,7 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 	selectedIDs := make(map[string]bool, len(selected))
 	for _, item := range selected {
 		selectedIDs[item.entityID] = true
+		renderSceneResult(item)
 	}
 	selectedContent, _, err := sceneContentVectors(s.db, s.featureVersion, selectedIDs)
 	if err != nil {
@@ -791,7 +857,9 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 				shared = append(shared, name)
 			}
 		}
-		sort.Slice(shared, func(i, j int) bool {
+		// Ties break by name so equal-weight tags keep a stable order.
+		sort.Strings(shared)
+		sort.SliceStable(shared, func(i, j int) bool {
 			return -targetVector[shared[i]]*vector[shared[i]] < -targetVector[shared[j]]*vector[shared[j]]
 		})
 		if len(shared) > 5 {
