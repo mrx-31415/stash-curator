@@ -2568,7 +2568,13 @@
     return trend === "same" ? `${name}: stays ${before}` : `${name}: ${before}, a bit ${trend === "up" ? "higher" : "lower"}`;
   }
   // One line for the performer and tag chips picked on a reason card
-  // (missing tags too).
+  // (missing tags too). It is Curator's blended view, so a tag you answered
+  // in Tag sentiment also names your answer: a Strong like can still read as
+  // Slight like once watch evidence is mixed in.
+  function reasonTagEstimateText(name, info, polarity) {
+    const text = estimateText(name, estimateTagReason(info, polarity));
+    return info.direct === null || info.direct === undefined ? text : `${text} (you said ${nearestSentimentLabel(info.direct)})`;
+  }
   function reasonEstimateLine(scene, picked, missing, taste, polarity) {
     if (!scene || !taste) return null;
     const names = new Map([...scene.tags, ...missing].map((tag) => [tag.id, tag.name]));
@@ -2580,8 +2586,8 @@
       ? [estimateText(scene.studio.name, estimateLearnedReason(taste.studios.get(scene.studio.id), polarity))]
       : [];
     const parts = [...performerParts, ...ids.filter((id) => taste.tags.has(id))
-      .map((id) => estimateText(names.get(id) || id, estimateTagReason(taste.tags.get(id), polarity))), ...studioParts];
-    return parts.length ? React.createElement("p", { className: "curator-answer-estimate", "aria-live": "polite" }, parts.join(" · ")) : null;
+      .map((id) => reasonTagEstimateText(names.get(id) || id, taste.tags.get(id), polarity)), ...studioParts];
+    return parts.length ? React.createElement("p", { className: "curator-answer-estimate", "aria-live": "polite" }, `Curator's view — ${parts.join(" · ")}`) : null;
   }
 
   // Why these?: scenes Curator rates highest among the ones you played

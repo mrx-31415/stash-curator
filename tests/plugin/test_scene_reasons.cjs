@@ -433,6 +433,13 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
     assert.equal(app.context.estimateText("Lace", { before: 0.5, after: 0.53 }), "Lace: stays Slight like");
     assert.equal(app.context.estimateText("Lace", { before: 0.5, after: 0.8 }), "Lace: Slight like → Like");
     assert.equal(app.context.estimateText("Lace", { before: 0.1, after: 0.2 }), "Lace: Neutral, a bit higher");
+    // An answered Strong like whose blended view is Slight like names both,
+    // so the estimate is not mistaken for the answer.
+    assert.equal(app.context.reasonTagEstimateText("Lace", { value: 0.5, support: 40, direct: 1, inherited: null }, 1),
+      "Lace: stays Slight like (you said Strong like)");
+    assert.equal(app.context.reasonTagEstimateText("Lace", { value: 0.5, support: 40, direct: null, inherited: null }, 1),
+      "Lace: stays Slight like");
+    assert.match(text(view), /Curator's view — /);
   }
   console.log("PASS: why-these queue, reasons, flip, skips, modes, the thumb follow-up, tag ranking, the tag search, what moved, estimates, and chip bars");
 })().catch((error) => {
