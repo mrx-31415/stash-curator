@@ -1,0 +1,40 @@
+name: Windows connection churn probe
+
+# Temporary diagnostic: run the released Curator against native Stash on
+# Windows and count TCP connections to Stash during Sync and build.
+on:
+  push:
+    branches: [test/windows-churn]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Download Stash and Curator
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stash" | Out-Null
+          Invoke-WebRequest -Uri https://github.com/stashapp/stash/releases/download/v0.31.1/stash-win.exe -OutFile "$env:RUNNER_TEMP\stash\stash-win.exe"
+          Invoke-WebRequest -Uri https://github.com/mrx-31415/stash-curator/releases/download/v0.45.0/stash-curator-windows-amd64.zip -OutFile "$env:RUNNER_TEMP\curator.zip"
+      - name: Probe
+        shell: pwsh
+        run: python -u scripts/windows_churn_probe.py "$env:RUNNER_TEMP\stash" "$env:RUNNER_TEMP\curator.zip" 5000
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-churn
+          path: |
+            ${{ runner.temp }}/stash/stash.log
+            ${{ runner.temp }}/stash/churn.csv
+            ${{ runner.temp }}/stash/plugins/stash-curator/data/*.log
+          if-no-files-found: warn
