@@ -1241,6 +1241,7 @@ var allowedConfigKeys = map[string]bool{
 	"page_size":                              true,
 	"recommendation_endless_scroll":          true,
 	"diversity_enabled":                      true,
+	"new_arrivals_include_unorganized":       true,
 	"rotation_cooldown_days":                 true,
 	"sync_page_size":                         true,
 	"debounce_ms":                            true,

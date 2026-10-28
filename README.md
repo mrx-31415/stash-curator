@@ -45,8 +45,9 @@ Curator your preferences. Feedback affects rankings after a model update.
 
 ### Recommendations
 
-Browse six lanes of scenes from your library: For You, Best Bets, Revisit, Stretch,
-Blind Spots, and Dormant. Each offers a different way to find something to watch.
+Browse seven lanes of scenes from your library: For You, Best Bets, New Arrivals,
+Revisit, Stretch, Blind Spots, and Dormant. Each offers a different way to find something
+to watch.
 [Learn how to choose a lane](docs/using-curator.md#choose-a-lane).
 
 ### Find

@@ -41,7 +41,15 @@ class ReportGenerator:
         ReasonGraphStore(self.connection).ensure(model_id)
         explanation_service = ExplanationService(self.connection)
         scores = RecommendationModelStore(self.connection).scores(model_id)
-        lanes = ("for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant")
+        lanes = (
+            "for_you",
+            "best_bets",
+            "new_arrivals",
+            "revisit",
+            "stretch",
+            "blind_spots",
+            "dormant",
+        )
         sections = []
         lane_counts: dict[str, int] = {}
         aliases = self._aliases(redacted)
@@ -593,6 +601,7 @@ class ReportGenerator:
             "stretch": "Stretch",
             "blind_spots": "Blind Spots",
             "dormant": "Dormant",
+            "new_arrivals": "New Arrivals",
         }[lane]
 
     @staticmethod

@@ -21,7 +21,7 @@ import (
 // slateLanes mirrors SlateBuilder's lane vocabulary.
 var slateLanes = map[string]bool{
 	"for_you": true, "best_bets": true, "revisit": true, "stretch": true, "blind_spots": true,
-	"dormant": true,
+	"dormant": true, "new_arrivals": true,
 }
 
 // queriedScoreFirstLanes mirrors slate.QUERIED_SCORE_FIRST_LANES.

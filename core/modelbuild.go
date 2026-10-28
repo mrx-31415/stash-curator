@@ -628,7 +628,7 @@ func modelSyncWatermark(db dbx) string {
 	return watermark.String
 }
 
-// modelSourceFingerprint mirrors _source_fingerprint (4 tables).
+// modelSourceFingerprint mirrors _source_fingerprint (5 tables).
 func modelSourceFingerprint(db dbx) (string, error) {
 	digest := sha256.New()
 	for _, spec := range []struct {
@@ -639,6 +639,7 @@ func modelSourceFingerprint(db dbx) (string, error) {
 		{"source_performer", `SELECT performer_id, favorite, rating100 FROM source_performer ORDER BY performer_id`},
 		{"source_studio", `SELECT studio_id, favorite FROM source_studio ORDER BY studio_id`},
 		{"source_file", `SELECT scene_id, max(available) FROM source_file GROUP BY scene_id ORDER BY scene_id`},
+		{"source_scene", `SELECT scene_id, created_at_ms, organized FROM source_scene ORDER BY scene_id`},
 	} {
 		if err := fingerprintTable(db, digest, spec.label, spec.statement); err != nil {
 			return "", err

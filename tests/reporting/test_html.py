@@ -52,6 +52,7 @@ def test_report_is_self_contained_and_renders_every_lane(tmp_path: Path) -> None
         "stretch",
         "blind_spots",
         "dormant",
+        "new_arrivals",
     }
     assert all(f'<section id="{lane}">' in document for lane in result.lane_counts)
     assert "<style>" in document

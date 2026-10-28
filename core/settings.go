@@ -25,6 +25,7 @@ var defaultPluginConfig = jvObj(
 	jvKey("model_update_min_interval_minutes", jvInt(60)),
 	jvKey("prune_tag_name", jvStr("[Prune]")),
 	jvKey("ignored_tags", jvStr("")),
+	jvKey("new_arrivals_include_unorganized", jvBool(false)),
 	jvKey("together_excluded_tags", jvArr()),
 	jvKey("moods", jvArr(jvObj(jvKey("id", jvStr("together")), jvKey("name", jvStr("Together")), jvKey("excluded_tags", jvArr())))),
 	jvKey("expand_horizon_days", jvInt(90)),
@@ -70,6 +71,7 @@ var settingMapping = []struct {
 	{"modelUpdateMinIntervalMinutes", "model_update_min_interval_minutes", convFloat},
 	{"pruneTagName", "prune_tag_name", convStr},
 	{"ignoredTags", "ignored_tags", convStr},
+	{"newArrivalsIncludeUnorganized", "new_arrivals_include_unorganized", convBool},
 	{"expandHorizonDays", "expand_horizon_days", convInt},
 	{"expandGender", "expand_gender", convStr},
 	{"expandWildcard", "expand_wildcard", convBool},
@@ -291,6 +293,9 @@ func validateConfig(values jVal) error {
 	}
 	if v := values.get("recommendation_endless_scroll"); v.kind != jNull && v.kind != jBool {
 		return fmt.Errorf("recommendation_endless_scroll must be true or false")
+	}
+	if v := values.get("new_arrivals_include_unorganized"); v.kind != jNull && v.kind != jBool {
+		return fmt.Errorf("new_arrivals_include_unorganized must be true or false")
 	}
 	for _, key := range []string{"schedule_expand_refresh_at_hour", "schedule_sync_build_at_hour", "schedule_backup_at_hour"} {
 		v := values.get(key)

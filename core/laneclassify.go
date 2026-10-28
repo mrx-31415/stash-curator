@@ -379,6 +379,76 @@ type dormancyRow struct {
 	distinctSceneCount int64
 }
 
+// New Arrivals window: every unplayed scene added within the last
+// newArrivalsWindowDays qualifies; when fewer than newArrivalsMinScenes did,
+// the window widens to the newArrivalsMinScenes most recently added instead,
+// so a quiet fortnight still leaves a lane. A bulk import inside the window
+// qualifies whole. Mirrors RankingConfig.new_arrivals_*.
+const (
+	newArrivalsWindowDays = 14
+	newArrivalsMinScenes  = 50
+)
+
+// newArrival is one scene's New Arrivals qualification.
+type newArrival struct {
+	addedAtMs      int64
+	daysSinceAdded float64
+}
+
+// newArrivalsContext mirrors LanePolicy._new_arrivals_context: the eligible,
+// unplayed scenes most recently added to Stash (newest first, scene_id
+// breaking ties), within the widening window above. Scenes Stash has not
+// marked organized are left out unless includeUnorganized is set.
+func newArrivalsContext(db dbx, sceneIDs map[string]bool, played map[string]bool, nowMs int64,
+	includeUnorganized bool, windowDays, minScenes int) (map[string]newArrival, error) {
+	rows, err := db.Query(`
+SELECT scene_id, created_at_ms, organized FROM source_scene
+WHERE created_at_ms IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	type arrival struct {
+		sceneID   string
+		addedAtMs int64
+	}
+	var candidates []arrival
+	for rows.Next() {
+		var sceneID string
+		var addedAtMs, organized int64
+		if err := rows.Scan(&sceneID, &addedAtMs, &organized); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if sceneIDs[sceneID] && !played[sceneID] && (organized == 1 || includeUnorganized) {
+			candidates = append(candidates, arrival{sceneID, addedAtMs})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].addedAtMs != candidates[j].addedAtMs {
+			return candidates[i].addedAtMs > candidates[j].addedAtMs
+		}
+		return candidates[i].sceneID < candidates[j].sceneID
+	})
+	cutoff := nowMs - int64(windowDays)*86_400_000
+	count := 0
+	for count < len(candidates) && candidates[count].addedAtMs >= cutoff {
+		count++
+	}
+	count = maxInt(count, minInt(minScenes, len(candidates)))
+	result := make(map[string]newArrival, count)
+	for _, candidate := range candidates[:count] {
+		result[candidate.sceneID] = newArrival{
+			addedAtMs:      candidate.addedAtMs,
+			daysSinceAdded: math.Max(0, float64(nowMs-candidate.addedAtMs)/86_400_000),
+		}
+	}
+	return result, nil
+}
+
 // dormantContext mirrors LanePolicy._dormant_context: per-scene strongest
 // qualifying dormant entity (a performer, studio, or confirmed tag the user
 // used to watch a lot of, hasn't touched in a while, and whose scenes
@@ -553,6 +623,7 @@ type laneContext struct {
 	fitRanks        map[string]float64
 	blindSpots      map[string]blindSpotSceneData
 	dormant         map[string]dormantCandidate
+	newArrivals     map[string]newArrival
 	played          map[string]bool
 }
 
@@ -781,11 +852,21 @@ func (c *laneContext) classifyScene(sceneID string, score classificationScore) (
 			),
 		})
 	}
+	if arrival, ok := c.newArrivals[sceneID]; ok {
+		classifications = append(classifications, builtLaneClassification{
+			sceneID: sceneID, lane: "new_arrivals",
+			laneValue: c.fitRanks[sceneID],
+			qualification: jvObj(
+				jvKey("added_at_ms", jvInt(arrival.addedAtMs)),
+				jvKey("days_since_added", jvInt(pyRound(arrival.daysSinceAdded))),
+			),
+		})
+	}
 	return classifications, stretch
 }
 
 // laneClassify mirrors LanePolicy.classify and persists the rows.
-func laneClassify(db dbx, modelID string, featureVersion string, nowMs int64, progress func(processed, total int)) ([]builtLaneClassification, error) {
+func laneClassify(db dbx, modelID string, featureVersion string, nowMs int64, includeUnorganized bool, progress func(processed, total int)) ([]builtLaneClassification, error) {
 	scores, err := classificationData(db, modelID)
 	if err != nil {
 		return nil, err
@@ -828,6 +909,11 @@ func laneClassify(db dbx, modelID string, featureVersion string, nowMs int64, pr
 	if err != nil {
 		return nil, err
 	}
+	newArrivals, err := newArrivalsContext(db, eligibleSet, played, nowMs, includeUnorganized,
+		newArrivalsWindowDays, newArrivalsMinScenes)
+	if err != nil {
+		return nil, err
+	}
 	sceneIDs := sortedStringKeys(eligibleScores)
 	total := len(sceneIDs)
 	var classifications []builtLaneClassification
@@ -840,6 +926,7 @@ func laneClassify(db dbx, modelID string, featureVersion string, nowMs int64, pr
 			studioRanks:     studioRanks,
 			fitRanks:        fitRanks,
 			dormant:         dormant,
+			newArrivals:     newArrivals,
 			blindSpots:      blindSpots,
 			played:          played,
 		}

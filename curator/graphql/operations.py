@@ -128,7 +128,8 @@ query CuratorPerformers(
 )
 
 SCENE_FIELDS = """
-      id title details date rating100 updated_at play_count play_duration play_history o_history
+      id title details date rating100 created_at updated_at organized
+      play_count play_duration play_history o_history
       studio { id name favorite rating100 updated_at parent_studio { id name updated_at } }
       tags { id name updated_at }
       performers { id name updated_at }

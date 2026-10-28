@@ -63,7 +63,9 @@ def _scene(sid: str, title: str) -> dict[str, object]:
         "details": "A sync fixture scene with distinctive chemistry.",
         "date": "2026-01-10",
         "rating100": None,
+        "created_at": "2025-12-30T08:15:00+01:00",
         "updated_at": "2026-01-01T00:00:00Z",
+        "organized": True,
         "play_count": 1,
         "play_duration": 300,
         "play_history": ["2026-07-01T00:00:00Z"],
@@ -212,13 +214,17 @@ class _StubSync(BaseHTTPRequestHandler):
                         "scenes": [
                             {
                                 "id": "s1",
+                                "created_at": "2025-12-30T08:15:00+01:00",
                                 "updated_at": "2026-01-01T00:00:00Z",
+                                "organized": True,
                                 "play_history": ["2026-07-01T00:00:00Z"],
                                 "o_history": [],
                             },
                             {
                                 "id": "s2",
+                                "created_at": "2025-12-30T08:15:00+01:00",
                                 "updated_at": "2026-01-01T00:00:00Z",
+                                "organized": True,
                                 "play_history": ["2026-07-02T00:00:00Z"],
                                 "o_history": [],
                             },
@@ -447,10 +453,20 @@ def test_sync_build_state_parity(sync_sidecar: Path, binary: Path, stub_stash: s
                 ).fetchall()
                 assert any(kind == "stashdb_id" for _, kind, _ in matches)
                 assert any(kind == "phash" for _, kind, _ in matches)
+                scenes = connection.execute(
+                    """
+                    SELECT scene_id, created_at_ms, organized, source_hash
+                    FROM source_scene ORDER BY scene_id
+                    """
+                ).fetchall()
+                # 2025-12-30T08:15:00+01:00, organized in the stub.
+                assert scenes and all(row[1:3] == (1767078900000, 1) for row in scenes)
             finally:
                 connection.close()
             artifact = run_dir / f"{run_db.stem}-derived" / f"{model_id[0]}.sqlite3"
-            states.append({"model_id": model_id[0], "job": job, "matches": matches})
+            states.append(
+                {"model_id": model_id[0], "job": job, "matches": matches, "scenes": scenes}
+            )
             from tests.core.compare import artifact_tolerant_diff
 
             artifact_diffs.append(artifact_tolerant_diff(artifact, artifact))

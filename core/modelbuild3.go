@@ -430,7 +430,7 @@ INSERT INTO model_entity_dormancy(
 // working set so the ordering stages don't stack their peak on top of it
 // (issue #214).
 func modelPublishTail(db dbx, artifact dbx, temporary, final, modelID, featureVersion string,
-	scoreCount int, nowMs int64, report func(fraction float64), rec *stageRecorder) (map[string]int64, error) {
+	scoreCount int, nowMs int64, includeUnorganized bool, report func(fraction float64), rec *stageRecorder) (map[string]int64, error) {
 	published := false
 	fail := func(err error) (map[string]int64, error) {
 		if !published {
@@ -445,7 +445,7 @@ func modelPublishTail(db dbx, artifact dbx, temporary, final, modelID, featureVe
 	// classification through index creation (Python's indexing_started).
 	indexingStarted := time.Now()
 	if err := rec.stage("lane_classification", "model.lane_classification", func() error {
-		_, err := laneClassify(artifact, modelID, featureVersion, nowMs, func(processed, total int) {
+		_, err := laneClassify(artifact, modelID, featureVersion, nowMs, includeUnorganized, func(processed, total int) {
 			if report != nil {
 				report(0.85 + 0.02*float64(processed)/float64(maxInt(1, total)))
 			}
@@ -581,17 +581,18 @@ func modelAffinitySanityCheck(artifact dbx, modelID string, computedAffinityCoun
 // passes the runtime ignored_tags via modelConfigCanonicalWith so the model
 // fingerprint reflects an edited ignore list.
 func modelConfigCanonical() string {
-	return modelConfigCanonicalWith(nil)
+	return modelConfigCanonicalWith(nil, false)
 }
 
 // modelConfigCanonicalWith mirrors modelConfigCanonical for a given
-// ignored_tags list (nil → the empty default). The model build passes the
-// runtime ignored_tags so the model digest changes when the list changes.
-func modelConfigCanonicalWith(ignoredTags []string) string {
+// ignored_tags list (nil → the empty default) and New Arrivals organized
+// setting. The model build passes the runtime values so the model digest
+// changes when either changes.
+func modelConfigCanonicalWith(ignoredTags []string, includeUnorganized bool) string {
 	config := jvObj(
 		jvKey("feature", modelFeatureConfigWith(ignoredTags)),
 		jvKey("model", modelSubConfig()),
-		jvKey("ranking", rankingSubConfig()),
+		jvKey("ranking", rankingSubConfig(includeUnorganized)),
 		jvKey("random_seed", jvInt(31415)),
 	)
 	return config.marshalSortedKeys()
@@ -665,8 +666,9 @@ func modelSubConfig() jVal {
 	)
 }
 
-// rankingSubConfig mirrors asdict(RankingConfig) with the defaults.
-func rankingSubConfig() jVal {
+// rankingSubConfig mirrors asdict(RankingConfig) with the defaults and the
+// runtime new_arrivals_include_unorganized setting.
+func rankingSubConfig(includeUnorganized bool) jVal {
 	return jvObj(
 		jvKey("adjacent_shared_performers", jvBool(false)),
 		jvKey("best_bet_anchor_percentile", jvFloat(0.60)),
@@ -694,6 +696,9 @@ func rankingSubConfig() jVal {
 		jvKey("history_performer_penalty", jvFloat(0.04)),
 		jvKey("history_size", jvInt(50)),
 		jvKey("history_studio_penalty", jvFloat(0.03)),
+		jvKey("new_arrivals_include_unorganized", jvBool(includeUnorganized)),
+		jvKey("new_arrivals_min_scenes", jvInt(newArrivalsMinScenes)),
+		jvKey("new_arrivals_window_days", jvInt(newArrivalsWindowDays)),
 		jvKey("page_size", jvInt(20)),
 		jvKey("performer_repeat_penalty", jvFloat(0.06)),
 		jvKey("relax_adjacent_when_exhausted", jvBool(false)),
@@ -723,6 +728,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	timings := map[string]int64{}
 	started := time.Now()
 	ignoredTags := featureIgnoredTags(db)
+	includeUnorganized := newArrivalsIncludeUnorganized(db)
 	var featureVersion string
 	err := rec.stage("", "model.features", func() error {
 		var err error
@@ -760,7 +766,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 	if err != nil {
 		return drainResult{}, err
 	}
-	modelConfigCanonical := modelConfigCanonicalWith(ignoredTags)
+	modelConfigCanonical := modelConfigCanonicalWith(ignoredTags, includeUnorganized)
 	if os.Getenv("CURATOR_DEBUG_MODEL_DIGEST") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG model digest: fv=%s ev=%s src=%s cfg=%s cutoff=%g ver=%d ref=%d code=%s\n",
 			featureVersion, evidenceFingerprint, sourceFingerprint, modelConfigCanonical,
@@ -887,7 +893,7 @@ func modelBuild(db dbx, nowMs int64, progress func(processed, total int)) (drain
 		runtime.GC()
 		debug.FreeOSMemory()
 		publishTimings, err = modelPublishTail(db, artifact, temporary, final, modelID,
-			featureVersion, scoreCount, nowMs, report, rec)
+			featureVersion, scoreCount, nowMs, includeUnorganized, report, rec)
 		return err
 	})
 	if err != nil {

@@ -603,8 +603,15 @@ def test_materialize_reports_each_lane_ordering(tmp_path: Path) -> None:
         progress=lambda processed, total: progress.append((processed, total)),
     )
 
-    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
-    assert progress == [(position, 9) for position in range(1, 10)]
+    assert set(counts) == {
+        "best_bets",
+        "revisit",
+        "stretch",
+        "blind_spots",
+        "dormant",
+        "new_arrivals",
+    }
+    assert progress == [(position, 11) for position in range(1, 12)]
     assert set(builder.materialize_timings_ms) == {
         "score_first_ordering",
         "varied_ordering",
@@ -796,7 +803,14 @@ def test_prepared_lane_candidates_avoid_rehydrating_model_features(
     connection = _database(tmp_path / "curator.sqlite3")
     LanePolicy(connection).classify("model")
     counts = SlateBuilder(connection).prepare("model")
-    assert set(counts) == {"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
+    assert set(counts) == {
+        "best_bets",
+        "revisit",
+        "stretch",
+        "blind_spots",
+        "dormant",
+        "new_arrivals",
+    }
 
     monkeypatch.setattr(
         SlateBuilder,

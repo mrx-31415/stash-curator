@@ -33,7 +33,7 @@ wide: true
 </section>
 
 <div class="grid">
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>Start with For You, find strong unwatched matches in Best Bets, or return to familiar scenes in Revisit. Stretch, Blind Spots, and Dormant help you explore more of your library.</p></section>
+  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>Start with For You, find strong unwatched matches in Best Bets, or return to familiar scenes in Revisit. Stretch, Blind Spots, and Dormant help you explore more of your library, and New Arrivals picks from what you just added.</p></section>
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#find">Find →</a></h3><p>Find opens on Expand, which ranks a refreshed pool of StashDB leads when connected. Similar finds related scenes in your library or on StashDB; Performer Hunt follows a performer’s catalog. External results are leads, not proof that a scene is available locally.</p></section>
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Answer Tag questions or rate tags in Tag sentiment to teach Curator what you like. After a model update, Impact shows which preferences and recommendations changed.</p></section>
 </div>

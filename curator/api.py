@@ -99,6 +99,7 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "model_update_min_interval_minutes": 60,
     "prune_tag_name": "[Prune]",
     "ignored_tags": "",
+    "new_arrivals_include_unorganized": False,
     "together_excluded_tags": [],
     "moods": [{"id": "together", "name": "Together", "excluded_tags": []}],
     "expand_horizon_days": 90,
@@ -877,6 +878,7 @@ class CuratorAPI:
             "stretch",
             "blind_spots",
             "dormant",
+            "new_arrivals",
         }:
             raise ValueError("unknown recommendation lane")
         where = "WHERE h.lane=?" if lane else ""
@@ -1742,6 +1744,7 @@ class CuratorAPI:
             "page_size",
             "recommendation_endless_scroll",
             "diversity_enabled",
+            "new_arrivals_include_unorganized",
             "rotation_cooldown_days",
             "sync_page_size",
             "debounce_ms",
@@ -1847,6 +1850,9 @@ class CuratorAPI:
         endless = values.get("recommendation_endless_scroll")
         if endless is not None and not isinstance(endless, bool):
             raise ValueError("recommendation_endless_scroll must be true or false")
+        unorganized = values.get("new_arrivals_include_unorganized")
+        if unorganized is not None and not isinstance(unorganized, bool):
+            raise ValueError("new_arrivals_include_unorganized must be true or false")
         for key in (
             "schedule_expand_refresh_at_hour",
             "schedule_sync_build_at_hour",

@@ -463,6 +463,17 @@ func presenceCategory(value string) string {
 // with confidence from document
 // frequency. Every input is a precomputed read-only map, so the scene pass
 // is row-independent: fixed-chunk parallel processing yields identical rows.
+
+// newArrivalsIncludeUnorganized reads the runtime New Arrivals organized
+// setting from the sidecar config (false when unset or unreadable).
+func newArrivalsIncludeUnorganized(db dbx) bool {
+	cfg, err := sidecarConfig(db)
+	if err != nil {
+		return false
+	}
+	return cfg.get("config").get("new_arrivals_include_unorganized").truthy()
+}
+
 // featureIgnoredTags reads the runtime ignored_tags from curator_config.
 // The plugin setting ignoredTags (a comma-separated string in Stash settings)
 // is mirrored into curator_config.config_json["ignored_tags"]. The build reads
