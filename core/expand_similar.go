@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-// performerProfilesAll mirrors FeatureStore.performer_profiles without an id
-// restriction (the targeted performer path loads every profile).
-func performerProfilesAll(db dbx, featureVersion string) (map[string]*performerProfile, error) {
-	return loadPerformerProfiles(db, featureVersion, nil)
-}
-
 // expandSimilar mirrors ExpandService.similar: rank the external_entity pool
 // (optionally restricted to candidate_ids) against a local scene or
 // performer, with the same similarity/appeal blend and why strings.
@@ -121,7 +115,7 @@ WHERE st.scene_id=? AND lower(t.name)='compilation' LIMIT 1`, entityID).Scan(&pr
 		}
 		var profiles map[string]*performerProfile
 		if featureVersion != "" {
-			profiles, err = performerProfilesAll(s.db, featureVersion)
+			profiles, err = loadPerformerProfiles(s.db, featureVersion, targetPerformers)
 			if err != nil {
 				return jvNull(), err
 			}
@@ -291,7 +285,7 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 		}
 		var target *performerProfile
 		if featureVersion != "" {
-			profiles, err := performerProfilesAll(s.db, featureVersion)
+			profiles, err := loadPerformerProfiles(s.db, featureVersion, []string{entityID})
 			if err != nil {
 				return jvNull(), err
 			}
@@ -623,7 +617,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 		}
 		var target *performerProfile
 		if featureVersion != "" {
-			profiles, err := performerProfilesAll(db, featureVersion)
+			profiles, err := loadPerformerProfiles(db, featureVersion, []string{entityID})
 			if err != nil {
 				return jvNull(), err
 			}

@@ -658,7 +658,7 @@ func dbValueToJSON(v any) jVal {
 // similarPerformers mirrors FeatureStore.similar_performers: rank every other
 // profile by performer_similarity, ties by performer id, and take `count`.
 func similarPerformers(db dbx, featureVersion, performerID string, count int) (jVal, error) {
-	profiles, err := performerProfilesAll(db, featureVersion)
+	targets, err := loadPerformerProfiles(db, featureVersion, []string{performerID})
 	if err != nil {
 		return jvNull(), err
 	}
@@ -669,7 +669,11 @@ func similarPerformers(db dbx, featureVersion, performerID string, count int) (j
 	}
 	weights := performerBlockWeightsMap()
 	var matches []match
-	if target := profiles[performerID]; target != nil {
+	if target := targets[performerID]; target != nil {
+		profiles, err := loadProfilesComparedTo(db, featureVersion, target)
+		if err != nil {
+			return jvNull(), err
+		}
 		for otherID, profile := range profiles {
 			if otherID == performerID {
 				continue

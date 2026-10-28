@@ -10,21 +10,21 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/buger/jsonparser"
 )
 
 // forEachProfileRow calls visit for every profile:* feature of the given
 // performers (nil ids: every performer) in featureVersion, with the block
-// name already stripped of its "profile:" prefix. Visit order within a
-// performer is unspecified.
+// name already stripped of its "profile:" prefix. name is only valid during
+// the call, so a caller that keeps it copies it; most entries are compared
+// and dropped. Visit order within a performer is unspecified.
 func forEachProfileRow(db dbx, featureVersion string, ids []string,
-	visit func(performerID, block, name string, value, confidence float64)) error {
+	visit func(performerID, block string, name []byte, value, confidence float64)) error {
 	packed, err := hasPerformerProfiles(db, featureVersion)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ ORDER BY ef.entity_id, ef.feature_id`, args...)
 			if err := rows.Scan(&performerID, &family, &name, &value, &confidence); err != nil {
 				return err
 			}
-			visit(performerID, strings.TrimPrefix(family, "profile:"), name, value, confidence)
+			visit(performerID, strings.TrimPrefix(family, "profile:"), []byte(name), value, confidence)
 		}
 		return rows.Err()
 	}
@@ -72,11 +72,11 @@ WHERE feature_version=?`+filter+` ORDER BY performer_id`, args...)
 	defer rows.Close()
 	for rows.Next() {
 		var performerID string
-		var raw []byte
+		var raw sql.RawBytes
 		if err := rows.Scan(&performerID, &raw); err != nil {
 			return err
 		}
-		if err := visitPackedProfile(raw, func(block, name string, value, confidence float64) {
+		if err := visitPackedProfile(raw, func(block string, name []byte, value, confidence float64) {
 			visit(performerID, block, name, value, confidence)
 		}); err != nil {
 			return fmt.Errorf("invalid performer profile for %s: %w", performerID, err)
@@ -86,49 +86,135 @@ WHERE feature_version=?`+filter+` ORDER BY performer_id`, args...)
 }
 
 // visitPackedProfile decodes one {block: {name: [value, confidence]}} row
-// straight from the bytes: a generic JSON tree costs several times more on
-// profiles with hundreds of entries.
-func visitPackedProfile(raw []byte, visit func(block, name string, value, confidence float64)) error {
-	return jsonparser.ObjectEach(raw, func(blockKey, blockValue []byte, kind jsonparser.ValueType, _ int) error {
-		if kind != jsonparser.Object {
-			return errors.New("profile block is not an object")
+// in a single pass over the bytes. Find, Expand and the model build read
+// every performer's row, and a generic JSON walker (even a lazy one)
+// rescans each value several times; this was most of performer Find.
+func visitPackedProfile(raw []byte, visit func(block string, name []byte, value, confidence float64)) error {
+	scan := packedProfileScanner{raw: raw}
+	if !scan.expect('{') {
+		return errors.New("profile is not an object")
+	}
+	for first := true; !scan.expect('}'); first = false {
+		if !first && !scan.expect(',') {
+			return errors.New("malformed profile object")
 		}
-		block, err := profileKey(blockKey)
+		block, err := scan.key()
 		if err != nil {
 			return err
 		}
-		return jsonparser.ObjectEach(blockValue, func(nameKey, pair []byte, kind jsonparser.ValueType, _ int) error {
-			name, err := profileKey(nameKey)
+		if !scan.expect('{') {
+			return errors.New("profile block is not an object")
+		}
+		for first := true; !scan.expect('}'); first = false {
+			if !first && !scan.expect(',') {
+				return errors.New("malformed profile block")
+			}
+			name, err := scan.keyBytes()
 			if err != nil {
 				return err
 			}
-			var numbers [2]float64
-			count := 0
-			var itemErr error
-			_, err = jsonparser.ArrayEach(pair, func(item []byte, kind jsonparser.ValueType, _ int, _ error) {
-				if itemErr != nil {
-					return
-				}
-				if kind != jsonparser.Number || count >= 2 {
-					itemErr = errors.New("profile entry is not a [value, confidence] pair")
-					return
-				}
-				numbers[count], itemErr = strconv.ParseFloat(string(item), 64)
-				count++
-			})
-			if err == nil {
-				err = itemErr
+			value, valueOK := 0.0, scan.expect('[')
+			confidence := 0.0
+			if valueOK {
+				value, valueOK = scan.number()
 			}
-			if err == nil && count != 2 {
-				err = errors.New("profile entry is not a [value, confidence] pair")
+			if valueOK {
+				valueOK = scan.expect(',')
 			}
-			if err != nil {
-				return err
+			if valueOK {
+				confidence, valueOK = scan.number()
 			}
-			visit(block, name, numbers[0], numbers[1])
-			return nil
-		})
-	})
+			if !valueOK || !scan.expect(']') {
+				return errors.New("profile entry is not a [value, confidence] pair")
+			}
+			visit(block, name, value, confidence)
+		}
+	}
+	scan.space()
+	if scan.pos != len(raw) {
+		return errors.New("trailing data after profile")
+	}
+	return nil
+}
+
+type packedProfileScanner struct {
+	raw []byte
+	pos int
+}
+
+func (s *packedProfileScanner) space() {
+	for s.pos < len(s.raw) {
+		switch s.raw[s.pos] {
+		case ' ', '\t', '\n', '\r':
+			s.pos++
+		default:
+			return
+		}
+	}
+}
+
+// expect consumes c (after whitespace) when it is next.
+func (s *packedProfileScanner) expect(c byte) bool {
+	s.space()
+	if s.pos < len(s.raw) && s.raw[s.pos] == c {
+		s.pos++
+		return true
+	}
+	return false
+}
+
+// key reads a quoted object key and its colon.
+func (s *packedProfileScanner) key() (string, error) {
+	raw, err := s.keyBytes()
+	return string(raw), err
+}
+
+// keyBytes is key without the copy: an unescaped key aliases raw.
+func (s *packedProfileScanner) keyBytes() ([]byte, error) {
+	if !s.expect('"') {
+		return nil, errors.New("profile key is not a string")
+	}
+	start := s.pos
+	for s.pos < len(s.raw) && s.raw[s.pos] != '"' {
+		if s.raw[s.pos] == '\\' {
+			s.pos++
+		}
+		s.pos++
+	}
+	if s.pos >= len(s.raw) {
+		return nil, errors.New("unterminated profile key")
+	}
+	key := s.raw[start:s.pos]
+	s.pos++
+	if bytes.IndexByte(key, '\\') >= 0 {
+		decoded, err := profileKey(key)
+		if err != nil {
+			return nil, err
+		}
+		key = []byte(decoded)
+	}
+	if !s.expect(':') {
+		return nil, errors.New("profile key has no value")
+	}
+	return key, nil
+}
+
+// number reads a JSON number; NaN, Infinity and other tokens are rejected.
+func (s *packedProfileScanner) number() (float64, bool) {
+	s.space()
+	start := s.pos
+	for s.pos < len(s.raw) {
+		c := s.raw[s.pos]
+		if (c < '0' || c > '9') && c != '-' && c != '+' && c != '.' && c != 'e' && c != 'E' {
+			break
+		}
+		s.pos++
+	}
+	if s.pos == start {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(string(s.raw[start:s.pos]), 64)
+	return value, err == nil
 }
 
 // profileKey returns an object key's string value. The builder writes

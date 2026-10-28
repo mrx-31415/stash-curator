@@ -2173,7 +2173,7 @@ func performerProfilesForIDs(db dbx, featureVersion string, performerIDs map[str
 // the given performers, or every performer when ids is nil.
 func loadPerformerProfiles(db dbx, featureVersion string, ids []string) (map[string]*performerProfile, error) {
 	profiles := make(map[string]*performerProfile)
-	err := forEachProfileRow(db, featureVersion, ids, func(entityID, block, name string, value, confidence float64) {
+	err := forEachProfileRow(db, featureVersion, ids, func(entityID, block string, name []byte, value, confidence float64) {
 		profile := profiles[entityID]
 		if profile == nil {
 			profile = &performerProfile{
@@ -2188,16 +2188,87 @@ func loadPerformerProfiles(db dbx, featureVersion string, ids []string) (map[str
 		if values == nil {
 			values = map[string]profileValue{}
 			profile.blocks[block] = values
-			profile.keys[block] = map[string]bool{}
 		}
-		values[name] = profileValue{value: value, confidence: confidence}
-		profile.keys[block][name] = true
+		values[string(name)] = profileValue{value: value, confidence: confidence}
 	})
 	if err != nil {
 		return nil, err
 	}
 	for _, profile := range profiles {
 		finalizeProfileNorms(profile)
+	}
+	return profiles, nil
+}
+
+// loadProfilesComparedTo loads every performer profile for comparison with
+// target alone. A cosine block's similarity reads only the entries target
+// shares, so the rest count toward the block norm and are dropped; numeric
+// and augmentation blocks stay whole (the augmentation penalty needs the
+// full set). Decoding every entry into maps cost most of Find.
+func loadProfilesComparedTo(db dbx, featureVersion string, target *performerProfile) (map[string]*performerProfile, error) {
+	profiles := make(map[string]*performerProfile)
+	// Entries arrive grouped by performer and (packed rows) by block, so the
+	// current profile and block are cached between calls.
+	var profile *performerProfile
+	var block string
+	var values, shared map[string]profileValue
+	var whole, numeric bool
+	norm := 0.0
+	flushNorm := func() {
+		if profile != nil && !numeric && values != nil {
+			profile.norms[block] += norm
+		}
+		norm = 0
+	}
+	err := forEachProfileRow(db, featureVersion, nil, func(entityID, entryBlock string, name []byte, value, confidence float64) {
+		if profile == nil || profile.id != entityID {
+			flushNorm()
+			profile = profiles[entityID]
+			if profile == nil {
+				profile = &performerProfile{
+					id:     entityID,
+					blocks: map[string]map[string]profileValue{},
+					norms:  map[string]float64{},
+					keys:   map[string]map[string]bool{},
+				}
+				profiles[entityID] = profile
+			}
+			values = nil
+		}
+		if values == nil || entryBlock != block {
+			flushNorm()
+			block = entryBlock
+			values = profile.blocks[block]
+			if values == nil {
+				values = map[string]profileValue{}
+				profile.blocks[block] = values
+			}
+			shared = target.blocks[block]
+			numeric = numericBlocks[block]
+			whole = numeric || block == "augmentation"
+		}
+		if !numeric {
+			norm += value * value
+		}
+		if _, ok := shared[string(name)]; ok || whole {
+			values[string(name)] = profileValue{value: value, confidence: confidence}
+		}
+	})
+	flushNorm()
+	if err != nil {
+		return nil, err
+	}
+	for _, profile := range profiles {
+		for block, values := range profile.blocks {
+			keys := make(map[string]bool, len(values))
+			for name := range values {
+				keys[name] = true
+			}
+			profile.keys[block] = keys
+			if !numericBlocks[block] {
+				profile.norms[block] = math.Sqrt(profile.norms[block])
+			}
+		}
 	}
 	return profiles, nil
 }
