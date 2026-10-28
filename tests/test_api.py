@@ -520,21 +520,6 @@ def test_sidecar_configuration_is_validated(tmp_path: Path) -> None:
         api.update_config({"mystery": True})
 
 
-def test_pruning_queue_requires_an_explicit_keep_or_remove_decision(tmp_path: Path) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    connection.execute(
-        """
-        INSERT INTO pruning_candidate(scene_id, state, created_at_ms, updated_at_ms, reason)
-        VALUES ('old-good', 'review', 1, 1, 'review it')
-        """
-    )
-    api = CuratorAPI(connection)
-
-    assert api.pruning_queue()["items"][0]["scene_id"] == "old-good"
-    assert api.update_pruning("old-good", "keep", now_ms=2)["state"] == "keep"
-    assert api.pruning_queue()["items"] == []
-
-
 def test_prune_candidates_are_reversible_tags_not_deletions(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS).build()
@@ -674,22 +659,6 @@ def test_explicit_negative_feedback_reopens_a_dismissed_prune_suspect(tmp_path: 
         "SELECT state, reason FROM pruning_candidate WHERE scene_id='unusual'"
     ).fetchone()
     assert tuple(row) == ("review", "Thumbs down")
-
-
-def test_never_show_can_be_reversed_explicitly(tmp_path: Path) -> None:
-    connection = _database(tmp_path / "curator.sqlite3")
-    connection.execute(
-        """
-        INSERT INTO exclusion(
-            exclusion_id, entity_type, entity_id, exclusion_type, created_at_ms
-        ) VALUES ('excluded', 'scene', 'old-good', 'never_show', 1)
-        """
-    )
-    api = CuratorAPI(connection)
-
-    assert api.exclusions()["items"][0]["scene_id"] == "old-good"
-    assert api.reverse_exclusion("old-good", now_ms=2)["reversed"] is True
-    assert api.exclusions()["items"] == []
 
 
 def test_recommendation_history_uses_qualified_impressions_without_new_tracking(

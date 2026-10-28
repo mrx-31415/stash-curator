@@ -1,4 +1,4 @@
-// get_slate / replace_item — a port of CuratorAPI.get_slate and
+// get_slate — a port of CuratorAPI.get_slate and
 // SlateBuilder.recommend (curator/api.py, curator/ranking/slate.py) for the
 // materialized-lane path the published model serves. Byte-identical JSON to
 // the Python backend for the same sidecar state, including the read-path
@@ -33,11 +33,6 @@ const scoreFirstRankingJSON = `{"penalties":{"performer":0.0,"studio":0.0,"conte
 func opGetSlate(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_slate",
 		func(settings jVal) (jVal, error) { return getSlateBody(pluginDir, payload, settings) })
-}
-
-func opReplaceItem(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "replace_item",
-		func(settings jVal) (jVal, error) { return replaceItemBody(pluginDir, payload, settings) })
 }
 
 // openAPISidecar mirrors _api's connection: migrate, apply settings, attach
@@ -109,34 +104,6 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	gender := argsString(args, "gender", "")
 	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration, drawSeed, drawAtMs,
 		includeTags, excludeTags, performerIDs, studioIDs, gender, requestedMoodID(args))
-}
-
-// replaceItemBody mirrors backend.py's replace_item: get_slate(lane, 1,
-// context={"replacement": True}). Unlike get_slate, replace_item reads
-// exclude_scene_ids without a [] default, so an absent key errors.
-func replaceItemBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	config, err := sidecarConfig(db)
-	if err != nil {
-		return jvNull(), err
-	}
-	args := payload.get("args")
-	excluded := args.get("exclude_scene_ids")
-	if !isList(excluded) {
-		return jvNull(), fmt.Errorf("exclude_scene_ids must be a list")
-	}
-	excludedSet, err := excludeSceneIDs(excluded)
-	if err != nil {
-		return jvNull(), err
-	}
-	lane := argsString(args, "lane", "for_you")
-	exploration := argsFloat(args, "exploration", 0)
-	return getSlateCore(db, config, lane, 1, 1, jvNull(),
-		jvObj(jvKey("replacement", jvBool(true))), excludedSet, exploration, "", 0, nil, nil, nil, nil, "", requestedMoodID(args))
 }
 
 // getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter

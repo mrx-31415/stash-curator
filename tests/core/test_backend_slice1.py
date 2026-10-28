@@ -1,6 +1,6 @@
 """Slice-1 backend differential harness: model-seeded read-path ops.
 
-The Slice-1 ops (get_slate, replace_item, get_similar, get_explanation,
+The Slice-1 ops (get_slate, get_similar, get_explanation,
 get_recommendation_history, get_shortlist, get_feedback_history,
 get_taste_profile, get_diagnostics) read a *published model* through the
 attached artifact views, so a plain migrated sidecar is not enough: the
@@ -164,13 +164,11 @@ def assert_slice1_identical(
     same_path: Path,
     *,
     timing_fields: tuple[str, ...] = (),
-    normalize: tuple[str, ...] = (),
 ) -> None:
     """Run both backends on fresh copies of the model sidecar and assert the
     outputs are byte-identical once the run-varying fields are handled:
     timing fields are compared structurally (key set + non-negative ints,
-    values may differ) and the listed fields are dropped (uuid4 fields like
-    replace_item's impression_id)."""
+    values may differ)."""
     run_dir = same_path.parent / f"{same_path.stem}-backend-run"
     run_db = run_dir / same_path.name
     derived_src = same_path.parent / f"{same_path.stem}-derived"
@@ -206,22 +204,7 @@ def assert_slice1_identical(
             assert a[field] >= 0 and b[field] >= 0
         a.pop(field)
         b.pop(field)
-    for field in normalize:
-        _strip_key(a, field)
-        _strip_key(b, field)
     assert_equivalent(a, b)
-
-
-def _strip_key(value: object, key: str) -> None:
-    """Remove every key named `key` at any depth (uuid4 fields that vary
-    between runs)."""
-    if isinstance(value, dict):
-        value.pop(key, None)
-        for item in value.values():
-            _strip_key(item, key)
-    elif isinstance(value, list):
-        for item in value:
-            _strip_key(item, key)
 
 
 # ── byte-identical Slice-1 ops on a builder-seeded sidecar ──────────────────
@@ -493,22 +476,6 @@ def test_get_slate_filtered_page_and_exclusions_byte_identical(
         raw,
         same_path=model_sidecar,
         timing_fields=("timings_ms", "ranking_timings_ms"),
-    )
-
-
-def test_replace_item_byte_identical(model_sidecar: Path, binary: Path, stub_stash: str) -> None:
-    raw = payload(
-        "replace_item", model_sidecar, stub_stash, lane="for_you", exclude_scene_ids=["old-good"]
-    )
-    # replace_item never accepts an impression_id, so it is uuid4 on both
-    # sides; the rest of the output must match byte for byte.
-    assert_slice1_identical(
-        binary,
-        PLUGIN_DIR,
-        raw,
-        same_path=model_sidecar,
-        timing_fields=("timings_ms", "ranking_timings_ms"),
-        normalize=("impression_id",),
     )
 
 

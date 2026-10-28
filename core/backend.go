@@ -157,8 +157,6 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetJobStatus(pluginDir, payload)
 	case "get_slate":
 		return opGetSlate(pluginDir, payload)
-	case "replace_item":
-		return opReplaceItem(pluginDir, payload)
 	case "get_score_review":
 		return opGetScoreReview(pluginDir, payload)
 	case "get_similar":
@@ -205,20 +203,12 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitEvents(pluginDir, payload)
 	case "update_config":
 		return opUpdateConfig(pluginDir, payload)
-	case "get_pruning_queue":
-		return opGetPruningQueue(pluginDir, payload)
 	case "get_prune_candidates":
 		return opGetPruneCandidates(pluginDir, payload)
 	case "dismiss_prune_candidate":
 		return opDismissPruneCandidate(pluginDir, payload)
 	case "set_prune_tag":
 		return opSetPruneTag(pluginDir, payload)
-	case "update_pruning":
-		return opUpdatePruning(pluginDir, payload)
-	case "get_exclusions":
-		return opGetExclusions(pluginDir, payload)
-	case "reverse_exclusion":
-		return opReverseExclusion(pluginDir, payload)
 	case "list_profiles":
 		return opListProfiles(pluginDir, payload)
 	case "get_profile":

@@ -71,7 +71,6 @@ OPERATIONS = {
     "get_config": {},
     "get_slate": {"operation": "get_slate", "lane": "for_you", "count": 20, "page": 1},
     "get_slate_page2": {"operation": "get_slate", "lane": "for_you", "count": 20, "page": 2},
-    "replace_item": {"operation": "replace_item", "exclude_scene_ids": []},
     "get_similar_scene": {"operation": "get_similar", "entity_type": "scene", "count": 20},
     "get_similar_performer": {
         "operation": "get_similar",
@@ -92,7 +91,6 @@ OPERATIONS = {
 MODEL_OPS = {
     "get_slate",
     "get_slate_page2",
-    "replace_item",
     "get_similar_scene",
     "get_similar_performer",
     "get_explanation",

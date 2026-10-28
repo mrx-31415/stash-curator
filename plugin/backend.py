@@ -767,19 +767,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 max_appeal=float(args.get("max_appeal") or 0),
                 order=args.get("order") or "asc",
             )
-        if operation == "replace_item":
-            excluded = args.get("exclude_scene_ids")
-            if not isinstance(excluded, list):
-                raise ValueError("exclude_scene_ids must be a list")
-            return api.get_slate(
-                str(args.get("lane") or "for_you"),
-                1,
-                context={"replacement": True},
-                mood_id=str(args["mood_id"] or "") if "mood_id" in args else None,
-                together_mode=bool(args.get("together_mode")),
-                exclude_scene_ids={str(value) for value in excluded},
-                exploration=float(args.get("exploration") or 0),
-            )
         if operation == "get_explanation":
             return api.explanation(str(args.get("scene_id") or ""))
         if operation == "get_recommendation_history":
@@ -994,8 +981,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(entries, list):
                 raise ValueError("entries must be a list")
             return api.submit_events(entries)
-        if operation == "get_pruning_queue":
-            return api.pruning_queue()
         if operation == "get_prune_candidates":
             config = api.config()["config"]
             assert isinstance(config, dict)
@@ -1051,12 +1036,6 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 "tag_id": str(tag["id"]),
                 "tag_name": tag_name,
             }
-        if operation == "update_pruning":
-            return api.update_pruning(str(args.get("scene_id") or ""), str(args.get("state") or ""))
-        if operation == "get_exclusions":
-            return api.exclusions()
-        if operation == "reverse_exclusion":
-            return api.reverse_exclusion(str(args.get("scene_id") or ""))
         if operation == "get_config":
             result = api.config()
             result["code_version"] = _installed_code_version()
