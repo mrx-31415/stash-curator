@@ -25,8 +25,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stash" | Out-Null
           Invoke-WebRequest -Uri https://github.com/stashapp/stash/releases/download/v0.31.1/stash-win.exe -OutFile "$env:RUNNER_TEMP\stash\stash-win.exe"
           Invoke-WebRequest -Uri https://github.com/mrx-31415/stash-curator/releases/download/v0.45.0/stash-curator-windows-amd64.zip -OutFile "$env:RUNNER_TEMP\curator.zip"
+      - name: Install browser
+        shell: pwsh
+        run: |
+          python -m pip install playwright==1.48.0
+          python -m playwright install chromium
       - name: Probe
         shell: pwsh
+        env:
+          CURATOR_PAGE: "1"
         run: python -u scripts/windows_churn_probe.py "$env:RUNNER_TEMP\stash" "$env:RUNNER_TEMP\curator.zip" 5000
       - name: Upload logs
         if: always()
@@ -36,5 +43,6 @@ jobs:
           path: |
             ${{ runner.temp }}/stash/stash.log
             ${{ runner.temp }}/stash/churn.csv
+            ${{ runner.temp }}/stash/curator-page.png
             ${{ runner.temp }}/stash/plugins/stash-curator/data/*.log
           if-no-files-found: warn

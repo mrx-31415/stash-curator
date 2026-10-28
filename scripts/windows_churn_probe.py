@@ -3,6 +3,7 @@
 Usage: windows_churn_probe.py <stash dir containing stash-win.exe> <curator zip> <scenes>
 
 Talks to Stash over one persistent connection so the probe adds no churn itself.
+With CURATOR_PAGE=1, a headless browser keeps the Curator page open throughout.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import collections
 import csv
 import http.client
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -54,7 +56,8 @@ def process_name(pid: str) -> str:
 
 
 def snapshot() -> tuple[int, int, collections.Counter]:
-    """TIME_WAIT total, TIME_WAIT touching :9999, and open client connections to :9999 by process."""
+    """TIME_WAIT total, TIME_WAIT touching :9999, and open client connections by process
+    (to :9999, and to any other port as "<name> other")."""
     out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
     total = stash = 0
     clients: collections.Counter = collections.Counter()
@@ -69,6 +72,8 @@ def snapshot() -> tuple[int, int, collections.Counter]:
                 stash += 1
         elif state == "ESTABLISHED" and remote.endswith(f":{PORT}"):
             clients[process_name(pid)] += 1
+        elif state == "ESTABLISHED" and not local.endswith(f":{PORT}"):
+            clients[process_name(pid) + " other"] += 1
     return total, stash, clients
 
 
@@ -97,6 +102,9 @@ def seed() -> None:
         scene = {"title": f"Synthetic scene {i}", "tag_ids": [tags[(i * k) % len(tags)] for k in (1, 3, 7)],
                  "performer_ids": [performers[i % len(performers)], performers[(i * 7) % len(performers)]],
                  "studio_id": studios[i % len(studios)]}
+        if i % 2 == 0:
+            scene["stash_ids"] = [{"endpoint": "https://stashdb.org/graphql",
+                                   "stash_id": f"00000000-0000-4000-8000-{i:012d}"}]
         if i % 5 == 0:
             scene["rating100"] = (i * 37) % 100 or 50
         scene_id = gql("mutation($i:SceneCreateInput!){sceneCreate(input:$i){id}}", {"i": scene})["sceneCreate"]["id"]
@@ -148,6 +156,16 @@ def main() -> None:
 
         sampler = threading.Thread(target=sample)
         sampler.start()
+        browser = None
+        if os.environ.get("CURATOR_PAGE") == "1":
+            from playwright.sync_api import sync_playwright
+
+            playwright = sync_playwright().start()
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={"width": 1400, "height": 1000})
+            page.on("console", lambda msg: msg.type == "error" and print("console:", msg.text, flush=True))
+            page.goto(f"http://127.0.0.1:{PORT}/plugins/stash-curator", wait_until="networkidle")
+            print("Curator page open", flush=True)
         print("task:", gql('mutation{runPluginTask(plugin_id:"stash-curator", task_name:"Sync and build recommendations")}'),
               flush=True)
         # Poll like the open Curator page does.
@@ -158,7 +176,10 @@ def main() -> None:
             if jobs and not any(job["state"] in ("queued", "running") for job in jobs):
                 break
         elapsed = time.time() - started
-        time.sleep(10)
+        time.sleep(60 if browser else 10)
+        if browser:
+            page.screenshot(path=str(ROOT / "curator-page.png"))
+            browser.close()
         stop.set()
         sampler.join()
 
