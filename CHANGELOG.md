@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.45.0](https://github.com/mrx-31415/stash-curator/compare/v0.44.0...v0.45.0) (2026-10-28)
+
+
+### Features
+
+* add New Arrivals recommendation lane ([#418](https://github.com/mrx-31415/stash-curator/issues/418)) ([c3d5288](https://github.com/mrx-31415/stash-curator/commit/c3d52887d03fcc027ff505e69c44828bb3ffeab0))
+
+
+### Bug Fixes
+
+* brighten lane colours and badges ([#421](https://github.com/mrx-31415/stash-curator/issues/421)) ([fbf1a6c](https://github.com/mrx-31415/stash-curator/commit/fbf1a6c698d258954e77e601db16b3f058a98b78))
+* connect to Stash directly instead of through a configured proxy ([#422](https://github.com/mrx-31415/stash-curator/issues/422)) ([3d4b565](https://github.com/mrx-31415/stash-curator/commit/3d4b56595796f62048c227107aefc4318ac0d74e))
+
 ## [0.44.0](https://github.com/mrx-31415/stash-curator/compare/v0.43.0...v0.44.0) (2026-10-28)
 
 
