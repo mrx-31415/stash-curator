@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.44.0](https://github.com/mrx-31415/stash-curator/compare/v0.43.0...v0.44.0) (2026-10-28)
+
+
+### Features
+
+* ask what made a scene work after a thumbs up or down ([#412](https://github.com/mrx-31415/stash-curator/issues/412)) ([2d21261](https://github.com/mrx-31415/stash-curator/commit/2d21261009d76377ab3ec55fe3a0337128442524))
+* ask what makes a scene work in Curate's Why these? ([#411](https://github.com/mrx-31415/stash-curator/issues/411)) ([5ed2fb7](https://github.com/mrx-31415/stash-curator/commit/5ed2fb70df417712d0d55542278e4ccbc937a67c))
+* count Why these? flips and "Just this scene" for the scene itself ([#413](https://github.com/mrx-31415/stash-curator/issues/413)) ([88bebfa](https://github.com/mrx-31415/stash-curator/commit/88bebfaa272bd811ae76662a0de7eb712eb9d353))
+* keep tag questions coming in one continuous queue ([#409](https://github.com/mrx-31415/stash-curator/issues/409)) ([46096e1](https://github.com/mrx-31415/stash-curator/commit/46096e100e384a590ae32e50afe2ff14bdc11379))
+* learn performer and studio taste from watch lift, and sharper reason chips ([#414](https://github.com/mrx-31415/stash-curator/issues/414)) ([6f5172b](https://github.com/mrx-31415/stash-curator/commit/6f5172bd5a5851a8701b9ea74ecbedd98bda48b6))
+* show what an answer changes, instantly and after each update ([#415](https://github.com/mrx-31415/stash-curator/issues/415)) ([7ab5d6f](https://github.com/mrx-31415/stash-curator/commit/7ab5d6f6cd302560deda7079c661e6fc75c94929))
+
+
+### Performance Improvements
+
+* cut performer Find and Expand profile loading ([#416](https://github.com/mrx-31415/stash-curator/issues/416)) ([ccb3d89](https://github.com/mrx-31415/stash-curator/commit/ccb3d897b4a22025773ad2d882de6252b8c72ecc))
+* halve Find response time for scenes ([#407](https://github.com/mrx-31415/stash-curator/issues/407)) ([6449f6a](https://github.com/mrx-31415/stash-curator/commit/6449f6a7989288a4308affc99197d88e0c9a0720))
+
 ## [0.43.0](https://github.com/mrx-31415/stash-curator/compare/v0.42.2...v0.43.0) (2026-10-27)
 
 
