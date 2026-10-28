@@ -1132,7 +1132,7 @@ func diverseScenes(ranked []*similarityResult, performers map[string][]string, c
 
 // performers mirrors SimilarityService.performers.
 func (s *similarityService) performers(performerID string, count int64, gender string) ([]*similarityResult, error) {
-	profiles, err := s.performerProfiles()
+	targets, err := loadPerformerProfiles(s.db, s.featureVersion, []string{performerID})
 	if err != nil {
 		return nil, err
 	}
@@ -1141,7 +1141,11 @@ func (s *similarityService) performers(performerID string, count int64, gender s
 		blockWeights[item.block] = item.weight
 	}
 	var matches []similarPerformerMatch
-	if target, ok := profiles[performerID]; ok {
+	if target, ok := targets[performerID]; ok {
+		profiles, err := loadProfilesComparedTo(s.db, s.featureVersion, target)
+		if err != nil {
+			return nil, err
+		}
 		for otherID, other := range profiles {
 			if otherID == performerID {
 				continue
@@ -1240,12 +1244,6 @@ type similarPerformerMatch struct {
 	similarity float64
 	blocks     map[string]float64
 	weights    map[string]float64
-}
-
-// performerProfiles mirrors FeatureStore.performer_profiles: profile blocks
-// from entity_feature with family LIKE 'profile:%'.
-func (s *similarityService) performerProfiles() (map[string]*performerProfile, error) {
-	return loadPerformerProfiles(s.db, s.featureVersion, nil)
 }
 
 func intersectStringSets(a, b []string) map[string]bool {

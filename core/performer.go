@@ -58,7 +58,7 @@ type performerProfile struct {
 
 func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (map[string]*performerProfile, error) {
 	profiles := make(map[string]*performerProfile)
-	err := forEachProfileRow(db, featureVersion, nil, func(entity, block, name string, value, confidence float64) {
+	err := forEachProfileRow(db, featureVersion, nil, func(entity, block string, name []byte, value, confidence float64) {
 		profile := profiles[entity]
 		if profile == nil {
 			profile = &performerProfile{id: entity, blocks: make(map[string]map[string]profileValue)}
@@ -67,7 +67,7 @@ func readProfiles(db *sql.DB, featureVersion string, numeric map[string]bool) (m
 		if profile.blocks[block] == nil {
 			profile.blocks[block] = make(map[string]profileValue)
 		}
-		profile.blocks[block][name] = profileValue{value: value, confidence: confidence}
+		profile.blocks[block][string(name)] = profileValue{value: value, confidence: confidence}
 	})
 	if err != nil {
 		return nil, err

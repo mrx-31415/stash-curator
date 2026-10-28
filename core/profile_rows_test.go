@@ -13,17 +13,6 @@ import (
 // A feature artifact's packed performer_profile rows must load exactly the
 // profiles the entity_feature join yields for older artifacts.
 func TestPackedPerformerProfilesMatchEntityFeatures(t *testing.T) {
-	db, err := sql.Open("sqlite3", fileURI(filepath.Join(t.TempDir(), "feature.sqlite3"), false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	for _, statement := range splitSchemaStatements(artifactFeatureSchema) {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
-	}
 	const version = "fv-test"
 	features := []featureRow{
 		{entityType: "performer", entityID: "10", family: "profile:age", name: "age_years", value: 27.25, confidence: 0.8},
@@ -36,46 +25,7 @@ func TestPackedPerformerProfilesMatchEntityFeatures(t *testing.T) {
 		{entityType: "performer", entityID: "3", family: "profile:content", name: "tag:1", value: -0.5, confidence: 0.2},
 		{entityType: "scene", entityID: "10", family: "content", name: "tag:1", value: 1, confidence: 1},
 	}
-	sort.SliceStable(features, func(i, j int) bool {
-		a, b := features[i], features[j]
-		if a.entityType != b.entityType {
-			return a.entityType < b.entityType
-		}
-		if a.entityID != b.entityID {
-			return a.entityID < b.entityID
-		}
-		if a.family != b.family {
-			return a.family < b.family
-		}
-		return a.name < b.name
-	})
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defined := map[string]bool{}
-	for _, feature := range features {
-		id := featureID(version, feature.entityType, feature.family, feature.name)
-		if !defined[id] {
-			defined[id] = true
-			if _, err := conn.ExecContext(context.Background(), `INSERT INTO feature_definition(
-feature_id, feature_version, family, name, provenance) VALUES (?, ?, ?, ?, 'test')`,
-				id, version, feature.family, feature.name); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := conn.ExecContext(context.Background(), `INSERT INTO entity_feature VALUES (?, ?, ?, ?, ?, ?)`,
-			version, feature.entityType, feature.entityID, id, feature.value, feature.confidence); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, profile := range performerProfileJSON(features) {
-		if _, err := conn.ExecContext(context.Background(), `INSERT INTO performer_profile VALUES (?, ?, ?)`,
-			version, profile[0], profile[1]); err != nil {
-			t.Fatal(err)
-		}
-	}
-	conn.Close()
+	db := packedProfileDB(t, version, features)
 
 	load := func() (map[string]*performerProfile, map[string]*performerProfile, map[string]*performerProfile) {
 		t.Helper()
@@ -122,4 +72,63 @@ feature_id, feature_version, family, name, provenance) VALUES (?, ?, ?, ?, 'test
 				label, fmt.Sprint(pair[0]), fmt.Sprint(pair[1]))
 		}
 	}
+}
+
+// packedProfileDB returns a feature artifact holding features both as
+// entity_feature rows and as the packed performer_profile rows built from them.
+func packedProfileDB(t *testing.T, version string, features []featureRow) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", fileURI(filepath.Join(t.TempDir(), "feature.sqlite3"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.SetMaxOpenConns(1)
+	for _, statement := range splitSchemaStatements(artifactFeatureSchema) {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	features = append([]featureRow{}, features...)
+	sort.SliceStable(features, func(i, j int) bool {
+		a, b := features[i], features[j]
+		if a.entityType != b.entityType {
+			return a.entityType < b.entityType
+		}
+		if a.entityID != b.entityID {
+			return a.entityID < b.entityID
+		}
+		if a.family != b.family {
+			return a.family < b.family
+		}
+		return a.name < b.name
+	})
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defined := map[string]bool{}
+	for _, feature := range features {
+		id := featureID(version, feature.entityType, feature.family, feature.name)
+		if !defined[id] {
+			defined[id] = true
+			if _, err := conn.ExecContext(context.Background(), `INSERT INTO feature_definition(
+feature_id, feature_version, family, name, provenance) VALUES (?, ?, ?, ?, 'test')`,
+				id, version, feature.family, feature.name); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := conn.ExecContext(context.Background(), `INSERT INTO entity_feature VALUES (?, ?, ?, ?, ?, ?)`,
+			version, feature.entityType, feature.entityID, id, feature.value, feature.confidence); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, profile := range performerProfileJSON(features) {
+		if _, err := conn.ExecContext(context.Background(), `INSERT INTO performer_profile VALUES (?, ?, ?)`,
+			version, profile[0], profile[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn.Close()
+	return db
 }
