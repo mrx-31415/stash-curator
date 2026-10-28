@@ -33,14 +33,14 @@
 
   --curator-hue-for_you: var(--st-flush, #4f8ce0);
   --curator-hue-similar: #6cc4dc;
-  --curator-hue-best_bets: #d59a52;
-  --curator-hue-hunt: #d98a9e;
-  --curator-hue-stretch: #5cc19c;
-  --curator-hue-blind_spots: #e0824f;
-  --curator-hue-dormant: #7b8fc4;
+  --curator-hue-best_bets: #f6a123;
+  --curator-hue-hunt: #e36d99;
+  --curator-hue-stretch: #4dcb9d;
+  --curator-hue-blind_spots: #e98449;
+  --curator-hue-dormant: #7985d8;
   --curator-hue-new_arrivals: #90c748;
-  --curator-hue-revisit: #b79ce0;
-  --curator-hue-expand: #e0645c;
+  --curator-hue-revisit: #ab83e2;
+  --curator-hue-expand: #e46258;
   --curator-hue-prune: #9aa1ab;
   --curator-hue-curate: #4cc2a8;
 
@@ -91,14 +91,14 @@
 
   --curator-hue-for_you: var(--st-flush-deep, #1d5fb8);
   --curator-hue-similar: #1f7f96;
-  --curator-hue-best_bets: #a56f2a;
-  --curator-hue-hunt: #a34a63;
-  --curator-hue-stretch: #2f8f68;
-  --curator-hue-blind_spots: #b85e33;
-  --curator-hue-dormant: #4f5f96;
+  --curator-hue-best_bets: #a86500;
+  --curator-hue-hunt: #d03970;
+  --curator-hue-stretch: #13845a;
+  --curator-hue-blind_spots: #c15415;
+  --curator-hue-dormant: #5564c3;
   --curator-hue-new_arrivals: #518112;
-  --curator-hue-revisit: #7452ad;
-  --curator-hue-expand: #b83f4c;
+  --curator-hue-revisit: #824dcb;
+  --curator-hue-expand: #d53d32;
   --curator-hue-prune: #7c838c;
   --curator-hue-curate: #2f9c85;
 }
@@ -571,11 +571,12 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   background: var(--curator-surface);
   border: 1px solid var(--curator-border);
   border-radius: var(--curator-radius);
+  align-items: center;
   cursor: pointer;
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.3rem 0.5rem;
+  grid-template-columns: auto minmax(0, 1fr);
   padding: 0.55rem 0.65rem 0.6rem;
   text-align: left;
   width: 13rem;
@@ -585,9 +586,16 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   border-color: var(--curator-border-strong);
 }
 
+/* A flat tint of a warm lane hue over the dark surface reads as brown, so the
+   selected card fades a glow from the left and makes the icon chip solid. */
 .curator-lane-card[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--lc) 12%, var(--curator-surface));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--lc) 22%, var(--curator-surface)), var(--curator-surface) 70%);
   border-color: var(--lc);
+}
+
+.curator-lane-card[aria-pressed="true"] .curator-lane-card-icon {
+  background: var(--lc);
+  color: var(--curator-surface);
 }
 
 .curator-lane-card-icon {
@@ -608,8 +616,10 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
 }
 
 .curator-lane-card-desc {
+  align-self: start;
   color: var(--curator-text-muted);
   display: -webkit-box;
+  grid-column: 1 / -1;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   font-size: 0.72rem;
@@ -1616,42 +1626,30 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
 .curator-lane-hunt { --lane-color: var(--curator-hue-hunt); }
 .curator-lane-prune { --lane-color: var(--curator-hue-prune); }
 
-/* --lane-color (above) is the vivid dark-theme hue, used for icon color and
-   border accents where flat text-on-background contrast doesn't apply —
-   left as-is. .curator-source-badge (BEST BETS / DISCOVER / REVISIT /
-   ADVENTURE corner badges) pairs white text directly on a solid fill of
-   that hue, same shape of bug as the original --curator-gradient-brand fix:
-   every single lane hue measured 1.99–3.42:1 against white, all failing
-   AA (4.5:1) — Similar and Discover were the worst, below even the
-   original button-contrast bug's worst case. Per user request, applied
-   the *same technique* as that fix (a 145deg two-stop gradient of a
-   darker, independently-AA-passing color) rather than one flat solid, so
-   the badges also get the same visual depth as the logo mark/active nav
-   pill. Where the light-theme hue already passed 4.5:1 it's reused as the
-   lighter gradient stop (for_you/similar/hunt/revisit/expand/dormant/
-   new_arrivals); the
-   other four (best_bets/stretch/blind_spots/prune) needed new darker
-   literals — light theme's own versions still fell short (3.83–4.48:1).
-   Each gradient's second stop is that first stop darkened ~22% further,
-   which can only raise contrast, never lower it. */
-.curator-lane-for_you { --lane-badge-gradient: linear-gradient(145deg, #1d5fb8, #174a90); }
-.curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #1f7f96, #186375); }
-.curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #976d3a, #76552d); }
-.curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #a34a63, #7f3a4d); }
-.curator-lane-stretch { --lane-badge-gradient: linear-gradient(145deg, #3f836a, #316653); }
-.curator-lane-blind_spots { --lane-badge-gradient: linear-gradient(145deg, #ac643d, #864e30); }
-.curator-lane-dormant { --lane-badge-gradient: linear-gradient(145deg, #4f5f96, #3e4a75); }
-.curator-lane-new_arrivals { --lane-badge-gradient: linear-gradient(145deg, #518112, #3f650e); }
-.curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #7452ad, #5a4087); }
-.curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #b83f4c, #90313b); }
-.curator-lane-prune { --lane-badge-gradient: linear-gradient(145deg, #72777f, #595d63); }
+/* .curator-source-badge (the lane corner badge on cards) uses dark text on
+   a bright fill. White text would need fills dark enough for 4.5:1, which
+   read as muddy next to the lane icons (every dark-theme hue is only
+   2.0–3.4:1 against white). Each first stop is the dark-theme lane hue
+   blended 22% toward neutral grey so a page of cards stays calm; the second
+   stop is 10% darker. All stops keep at least 4.8:1 against #111 text. */
+.curator-lane-for_you { --lane-badge-gradient: linear-gradient(145deg, #6192d4, #5783bf); --lane-badge-text: #111; }
+.curator-lane-similar { --lane-badge-gradient: linear-gradient(145deg, #78bdd1, #6caabc); --lane-badge-text: #111; }
+.curator-lane-best_bets { --lane-badge-gradient: linear-gradient(145deg, #e4a241, #cd923a); --lane-badge-text: #111; }
+.curator-lane-hunt { --lane-badge-gradient: linear-gradient(145deg, #d57a9d, #c06e8d); --lane-badge-text: #111; }
+.curator-lane-stretch { --lane-badge-gradient: linear-gradient(145deg, #60c3a0, #56b090); --lane-badge-text: #111; }
+.curator-lane-blind_spots { --lane-badge-gradient: linear-gradient(145deg, #da8b5f, #c47d56); --lane-badge-text: #111; }
+.curator-lane-dormant { --lane-badge-gradient: linear-gradient(145deg, #828cce, #757eb9); --lane-badge-text: #111; }
+.curator-lane-new_arrivals { --lane-badge-gradient: linear-gradient(145deg, #94c05e, #85ad55); --lane-badge-text: #111; }
+.curator-lane-revisit { --lane-badge-gradient: linear-gradient(145deg, #a98bd6, #987dc1); --lane-badge-text: #111; }
+.curator-lane-expand { --lane-badge-gradient: linear-gradient(145deg, #d6716a, #c1665f); --lane-badge-text: #111; }
+.curator-lane-prune { --lane-badge-gradient: linear-gradient(145deg, #9ca2ab, #8c929a); --lane-badge-text: #111; }
 
 .curator-tabs .nav-link svg {
   color: var(--lane-color);
 }
 
 .curator-source-badge svg {
-  color: #fff;
+  color: inherit;
 }
 
 .curator-controls {
@@ -2380,7 +2378,7 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   align-items: center;
   background: var(--lane-badge-gradient, var(--curator-overlay));
   border-radius: var(--curator-radius-sm);
-  color: #fff;
+  color: var(--lane-badge-text, #fff);
   display: inline-flex;
   font-size: calc(0.625rem * var(--curator-card-text-scale, 1));
   font-weight: 700;
