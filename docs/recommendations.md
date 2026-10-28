@@ -95,8 +95,14 @@ studio, and other scoring signals.
 - **Dormant** offers unseen scenes with a performer, studio, or confirmed tag you had
   a real positive history with but haven't touched in a while. The model build checks
   how long that preference has been dormant.
-- **For You** mixes those policies with conservative items early and only a small
-  Blind Spots and Dormant share.
+- **New Arrivals** ranks unplayed scenes by Current Fit among those most recently
+  added to Stash: everything added in the last 14 days, or the 50 most recent when
+  fewer arrived. Scenes not yet marked Organized wait until they are, unless
+  **Include unorganized scenes in New Arrivals** is enabled. A new scene has no
+  feedback of its own, so its fit comes from performers, studio, tags, and similar
+  scenes.
+- **For You** mixes those policies with conservative items early, one New Arrivals
+  slot in every 20, and only a small Blind Spots and Dormant share.
 
 Hard exclusions, unavailable files, explicit suppression, and Prune state are
 checked before lane scoring.
@@ -117,7 +123,8 @@ Filters narrow the qualifying candidates without teaching a preference.
 
 Recommendation cards show a short reason for their selection, including positive
 preference matches for Best Bets, prior outcomes and cooldown recovery for Revisit,
-and the named past preference and time away for Dormant. For You uses each card's
+the named past preference and time away for Dormant, and when the scene was added
+for New Arrivals. For You uses each card's
 source lane. The visible reason is capped at two lines; **Why this?** retains the
 full explanation.
 

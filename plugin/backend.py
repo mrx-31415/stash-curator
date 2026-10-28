@@ -566,6 +566,7 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         "expandSimilarSeedTopK": ("expand_similar_seed_top_k", int),
         "expandSimilarSeedPerFavorite": ("expand_similar_seed_per_favorite", int),
         "ignoredTags": ("ignored_tags", str),
+        "newArrivalsIncludeUnorganized": ("new_arrivals_include_unorganized", bool),
     }
     overrides = {
         key: convert(settings[source])

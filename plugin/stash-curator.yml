@@ -127,6 +127,10 @@ settings:
     displayName: Ignored tags
     description: "Comma-separated names of tags excluded from tag analysis. Auto-generated or metadata tags like [Timestamp: Synced] do not describe the scene; exact-name match only. Empty by default."
     type: STRING
+  newArrivalsIncludeUnorganized:
+    displayName: Include unorganized scenes in New Arrivals
+    description: Let New Arrivals recommend recently added scenes that are not marked Organized yet. Off by default, so the lane waits until a scene has been scraped and organized. Takes effect at the next model update.
+    type: BOOLEAN
   expandHorizonDays:
     displayName: Expand recent-release horizon (days)
     description: Recent-release window used by Expand. Default 90.

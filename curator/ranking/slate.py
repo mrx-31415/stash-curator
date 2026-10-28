@@ -546,7 +546,15 @@ class SlateBuilder:
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
-        if lane not in {"for_you", "best_bets", "revisit", "stretch", "blind_spots", "dormant"}:
+        if lane not in {
+            "for_you",
+            "best_bets",
+            "revisit",
+            "stretch",
+            "blind_spots",
+            "dormant",
+            "new_arrivals",
+        }:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")

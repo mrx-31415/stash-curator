@@ -91,6 +91,8 @@ class Scene:
     performers: tuple[Performer, ...]
     files: tuple[SourceFile, ...]
     markers: tuple[Marker, ...]
+    created_at_ms: int | None = None
+    organized: bool = False
 
 
 SourceEntity = Tag | Studio | Performer | Scene
@@ -145,6 +147,15 @@ def _epoch_ms(value: object) -> int:
     except ValueError as error:
         raise AdapterError(f"invalid history timestamp: {value}") from error
     return int(parsed.timestamp() * 1000)
+
+
+def _optional_epoch_ms(value: object) -> int | None:
+    """A non-negative epoch-ms timestamp, or None when absent or unusable."""
+    try:
+        parsed = _epoch_ms(value)
+    except AdapterError:
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def adapt_tag(value: object, *, include_parents: bool = True) -> Tag:
@@ -247,6 +258,8 @@ def adapt_scene(value: object) -> Scene:
         ),
         files=files,
         markers=tuple(markers),
+        created_at_ms=_optional_epoch_ms(raw.get("created_at")),
+        organized=bool(raw.get("organized", False)),
     )
 
 

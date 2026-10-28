@@ -191,6 +191,9 @@ class RankingConfig:
     dormant_min_positive: float = 0.10
     dormant_floor: float = 0.5
     dormant_per_entity: int = 1
+    new_arrivals_window_days: int = 14
+    new_arrivals_min_scenes: int = 50
+    new_arrivals_include_unorganized: bool = False
     page_size: int = 20
     for_you_pattern: tuple[str, ...] = (
         "best_bets",
@@ -198,7 +201,7 @@ class RankingConfig:
         "revisit",
         "best_bets",
         "stretch",
-        "best_bets",
+        "new_arrivals",
         "best_bets",
         "stretch",
         "best_bets",

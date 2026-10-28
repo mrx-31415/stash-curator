@@ -933,6 +933,10 @@ class PreferenceModelBuilder:
                 GROUP BY scene_id ORDER BY scene_id
                 """,
             ),
+            (
+                "source_scene",
+                "SELECT scene_id, created_at_ms, organized FROM source_scene ORDER BY scene_id",
+            ),
         ):
             _fingerprint_table(self.connection, digest, label, statement)
         return digest.hexdigest()

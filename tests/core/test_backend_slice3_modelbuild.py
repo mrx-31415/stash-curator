@@ -649,3 +649,96 @@ def test_model_build_reuse_parity(binary: Path, tmp_path: Path) -> None:
     finally:
         connection.close()
     assert after == before + 1
+
+
+def _seed_new_arrivals(sidecar: Path, include_unorganized: bool) -> None:
+    """Give scenes Stash added dates and organized flags, and set the New
+    Arrivals organized setting where the Go build reads it."""
+    day_ms = 86_400_000
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.executemany(
+            "UPDATE source_scene SET created_at_ms=?, organized=? WHERE scene_id=?",
+            (
+                (REFERENCE_MS - 2 * day_ms, 1, "unseen-good"),
+                (REFERENCE_MS - 3 * day_ms, 0, "unlabeled"),
+                (REFERENCE_MS - 40 * day_ms, 1, "unusual"),
+                (REFERENCE_MS - 1 * day_ms, 1, "old-good"),
+            ),
+        )
+        connection.execute(
+            "UPDATE curator_config SET config_json=?, updated_at_ms=1 WHERE singleton=1",
+            (json.dumps({"new_arrivals_include_unorganized": include_unorganized}),),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("include_unorganized", [False, True])
+def test_model_build_new_arrivals_parity(
+    binary: Path, tmp_path: Path, include_unorganized: bool
+) -> None:
+    """Scenes with Stash added dates classify into New Arrivals identically in
+    both implementations; unorganized scenes join only when the setting
+    includes them, and played scenes never do."""
+    from dataclasses import replace
+
+    from curator.config import CuratorConfig, RankingConfig
+
+    artifacts: dict[str, tuple[str, Path]] = {}
+    for name in ("py", "go"):
+        directory = tmp_path / name
+        directory.mkdir()
+        sidecar = directory / "curator.sqlite3"
+        make_feature_sidecar(sidecar)
+        _seed_new_arrivals(sidecar, include_unorganized)
+        if name == "go":
+            artifacts[name] = _run_go_build(binary, sidecar)
+            continue
+        connection = connect_database(sidecar, attach_artifacts=False)
+        try:
+            config = CuratorConfig(
+                ranking=replace(
+                    RankingConfig(), new_arrivals_include_unorganized=include_unorganized
+                )
+            )
+            model_id = (
+                PreferenceModelBuilder(connection, config, clock_ms=lambda: REFERENCE_MS)
+                .build()
+                .model_id
+            )
+            basename = connection.execute(
+                "SELECT artifact_basename FROM model_version WHERE model_id=?", (model_id,)
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        artifacts[name] = (model_id, sidecar.parent / f"{sidecar.stem}-derived" / basename)
+
+    (py_model, py_artifact), (go_model, go_artifact) = artifacts["py"], artifacts["go"]
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    assert _artifact_schema_diff(go_artifact, py_artifact) == ""
+
+    connection = sqlite3.connect(go_artifact)
+    try:
+        rows = dict(
+            connection.execute(
+                """
+                SELECT scene_id, qualification_json FROM model_scene_lane
+                WHERE lane='new_arrivals'
+                """
+            ).fetchall()
+        )
+        ordered = connection.execute(
+            "SELECT count(*) FROM model_lane_order WHERE lane='new_arrivals'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    expected = {"unseen-good", "unusual"} | ({"unlabeled"} if include_unorganized else set())
+    assert set(rows) == expected
+    assert json.loads(rows["unseen-good"]) == {
+        "added_at_ms": REFERENCE_MS - 2 * 86_400_000,
+        "days_since_added": 2,
+    }
+    assert ordered > 0

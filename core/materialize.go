@@ -15,7 +15,7 @@ import (
 )
 
 // lanes mirrors policy.LANES (order matters for the returned counts dict).
-var lanes = []string{"best_bets", "revisit", "stretch", "blind_spots", "dormant"}
+var lanes = []string{"best_bets", "revisit", "stretch", "blind_spots", "dormant", "new_arrivals"}
 
 // orderingEntry mirrors one _build_order result row.
 type orderingEntry struct {

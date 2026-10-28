@@ -29,7 +29,7 @@ const (
 
 var forYouPattern = []string{
 	"best_bets", "best_bets", "revisit", "best_bets", "stretch",
-	"best_bets", "best_bets", "stretch", "best_bets", "revisit",
+	"new_arrivals", "best_bets", "stretch", "best_bets", "revisit",
 	"best_bets", "stretch", "best_bets", "best_bets", "revisit",
 	"best_bets", "stretch", "best_bets", "blind_spots", "dormant",
 }

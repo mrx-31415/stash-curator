@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faInbox, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -28,6 +28,12 @@
       label: "Best Bets",
       icon: faBullseye,
       description: "The strongest unwatched matches for when you want a dependable choice now.",
+    },
+    {
+      value: "new_arrivals",
+      label: "New Arrivals",
+      icon: faInbox,
+      description: "Your best matches among the scenes added to your library most recently.",
     },
     {
       value: "revisit",
@@ -1193,15 +1199,18 @@
     const qualification = item?.qualification || {};
     const unavailable = { summary: "The specific reason for this selection is unavailable.", details: [] };
     const name = (value) => typeof value === "string" ? value.trim() : "";
-    if (item?.source_lane === "best_bets") {
-      if (!qualification.unseen || !(qualification.corroborated || qualification.direct_reliable)) return unavailable;
+    const positiveMatchNames = () => {
       const components = item.components || {};
       const matches = [
         ...(components.content?.value > 0 ? components.content.top || [] : []).map((feature) => ({ ...feature, name: feature.metadata?.tag_name || feature.name })),
         ...(components.performer_identity?.value > 0 ? components.performer_identity.performers || [] : []).map((performer) => ({ ...performer, name: scene?.performers?.find((entry) => String(entry.id) === String(performer.performer_id))?.name })),
         ...(components.studio?.value > 0 ? components.studio.studios || [] : []).map((studio) => ({ ...studio, name: String(scene?.studio?.id) === String(studio.studio_id) ? scene?.studio?.name : "" })),
       ].filter((feature) => feature.value > 0 && name(feature.name)).sort((a, b) => b.value - a.value);
-      const names = [...new Set(matches.map((feature) => name(feature.name)))].slice(0, 2).map((value) => `“${value}”`).join(" and ");
+      return [...new Set(matches.map((feature) => name(feature.name)))].slice(0, 2).map((value) => `“${value}”`).join(" and ");
+    };
+    if (item?.source_lane === "best_bets") {
+      if (!qualification.unseen || !(qualification.corroborated || qualification.direct_reliable)) return unavailable;
+      const names = positiveMatchNames();
       return {
         teaser: names ? `Matches your preference for ${names}.` : "Strong current fit backed by positive evidence.",
         summary: names ? `Best bet because this unplayed scene matches positive preferences for ${names}.` : `Best bet because this unplayed scene has ${qualification.direct_reliable ? "reliable positive feedback" : "corroborating preference evidence"} and strong current fit.`,
@@ -1223,6 +1232,17 @@
         teaser: `Past preference for “${name(entity.name)}”; ${qualification.days_since_played} days since a play.`,
         summary: `Dormant because you had positive history with ${entity.type || ""} “${name(entity.name)}”, but no recorded play involving it for ${qualification.days_since_played} days.`,
         details: ["This is an unplayed scene connected to that past preference.", "The time away refers to the named performer, studio, or tag, not this scene."],
+      };
+    }
+    if (item?.source_lane === "new_arrivals") {
+      const days = qualification.days_since_added;
+      if (!Number.isInteger(days) || days < 0) return unavailable;
+      const added = days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+      const names = positiveMatchNames();
+      return {
+        teaser: names ? `Added ${added}; matches your preference for ${names}.` : `Added ${added}.`,
+        summary: `New arrival because you added this unplayed scene ${added}${names ? ` and it matches positive preferences for ${names}` : ""}.`,
+        details: ["Ranked by current fit among your most recently added unplayed scenes.", "Recently added scenes have no feedback of their own yet, so the fit comes from their performers, studio, tags, and similar scenes."],
       };
     }
     if (item?.source_lane === "stretch") {
@@ -6336,6 +6356,7 @@
       title: "Sync & model timing",
       fields: [
         { key: "rotationCooldownDays", configKey: "rotation_cooldown_days", type: "NUMBER", label: "Rotation cooldown (days)", description: "Days until a viewed but unpicked recommendation regains its full draw chance. Default 7; range 1-30." },
+        { key: "newArrivalsIncludeUnorganized", configKey: "new_arrivals_include_unorganized", type: "BOOLEAN", label: "Include unorganized scenes in New Arrivals", description: "Let New Arrivals recommend recently added scenes that are not marked Organized yet. Off by default, so the lane waits until a scene has been scraped and organized. Takes effect at the next model update." },
         { key: "syncPageSize", configKey: "sync_page_size", type: "NUMBER", label: "Sync page size", description: "Number of Stash records fetched per synchronization request. Default 250." },
         { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
         { key: "modelUpdateMaxWaitMinutes", configKey: "model_update_max_wait_minutes", type: "NUMBER", label: "Maximum model update delay (minutes)", description: "Rebuild pending preference changes after this delay. Default 30." },

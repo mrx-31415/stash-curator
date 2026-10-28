@@ -38,5 +38,6 @@ def test_synthetic_sync_build_and_report_validation_slice(tmp_path: Path) -> Non
         "stretch",
         "blind_spots",
         "dormant",
+        "new_arrivals",
     }
     assert report_path.read_text(encoding="utf-8").startswith("<!doctype html>")

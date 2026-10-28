@@ -132,6 +132,12 @@ assert.match(cardReason({ source_lane: "revisit", qualification: { direct_appeal
 assert.match(cardReason({ source_lane: "revisit", qualification: {} }).summary, /unavailable/);
 assert.match(cardReason({ source_lane: "dormant", qualification: { dormant_entity: { type: "studio", name: "Old favorite" }, days_since_played: 180 } }).summary, /studio “Old favorite”.*180 days/);
 assert.match(cardReason({ source_lane: "dormant" }).summary, /unavailable/);
+const arrival = { ...best, source_lane: "new_arrivals", lane: "new_arrivals", qualification: { added_at_ms: 1, days_since_added: 3 } };
+assert.match(cardReason(arrival, scene).summary, /New arrival because you added this unplayed scene 3 days ago and it matches positive preferences for “Liked tag” and “Alex”/);
+assert.equal(cardReason(arrival, scene).teaser, "Added 3 days ago; matches your preference for “Liked tag” and “Alex”.");
+assert.equal(cardReason({ source_lane: "new_arrivals", qualification: { days_since_added: 1 } }).teaser, "Added yesterday.");
+assert.equal(cardReason({ source_lane: "new_arrivals", qualification: { days_since_added: 0 } }).teaser, "Added today.");
+assert.match(cardReason({ source_lane: "new_arrivals" }).summary, /unavailable/);
 
 // A generic explanation without lane context must preserve the card's own facts.
 const rendered = JSON.stringify(ExplanationView({ explanation: { summary: "General evidence", lane_context: { available: false } }, item: stretch }));

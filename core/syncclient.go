@@ -36,7 +36,8 @@ query CuratorCapabilities {
 `
 
 const syncSceneFields = `
-      id title details date rating100 updated_at play_count play_duration play_history o_history
+      id title details date rating100 created_at updated_at organized
+      play_count play_duration play_history o_history
       studio { id name favorite rating100 updated_at parent_studio { id name updated_at } }
       tags { id name updated_at }
       performers { id name updated_at }
@@ -371,6 +372,8 @@ type syncScene struct {
 	sceneDate           *string
 	rating100           *int64
 	updatedAt           *string
+	createdAtMs         *int64
+	organized           bool
 	playCount           int64
 	playDurationSeconds float64
 	playHistoryMs       []int64
@@ -492,6 +495,10 @@ func adaptSyncScene(raw jVal) *syncScene {
 		updatedAt:           optionalStringPtr(raw.get("updated_at")),
 		playCount:           maxInt64(0, pythonInt(raw.get("play_count"))),
 		playDurationSeconds: mathMax(0.0, pythonFloatOr(raw.get("play_duration"), 0)),
+		organized:           raw.get("organized").truthy(),
+	}
+	if ms, ok := epochMsOf(raw.get("created_at")); ok {
+		scene.createdAtMs = &ms
 	}
 	for _, value := range raw.get("play_history").arr {
 		if ms, ok := epochMsOf(value); ok {
@@ -792,6 +799,8 @@ func syncAsdict(entity syncSourceEntity) jVal {
 			jvKey("scene_date", jvOptionalString(e.sceneDate)),
 			jvKey("rating100", jvOptionalInt(e.rating100)),
 			jvKey("updated_at", jvOptionalString(e.updatedAt)),
+			jvKey("created_at_ms", jvOptionalInt(e.createdAtMs)),
+			jvKey("organized", jvBool(e.organized)),
 			jvKey("play_count", jvInt(e.playCount)),
 			jvKey("play_duration_seconds", jvFloat(e.playDurationSeconds)),
 			jvKey("play_history_ms", playHistory),
@@ -1520,18 +1529,20 @@ ON CONFLICT(performer_id) DO UPDATE SET
 	if _, err := conn.ExecContext(context.Background(), `
 INSERT INTO source_scene(
     scene_id, title, details, scene_date, studio_id, play_count,
-    play_duration_seconds, rating100, updated_at, source_hash
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    play_duration_seconds, rating100, updated_at, created_at_ms, organized, source_hash
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(scene_id) DO UPDATE SET title=excluded.title, details=excluded.details,
     scene_date=excluded.scene_date, studio_id=excluded.studio_id,
     play_count=excluded.play_count,
     play_duration_seconds=excluded.play_duration_seconds,
     rating100=excluded.rating100, updated_at=excluded.updated_at,
+    created_at_ms=excluded.created_at_ms, organized=excluded.organized,
     source_hash=excluded.source_hash`,
 		scene.id, jvOptionalStringPtr(scene.title), jvOptionalStringPtr(scene.details),
 		jvOptionalStringPtr(scene.sceneDate), jvOptionalStringPtrOf(studioID),
 		scene.playCount, scene.playDurationSeconds, jvOptionalIntPtr(scene.rating100),
-		jvOptionalStringPtr(scene.updatedAt), syncHash(scene)); err != nil {
+		jvOptionalStringPtr(scene.updatedAt), jvOptionalIntPtr(scene.createdAtMs),
+		boolToInt(scene.organized), syncHash(scene)); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(context.Background(), `DELETE FROM source_file WHERE scene_id = ?`, scene.id); err != nil {

@@ -16,13 +16,14 @@ excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
 
 <figure class="capture guide-capture">
   <img src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" alt="For You recommendations with six scene previews and the six lane choices above them" width="960" height="675" loading="lazy">
-  <figcaption>For You is one of six recommendation lanes.</figcaption>
+  <figcaption>For You is one of seven recommendation lanes.</figcaption>
 </figure>
 
 | Lane | Best used for |
 | --- | --- |
 | **For You** | A varied everyday mix of dependable matches, revisits, and a little discovery |
 | **Best Bets** | Strong unseen matches supported by corroborating signals or reliable direct feedback |
+| **New Arrivals** | Your best matches among the scenes added to your library most recently |
 | **Revisit** | Scenes you previously enjoyed, shown again after enough time away |
 | **Stretch** | Mostly familiar recommendations, with one confirmed tag or studio named as the challenge |
 | **Blind Spots** | Studios or tags you've barely watched, corroborated by more than one signal |

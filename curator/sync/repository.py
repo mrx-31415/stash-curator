@@ -470,13 +470,15 @@ class SyncRepository:
             """
             INSERT INTO source_scene(
                 scene_id, title, details, scene_date, studio_id, play_count,
-                play_duration_seconds, rating100, updated_at, source_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                play_duration_seconds, rating100, updated_at, created_at_ms, organized,
+                source_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scene_id) DO UPDATE SET title=excluded.title, details=excluded.details,
                 scene_date=excluded.scene_date, studio_id=excluded.studio_id,
                 play_count=excluded.play_count,
                 play_duration_seconds=excluded.play_duration_seconds,
                 rating100=excluded.rating100, updated_at=excluded.updated_at,
+                created_at_ms=excluded.created_at_ms, organized=excluded.organized,
                 source_hash=excluded.source_hash
             """,
             (
@@ -489,6 +491,8 @@ class SyncRepository:
                 scene.play_duration_seconds,
                 scene.rating100,
                 scene.updated_at,
+                scene.created_at_ms,
+                int(scene.organized),
                 _hash(scene),
             ),
         )

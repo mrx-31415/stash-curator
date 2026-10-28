@@ -1,4 +1,4 @@
-"""Inspectable qualification policies for the four source lanes."""
+"""Inspectable qualification policies for the source lanes."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from curator.model import ModelSceneScore, RecommendationModelStore
 from curator.model.curves import entity_dormancy
 from curator.storage import transaction
 
-LANES = ("best_bets", "revisit", "stretch", "blind_spots", "dormant")
+LANES = ("best_bets", "revisit", "stretch", "blind_spots", "dormant", "new_arrivals")
 
 
 @dataclass(frozen=True)
@@ -123,6 +123,7 @@ class LanePolicy:
         )
         blind_spot_context = self._blind_spot_context(model_id, set(eligible_scores))
         dormant_context = self._dormant_context(model_id, set(eligible_scores), now_ms)
+        new_arrivals = self._new_arrivals_context(set(eligible_scores), played_scene_ids, now_ms)
         classifications: list[LaneClassification] = []
         stretch_raw: dict[str, dict[str, object]] = {}
         total = len(eligible_scores)
@@ -322,6 +323,21 @@ class LanePolicy:
                             "positive_strength": _number(dormant_candidate["positive_strength"]),
                             "supporting_plays": dormant_candidate["supporting_plays"],
                             "dormancy": _number(dormant_candidate["dormancy"]),
+                        },
+                    )
+                )
+            arrival = new_arrivals.get(scene_id)
+            if arrival is not None:
+                added_at_ms, days_since_added = arrival
+                classifications.append(
+                    LaneClassification(
+                        scene_id,
+                        "new_arrivals",
+                        None,
+                        fit_ranks[scene_id],
+                        {
+                            "added_at_ms": added_at_ms,
+                            "days_since_added": round(days_since_added),
                         },
                     )
                 )
@@ -570,6 +586,40 @@ class LanePolicy:
                 "content_feature_count": content_feature_count.get(scene_id, 0),
             }
         return result
+
+    def _new_arrivals_context(
+        self, scene_ids: set[str], played_scene_ids: set[str], now_ms: int
+    ) -> dict[str, tuple[int, float]]:
+        """The eligible, unplayed scenes most recently added to Stash, as
+        (added_at_ms, days_since_added). Every scene added within the window
+        qualifies; when fewer than new_arrivals_min_scenes did, the window
+        widens to that many of the most recent instead, so a quiet fortnight
+        still leaves a lane. Scenes Stash has not marked organized are left
+        out unless new_arrivals_include_unorganized is set.
+        """
+        ranking = self.config.ranking
+        candidates = sorted(
+            (
+                (int(row["created_at_ms"]), str(row["scene_id"]))
+                for row in self.connection.execute(
+                    """
+                    SELECT scene_id, created_at_ms, organized FROM source_scene
+                    WHERE created_at_ms IS NOT NULL
+                    """
+                )
+                if str(row["scene_id"]) in scene_ids
+                and str(row["scene_id"]) not in played_scene_ids
+                and (row["organized"] or ranking.new_arrivals_include_unorganized)
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        cutoff = now_ms - ranking.new_arrivals_window_days * 86_400_000
+        count = sum(1 for added_at_ms, _ in candidates if added_at_ms >= cutoff)
+        count = max(count, min(ranking.new_arrivals_min_scenes, len(candidates)))
+        return {
+            scene_id: (added_at_ms, max(0.0, (now_ms - added_at_ms) / 86_400_000))
+            for added_at_ms, scene_id in candidates[:count]
+        }
 
     def _dormant_context(
         self, model_id: str, scene_ids: set[str], now_ms: int
