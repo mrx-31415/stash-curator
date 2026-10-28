@@ -855,15 +855,13 @@ def test_update_config_invalid_byte_identical(
     assert_slice3_identical(binary, raw, writes_sidecar)
 
 
-# ── pruning / exclusions ─────────────────────────────────────────────────────
+# ── pruning ────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("title", [None, ""])
 @pytest.mark.parametrize(
     ("operation", "view"),
     [
-        ("get_pruning_queue", None),
-        ("get_exclusions", None),
         *[
             ("get_prune_candidates", view)
             for view in ("candidates", "tagged", "explicit", "suspects")
@@ -896,37 +894,6 @@ def test_prune_missing_titles(
     assert items
     assert all(item["title"] == title for item in items)
     assert_slice3_identical(binary, raw, sidecar)
-
-
-@pytest.mark.parametrize("operation", ["get_pruning_queue", "get_exclusions"])
-def test_prune_missing_scene_title(
-    tmp_path: Path, binary: Path, stub_stash: str, operation: str
-) -> None:
-    sidecar = tmp_path / "curator.sqlite3"
-    make_writes_sidecar(sidecar)
-    with sqlite3.connect(sidecar) as connection:
-        connection.execute(
-            "INSERT INTO pruning_candidate(scene_id,state,created_at_ms,updated_at_ms) "
-            "VALUES ('missing','review',500,500)"
-        )
-        connection.execute(
-            "INSERT INTO exclusion("
-            "exclusion_id,entity_type,entity_id,exclusion_type,created_at_ms) "
-            "VALUES ('missing','scene','missing','never_show',500)"
-        )
-    raw = _writes_payload(operation, sidecar, stub_stash)
-    result = run_backend(binary, PLUGIN_DIR, raw)
-    assert result.returncode == 0, result.stdout + result.stderr
-    items = json.loads(result.stdout)["output"]["items"]
-    assert next(item for item in items if item["scene_id"] == "missing")["title"] is None
-    assert_slice3_identical(binary, raw, sidecar)
-
-
-def test_get_pruning_queue_byte_identical(
-    writes_sidecar: Path, binary: Path, stub_stash: str
-) -> None:
-    raw = _writes_payload("get_pruning_queue", writes_sidecar, stub_stash)
-    assert_slice3_identical(binary, raw, writes_sidecar)
 
 
 def test_get_prune_candidates_byte_identical(
@@ -976,32 +943,6 @@ def test_dismiss_prune_candidate_byte_identical(
     writes_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
     raw = _writes_payload("dismiss_prune_candidate", writes_sidecar, stub_stash, scene_id="s2")
-    assert_slice3_identical(binary, raw, writes_sidecar)
-
-
-def test_update_pruning_byte_identical(writes_sidecar: Path, binary: Path, stub_stash: str) -> None:
-    raw = _writes_payload("update_pruning", writes_sidecar, stub_stash, scene_id="s2", state="keep")
-    assert_slice3_identical(binary, raw, writes_sidecar)
-
-
-def test_update_pruning_not_in_queue_byte_identical(
-    writes_sidecar: Path, binary: Path, stub_stash: str
-) -> None:
-    raw = _writes_payload(
-        "update_pruning", writes_sidecar, stub_stash, scene_id="s1", state="remove"
-    )
-    assert_slice3_identical(binary, raw, writes_sidecar)
-
-
-def test_get_exclusions_byte_identical(writes_sidecar: Path, binary: Path, stub_stash: str) -> None:
-    raw = _writes_payload("get_exclusions", writes_sidecar, stub_stash)
-    assert_slice3_identical(binary, raw, writes_sidecar)
-
-
-def test_reverse_exclusion_byte_identical(
-    writes_sidecar: Path, binary: Path, stub_stash: str
-) -> None:
-    raw = _writes_payload("reverse_exclusion", writes_sidecar, stub_stash, scene_id="s2")
     assert_slice3_identical(binary, raw, writes_sidecar)
 
 

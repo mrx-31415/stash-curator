@@ -1,7 +1,6 @@
-// Prune/exclusion write ops and the prune-tag Stash mutation — ports of
-// backend.py's set_prune_tag branch and CuratorAPI's pruning_queue /
-// prune_candidates / dismiss_prune_candidate / update_pruning / exclusions /
-// reverse_exclusion / record_prune_tags / reconcile_prune_tag.
+// Prune write ops and the prune-tag Stash mutation — ports of backend.py's
+// set_prune_tag branch and CuratorAPI's prune_candidates /
+// dismiss_prune_candidate / record_prune_tags / reconcile_prune_tag.
 package main
 
 import (
@@ -25,53 +24,7 @@ func pythonSpan(name string, fn func() error) error {
 	return fn()
 }
 
-// ── pruning queue / candidates ──────────────────────────────────────────────
-
-func opGetPruningQueue(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "get_pruning_queue",
-		func(settings jVal) (jVal, error) { return getPruningQueueBody(pluginDir, payload, settings) })
-}
-
-func getPruningQueueBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	rows, err := db.Query(`
-SELECT p.scene_id, p.state, p.created_at_ms, p.updated_at_ms, p.reason,
-       s.title
-FROM pruning_candidate p LEFT JOIN source_scene s USING(scene_id)
-WHERE p.state IN ('review', 'remove') ORDER BY p.updated_at_ms DESC`)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer rows.Close()
-	items := jvArr()
-	for rows.Next() {
-		var sceneID, state string
-		var reason, title any
-		var createdAtMs, updatedAtMs int64
-		if err := rows.Scan(&sceneID, &state, &createdAtMs, &updatedAtMs, &reason, &title); err != nil {
-			return jvNull(), err
-		}
-		items.arr = append(items.arr, jvObj(
-			jvKey("scene_id", jvStr(sceneID)),
-			jvKey("state", jvStr(state)),
-			jvKey("created_at_ms", jvInt(createdAtMs)),
-			jvKey("updated_at_ms", jvInt(updatedAtMs)),
-			jvKey("reason", dbValueToJSON(reason)),
-			jvKey("title", dbValueToJSON(title)),
-		))
-	}
-	if err := rows.Err(); err != nil {
-		return jvNull(), err
-	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("items", items),
-	), nil
-}
+// ── prune candidates ────────────────────────────────────────────────────────
 
 func opGetPruneCandidates(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_prune_candidates",
@@ -498,138 +451,6 @@ ON CONFLICT(scene_id) DO UPDATE SET state='keep',
 		jvKey("schema_version", jvInt(apiSchemaVersion)),
 		jvKey("scene_id", jvStr(sceneID)),
 		jvKey("dismissed", jvBool(true)),
-	), nil
-}
-
-func opUpdatePruning(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "update_pruning",
-		func(settings jVal) (jVal, error) { return updatePruningBody(pluginDir, payload, settings) })
-}
-
-func updatePruningBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	args := payload.get("args")
-	sceneID := pythonStrOrEmpty(args.get("scene_id"))
-	state := pythonStrOrEmpty(args.get("state"))
-	if state != "keep" && state != "remove" {
-		return jvNull(), fmt.Errorf("pruning state must be keep or remove")
-	}
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	ensureAutoWorker(pluginDir, payload, settings, db)
-	now := nowMs()
-	err = withTxn(db, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		res, err := conn.ExecContext(ctx,
-			`UPDATE pruning_candidate SET state=?, updated_at_ms=? WHERE scene_id=?`,
-			state, now, sceneID)
-		if err != nil {
-			return err
-		}
-		rows, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows != 1 {
-			return fmt.Errorf("scene is not in the pruning queue: %s", sceneID)
-		}
-		return coordinatorRequest(conn, "pruning_decision", now)
-	})
-	if err != nil {
-		return jvNull(), err
-	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("scene_id", jvStr(sceneID)),
-		jvKey("state", jvStr(state)),
-	), nil
-}
-
-func opGetExclusions(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "get_exclusions",
-		func(settings jVal) (jVal, error) { return getExclusionsBody(pluginDir, payload, settings) })
-}
-
-func getExclusionsBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	rows, err := db.Query(`
-SELECT e.entity_id AS scene_id, e.created_at_ms, s.title
-FROM exclusion e LEFT JOIN source_scene s ON s.scene_id=e.entity_id
-WHERE e.entity_type='scene' AND e.exclusion_type='never_show'
-  AND e.reversed_at_ms IS NULL
-ORDER BY e.created_at_ms DESC`)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer rows.Close()
-	items := jvArr()
-	for rows.Next() {
-		var sceneID string
-		var title any
-		var createdAtMs int64
-		if err := rows.Scan(&sceneID, &createdAtMs, &title); err != nil {
-			return jvNull(), err
-		}
-		items.arr = append(items.arr, jvObj(
-			jvKey("scene_id", jvStr(sceneID)),
-			jvKey("created_at_ms", jvInt(createdAtMs)),
-			jvKey("title", dbValueToJSON(title)),
-		))
-	}
-	if err := rows.Err(); err != nil {
-		return jvNull(), err
-	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("items", items),
-	), nil
-}
-
-func opReverseExclusion(pluginDir string, payload jVal) (jVal, error) {
-	return profiledOperation(pluginDir, payload, "reverse_exclusion",
-		func(settings jVal) (jVal, error) { return reverseExclusionBody(pluginDir, payload, settings) })
-}
-
-func reverseExclusionBody(pluginDir string, payload, settings jVal) (jVal, error) {
-	sceneID := pythonStrOrEmpty(payload.get("args").get("scene_id"))
-	db, err := openAPISidecar(pluginDir, payload, settings)
-	if err != nil {
-		return jvNull(), err
-	}
-	defer db.Close()
-	ensureAutoWorker(pluginDir, payload, settings, db)
-	now := nowMs()
-	err = withTxn(db, func(conn *sql.Conn) error {
-		ctx := context.Background()
-		res, err := conn.ExecContext(ctx,
-			`UPDATE exclusion SET reversed_at_ms=?
-WHERE entity_type='scene' AND entity_id=? AND exclusion_type='never_show'
-  AND reversed_at_ms IS NULL`, now, sceneID)
-		if err != nil {
-			return err
-		}
-		rows, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if rows != 1 {
-			return fmt.Errorf("scene is not actively excluded: %s", sceneID)
-		}
-		return coordinatorRequest(conn, "exclusion_reversed", now)
-	})
-	if err != nil {
-		return jvNull(), err
-	}
-	return jvObj(
-		jvKey("schema_version", jvInt(apiSchemaVersion)),
-		jvKey("scene_id", jvStr(sceneID)),
-		jvKey("reversed", jvBool(true)),
 	), nil
 }
 

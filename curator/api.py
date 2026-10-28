@@ -1436,20 +1436,6 @@ class CuratorAPI:
         inserted = store.qualify_impressions(impressions) + store.submit_sessions(sessions)
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
-    def pruning_queue(self) -> dict[str, object]:
-        rows = self.connection.execute(
-            """
-            SELECT p.scene_id, p.state, p.created_at_ms, p.updated_at_ms, p.reason,
-                   s.title
-            FROM pruning_candidate p LEFT JOIN source_scene s USING(scene_id)
-            WHERE p.state IN ('review', 'remove') ORDER BY p.updated_at_ms DESC
-            """
-        )
-        return {
-            "schema_version": API_SCHEMA_VERSION,
-            "items": [dict(row) for row in rows],
-        }
-
     def prune_candidates(
         self,
         view: str = "candidates",
@@ -1734,54 +1720,6 @@ class CuratorAPI:
                 )
                 changed = changed or cursor.rowcount > 0
         return changed
-
-    def update_pruning(
-        self, scene_id: str, state: str, now_ms: int | None = None
-    ) -> dict[str, object]:
-        if state not in {"keep", "remove"}:
-            raise ValueError("pruning state must be keep or remove")
-        with transaction(self.connection):
-            cursor = self.connection.execute(
-                """
-                UPDATE pruning_candidate SET state=?, updated_at_ms=? WHERE scene_id=?
-                """,
-                (
-                    state,
-                    now_ms if now_ms is not None else time.time_ns() // 1_000_000,
-                    scene_id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError(f"scene is not in the pruning queue: {scene_id}")
-            ModelUpdateCoordinator(self.connection).request("pruning_decision")
-        return {"schema_version": API_SCHEMA_VERSION, "scene_id": scene_id, "state": state}
-
-    def exclusions(self) -> dict[str, object]:
-        rows = self.connection.execute(
-            """
-            SELECT e.entity_id AS scene_id, e.created_at_ms, s.title
-            FROM exclusion e LEFT JOIN source_scene s ON s.scene_id=e.entity_id
-            WHERE e.entity_type='scene' AND e.exclusion_type='never_show'
-              AND e.reversed_at_ms IS NULL
-            ORDER BY e.created_at_ms DESC
-            """
-        )
-        return {"schema_version": API_SCHEMA_VERSION, "items": [dict(row) for row in rows]}
-
-    def reverse_exclusion(self, scene_id: str, now_ms: int | None = None) -> dict[str, object]:
-        with transaction(self.connection):
-            cursor = self.connection.execute(
-                """
-                UPDATE exclusion SET reversed_at_ms=?
-                WHERE entity_type='scene' AND entity_id=? AND exclusion_type='never_show'
-                  AND reversed_at_ms IS NULL
-                """,
-                (now_ms if now_ms is not None else time.time_ns() // 1_000_000, scene_id),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError(f"scene is not actively excluded: {scene_id}")
-            ModelUpdateCoordinator(self.connection).request("exclusion_reversed")
-        return {"schema_version": API_SCHEMA_VERSION, "scene_id": scene_id, "reversed": True}
 
     def config(self) -> dict[str, object]:
         row = self.connection.execute(
