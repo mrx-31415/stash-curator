@@ -215,6 +215,18 @@ func pluginSettings(payload jVal) jVal {
 	return jvObj()
 }
 
+// stashTransport reaches Stash without a proxy. Stash exports its own proxy
+// setting as HTTP_PROXY to plugins, with a default NO_PROXY of only private
+// ranges, and a container may set HTTP_PROXY with no NO_PROXY at all; a Stash
+// listening on a non-loopback address was then reached through the proxy,
+// which dropped the request ("Post .../graphql: EOF"). The server_connection
+// address is always Stash's own listener on this machine.
+var stashTransport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return transport
+}()
+
 // graphqlQuery POSTs one query and returns the response data object,
 // mirroring GraphQLClient._send: errors raise, data must be an object. When
 // an operation trace is active, the call records a "stash" span named after
@@ -251,6 +263,9 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 		timeout = 90 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}
+	if category == "stash" {
+		client.Transport = stashTransport
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
