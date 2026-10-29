@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.46.0](https://github.com/mrx-31415/stash-curator/compare/v0.45.0...v0.46.0) (2026-10-29)
+
+
+### Features
+
+* explain failed Stash and Stash-box requests ([#428](https://github.com/mrx-31415/stash-curator/issues/428)) ([f078a8f](https://github.com/mrx-31415/stash-curator/commit/f078a8fdf9b6d01788ab448fd7235e5237dcc1a8))
+* let Find cards take Not interested / Not now feedback ([#425](https://github.com/mrx-31415/stash-curator/issues/425)) ([0bce6d9](https://github.com/mrx-31415/stash-curator/commit/0bce6d9423fff24dd27c14495dfcbb2d0da98905))
+
+
+### Bug Fixes
+
+* keep tag answers flowing when localStorage is full or a tag is gone ([#426](https://github.com/mrx-31415/stash-curator/issues/426)) ([e97cf9a](https://github.com/mrx-31415/stash-curator/commit/e97cf9ad15ab5ebdc8cb25387f6b836a6f91afa8)), closes [#419](https://github.com/mrx-31415/stash-curator/issues/419)
+* name your answer next to Curator's estimate on Why these? cards ([#423](https://github.com/mrx-31415/stash-curator/issues/423)) ([e7e53b1](https://github.com/mrx-31415/stash-curator/commit/e7e53b1918be52fc3e27e98d25bd1ed06f193627))
+* show the HTTP status and reply when a GraphQL response is unusable ([#427](https://github.com/mrx-31415/stash-curator/issues/427)) ([356ca16](https://github.com/mrx-31415/stash-curator/commit/356ca1655d2d9a17b9edc1c341e4344f87d70502))
+
 ## [0.45.0](https://github.com/mrx-31415/stash-curator/compare/v0.44.0...v0.45.0) (2026-10-28)
 
 
