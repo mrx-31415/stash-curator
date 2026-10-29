@@ -151,7 +151,7 @@ def _answer(**changes: object) -> dict[str, object]:
         [_answer(reasons=[{"subject_type": "mood", "subject_id": "x"}])],
         [_answer(reasons=[{"subject_type": "tag", "subject_id": ""}])],
         [_answer(reasons=[])],
-        [_answer(scene_id="missing")],
+        [_answer(scene_id="missing"), _answer(answer_id="kept")],
         [_answer(flipped=True, flip_strength="fuzzy")],
     ],
 )
@@ -181,6 +181,9 @@ def test_answered_scenes_leave_the_queue_and_retries_are_ignored(tmp_path: Path)
         )
         assert strengths == {"a1": "mild", "a2": "mild", "a3": "strong"}
         assert api.submit_scene_reasons(VALID_ANSWERS)["accepted"] == 0
+        # An answer for a scene no longer in the library is dropped, not failed.
+        gone = {**VALID_ANSWERS[0], "answer_id": "gone", "scene_id": "missing"}
+        assert api.submit_scene_reasons([gone])["accepted"] == 0
         assert (
             connection.execute("SELECT requested_generation FROM model_update_state").fetchone()[0]
             == generation + 1
