@@ -5,14 +5,20 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../../plugin/stash-curator.js"), "utf8");
 const slice = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 
-function harness({ health }) {
+function harness({ health, full = false, hold = true }) {
   const store = new Map();
   const calls = { submitted: [], tasks: [] };
   let release = null;
   const context = {
     JSON, Date, Set, Promise, setTimeout: (callback) => setImmediate(callback),
     TAG_PREFERENCE_QUEUE_KEY: "queue",
-    localStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) },
+    localStorage: {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => {
+        if (full) throw new Error("QuotaExceededError");
+        store.set(key, value);
+      },
+    },
     uuid: (() => { let n = 0; return () => `p${++n}`; })(),
     clearSlateCache: () => {},
     scheduleModelUpdate: () => {},
@@ -21,13 +27,13 @@ function harness({ health }) {
       if (args.operation === "health") return health.shift();
       calls.submitted.push(args.entries.map((entry) => entry.tag_id));
       // Hold the first request open so later answers queue behind it.
-      if (calls.submitted.length === 1) await new Promise((resolve) => { release = resolve; });
+      if (hold && calls.submitted.length === 1) await new Promise((resolve) => { release = resolve; });
     },
   };
   vm.createContext(context);
   vm.runInContext(
     slice("  const MODEL_REFRESH_POLL_MS", "  // Stash records plays")
-      + slice("  function readTagPreferenceQueue()", "  // RatingRows renders"),
+      + slice("  // Stash and every plugin share one localStorage", "  // RatingRows renders"),
     context
   );
   return { context, calls, store, release: () => release() };
@@ -48,6 +54,26 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
   await settle();
   assert.equal(JSON.stringify(app.calls.submitted), JSON.stringify([["a"], ["b", "c"]]));
   assert.equal(app.store.get("queue"), "[]");
+
+  // With storage full, an answer is sent directly instead of throwing from
+  // the click handler.
+  const full = harness({ health: [], full: true, hold: false });
+  full.context.submitTagPreference("a", { value: 1, blocked: false });
+  await settle();
+  assert.equal(JSON.stringify(full.calls.submitted), JSON.stringify([["a"]]));
+  assert.equal(full.store.has("queue"), false);
+
+  // A large backlog drains in bounded batches, and the stored queue keeps
+  // only the newest entries.
+  const backlog = harness({ health: [], hold: false });
+  backlog.store.set("queue", JSON.stringify(Array.from({ length: 450 }, (_, i) => ({ preference_id: `b${i}`, tag_id: `t${i}` }))));
+  await backlog.context.flushTagPreferenceQueue();
+  assert.equal(JSON.stringify(backlog.calls.submitted.map((batch) => batch.length)), JSON.stringify([200, 200, 50]));
+  assert.equal(backlog.store.get("queue"), "[]");
+  assert.equal(backlog.context.writeQueue("queue", Array.from({ length: 1005 }, (_, i) => i)), true);
+  const kept = JSON.parse(backlog.store.get("queue"));
+  assert.equal(kept.length, 1000);
+  assert.equal(kept[0], 5);
 
   // Apply now sends queued answers first, and builds when feedback is
   // pending even below the automatic update threshold.

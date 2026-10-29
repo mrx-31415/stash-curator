@@ -525,7 +525,8 @@ def test_submit_tag_preferences_unknown_tag_byte_identical(
         writes_sidecar,
         stub_stash,
         entries=[
-            {"preference_id": "pref-6", "tag_id": "t-unknown", "value": 0.5, "occurred_at_ms": 100}
+            {"preference_id": "pref-6", "tag_id": "t-unknown", "value": 0.5, "occurred_at_ms": 100},
+            {"preference_id": "pref-7", "tag_id": "t1", "value": 0.5, "occurred_at_ms": 110},
         ],
     )
     assert_slice3_identical(binary, raw, writes_sidecar)
