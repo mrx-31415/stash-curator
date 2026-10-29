@@ -13,17 +13,17 @@ func TestUnexpectedGraphQLResponsesShowWhatAnswered(t *testing.T) {
 	cases := []struct {
 		category, body string
 		status         int
-		want           string
+		want           []string
 	}{
 		{"stash", `{"message":"blocked by proxy"}`, http.StatusForbidden,
-			`Stash GraphQL response has no data object (HTTP 403: {"message":"blocked by proxy"})`},
+			[]string{"Stash returned an error status (Probe, HTTP 403", `blocked by proxy`}},
 		{"stashdb", "<html>\n  <body>Too many requests</body>\n</html>", http.StatusTooManyRequests,
-			"StashDB returned invalid JSON (HTTP 429: <html> <body>Too many requests</body> </html>)"},
-		{"stash", "", http.StatusUnauthorized, "Stash returned invalid JSON (HTTP 401: empty body)"},
+			[]string{"Stash-box returned an error status (Probe, HTTP 429, text/html", "<html> <body>Too many requests</body> </html>", "rate limiting"}},
+		{"stash", "", http.StatusUnauthorized, []string{"Stash returned an error status (Probe, HTTP 401): empty body"}},
 		{"stash", `{"data":null,"errors":[{"message":"boom"}]}`, http.StatusOK,
-			`Stash GraphQL error: [{"message":"boom"}]`},
+			[]string{`Stash GraphQL error: [{"message":"boom"}]`}},
 		{"stash", "[" + strings.Repeat(`"x",`, 100) + `"x"]`, http.StatusOK,
-			`Stash returned a non-object GraphQL response (HTTP 200: [` + strings.Repeat(`"x",`, 49) + `"x"…)`},
+			[]string{"Stash returned a non-object GraphQL response (Probe, HTTP 200", strings.Repeat(`\"x\",`, 40), `…"`}},
 	}
 	for _, tc := range cases {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,8 +32,14 @@ func TestUnexpectedGraphQLResponsesShowWhatAnswered(t *testing.T) {
 		}))
 		_, err := graphqlQueryCat(server.URL, nil, "query Probe { probe }", jvNull(), tc.category)
 		server.Close()
-		if err == nil || err.Error() != tc.want {
-			t.Errorf("%s %d: got %v, want %s", tc.category, tc.status, err, tc.want)
+		if err == nil {
+			t.Errorf("%s %d: no error", tc.category, tc.status)
+			continue
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s %d: %q does not contain %q", tc.category, tc.status, err.Error(), want)
+			}
 		}
 	}
 }

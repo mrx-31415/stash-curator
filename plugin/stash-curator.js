@@ -389,6 +389,61 @@
     }
   }
 
+  // One status poll shared by every view that shows Curator's health or jobs.
+  // Each poll is a plugin operation, which costs Stash a process launch, so
+  // it runs every 4 s while a job is queued or running, every 15 s when idle,
+  // and not at all while the tab is hidden.
+  const STATUS_ACTIVE_MS = 4000;
+  const STATUS_IDLE_MS = 15000;
+  const curatorStatus = { value: null, error: "", listeners: new Set(), timer: null, inFlight: null };
+  function curatorStatusActive(status) {
+    return Boolean(status?.health?.active_jobs?.length || status?.health?.active_job
+      || (status?.jobs || []).some((job) => job.state === "queued" || job.state === "running"));
+  }
+  function scheduleCuratorStatus() {
+    clearTimeout(curatorStatus.timer);
+    curatorStatus.timer = null;
+    if (!curatorStatus.listeners.size || document.visibilityState === "hidden") return;
+    curatorStatus.timer = setTimeout(
+      refreshCuratorStatus,
+      curatorStatusActive(curatorStatus.value) ? STATUS_ACTIVE_MS : STATUS_IDLE_MS
+    );
+  }
+  function refreshCuratorStatus() {
+    if (curatorStatus.inFlight) return curatorStatus.inFlight;
+    clearTimeout(curatorStatus.timer);
+    curatorStatus.inFlight = operation({ operation: "get_status" }).then(
+      (value) => { curatorStatus.value = value; curatorStatus.error = ""; },
+      (failure) => { curatorStatus.error = failure.message; }
+    ).then(() => {
+      curatorStatus.inFlight = null;
+      curatorStatus.listeners.forEach((listener) => listener());
+      scheduleCuratorStatus();
+    });
+    return curatorStatus.inFlight;
+  }
+  function curatorStatusVisibility() {
+    if (document.visibilityState === "visible") refreshCuratorStatus();
+    else scheduleCuratorStatus();
+  }
+  function useCuratorStatus() {
+    const [, setVersion] = React.useState(0);
+    React.useEffect(() => {
+      const listener = () => setVersion((version) => version + 1);
+      if (!curatorStatus.listeners.size) document.addEventListener("visibilitychange", curatorStatusVisibility);
+      curatorStatus.listeners.add(listener);
+      refreshCuratorStatus();
+      return () => {
+        curatorStatus.listeners.delete(listener);
+        if (curatorStatus.listeners.size) return;
+        document.removeEventListener("visibilitychange", curatorStatusVisibility);
+        clearTimeout(curatorStatus.timer);
+        curatorStatus.timer = null;
+      };
+    }, []);
+    return { status: curatorStatus.value, error: curatorStatus.error, refresh: refreshCuratorStatus };
+  }
+
   function slateKey(lane, page = 1) {
     return `${cachedConfigUpdatedAtMs || 0}:${lane}:${page}`;
   }
@@ -6019,9 +6074,17 @@
       setLoading(true);
       setError("");
       try {
-        setReport(await operation({ operation: "get_diagnostics" }));
-      } catch (failure) {
-        setError(failure.message);
+        // The connection check runs beside the sidecar report, so a broken
+        // sidecar still leaves the network half of the report to share.
+        const [diagnostics, connection] = await Promise.allSettled([
+          operation({ operation: "get_diagnostics" }),
+          operation({ operation: "get_connection_check" }),
+        ]);
+        if (diagnostics.status === "rejected") setError(diagnostics.reason.message);
+        setReport({
+          ...(diagnostics.status === "fulfilled" ? diagnostics.value : { error: diagnostics.reason.message }),
+          connection: connection.status === "fulfilled" ? connection.value : { error: connection.reason.message },
+        });
       } finally {
         setLoading(false);
       }
@@ -6047,7 +6110,7 @@
     return React.createElement(
       "section",
       { className: "curator-diagnostics", role: "tabpanel" },
-      React.createElement("p", null, "This allowlisted report excludes library metadata, identifiers, paths, URLs, credentials, preferences, and SQL. Profiling traces are separate and are not included."),
+      React.createElement("p", null, "This allowlisted report excludes library metadata, identifiers, paths, URLs, server addresses, credentials, preferences, and SQL. Its connection check times one small request to Stash and to the selected Stash-box. Profiling traces are separate and are not included."),
       React.createElement(
         "div",
         { className: "curator-profiling-toolbar" },
@@ -6180,21 +6243,10 @@
   // real status surface for background tasks, since Stash's own Tasks tab
   // only ever sees the instant enqueue jobs now.
   function TasksPanel() {
-    const [jobs, setJobs] = React.useState([]);
-    const [error, setError] = React.useState("");
+    const { status, error, refresh } = useCuratorStatus();
+    const jobs = status?.jobs || [];
     const [starting, setStarting] = React.useState("");
     const [message, setMessage] = React.useState("");
-    function refresh() {
-      operation({ operation: "get_job_status" }).then(
-        (result) => { setError(""); setJobs(result.jobs || []); },
-        (failure) => setError(failure.message)
-      );
-    }
-    React.useEffect(() => {
-      refresh();
-      const timer = setInterval(refresh, 4000);
-      return () => clearInterval(timer);
-    }, []);
     const active = jobs.filter((job) => job.state === "queued" || job.state === "running");
     const finished = jobs.filter((job) => job.state !== "queued" && job.state !== "running");
     const running = active.length > 0;
@@ -6343,52 +6395,22 @@
 
   function CuratorControls({ onRefresh, theme, onToggleTheme, cardSize, onChangeCardSize, onOpenManage, manageDescription }) {
     const routeLocation = useLocation();
-    const [jobs, setJobs] = React.useState([]);
-    const [health, setHealth] = React.useState(null);
+    const { status, error: statusError, refresh: refreshStatus } = useCuratorStatus();
+    const health = status?.health || null;
+    const jobs = status?.jobs || [];
     const [message, setMessage] = React.useState("");
     const activities = useLocalActivities();
-
-    async function refreshStatus() {
-      try {
-        const [currentHealth, jobStatus] = await Promise.all([
-          operation({ operation: "health" }),
-          operation({ operation: "get_job_status" }),
-        ]);
-        setHealth(currentHealth);
-        if (cachedModelId && currentHealth.model_id !== cachedModelId) {
-          clearSlateCache();
-          onRefresh();
-        }
-        setJobs(jobStatus.jobs);
-      } catch (error) {
-        setMessage(error.message);
-      }
-    }
-    // Poll continuously so the indicator and health pill update without a
-    // manual refresh. The old effect armed a one-shot setTimeout when idle,
-    // whose trigger (the active-job boolean) never changed after it fired —
-    // so once one idle poll ran the chain never re-armed and the UI froze
-    // until the user refreshed the page (a task started while idle never
-    // appeared). A ref keeps the latest refreshStatus so a model change
-    // still clears the slate cache / refreshes recommendations.
-    const refreshRef = React.useRef(refreshStatus);
-    refreshRef.current = refreshStatus;
+    React.useEffect(() => { if (statusError) setMessage(statusError); }, [statusError]);
+    // A model published elsewhere (a background task, another tab) clears
+    // the cached slates; a ref keeps the latest onRefresh callback.
+    const onRefreshRef = React.useRef(onRefresh);
+    onRefreshRef.current = onRefresh;
     React.useEffect(() => {
-      let cancelled = false;
-      let timer;
-      const poll = async () => {
-        try {
-          await refreshRef.current();
-        } finally {
-          if (!cancelled) timer = setTimeout(poll, 4000);
-        }
-      };
-      poll();
-      return () => {
-        cancelled = true;
-        clearTimeout(timer);
-      };
-    }, []);
+      if (health && cachedModelId && health.model_id !== cachedModelId) {
+        clearSlateCache();
+        onRefreshRef.current();
+      }
+    }, [status]);
 
     async function start(taskName) {
       try {

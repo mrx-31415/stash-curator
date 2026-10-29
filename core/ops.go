@@ -168,13 +168,21 @@ func execImmediate(db dbx, statement string, args ...any) error {
 }
 
 func opGetJobStatus(pluginDir string, payload jVal) (jVal, error) {
-	settings := pluginSettings(payload)
+	return jobStatusBody(pluginDir, payload, pluginSettings(payload), true)
+}
+
+// jobStatusBody lists recent jobs; ensureWorker is false when the caller has
+// already ensured the auto worker (on Windows its liveness probe launches a
+// process).
+func jobStatusBody(pluginDir string, payload, settings jVal, ensureWorker bool) (jVal, error) {
 	db, err := openSidecar(pluginDir, payload, settings, true)
 	if err != nil {
 		return jvNull(), err
 	}
 	defer db.Close()
-	ensureAutoWorker(pluginDir, payload, settings, db)
+	if ensureWorker {
+		ensureAutoWorker(pluginDir, payload, settings, db)
+	}
 	rows, err := db.Query(`SELECT * FROM curator_job ORDER BY started_at_ms DESC LIMIT 10`)
 	if err != nil {
 		return jvNull(), err
@@ -477,7 +485,30 @@ func installedCodeVersion(pluginDir string) string {
 }
 
 func opHealth(pluginDir string, payload jVal) (jVal, error) {
+	return healthBody(pluginDir, payload, pluginSettings(payload))
+}
+
+// opGetStatus is health plus get_job_status in one invocation: the page polls
+// both, and each operation costs Stash a process launch and Curator a
+// settings query.
+func opGetStatus(pluginDir string, payload jVal) (jVal, error) {
 	settings := pluginSettings(payload)
+	health, err := healthBody(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	jobs, err := jobStatusBody(pluginDir, payload, settings, false)
+	if err != nil {
+		return jvNull(), err
+	}
+	return jvObj(
+		jvKey("schema_version", jvInt(apiSchemaVersion)),
+		jvKey("health", health),
+		jvKey("jobs", jobs.get("jobs")),
+	), nil
+}
+
+func healthBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	configureStashbox(settings)
 	base, headers := stashConnection(payload)
 	stash, err := graphqlQuery(base, headers, runtimeQuery, jvNull())

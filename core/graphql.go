@@ -242,75 +242,103 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	if t := currentTrace(); t != nil {
 		started = time.Now().UnixNano()
 	}
+	start := time.Now()
 	base = strings.TrimRight(base, "/")
 	url := base
 	if !strings.HasSuffix(base, "/graphql") {
 		url = base + "/graphql"
 	}
-	server := "Stash"
-	if category == "stashdb" {
-		server = "StashDB"
-	}
 	body := `{"query":` + marshalJSONString(query) + `,"variables":` + variables.marshalCompact() + `}`
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
-	if err != nil {
-		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
+	mutation := graphqlIsMutation(query)
+	attempt := func() (jVal, *requestError) {
+		failure := &requestError{
+			server:    requestServer(category, url),
+			operation: graphqlOperationName(query),
+		}
+		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		if err != nil {
+			failure.cause = err
+			return jvNull(), failure
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
+		if !mutation {
+			// An empty Idempotency-Key is never sent; it lets the transport
+			// replay a query whose reused keep-alive connection the server had
+			// already closed, which otherwise surfaces as a bare EOF.
+			req.Header["Idempotency-Key"] = nil
+		}
+		timeout := 30 * time.Second
+		if category == "stashdb" {
+			// External discovery queries can take longer than local Stash requests.
+			timeout = 90 * time.Second
+		}
+		client := &http.Client{Timeout: timeout}
+		if category == "stash" {
+			client.Transport = stashTransport
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			failure.cause = err
+			return jvNull(), failure
+		}
+		defer resp.Body.Close()
+		failure.status = resp.StatusCode
+		failure.contentType = resp.Header.Get("Content-Type")
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			failure.cause = err
+			return jvNull(), failure
+		}
+		if t := currentTrace(); t != nil {
+			t.record(category, graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
+		}
+		failure.snippet = bodySnippet(raw)
+		payload, err := parseJSON(raw)
+		// GraphQL servers report errors in the body, with HTTP 200 or a 4xx
+		// status; the errors array is the more useful message either way.
+		if err == nil && payload.kind == jObj {
+			if errs := payload.get("errors"); errs.kind != jNull {
+				failure.problem = "GraphQL error: " + errs.marshalCompact()
+				failure.snippet = ""
+				return jvNull(), failure
+			}
+		}
+		switch {
+		case resp.StatusCode < 200 || resp.StatusCode > 299:
+			failure.problem = "returned an error status"
+			return jvNull(), failure
+		case err != nil:
+			failure.problem = "returned invalid JSON"
+			return jvNull(), failure
+		case payload.kind != jObj:
+			failure.problem = "returned a non-object GraphQL response"
+			return jvNull(), failure
+		}
+		data := payload.get("data")
+		if data.kind != jObj {
+			failure.problem = "GraphQL response has no data object"
+			return jvNull(), failure
+		}
+		return data, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	for key, value := range headers {
-		req.Header.Set(key, value)
+	for tries := 1; ; tries++ {
+		data, failed := attempt()
+		if failed == nil {
+			return data, nil
+		}
+		failed.attempts = tries
+		failed.elapsed = time.Since(start)
+		if mutation || tries >= len(requestRetryDelays)+1 || !failed.retryable() {
+			recordRequestFailure(failed)
+			return jvNull(), failed
+		}
+		warnLog(fmt.Sprintf("Curator: retrying %s %s after %s", failed.server, failed.operation, failed.kind()))
+		time.Sleep(requestRetryDelays[tries-1])
 	}
-	timeout := 30 * time.Second
-	if category == "stashdb" {
-		// External discovery queries can take longer than local Stash requests.
-		timeout = 90 * time.Second
-	}
-	client := &http.Client{Timeout: timeout}
-	if category == "stash" {
-		client.Transport = stashTransport
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
-	}
-	if t := currentTrace(); t != nil {
-		t.record(category, graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
-	}
-	payload, err := parseJSON(raw)
-	if err != nil {
-		return jvNull(), unexpectedGraphQLResponse(server+" returned invalid JSON", resp.StatusCode, raw)
-	}
-	if payload.kind != jObj {
-		return jvNull(), unexpectedGraphQLResponse(server+" returned a non-object GraphQL response", resp.StatusCode, raw)
-	}
-	if errs := payload.get("errors"); errs.kind != jNull {
-		return jvNull(), fmt.Errorf("%s GraphQL error: %s", server, errs.marshalCompact())
-	}
-	data := payload.get("data")
-	if data.kind != jObj {
-		return jvNull(), unexpectedGraphQLResponse(server+" GraphQL response has no data object", resp.StatusCode, raw)
-	}
-	return data, nil
-}
-
-// unexpectedGraphQLResponse reports a reply that is not a GraphQL result with
-// its HTTP status and the start of its body, so a report shows what actually
-// answered (a proxy, another service on the address, a rate limit page).
-func unexpectedGraphQLResponse(problem string, status int, raw []byte) error {
-	snippet := []rune(strings.Join(strings.Fields(string(raw)), " "))
-	if len(snippet) > 200 {
-		snippet = append(snippet[:200], '…')
-	}
-	if len(snippet) == 0 {
-		snippet = []rune("empty body")
-	}
-	return fmt.Errorf("%s (HTTP %d: %s)", problem, status, string(snippet))
 }
 
 // stashdbClient mirrors backend.py's _stashdb: query the configured Stash

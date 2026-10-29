@@ -58,6 +58,7 @@ func marshalJSONString(s string) string {
 func runBackend(pluginDir, mode string) {
 	pluginDir = resolvePluginDir(pluginDir)
 	tpdbCachePath = filepath.Join(pluginDir, "data", "theporndb-identities.json")
+	setNetworkFailureDir(pluginDir)
 	if mode == "daemon" {
 		// Worker mode is not a Stash request: no stdin protocol, no output.
 		// The daemon exits on its own after an idle period.
@@ -147,6 +148,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return jvObj(jvKey("ok", jvBool(true))), nil
 	case "health":
 		return opHealth(pluginDir, payload)
+	case "get_status":
+		return opGetStatus(pluginDir, payload)
 	case "restart_worker":
 		return opRestartWorker(pluginDir, payload)
 	case "round_trip":
@@ -171,6 +174,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetFeedbackHistory(pluginDir, payload)
 	case "get_taste_profile":
 		return opGetTasteProfile(pluginDir, payload)
+	case "get_connection_check":
+		return opGetConnectionCheck(pluginDir, payload)
 	case "get_diagnostics":
 		return opGetDiagnostics(pluginDir, payload)
 	case "get_impression_measurement":

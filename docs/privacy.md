@@ -41,6 +41,13 @@ retained because they rebuild the model. Profiling retains the latest 200 operat
 and task traces; trace details omit SQL parameters and GraphQL variables. Disable
 profiling when finished and clear saved traces explicitly when no longer needed.
 
+Failed requests to Stash or a Stash-box are written in full to Stash's log, or to
+`data/curator-daemon.log` for background tasks. `data/curator-network-failures.jsonl` keeps
+the latest 20 failures: time, server name, query name, failure kind and HTTP status, with no
+address, URL or response body. The **Diagnostics** report includes those entries and
+a connection check, which describes Stash's address only as loopback, private, public, or a
+host name and lists the names of any proxy variables, never their values.
+
 Databases, backups, and exported reports can reveal library titles, viewing history,
 and preferences. Treat them as private files. Before sharing diagnostic material,
 check it for personal data, server addresses, and credentials.

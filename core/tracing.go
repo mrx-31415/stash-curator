@@ -84,7 +84,7 @@ func (t *trace) fail(err error) {
 func errorTypeName(err error) string {
 	msg := err.Error()
 	switch {
-	case strings.HasPrefix(msg, "Stash "):
+	case strings.HasPrefix(msg, "Stash ") || strings.HasPrefix(msg, "StashDB ") || strings.HasPrefix(msg, "Stash-box "):
 		return "GraphQLError"
 	case strings.Contains(msg, "migration"):
 		return "MigrationError"
