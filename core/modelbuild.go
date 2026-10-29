@@ -580,13 +580,13 @@ FROM direct_tag_preference ORDER BY tag_id`)
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	// Why these? reasons feed modelSceneReasons, so a new answer must change
-	// the model_id or the build would reuse the previous artifact.
+	// Why these? and external "What put you off?" reasons feed
+	// modelSceneReasons, so a new answer must change the model_id or the
+	// build would reuse the previous artifact.
 	sceneReasons := jvArr()
 	rows, err = db.Query(`
-SELECT r.answer_id, r.subject_type, r.subject_id, a.polarity
-FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
-ORDER BY r.answer_id, r.subject_type, r.subject_id`)
+SELECT answer_id, subject_type, subject_id, polarity FROM (` + reasonRows + `)
+ORDER BY answer_id, subject_type, subject_id`)
 	if err != nil {
 		return "", err
 	}
@@ -1157,8 +1157,24 @@ func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[strin
 // sceneReasonSupport mirrors ModelConfig.scene_reason_support.
 const sceneReasonSupport = 2.0
 
+// reasonRows mirrors builder.REASON_ROWS: every reason subject with its
+// answer, from Why these? on library scenes, "What put you off?" on
+// dismissed StashDB scenes, and disliked StashDB performers that have since
+// linked to a local performer.
+const reasonRows = `
+SELECT r.subject_type, r.subject_id, a.polarity, a.occurred_at_ms, a.answer_id
+FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+UNION ALL
+SELECT r.subject_type, r.subject_id, a.polarity, a.occurred_at_ms, a.answer_id
+FROM external_scene_reason r
+JOIN external_scene_reason_answer a ON a.answer_id=r.answer_id
+UNION ALL
+SELECT 'performer', l.performer_id, -1, d.created_at_ms,
+       'stashdb-performer:' || d.performer_id
+FROM external_performer_dislike d JOIN (` + linkedPerformers + `) l ON l.stash_id=d.performer_id`
+
 // modelSceneReasons mirrors PreferenceModelBuilder._scene_reason_evidence:
-// each Why these? subject adds sceneReasonSupport pseudo-observations at the
+// each Why these? or external reason subject adds sceneReasonSupport pseudo-observations at the
 // answer's polarity to its tag, performer, or studio feature; a missing tag
 // counts as that tag, and the scene itself carries nothing.
 func modelSceneReasons(db dbx, sceneFeatures map[string][]storedFeature) (map[string]watchLiftTerm, error) {
@@ -1182,9 +1198,8 @@ func modelSceneReasons(db dbx, sceneFeatures map[string][]storedFeature) (map[st
 		}
 	}
 	rows, err := db.Query(`
-SELECT r.subject_type, r.subject_id, a.polarity
-FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
-ORDER BY a.occurred_at_ms, a.answer_id, r.subject_type, r.subject_id`)
+SELECT subject_type, subject_id, polarity FROM (` + reasonRows + `)
+ORDER BY occurred_at_ms, answer_id, subject_type, subject_id`)
 	if err != nil {
 		return nil, err
 	}

@@ -192,8 +192,9 @@ STASHDB_PERFORMER_POOL = [
 
 
 def _scene_filter_matches(scene: dict[str, Any], criterion: dict[str, Any]) -> bool:
-    modifier = criterion.get("modifier")
-    wanted = set(str(value) for value in criterion.get("value", []))
+    (condition,) = criterion.values()
+    modifier = condition.get("modifier")
+    wanted = set(str(value) for value in condition.get("value", []))
     if "performers" in criterion:
         present = {str(item["performer"]["id"]) for item in scene.get("performers", [])}
     elif "tags" in criterion:

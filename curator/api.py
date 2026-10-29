@@ -937,6 +937,7 @@ class CuratorAPI:
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
         hide_phash_matches: bool = True,
+        hide_dismissed: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
         links: dict[str, dict[str, str]] | None = None,
@@ -955,6 +956,7 @@ class CuratorAPI:
             performer_names=performer_names,
             studio_names=studio_names,
             hide_phash_matches=hide_phash_matches,
+            hide_dismissed=hide_dismissed,
             minimum_score=minimum_score,
             count=count,
             links=links,
@@ -969,6 +971,28 @@ class CuratorAPI:
         ExpandService(self.connection, self.stashbox_endpoint).shortlist(
             entity_type, external_id, selected
         )
+
+    def update_external_dismissal(self, external_id: str, kind: str | None) -> None:
+        ExpandService(self.connection, self.stashbox_endpoint).dismiss(external_id, kind)
+
+    def update_external_performer_dislike(
+        self, performer_id: str, name: str, disliked: bool
+    ) -> None:
+        ExpandService(self.connection, self.stashbox_endpoint).update_performer_dislike(
+            performer_id, name, disliked
+        )
+
+    def external_performer_dislikes(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
+        result = ExpandService(self.connection, self.stashbox_endpoint).performer_dislike_results(
+            page=page, count=page_size
+        )
+        return {"schema_version": API_SCHEMA_VERSION, **result}
+
+    def external_dismissals(self, page: int = 1, page_size: int = 20) -> dict[str, object]:
+        result = ExpandService(self.connection, self.stashbox_endpoint).dismissal_results(
+            page=page, count=page_size
+        )
+        return {"schema_version": API_SCHEMA_VERSION, **result}
 
     def external_similar(self, entity_type: str, entity_id: str) -> dict[str, object]:
         return ExpandService(self.connection).similar(entity_type, entity_id)
@@ -1024,6 +1048,12 @@ class CuratorAPI:
 
     def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> dict[str, object]:
         inserted = InteractionStore(self.connection).submit_tag_preferences(entries)
+        return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
+
+    def submit_external_scene_reasons(self, entries: list[dict[str, Any]]) -> dict[str, object]:
+        inserted = InteractionStore(self.connection).submit_external_scene_reasons(
+            self.stashbox_endpoint, entries
+        )
         return {"schema_version": API_SCHEMA_VERSION, "accepted": inserted}
 
     def submit_scene_reasons(self, entries: list[dict[str, Any]]) -> dict[str, object]:

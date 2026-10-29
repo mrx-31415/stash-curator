@@ -4867,3 +4867,70 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 
 /* After a flip: how strongly Curator has it wrong. */
 .curator-reason-strength { margin-top: 0.5rem; }
+
+/* A StashDB scene hidden with Not interested / Not now: a quiet stub that
+   keeps its grid slot until the next fetch, with Undo outside card-section. */
+.curator-external-card.curator-external-dismissed {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 7rem;
+  padding: 0.75rem;
+  border-style: dashed;
+  color: var(--curator-text-muted);
+}
+
+.curator-external-dismissed .card-section-title {
+  font-size: 0.95rem;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curator-external-dismissed-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.curator-external-dismissal-history {
+  margin-top: 1.5rem;
+}
+
+/* "What put you off?" after Not interested: a popover anchored under the
+   dismissed card, not Curate's viewport-fixed follow-up. */
+.popover.curator-dismiss-popover {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-card-border-strong);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: var(--curator-card-text);
+  max-width: min(28rem, calc(100vw - 1rem));
+  padding: 0.75rem;
+  z-index: 1070;
+}
+
+.curator-dismiss-popover .curator-tag-follow-up {
+  margin: 0;
+}
+
+/* A scene dismissed earlier, shown because Hide dismissed scenes is off. */
+.curator-hidden-badge {
+  background: #495057;
+  border-radius: var(--curator-radius-sm);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
+  position: absolute;
+  right: 0.5rem;
+  top: 0.5rem;
+  z-index: 3;
+}
+
+.curator-wildcard-badge ~ .curator-hidden-badge {
+  top: 2.25rem;
+}
+
+.curator-external-hidden .scene-card-image {
+  opacity: 0.55;
+}

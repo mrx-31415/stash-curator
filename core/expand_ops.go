@@ -64,6 +64,7 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	hidePhash := argsBool(args, "hide_phash_matches", true)
+	hideDismissed := argsBool(args, "hide_dismissed", true)
 	minimumScore := -1.0
 	if v := args.get("minimum_score"); v.kind != jNull {
 		minimumScore, err = pythonFloat(v)
@@ -104,13 +105,13 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	}
 	return expandResults(db, entityType, page, sortBy, performerID, favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery,
-		hidePhash, minimumScore, count, links)
+		hidePhash, hideDismissed, minimumScore, count, links)
 }
 
 // expandResults mirrors ExpandService.results.
 func expandResults(db dbx, entityType string, page int64, sortBy string, performerID jVal,
 	favoriteOnly bool, gender string, includeTags, excludeTags, performerNames, studioNames []string,
-	performerQuery, studioQuery string, hidePhash bool, minimumScore float64, count int64,
+	performerQuery, studioQuery string, hidePhash, hideDismissed bool, minimumScore float64, count int64,
 	links jVal) (jVal, error) {
 	if (entityType != "scene" && entityType != "performer") || (sortBy != "match" && sortBy != "newest") {
 		return jvNull(), errors.New("invalid Expand query")
@@ -173,6 +174,28 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	if err != nil {
 		return jvNull(), err
 	}
+	dismissed := map[string]string{}
+	if entityType == "scene" {
+		if dismissed, err = dismissedScenes(db); err != nil {
+			return jvNull(), err
+		}
+	}
+	disliked := map[string]string{}
+	if entityType == "scene" {
+		if disliked, err = dislikedPerformers(db); err != nil {
+			return jvNull(), err
+		}
+	}
+	dislikedIDs := map[string]bool{}
+	for performerID := range disliked {
+		dislikedIDs[performerID] = true
+	}
+	hidden := map[string]bool{}
+	if hideDismissed {
+		for externalID := range dismissed {
+			hidden[externalID] = true
+		}
+	}
 	var byExternalID, byPhash map[string]string
 	if links.kind == jObj {
 		byExternalID, byPhash = sceneLinkMaps(links)
@@ -185,7 +208,8 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	encoder := json.NewEncoder(digest)
 	if err := encoder.Encode([]any{stashdbEndpoint, entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery, hidePhash,
-		minimumScore, includeGroups, excludeGroups, blockedGroups, byExternalID, byPhash, revision}); err != nil {
+		minimumScore, includeGroups, excludeGroups, blockedGroups, byExternalID, byPhash, revision,
+		sortedKeys(hidden), sortedKeys(dislikedIDs)}); err != nil {
 		return jvNull(), err
 	}
 	type expandRow struct {
@@ -199,13 +223,17 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		if err != nil {
 			sources = jvArr()
 		}
-		return jvObj(
+		item := jvObj(
 			jvKey("id", jvStr(row.externalID)),
 			jvKey("score", jvFloat(row.score)),
 			jvKey("sources", sources),
 			jvKey("payload", payload),
 			jvKey("shortlisted", jvBool(shortlisted[row.externalID])),
 		)
+		if entityType == "scene" {
+			item.set("dismissed", dismissedValue(dismissed, row.externalID))
+		}
+		return item
 	}
 	fingerprint := hex.EncodeToString(digest.Sum(nil))
 	// Candidate triggers advance the revision; unchanged pages only load their
@@ -251,6 +279,9 @@ ORDER BY CAST(requested.key AS INTEGER)`, requested.marshalCompact(), entityType
 			}
 			if links.kind == jObj && entityType == "scene" {
 				payload = annotateLocalMatch(payload, byExternalID, byPhash)
+			}
+			if entityType == "scene" {
+				payload, row.score = withPerformerDislike(payload, row.score, disliked)
 			}
 			items.arr = append(items.arr, render(row, payload))
 		}
@@ -302,12 +333,18 @@ AND lower(rtrim(COALESCE((SELECT value FROM application_meta WHERE key='expand_c
 			defer wg.Done()
 			for i := range jobCh {
 				row := materialized[i]
-				if row.score < minimumScore {
+				if hidden[row.externalID] {
 					continue
 				}
 				payload, err := parseJSON([]byte(row.payloadJSON))
 				if err != nil {
 					errs[i] = err
+					continue
+				}
+				if entityType == "scene" {
+					payload, row.score = withPerformerDislike(payload, row.score, disliked)
+				}
+				if row.score < minimumScore {
 					continue
 				}
 				// Issue #118: the stored annotation can be stale (the
@@ -617,6 +654,17 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	if err := shortRows.Err(); err != nil {
 		return jvNull(), err
 	}
+	dismissed, err := dismissedScenes(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	disliked, err := dislikedPerformers(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	for i := range scenes {
+		scenes[i].payload, scenes[i].score = withPerformerDislike(scenes[i].payload, scenes[i].score, disliked)
+	}
 	items := make([]jVal, 0, len(scenes))
 	for _, scene := range scenes {
 		if !expandSceneMatches(scene.payload, includeTags, excludeTags, nil, nil, "", "",
@@ -637,6 +685,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 		item.set("local_scene_id", match.get("local_scene_id"))
 		item.set("match_type", match.get("type"))
 		item.set("shortlisted", jvBool(shortlisted[scene.id]))
+		item.set("dismissed", dismissedValue(dismissed, scene.id))
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -723,6 +772,7 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 	favoriteOnly := argsBool(args, "favorite_only", false)
 	includeOwned := argsBool(args, "include_owned", false)
 	hidePhash := argsBool(args, "hide_phash_matches", true)
+	hideDismissed := argsBool(args, "hide_dismissed", true)
 	minimumSimilarity := 0.15
 	if v := args.get("minimum_similarity"); v.kind != jNull {
 		minimumSimilarity, err = pythonFloat(v)
@@ -740,7 +790,7 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 	}
 	return expandTargetedSimilar(db, clientURL, apiKey, links, entityType, entityID,
 		gender, 100, includeTags, excludeTags, performerNames, studioNames,
-		favoriteOnly, includeOwned, hidePhash, minimumSimilarity)
+		favoriteOnly, includeOwned, hidePhash, hideDismissed, minimumSimilarity)
 }
 
 // recordDurationMs mirrors curator.profiling.record_duration: a back-dated

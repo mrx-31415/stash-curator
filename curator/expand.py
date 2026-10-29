@@ -28,6 +28,7 @@ from curator.features.profiles import (
 from curator.features.profiles import SimilarityResult as ProfileSimilarityResult
 from curator.graphql import GraphQLClient, GraphQLError
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
+from curator.model.builder import LINKED_PERFORMERS
 from curator.model.multi_hop import MultiHopAffinity
 from curator.profiling import record_duration
 from curator.storage import transaction
@@ -55,6 +56,10 @@ EXPAND_WATERMARK_SLACK_MS = 3_600_000
 EXPAND_LOOKALIKE_TTL_MS = 7 * 24 * 3_600_000
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 PERFORMER_HUNT_LIMIT = 1_000
+EXTERNAL_DISMISSAL_KINDS = frozenset({"not_interested", "not_now"})
+# A StashDB performer the user is not into counts in Find like a local
+# performer with this (negative) identity strength.
+DISLIKED_PERFORMER_STRENGTH = 0.5
 
 
 SCENES = """
@@ -742,6 +747,9 @@ class ExpandService:
                 (self.stashbox_endpoint.casefold(),),
             )
         }
+        dismissed = self.dismissed_scenes()
+        disliked = self.disliked_performers()
+        scenes = [self._with_performer_dislike(scene, disliked) for scene in scenes]
         items = [
             {
                 **scene,
@@ -751,6 +759,7 @@ class ExpandService:
                 ),
                 "match_type": (scene["payload"].get("curator_local_match") or {}).get("type"),
                 "shortlisted": scene["id"] in shortlisted,
+                "dismissed": dismissed.get(scene["id"]),
             }
             for scene in scenes
             if self._scene_matches(
@@ -805,6 +814,7 @@ class ExpandService:
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
         hide_phash_matches: bool = True,
+        hide_dismissed: bool = True,
         minimum_score: float = -1.0,
         count: int = 50,
         links: dict[str, dict[str, str]] | None = None,
@@ -839,6 +849,8 @@ class ExpandService:
         include_groups = equivalent_tag_names(self.connection, include_tags)
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         blocked_groups = self._blocked_tag_name_groups()
+        dismissed = self.dismissed_scenes() if entity_type == "scene" else {}
+        disliked = self.disliked_performers() if entity_type == "scene" else {}
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate' "
             "AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),"
@@ -847,9 +859,17 @@ class ExpandService:
             "WHERE key='expand_cache_endpoint'),'https://stashdb.org/graphql'),'/'))=lower(?)",
             (entity_type, self.stashbox_endpoint.rstrip("/"), self.stashbox_endpoint.rstrip("/")),
         ):
-            if float(row["score"]) < minimum_score:
+            if hide_dismissed and str(row["external_id"]) in dismissed:
                 continue
             payload = json.loads(row["payload_json"])
+            score = float(row["score"])
+            if entity_type == "scene":
+                adjusted = self._with_performer_dislike(
+                    {"payload": payload, "score": score}, disliked
+                )
+                payload, score = adjusted["payload"], adjusted["score"]
+            if score < minimum_score:
+                continue
             # Issue #118: the stored annotation can be stale (the candidate
             # was fetched before the local scene gained its StashDB id).
             # Re-derive it against the current links map; the serve-time
@@ -895,10 +915,15 @@ class ExpandService:
             rows.append(
                 {
                     "id": str(row["external_id"]),
-                    "score": float(row["score"]),
+                    "score": score,
                     "sources": json.loads(row["sources_json"]),
                     "payload": payload,
                     "shortlisted": str(row["external_id"]) in shortlisted,
+                    **(
+                        {"dismissed": dismissed.get(str(row["external_id"]))}
+                        if entity_type == "scene"
+                        else {}
+                    ),
                 }
             )
         if sort == "newest" and entity_type == "scene":
@@ -1042,6 +1067,198 @@ class ExpandService:
                 ),
             )
 
+    def dismissed_scenes(self) -> dict[str, str]:
+        """External scenes hidden from Find, by kind: Not interested, or an unexpired Not now."""
+        return {
+            str(row[0]): str(row[1])
+            for row in self.connection.execute(
+                "SELECT external_id, kind FROM external_dismissal WHERE endpoint=? "
+                "AND (expires_at_ms IS NULL OR expires_at_ms>?)",
+                (self.stashbox_endpoint.casefold(), time.time_ns() // 1_000_000),
+            )
+        }
+
+    def disliked_performers(self) -> dict[str, str]:
+        """StashDB performers the user is not into: name by StashDB id."""
+        return {
+            str(row[0]): str(row[1])
+            for row in self.connection.execute(
+                "SELECT performer_id, name FROM external_performer_dislike WHERE endpoint=?",
+                (self.stashbox_endpoint.casefold(),),
+            )
+        }
+
+    @classmethod
+    def _with_performer_dislike(
+        cls, scene: dict[str, Any], disliked: dict[str, str]
+    ) -> dict[str, Any]:
+        """Lower a scene's score for a cast member the user is not into.
+
+        Only performers without a local profile count: a linked performer's
+        dislike reaches the model as a reason instead. The penalty mirrors the
+        identity term of _score at DISLIKED_PERFORMER_STRENGTH, and the
+        payload names the performers so the card can say why.
+        """
+        payload = scene["payload"]
+        cast = [item.get("performer") or {} for item in payload.get("performers", [])]
+        names = [
+            str(performer.get("name") or disliked[str(performer.get("id"))])
+            for performer in cast
+            if str(performer.get("id")) in disliked and not performer.get("curator_local")
+        ]
+        if not names:
+            return scene
+        penalty = 0.25 * DISLIKED_PERFORMER_STRENGTH * cls._cast_weight(len(cast)) / 0.90
+        return {
+            **scene,
+            "payload": {
+                **payload,
+                "curator_performer_dislike": {"names": names, "penalty": penalty},
+            },
+            "score": float(scene["score"]) - penalty,
+        }
+
+    def update_performer_dislike(self, performer_id: str, name: str, disliked: bool) -> None:
+        if not performer_id:
+            raise ValueError("performer_id is required")
+        endpoint = self.stashbox_endpoint.casefold()
+        with transaction(self.connection):
+            if disliked:
+                changed = self.connection.execute(
+                    """
+                    INSERT INTO external_performer_dislike(
+                        endpoint, performer_id, name, created_at_ms
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(endpoint, performer_id) DO UPDATE SET name=excluded.name
+                    """,
+                    (endpoint, performer_id, name or performer_id, time.time_ns() // 1_000_000),
+                ).rowcount
+            else:
+                changed = self.connection.execute(
+                    "DELETE FROM external_performer_dislike WHERE endpoint=? AND performer_id=?",
+                    (endpoint, performer_id),
+                ).rowcount
+            # A performer already linked to the library is model evidence.
+            if (
+                changed
+                and self.connection.execute(
+                    f"SELECT 1 FROM ({LINKED_PERFORMERS}) WHERE stash_id=?", (performer_id,)
+                ).fetchone()
+            ):
+                ModelUpdateCoordinator(self.connection).request("scene_reason")
+
+    def performer_dislike_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
+        if page < 1 or not 1 <= count <= 100:
+            raise ValueError("invalid performer dislike page")
+        endpoint = self.stashbox_endpoint.casefold()
+        total = int(
+            self.connection.execute(
+                "SELECT count(*) FROM external_performer_dislike WHERE endpoint=?", (endpoint,)
+            ).fetchone()[0]
+        )
+        items = [
+            {
+                "performer_id": str(row["performer_id"]),
+                "name": str(row["name"]),
+                "created_at_ms": int(row["created_at_ms"]),
+            }
+            for row in self.connection.execute(
+                "SELECT * FROM external_performer_dislike WHERE endpoint=?"
+                " ORDER BY created_at_ms DESC, performer_id DESC LIMIT ? OFFSET ?",
+                (endpoint, count, (page - 1) * count),
+            )
+        ]
+        return {
+            "page": page,
+            "page_size": count,
+            "total": total,
+            "has_more": page * count < total,
+            "items": items,
+        }
+
+    def dismiss(self, external_id: str, kind: str | None) -> None:
+        """Hide an external scene from Find, or clear its dismissal when kind is None."""
+        if kind is not None and kind not in EXTERNAL_DISMISSAL_KINDS:
+            raise ValueError("invalid dismissal kind")
+        endpoint = self.stashbox_endpoint.casefold()
+        with transaction(self.connection):
+            if kind is None:
+                self.connection.execute(
+                    "DELETE FROM external_dismissal WHERE endpoint=? AND external_id=?",
+                    (endpoint, external_id),
+                )
+                return
+            row = self.connection.execute(
+                "SELECT payload_json FROM external_entity "
+                "WHERE entity_type='scene' AND external_id=?",
+                (external_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("external entity is not in the current Expand cache")
+            source = str(json.loads(row["payload_json"]).get("curator_endpoint") or STASHDB)
+            if source.rstrip("/").casefold() != endpoint:
+                raise ValueError("external entity is not in the selected endpoint's cache")
+            now_ms = time.time_ns() // 1_000_000
+            expires_at_ms = (
+                now_ms + int(DEFAULT_CONFIG.model.not_now_days * 86_400_000)
+                if kind == "not_now"
+                else None
+            )
+            self.connection.execute(
+                """
+                INSERT INTO external_dismissal(
+                  endpoint, external_id, kind, created_at_ms, expires_at_ms, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(endpoint, external_id) DO UPDATE SET
+                  kind=excluded.kind, created_at_ms=excluded.created_at_ms,
+                  expires_at_ms=excluded.expires_at_ms, payload_json=excluded.payload_json
+                """,
+                (endpoint, external_id, kind, now_ms, expires_at_ms, row["payload_json"]),
+            )
+
+    def dismissal_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
+        if page < 1 or not 1 <= count <= 100:
+            raise ValueError("invalid dismissal page")
+        active = "d.endpoint=? AND (d.expires_at_ms IS NULL OR d.expires_at_ms>?)"
+        parameters = (self.stashbox_endpoint.casefold(), time.time_ns() // 1_000_000)
+        total = int(
+            self.connection.execute(
+                "SELECT count(*) FROM external_dismissal d WHERE " + active, parameters
+            ).fetchone()[0]
+        )
+        # Card-shaped like Expand items; the score and sources come from the
+        # candidate cache while the scene is still in it.
+        items = [
+            {
+                "id": str(row["external_id"]),
+                "score": float(row["score"]) if row["score"] is not None else 0.0,
+                "sources": json.loads(row["sources_json"]) if row["sources_json"] else [],
+                "payload": json.loads(row["payload_json"]),
+                "kind": str(row["kind"]),
+                "created_at_ms": int(row["created_at_ms"]),
+                "expires_at_ms": (
+                    int(row["expires_at_ms"]) if row["expires_at_ms"] is not None else None
+                ),
+            }
+            for row in self.connection.execute(
+                "SELECT d.external_id, d.kind, d.created_at_ms, d.expires_at_ms, d.payload_json,"
+                " e.score, e.sources_json FROM external_dismissal d"
+                " LEFT JOIN external_entity e"
+                " ON e.entity_type='scene' AND e.external_id=d.external_id WHERE "
+                + active
+                + " ORDER BY d.created_at_ms DESC, d.external_id DESC LIMIT ? OFFSET ?",
+                (*parameters, count, (page - 1) * count),
+            )
+        ]
+        return {
+            "ready": True,
+            "page": page,
+            "page_size": count,
+            "total": total,
+            "has_more": page * count < total,
+            "items": items,
+        }
+
     def shortlist_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
             raise ValueError("invalid shortlist page")
@@ -1091,6 +1308,7 @@ class ExpandService:
         studio_names: tuple[str, ...] = (),
         favorite_only: bool = False,
         minimum_similarity: float = 0.15,
+        hide_dismissed: bool = True,
     ) -> dict[str, object]:
         if not 0 <= minimum_similarity <= 1:
             raise ValueError("minimum_similarity must be between 0 and 1")
@@ -1143,6 +1361,8 @@ class ExpandService:
             )
             targets = [profiles[value] for value in target_performers if value in profiles]
             weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
+            dismissed = self.dismissed_scenes()
+            disliked = self.disliked_performers()
             items = []
             for row in self.connection.execute(
                 "SELECT * FROM external_entity WHERE entity_type='scene' "
@@ -1152,7 +1372,13 @@ class ExpandService:
             ):
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
-                payload = json.loads(row["payload_json"])
+                if hide_dismissed and str(row["external_id"]) in dismissed:
+                    continue
+                adjusted = self._with_performer_dislike(
+                    {"payload": json.loads(row["payload_json"]), "score": float(row["score"])},
+                    disliked,
+                )
+                payload, base_score = adjusted["payload"], adjusted["score"]
                 if not target_is_compilation and any(
                     str(tag.get("name", "")).casefold() == "compilation"
                     for tag in payload.get("tags", [])
@@ -1234,7 +1460,7 @@ class ExpandService:
                 )
                 if similarity < minimum_similarity:
                     continue
-                appeal = max(0.0, min(1.0, (float(row["score"]) + 1) / 2))
+                appeal = max(0.0, min(1.0, (base_score + 1) / 2))
                 items.append(
                     {
                         "id": str(row["external_id"]),
@@ -1244,6 +1470,7 @@ class ExpandService:
                         "score": 0.7 * similarity + 0.3 * appeal,
                         "sources": json.loads(row["sources_json"]),
                         "shortlisted": str(row["external_id"]) in shortlisted,
+                        "dismissed": dismissed.get(str(row["external_id"])),
                         "payload": {
                             **payload,
                             "why": [
@@ -1351,6 +1578,7 @@ class ExpandService:
         favorite_only: bool = False,
         include_owned: bool = False,
         hide_phash_matches: bool = True,
+        hide_dismissed: bool = True,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
@@ -1498,6 +1726,7 @@ class ExpandService:
             studio_names=studio_names,
             favorite_only=favorite_only,
             minimum_similarity=minimum_similarity,
+            hide_dismissed=hide_dismissed,
         )
         raw_items = result["items"]
         assert isinstance(raw_items, list)

@@ -7,8 +7,9 @@ permalink: /privacy/
 
 Curator is local-first. A separate plugin-owned SQLite database stores the Stash
 metadata needed for recommendations, viewing and feedback events, tag preferences,
-scene reasons (Why these? answers), recommendation history, shortlists, model
-versions, and explanation evidence. A missing tag you name in Why these? is stored
+scene reasons (Why these? answers), recommendation history, shortlists, StashDB
+scenes you hid from Find and why, StashDB performers you marked as not for you,
+model versions, and explanation evidence. A missing tag you name in Why these? is stored
 only in Curator's database; Curator never adds it to the scene in Stash. The
 browser keeps retry queues for playback events, tag/term answers, and scene reasons. Scene feedback
 is submitted directly; check its confirmation or error before moving on.

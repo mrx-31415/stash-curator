@@ -148,7 +148,7 @@ func TestExpandDoesNotServeAnotherEndpointCache(t *testing.T) {
 	previous := stashdbEndpoint
 	t.Cleanup(func() { stashdbEndpoint = previous })
 	stashdbEndpoint = "https://example.test/graphql"
-	result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 20, jvNull())
+	result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 20, jvNull())
 	if err != nil || result.get("ready").truthy() || len(result.get("items").arr) != 0 {
 		t.Fatalf("served old endpoint: %s error=%v", result.marshalCompact(), err)
 	}
@@ -160,7 +160,7 @@ func TestExpandSkipsCandidatesStampedWithAnotherSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 20, jvNull())
+		result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 20, jvNull())
 		if err != nil || result.get("total").asString() != "2" {
 			t.Fatalf("served mixed sources: %s error=%v", result.marshalCompact(), err)
 		}
@@ -174,7 +174,7 @@ func TestExpandEndpointChangesDuringPageRead(t *testing.T) {
 	stashdbEndpoint = "https://stashdb.org/graphql"
 	serve := func(connection dbx) jVal {
 		t.Helper()
-		result, err := expandResults(connection, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 20, jvNull())
+		result, err := expandResults(connection, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 20, jvNull())
 		if err != nil {
 			t.Fatal(err)
 		}

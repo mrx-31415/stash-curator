@@ -62,6 +62,27 @@ class ModelBuildResult:
 
 # The label signal for a "Just this scene" answer; it never reaches training.
 SCENE_ONLY_SIGNAL = "scene_reason_scene"
+# Local performers and their StashDB ids, from the cached external links.
+LINKED_PERFORMERS = """
+    SELECT link.key AS performer_id, link.value AS stash_id
+    FROM application_meta m, json_each(json_extract(m.value, '$.links.performers')) link
+    WHERE m.key='external_links'
+"""
+# Every reason subject with its answer: Why these? answers on library scenes,
+# "What put you off?" answers on dismissed StashDB scenes, and disliked StashDB
+# performers that have since linked to a local performer.
+REASON_ROWS = f"""
+    SELECT r.subject_type, r.subject_id, a.polarity, a.occurred_at_ms, a.answer_id
+    FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
+    UNION ALL
+    SELECT r.subject_type, r.subject_id, a.polarity, a.occurred_at_ms, a.answer_id
+    FROM external_scene_reason r
+    JOIN external_scene_reason_answer a ON a.answer_id=r.answer_id
+    UNION ALL
+    SELECT 'performer', l.performer_id, -1, d.created_at_ms,
+           'stashdb-performer:' || d.performer_id
+    FROM external_performer_dislike d JOIN ({LINKED_PERFORMERS}) l ON l.stash_id=d.performer_id
+"""
 
 
 @dataclass(frozen=True)
@@ -872,15 +893,16 @@ class PreferenceModelBuilder:
                 """
             )
         ]
-        # Why these? reasons feed _scene_reason_evidence, so a new answer must
-        # change the model_id or the build would reuse the previous artifact.
+        # Why these? and external "What put you off?" reasons feed
+        # _scene_reason_evidence, so a new answer must change the model_id or
+        # the build would reuse the previous artifact.
         scene_reasons = [
             tuple(row)
             for row in self.connection.execute(
-                """
-                SELECT r.answer_id, r.subject_type, r.subject_id, a.polarity
-                FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
-                ORDER BY r.answer_id, r.subject_type, r.subject_id
+                f"""
+                SELECT answer_id, subject_type, subject_id, polarity
+                FROM ({REASON_ROWS})
+                ORDER BY answer_id, subject_type, subject_id
                 """
             )
         ]
@@ -1295,7 +1317,8 @@ class PreferenceModelBuilder:
     def _scene_reason_evidence(
         self, scene_features: dict[str, tuple[StoredFeature, ...]]
     ) -> dict[str, tuple[float, float]]:
-        """Pseudo-evidence from Why these? answers, per tag, performer, or studio.
+        """Pseudo-evidence from Why these? and external "What put you off?"
+        answers, per tag, performer, or studio.
 
         Each tapped subject adds scene_reason_support pseudo-observations at the
         answer's polarity to its feature; a missing tag counts as that tag. The
@@ -1318,10 +1341,9 @@ class PreferenceModelBuilder:
                     subjects[("studio", feature.name.removeprefix("studio:"))] = feature.feature_id
         terms: dict[str, tuple[float, float]] = {}
         for row in self.connection.execute(
-            """
-            SELECT r.subject_type, r.subject_id, a.polarity
-            FROM scene_reason r JOIN scene_reason_answer a ON a.answer_id=r.answer_id
-            ORDER BY a.occurred_at_ms, a.answer_id, r.subject_type, r.subject_id
+            f"""
+            SELECT subject_type, subject_id, polarity FROM ({REASON_ROWS})
+            ORDER BY occurred_at_ms, answer_id, subject_type, subject_id
             """
         ):
             kind = "tag" if row["subject_type"] == "missing_tag" else str(row["subject_type"])
