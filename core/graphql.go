@@ -242,15 +242,26 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	if t := currentTrace(); t != nil {
 		started = time.Now().UnixNano()
 	}
+	start := time.Now()
 	base = strings.TrimRight(base, "/")
 	url := base
 	if !strings.HasSuffix(base, "/graphql") {
 		url = base + "/graphql"
 	}
 	body := `{"query":` + marshalJSONString(query) + `,"variables":` + variables.marshalCompact() + `}`
+	failure := &requestError{
+		server:    requestServer(category, url),
+		operation: graphqlOperationName(query),
+	}
+	fail := func() (jVal, error) {
+		failure.elapsed = time.Since(start)
+		recordRequestFailure(failure)
+		return jvNull(), failure
+	}
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		failure.cause = err
+		return fail()
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -268,29 +279,46 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		failure.cause = err
+		return fail()
 	}
 	defer resp.Body.Close()
+	failure.status = resp.StatusCode
+	failure.contentType = resp.Header.Get("Content-Type")
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		failure.cause = err
+		return fail()
 	}
 	if t := currentTrace(); t != nil {
 		t.record(category, graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
 	}
+	failure.snippet = bodySnippet(raw)
 	payload, err := parseJSON(raw)
-	if err != nil {
-		return jvNull(), errors.New("Stash returned invalid JSON")
+	// GraphQL servers report errors in the body, with HTTP 200 or a 4xx
+	// status; the errors array is the more useful message either way.
+	if err == nil && payload.kind == jObj {
+		if errs := payload.get("errors"); errs.kind != jNull {
+			failure.problem = "GraphQL error: " + errs.marshalCompact()
+			failure.snippet = ""
+			return fail()
+		}
 	}
-	if payload.kind != jObj {
-		return jvNull(), errors.New("Stash returned a non-object GraphQL response")
-	}
-	if errs := payload.get("errors"); errs.kind != jNull {
-		return jvNull(), fmt.Errorf("Stash GraphQL error: %s", errs.marshalCompact())
+	switch {
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		failure.problem = "returned an error status"
+		return fail()
+	case err != nil:
+		failure.problem = "returned invalid JSON"
+		return fail()
+	case payload.kind != jObj:
+		failure.problem = "returned a non-object GraphQL response"
+		return fail()
 	}
 	data := payload.get("data")
 	if data.kind != jObj {
-		return jvNull(), errors.New("Stash GraphQL response has no data object")
+		failure.problem = "GraphQL response has no data object"
+		return fail()
 	}
 	return data, nil
 }

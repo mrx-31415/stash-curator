@@ -6006,9 +6006,17 @@
       setLoading(true);
       setError("");
       try {
-        setReport(await operation({ operation: "get_diagnostics" }));
-      } catch (failure) {
-        setError(failure.message);
+        // The connection check runs beside the sidecar report, so a broken
+        // sidecar still leaves the network half of the report to share.
+        const [diagnostics, connection] = await Promise.allSettled([
+          operation({ operation: "get_diagnostics" }),
+          operation({ operation: "get_connection_check" }),
+        ]);
+        if (diagnostics.status === "rejected") setError(diagnostics.reason.message);
+        setReport({
+          ...(diagnostics.status === "fulfilled" ? diagnostics.value : { error: diagnostics.reason.message }),
+          connection: connection.status === "fulfilled" ? connection.value : { error: connection.reason.message },
+        });
       } finally {
         setLoading(false);
       }
@@ -6034,7 +6042,7 @@
     return React.createElement(
       "section",
       { className: "curator-diagnostics", role: "tabpanel" },
-      React.createElement("p", null, "This allowlisted report excludes library metadata, identifiers, paths, URLs, credentials, preferences, and SQL. Profiling traces are separate and are not included."),
+      React.createElement("p", null, "This allowlisted report excludes library metadata, identifiers, paths, URLs, server addresses, credentials, preferences, and SQL. Its connection check times one small request to Stash and to the selected Stash-box. Profiling traces are separate and are not included."),
       React.createElement(
         "div",
         { className: "curator-profiling-toolbar" },
