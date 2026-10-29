@@ -3,23 +3,17 @@
 package main
 
 import (
-	"encoding/binary"
 	"strconv"
 	"syscall"
 	"unsafe"
 )
 
 var (
-	iphlpapi      = syscall.NewLazyDLL("iphlpapi.dll")
-	getTCPTable   = iphlpapi.NewProc("GetTcpTable")
-	getTCP6Table  = iphlpapi.NewProc("GetTcp6Table")
-	tcpTimeWait   = uint32(11) // MIB_TCP_STATE_TIME_WAIT
-	errNoBuffer   = uintptr(122)
-	tcpRowLayout  = tcpLayout{size: 20, localPort: 8, remotePort: 16}  // MIB_TCPROW
-	tcp6RowLayout = tcpLayout{size: 52, localPort: 24, remotePort: 48} // MIB_TCP6ROW
+	iphlpapi     = syscall.NewLazyDLL("iphlpapi.dll")
+	getTCPTable  = iphlpapi.NewProc("GetTcpTable")
+	getTCP6Table = iphlpapi.NewProc("GetTcp6Table")
+	errNoBuffer  = uintptr(122)
 )
-
-type tcpLayout struct{ size, localPort, remotePort int }
 
 // socketSummary counts TIME_WAIT TCP sockets, in total and on Stash's port.
 // Windows has a small ephemeral port range, and a high count is what turns
@@ -74,31 +68,4 @@ func readTCPTable(proc *syscall.LazyProc) ([]byte, error) {
 		size = uint32(len(buffer))
 	}
 	return nil, syscall.Errno(errNoBuffer)
-}
-
-// countTimeWait walks a MIB_TCPTABLE or MIB_TCP6TABLE: a row count followed
-// by fixed-size rows whose first field is the state; ports sit in the low 16
-// bits in network byte order.
-func countTimeWait(table []byte, layout tcpLayout, port int) (int64, int64) {
-	if len(table) < 4 {
-		return 0, 0
-	}
-	count := int(binary.LittleEndian.Uint32(table))
-	var total, onStash int64
-	for row := 0; row < count; row++ {
-		offset := 4 + row*layout.size
-		if offset+layout.size > len(table) {
-			break
-		}
-		if binary.LittleEndian.Uint32(table[offset:]) != tcpTimeWait {
-			continue
-		}
-		total++
-		local := int(binary.BigEndian.Uint16(table[offset+layout.localPort:]))
-		remote := int(binary.BigEndian.Uint16(table[offset+layout.remotePort:]))
-		if port > 0 && (local == port || remote == port) {
-			onStash++
-		}
-	}
-	return total, onStash
 }

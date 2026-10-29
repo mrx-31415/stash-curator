@@ -48,6 +48,18 @@ Build the plugin source with `uv run --frozen python scripts/build_plugin.py`. I
 writes `dist/stash-curator.zip` and a checksummed `dist/index.yml`. Repository tests
 use synthetic data and need no live Stash or StashDB access.
 
+### Windows coverage
+
+The Windows workflow runs `go vet` and `go test` for `core/` on `windows-latest`,
+then installs a Windows-only package built from the same commit into native Stash
+v0.31.1 (`scripts/windows_smoke.py`). The smoke test seeds a synthetic library,
+runs Sync and build, calls the status and connection-check operations, and keeps the
+Curator page open. It fails on task failures, browser exceptions, Curator errors in
+Stash's log, request failures in the daemon log, or more new TCP connections than its
+budget. It runs for pull requests that touch `core/`, `plugin/` or packaging, for
+pushes to `main`, nightly, and on demand. Its logs and a page screenshot are
+uploaded as artifacts.
+
 ### Plugin compatibility coverage
 
 `tests/plugin/test_patch_composition.cjs` exercises every registered Stash patch

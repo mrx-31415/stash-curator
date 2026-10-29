@@ -504,7 +504,10 @@ WHERE status='published'`); err != nil {
 // directly inside directory.
 func selectBackup(directory, backupID string) (string, error) {
 	backup := filepath.Join(directory, backupID)
-	if backupName.FindStringSubmatch(backupID) == nil || realpath(filepath.Dir(backup)) != directory ||
+	// Both sides are resolved: the directory can come from a path whose
+	// file does not exist yet, which keeps a Windows 8.3 short name
+	// (RUNNER~1) or junction that the backup's resolved parent expands.
+	if backupName.FindStringSubmatch(backupID) == nil || realpath(filepath.Dir(backup)) != realpath(directory) ||
 		!isRegularFile(backup) || isSymlink(backup) {
 		return "", errors.New("select a recognized Curator backup")
 	}

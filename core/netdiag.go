@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -489,4 +490,42 @@ func addressClass(address string) string {
 		return "private"
 	}
 	return "public"
+}
+
+// Windows IP Helper TCP tables (GetTcpTable, GetTcp6Table), parsed here so
+// the layout is tested on every platform.
+const tcpTimeWait = uint32(11) // MIB_TCP_STATE_TIME_WAIT
+
+type tcpLayout struct{ size, localPort, remotePort int }
+
+var (
+	tcpRowLayout  = tcpLayout{size: 20, localPort: 8, remotePort: 16}  // MIB_TCPROW
+	tcp6RowLayout = tcpLayout{size: 52, localPort: 24, remotePort: 48} // MIB_TCP6ROW
+)
+
+// countTimeWait walks a MIB_TCPTABLE or MIB_TCP6TABLE: a row count followed
+// by fixed-size rows whose first field is the state; ports sit in the low 16
+// bits in network byte order.
+func countTimeWait(table []byte, layout tcpLayout, port int) (int64, int64) {
+	if len(table) < 4 {
+		return 0, 0
+	}
+	count := int(binary.LittleEndian.Uint32(table))
+	var total, onStash int64
+	for row := 0; row < count; row++ {
+		offset := 4 + row*layout.size
+		if offset+layout.size > len(table) {
+			break
+		}
+		if binary.LittleEndian.Uint32(table[offset:]) != tcpTimeWait {
+			continue
+		}
+		total++
+		local := int(binary.BigEndian.Uint16(table[offset+layout.localPort:]))
+		remote := int(binary.BigEndian.Uint16(table[offset+layout.remotePort:]))
+		if port > 0 && (local == port || remote == port) {
+			onStash++
+		}
+	}
+	return total, onStash
 }

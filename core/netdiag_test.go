@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
@@ -200,5 +201,34 @@ func TestTransientFailuresRetryQueriesOnly(t *testing.T) {
 	_, err := graphqlQuery(refused, nil, "query Probe { ok }", jvNull())
 	if err == nil || strings.Contains(err.Error(), "attempts") {
 		t.Fatalf("refused connection was retried: %v", err)
+	}
+}
+
+func TestCountTimeWaitReadsTCPTables(t *testing.T) {
+	row := func(layout tcpLayout, state uint32, local, remote uint16) []byte {
+		buffer := make([]byte, layout.size)
+		binary.LittleEndian.PutUint32(buffer, state)
+		binary.BigEndian.PutUint16(buffer[layout.localPort:], local)
+		binary.BigEndian.PutUint16(buffer[layout.remotePort:], remote)
+		return buffer
+	}
+	for _, layout := range []tcpLayout{tcpRowLayout, tcp6RowLayout} {
+		rows := [][]byte{
+			row(layout, tcpTimeWait, 51000, 9999),
+			row(layout, tcpTimeWait, 9999, 51001),
+			row(layout, tcpTimeWait, 51002, 443),
+			row(layout, 5, 51003, 9999), // ESTABLISHED
+		}
+		table := binary.LittleEndian.AppendUint32(nil, uint32(len(rows)))
+		for _, r := range rows {
+			table = append(table, r...)
+		}
+		total, onStash := countTimeWait(table, layout, 9999)
+		if total != 3 || onStash != 2 {
+			t.Errorf("layout %+v: %d TIME_WAIT, %d on Stash's port; want 3 and 2", layout, total, onStash)
+		}
+		if total, _ := countTimeWait(table[:len(table)-1], layout, 9999); total != 3 {
+			t.Errorf("layout %+v: truncated table counted %d", layout, total)
+		}
 	}
 }
