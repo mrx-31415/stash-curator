@@ -247,10 +247,14 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	if !strings.HasSuffix(base, "/graphql") {
 		url = base + "/graphql"
 	}
+	server := "Stash"
+	if category == "stashdb" {
+		server = "StashDB"
+	}
 	body := `{"query":` + marshalJSONString(query) + `,"variables":` + variables.marshalCompact() + `}`
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -268,31 +272,45 @@ func graphqlQueryCat(base string, headers map[string]string, query string, varia
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return jvNull(), fmt.Errorf("Stash request failed: %v", err)
+		return jvNull(), fmt.Errorf("%s request failed: %v", server, err)
 	}
 	if t := currentTrace(); t != nil {
 		t.record(category, graphqlOperationName(query), started, time.Now().UnixNano()-started, jvNull())
 	}
 	payload, err := parseJSON(raw)
 	if err != nil {
-		return jvNull(), errors.New("Stash returned invalid JSON")
+		return jvNull(), unexpectedGraphQLResponse(server+" returned invalid JSON", resp.StatusCode, raw)
 	}
 	if payload.kind != jObj {
-		return jvNull(), errors.New("Stash returned a non-object GraphQL response")
+		return jvNull(), unexpectedGraphQLResponse(server+" returned a non-object GraphQL response", resp.StatusCode, raw)
 	}
 	if errs := payload.get("errors"); errs.kind != jNull {
-		return jvNull(), fmt.Errorf("Stash GraphQL error: %s", errs.marshalCompact())
+		return jvNull(), fmt.Errorf("%s GraphQL error: %s", server, errs.marshalCompact())
 	}
 	data := payload.get("data")
 	if data.kind != jObj {
-		return jvNull(), errors.New("Stash GraphQL response has no data object")
+		return jvNull(), unexpectedGraphQLResponse(server+" GraphQL response has no data object", resp.StatusCode, raw)
 	}
 	return data, nil
+}
+
+// unexpectedGraphQLResponse reports a reply that is not a GraphQL result with
+// its HTTP status and the start of its body, so a report shows what actually
+// answered (a proxy, another service on the address, a rate limit page).
+func unexpectedGraphQLResponse(problem string, status int, raw []byte) error {
+	snippet := []rune(strings.Join(strings.Fields(string(raw)), " "))
+	if len(snippet) > 200 {
+		snippet = append(snippet[:200], '…')
+	}
+	if len(snippet) == 0 {
+		snippet = []rune("empty body")
+	}
+	return fmt.Errorf("%s (HTTP %d: %s)", problem, status, string(snippet))
 }
 
 // stashdbClient mirrors backend.py's _stashdb: query the configured Stash
