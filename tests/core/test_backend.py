@@ -313,6 +313,21 @@ def test_health_byte_identical(tmp_path: Path, binary: Path, stub_stash: str) ->
     )
 
 
+def test_get_status_combines_health_and_jobs(tmp_path: Path, binary: Path, stub_stash: str) -> None:
+    """The page's single status poll returns what health and get_job_status return."""
+    sidecar = tmp_path / "sidecar.sqlite3"
+    make_sidecar(sidecar)
+
+    def output(op: str) -> dict:
+        result = run_backend(binary, PLUGIN_DIR, payload(op, sidecar, stub_stash))
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)["output"]
+
+    status = output("get_status")
+    assert status["health"] == output("health")
+    assert status["jobs"] == output("get_job_status")["jobs"]
+
+
 def test_get_config_code_version_matches_python(
     tmp_path: Path, binary: Path, stub_stash: str
 ) -> None:
