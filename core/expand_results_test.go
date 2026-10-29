@@ -60,7 +60,7 @@ VALUES ('scene', ?, ?, ?, '[]', 1000, 'candidate')`, payload.get("id").asString(
 func BenchmarkExpandResults(b *testing.B) {
 	db := expandResultsFixture(b, 3423)
 	serve := func() {
-		if _, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 20, jvNull()); err != nil {
+		if _, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 20, jvNull()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestExpandOrderingCache(t *testing.T) {
 	db := expandResultsFixture(t, 12)
 	serve := func(page int64, sortBy string, tags []string, links jVal) jVal {
 		t.Helper()
-		result, err := expandResults(db, "scene", page, sortBy, jvNull(), false, "", tags, nil, nil, nil, "", "", true, -1, 5, links)
+		result, err := expandResults(db, "scene", page, sortBy, jvNull(), false, "", tags, nil, nil, nil, "", "", true, true, -1, 5, links)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +171,7 @@ func TestExpandOrderingAfterPoolChange(t *testing.T) {
 	db := expandResultsFixture(t, 4)
 	serve := func() jVal {
 		t.Helper()
-		result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 20, jvNull())
+		result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 20, jvNull())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,7 +196,7 @@ func TestExpandOrderingChangedDuringCacheHit(t *testing.T) {
 	db := expandResultsFixture(t, 4)
 	serve := func(connection dbx) jVal {
 		t.Helper()
-		result, err := expandResults(connection, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, -1, 2, jvNull())
+		result, err := expandResults(connection, "scene", 1, "match", jvNull(), false, "", nil, nil, nil, nil, "", "", true, true, -1, 2, jvNull())
 		if err != nil {
 			t.Fatal(err)
 		}

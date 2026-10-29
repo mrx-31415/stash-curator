@@ -373,6 +373,90 @@ def test_a_new_scene_reason_changes_the_model_id(binary: Path, tmp_path: Path) -
         assert after != before, name
 
 
+def _seed_external_reasons(sidecar: Path) -> None:
+    """A "What put you off?" answer on a dismissed StashDB scene: a local
+    performer, studio, and tag."""
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.execute(
+            "INSERT INTO external_scene_reason_answer VALUES"
+            " ('x-miss', 'https://stashdb.org/graphql', 'ext-scene', -1, 50)"
+        )
+        connection.executemany(
+            "INSERT INTO external_scene_reason(answer_id, subject_type, subject_id)"
+            " VALUES (?, ?, ?)",
+            [
+                ("x-miss", "performer", "p3"),
+                ("x-miss", "studio", "studio-2"),
+                ("x-miss", "tag", "good"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_external_reasons_build_identically_and_move_features(binary: Path, tmp_path: Path) -> None:
+    """External answers enter both builds like Why these? reasons, push the
+    named features down, and change the model_id."""
+    built = []
+    for name, seed in (("plain", False), ("py", True), ("go", True)):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        if seed:
+            _seed_external_reasons(db)
+        built.append(_run_go_build(binary, db) if name == "go" else _run_python_build(db))
+    (plain_model, _), (py_model, py_artifact), (go_model, go_artifact) = built
+    assert go_model == py_model != plain_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    before = _affinities_by_name(tmp_path / "plain" / "curator.sqlite3")
+    after = _affinities_by_name(tmp_path / "go" / "curator.sqlite3")
+    for feature in ("performer:p3", "studio:studio-2"):
+        assert after[feature] < before.get(feature, 0.0), feature
+
+
+def _seed_performer_dislike(sidecar: Path, *, linked: bool) -> None:
+    """A disliked StashDB performer, optionally linked to local p3 through
+    the cached external links."""
+    connection = sqlite3.connect(sidecar)
+    try:
+        connection.execute(
+            "INSERT INTO external_performer_dislike VALUES"
+            " ('https://stashdb.org/graphql', 'ext-p3', 'Performer Three', 60)"
+        )
+        if linked:
+            connection.execute(
+                "INSERT INTO application_meta(key, value) VALUES ('external_links', ?)",
+                ('{"state":"s","links":{"performers":{"p3":"ext-p3"},"scenes":{},"studios":{}}}',),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_linked_performer_dislike_becomes_model_evidence(binary: Path, tmp_path: Path) -> None:
+    """Once a disliked StashDB performer links to a local performer, both
+    builds count the dislike against her; unlinked, it changes nothing."""
+    built = []
+    for name, linked in (("plain", None), ("unlinked", False), ("py", True), ("go", True)):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        if linked is not None:
+            _seed_performer_dislike(db, linked=linked)
+        built.append(_run_go_build(binary, db) if name == "go" else _run_python_build(db))
+    (plain_model, _), (unlinked_model, _), (py_model, py_artifact), (go_model, go_artifact) = built
+    assert unlinked_model == plain_model
+    assert go_model == py_model != plain_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    before = _affinities_by_name(tmp_path / "plain" / "curator.sqlite3")
+    after = _affinities_by_name(tmp_path / "go" / "curator.sqlite3")
+    assert after["performer:p3"] < before.get("performer:p3", 0.0)
+
+
 def test_scene_level_reasons_label_the_scene(tmp_path: Path) -> None:
     """A flip labels the scene like a thumb and trains features; "Just this
     scene" labels the scene's own appeal only and never reaches training."""

@@ -59,7 +59,7 @@ func TestExpandResultsReannotatesAgainstCurrentLinks(t *testing.T) {
 	serve := func(links jVal, hidePhash bool) []string {
 		t.Helper()
 		result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "",
-			nil, nil, nil, nil, "", "", hidePhash, -1, 50, links)
+			nil, nil, nil, nil, "", "", hidePhash, true, -1, 50, links)
 		if err != nil {
 			t.Fatalf("expandResults: %v", err)
 		}
@@ -110,7 +110,7 @@ func TestExpandResultsReannotatesAgainstCurrentLinks(t *testing.T) {
 	// The re-derived payload is what is served: the phash candidate carries
 	// its fresh annotation when it is not hidden.
 	result, err := expandResults(db, "scene", 1, "match", jvNull(), false, "",
-		nil, nil, nil, nil, "", "", false, -1, 50, linked)
+		nil, nil, nil, nil, "", "", false, true, -1, 50, linked)
 	if err != nil {
 		t.Fatalf("expandResults: %v", err)
 	}

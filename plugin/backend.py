@@ -817,6 +817,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
                 hide_phash_matches=bool(args.get("hide_phash_matches", True)),
+                hide_dismissed=bool(args.get("hide_dismissed", True)),
                 minimum_score=(
                     float(args["minimum_score"]) if args.get("minimum_score") is not None else -1
                 ),
@@ -864,6 +865,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 favorite_only=bool(args.get("favorite_only", False)),
                 include_owned=bool(args.get("include_owned", False)),
                 hide_phash_matches=bool(args.get("hide_phash_matches", True)),
+                hide_dismissed=bool(args.get("hide_dismissed", True)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])
                     if args.get("minimum_similarity") is not None
@@ -881,6 +883,36 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 "external_id": external_id,
                 "selected": selected,
             }
+        if operation == "update_external_dismissal":
+            external_id = str(args.get("external_id") or "")
+            kind = str(args["kind"]) if args.get("kind") else None
+            api.update_external_dismissal(external_id, kind)
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "external_id": external_id,
+                "kind": kind,
+            }
+        if operation == "update_external_performer_dislike":
+            performer_id = str(args.get("performer_id") or "")
+            disliked = bool(args.get("disliked"))
+            api.update_external_performer_dislike(
+                performer_id, str(args.get("name") or ""), disliked
+            )
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "performer_id": performer_id,
+                "disliked": disliked,
+            }
+        if operation == "get_external_performer_dislikes":
+            return api.external_performer_dislikes(
+                int(args.get("page") or 1),
+                int(args.get("page_size") or 20),
+            )
+        if operation == "get_external_dismissals":
+            return api.external_dismissals(
+                int(args.get("page") or 1),
+                int(args.get("page_size") or 20),
+            )
         if operation == "send_whisparr":
             if endpoint.casefold() != STASHDB.casefold():
                 raise RuntimeError(
@@ -951,6 +983,11 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             if not isinstance(entries, list):
                 raise ValueError("entries must be a list")
             return api.submit_scene_reasons(entries)
+        if operation == "submit_external_scene_reasons":
+            entries = args.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("entries must be a list")
+            return api.submit_external_scene_reasons(entries)
         if operation == "get_taste_profile":
             return api.taste_profile()
         if operation == "get_tag_questions":

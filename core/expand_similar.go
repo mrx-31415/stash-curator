@@ -19,7 +19,7 @@ import (
 // performer, with the same similarity/appeal blend and why strings.
 func (s *expandService) similar(entityType, entityID string, count int64, candidateIDs map[string]bool,
 	includeTags, excludeTags, performerNames, studioNames []string, favoriteOnly bool,
-	minimumSimilarity float64) (jVal, error) {
+	minimumSimilarity float64, hideDismissed bool) (jVal, error) {
 	if minimumSimilarity < 0 || minimumSimilarity > 1 {
 		return jvNull(), errors.New("minimum_similarity must be between 0 and 1")
 	}
@@ -45,6 +45,14 @@ func (s *expandService) similar(entityType, entityID string, count int64, candid
 	}
 	items := make([]jVal, 0)
 	if entityType == "scene" {
+		dismissed, err := dismissedScenes(s.db)
+		if err != nil {
+			return jvNull(), err
+		}
+		disliked, err := dislikedPerformers(s.db)
+		if err != nil {
+			return jvNull(), err
+		}
 		includeGroups, err := equivalentTagNames(s.db, includeTags)
 		if err != nil {
 			return jvNull(), err
@@ -150,7 +158,8 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 				row[name] = values[i]
 			}
 			externalID := asDBString(row["external_id"])
-			if candidateIDs != nil && !candidateIDs[externalID] {
+			_, isDismissed := dismissed[externalID]
+			if (candidateIDs != nil && !candidateIDs[externalID]) || (hideDismissed && isDismissed) {
 				continue
 			}
 			payload, err := parseJSON([]byte(asDBString(row["payload_json"])))
@@ -253,7 +262,7 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 			if similarity < minimumSimilarity {
 				continue
 			}
-			rowScore := asDBFloat(row["score"])
+			payload, rowScore := withPerformerDislike(payload, asDBFloat(row["score"]), disliked)
 			appeal := math.Max(0.0, math.Min(1.0, (rowScore+1)/2))
 			itemScore := 0.7*similarity + 0.3*appeal
 			why := whyForShared(tags, shared, exactPerformer, performer, sameStudio)
@@ -271,6 +280,7 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 				jvKey("score", jvFloat(itemScore)),
 				jvKey("sources", sources),
 				jvKey("shortlisted", jvBool(shortlisted[externalID])),
+				jvKey("dismissed", dismissedValue(dismissed, externalID)),
 				jvKey("payload", itemPayload),
 			))
 		}
@@ -461,7 +471,7 @@ func profileMatchFull(left, right *performerProfile, weights map[string]float64)
 // StashDB pool biased toward the target, score/merge it, and rank it.
 func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityType, entityID,
 	gender string, count int64, includeTags, excludeTags, performerNames, studioNames []string,
-	favoriteOnly, includeOwned, hidePhash bool, minimumSimilarity float64) (jVal, error) {
+	favoriteOnly, includeOwned, hidePhash, hideDismissed bool, minimumSimilarity float64) (jVal, error) {
 	service := newExpandService(db)
 	modelID, err := currentModelID(db)
 	if err != nil {
@@ -674,7 +684,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	}
 	stageStart := time.Now()
 	result, err := service.similar(entityType, entityID, count*2, candidateIDs,
-		includeTags, excludeTags, performerNames, studioNames, favoriteOnly, minimumSimilarity)
+		includeTags, excludeTags, performerNames, studioNames, favoriteOnly, minimumSimilarity, hideDismissed)
 	if err != nil {
 		return jvNull(), err
 	}

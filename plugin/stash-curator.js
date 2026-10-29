@@ -1318,8 +1318,23 @@
     };
   }
 
+  // "Ranked lower: you're not into …" for a scene whose StashDB cast includes
+  // a performer the user disliked in Find (curator_performer_dislike).
+  function performerDislikeLine(payload) {
+    const names = payload?.curator_performer_dislike?.names || [];
+    if (!names.length) return "";
+    const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+    return `Ranked lower: you're not into ${list}.`;
+  }
+
   function findSceneSummary(item) {
     const payload = item.payload || {};
+    const disliked = performerDislikeLine(payload);
+    const summary = findSceneBaseSummary(item, payload);
+    return disliked ? `${summary} ${disliked}` : summary;
+  }
+
+  function findSceneBaseSummary(item, payload) {
     const summary = payload.explanation?.summary || item.explanation?.summary;
     if (summary) return summary;
     const reasons = (payload.why || []).filter((value) => typeof value === "string" && value.trim());
@@ -3135,6 +3150,127 @@
     );
   }
 
+  // After Not interested on a StashDB scene: what put the user off. The scene
+  // is not in the library: its local performers, content tags, and studio
+  // count like Why these? reasons (submit_external_scene_reasons) and never
+  // label the scene itself. A performer outside the library becomes a
+  // StashDB performer dislike, which lowers her scenes in Find.
+  function ExternalDismissFollowUp({ item, gender, onDismiss }) {
+    const [choices, setChoices] = React.useState(null);
+    const [taste, setTaste] = React.useState(undefined);
+    const [picked, setPicked] = React.useState(new Set());
+    const [allTags, setAllTags] = React.useState(false);
+    const [busy, setBusy] = React.useState(false);
+    const [status, setStatus] = React.useState("");
+    const payload = item.payload || {};
+    // The view's performer gender filter, as on the card itself.
+    const performers = (payload.performers || []).map((value) => value.performer)
+      .filter((person) => person?.id && (!gender || person.gender === gender))
+      .slice(0, SCENE_REASON_PERFORMERS);
+    const studio = payload.studio?.curator_local?.id ? payload.studio : null;
+    React.useEffect(() => {
+      let current = true;
+      const tags = payload.tags || [];
+      operation({ operation: "get_external_tag_choices", tags: tags.map((tag) => ({ id: tag.id, name: tag.name })) })
+        .then((result) => { if (current) setChoices(result.items); })
+        .catch(() => { if (current) setChoices([]); });
+      loadReasonTaste().then((value) => { if (current) setTaste(value); }).catch(() => { if (current) setTaste(null); });
+      return () => { current = false; };
+    }, [item.id]);
+    const ranked = choices && taste !== undefined
+      ? sceneReasonTags({ tags: choices.map((choice) => ({ id: choice.tag_id, name: choice.name })) }, taste, "misses")
+      : null;
+    const empty = ranked !== null && ranked.length === 0 && performers.length === 0 && !studio;
+    React.useEffect(() => {
+      if (empty) onDismiss();
+    }, [empty]);
+    if (ranked === null || empty) return null;
+    function toggle(key) {
+      setPicked((current) => {
+        const next = new Set(current);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+    }
+    async function done() {
+      setBusy(true);
+      setStatus("");
+      try {
+        const reasons = [...picked].map((key) => {
+          const [subject_type, subject_id] = key.split(":");
+          return { subject_type, subject_id };
+        });
+        const local = reasons.filter((reason) => reason.subject_type !== "stashdb_performer");
+        if (local.length) {
+          await operation({
+            operation: "submit_external_scene_reasons",
+            entries: [{ answer_id: uuid(), external_id: item.id, polarity: -1, reasons: local, occurred_at_ms: Date.now() }],
+          });
+          scheduleModelUpdate();
+        }
+        for (const reason of reasons.filter((value) => value.subject_type === "stashdb_performer")) {
+          const person = performers.find((value) => String(value.id) === reason.subject_id);
+          await operation({ operation: "update_external_performer_dislike", performer_id: reason.subject_id, name: person?.name || "", disliked: true });
+        }
+        clearEndlessCache();
+        onDismiss();
+      } catch (failure) {
+        setStatus(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    const chip = (key, label, image) => React.createElement(ReasonChip, {
+      key, tone: "miss", image, pressed: picked.has(key), onClick: () => toggle(key),
+      trend: reasonChipTrend(key, picked, taste, -1),
+    }, label);
+    return React.createElement(
+      "aside",
+      { className: "curator-tag-follow-up curator-dismiss-follow-up", "aria-label": "What put you off?" },
+      React.createElement("div", { className: "curator-tag-follow-up-heading" },
+        React.createElement("strong", null, "What put you off?"),
+        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss" }, "×")
+      ),
+      React.createElement("p", null, `${payload.title || item.id} · optional, tap any that apply.`),
+      React.createElement(
+        "div", { className: "curator-reason-group", role: "group", "aria-label": "Reasons" },
+        performers.map((person) => person.curator_local?.id
+          ? chip(`performer:${person.curator_local.id}`, person.name, externalImageProps(person.images).src)
+          : chip(`stashdb_performer:${person.id}`, person.name, externalImageProps(person.images).src)),
+        shownReasonTags(ranked, allTags).map((tag) => chip(`tag:${tag.id}`, tag.name)),
+        studio && chip(`studio:${studio.curator_local.id}`, studio.name),
+        moreReasonTagsChip(ranked, allTags, () => setAllTags(true))
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-tag-follow-up-actions" },
+        React.createElement(Button, { size: "sm", variant: "primary", disabled: busy || picked.size === 0, onClick: done }, "Done"),
+        React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss }, "Skip")
+      ),
+      status && React.createElement("small", { role: "status" }, status)
+    );
+  }
+
+  // Not interested / Not now in a Find view. Dismissed scenes stay as stubs
+  // until the next fetch (the backend then leaves them out); Not interested
+  // offers the reason follow-up beside the dismissed card.
+  function useExternalDismissals(gender) {
+    const [dismissals, setDismissals] = React.useState({});
+    const [followUp, setFollowUp] = React.useState(null);
+    async function dismiss(item, kind) {
+      await operation({ operation: "update_external_dismissal", external_id: item.id, kind });
+      clearEndlessCache();
+      // "restored" overrides the item's own dismissed marker until the next fetch.
+      setDismissals((current) => ({ ...current, [item.id]: kind || "restored" }));
+      setFollowUp((current) => kind === "not_interested" ? item : current?.id === item.id ? null : current);
+    }
+    // The follow-up for one card, anchored to that card's stub by ExternalCard.
+    const followUpFor = (id) => followUp?.id === id
+      ? React.createElement(ExternalDismissFollowUp, { key: followUp.id, item: followUp, gender, onDismiss: () => setFollowUp(null) })
+      : null;
+    return { dismissals, dismiss, followUpFor };
+  }
+
   // After a model update started from Tag questions or Why these?: what the
   // newest build moved compared with the one before (get_curation_impact),
   // so an answer's effect is visible where it was given. refreshKey changes
@@ -3367,10 +3503,13 @@
 
   // The "external" action-set variant (Stash-box/Whisparr/shortlist), sibling
   // to Feedback's "local" variant (thumbs up/down + More menu).
-  function ExternalActions({ item, kind, onShortlist, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
+  function ExternalActions({ item, kind, onShortlist, onDismiss, onRestore, dismissBusy, tagsAvailable, tagsActive, tagLoading, onRateTags, onShowScenes, whisparrEnabled, canWhisparr, whisparr, onAddToWhisparr }) {
     return React.createElement(
       "div",
       { className: "curator-prune-actions" },
+      onRestore && React.createElement(Button, { size: "sm", variant: "secondary", disabled: dismissBusy, title: "Show this scene in Find again", onClick: onRestore }, React.createElement(FontAwesomeIcon, { icon: faEyeSlash }), " Show again"),
+      kind === "scene" && onDismiss && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", disabled: dismissBusy, title: "Not interested: hide this scene from Find", "aria-label": "Not interested", onClick: () => onDismiss("not_interested") }, React.createElement(FontAwesomeIcon, { icon: faThumbsDown })),
+      kind === "scene" && onDismiss && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", disabled: dismissBusy, title: "Not now: hide this scene from Find for 30 days", "aria-label": "Not now", onClick: () => onDismiss("not_now") }, React.createElement(FontAwesomeIcon, { icon: faClock })),
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags", "aria-label": "Rate tags", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
@@ -3488,8 +3627,12 @@
 
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
-    const { item, kind, gender, onShortlist, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
+    const { item, kind, gender, onShortlist, onDismiss, dismissal, followUp, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
     const [whisparr, setWhisparr] = React.useState(null);
+    const [dismissBusy, setDismissBusy] = React.useState(false);
+    const [dismissError, setDismissError] = React.useState("");
+    // The stub element, set by a callback ref so the follow-up can anchor to it.
+    const [stub, setStub] = React.useState(null);
     const [tagChoices, setTagChoices] = React.useState(null);
     const [tagLoading, setTagLoading] = React.useState(false);
     const [tagError, setTagError] = React.useState("");
@@ -3509,6 +3652,40 @@
     const stickyCards = !window.Sticky?.off && window.Sticky?.cards;
     const stickyScene = kind === "scene" && typeof stickyCards?.formatDate === "function";
     if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind });
+    async function dismiss(value) {
+      setDismissBusy(true);
+      setDismissError("");
+      try {
+        await onDismiss(item, value);
+      } catch (failure) {
+        setDismissError(failure.message);
+      } finally {
+        setDismissBusy(false);
+      }
+    }
+    // Dismissed in this view: a stub until the next fetch, so the grid does not
+    // reflow under the pointer and Undo stays one tap away. Dismissed earlier
+    // (shown with Hide dismissed scenes off): a full card with Show again.
+    const stubKind = dismissal && dismissal !== "restored" ? dismissal : null;
+    const hiddenKind = !dismissal && item.dismissed ? item.dismissed : null;
+    if (stubKind) {
+      return React.createElement(
+        "article",
+        { ref: setStub, className: `curator-card curator-compact-card curator-external-card curator-external-dismissed grid-card ${kind}-card` },
+        followUp && stub && React.createElement(libraries.Bootstrap.Overlay, {
+          show: true, target: stub, placement: "bottom", flip: true,
+          popperConfig: { modifiers: [{ name: "preventOverflow", options: { padding: 8 } }] },
+        }, React.createElement(libraries.Bootstrap.Popover, { id: `curator-dismiss-${item.id}`, className: "curator-dismiss-popover curator-page" }, followUp)),
+        React.createElement("div", { className: "card-section" },
+          React.createElement("h5", { className: "card-section-title" }, title),
+          React.createElement("small", null, stubKind === "not_now" ? "Hidden from Find for 30 days." : "Not interested · hidden from Find.")
+        ),
+        React.createElement("div", { className: "curator-external-dismissed-actions" },
+          React.createElement(Button, { size: "sm", variant: "link", disabled: dismissBusy, onClick: () => dismiss(null) }, "Undo"),
+          dismissError && React.createElement("small", { className: "text-danger", role: "status" }, dismissError)
+        )
+      );
+    }
     function metadataPopover(id, icon, label, count, content) {
       if (!count) return null;
       const trigger = React.createElement(Button, { className: "minimal curator-external-popover-button", size: "sm", title: label, "aria-label": `${count} ${label.toLowerCase()}` }, React.createElement(FontAwesomeIcon, { icon }), React.createElement("span", null, count));
@@ -3568,9 +3745,10 @@
     }
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}` },
+      { className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}${hiddenKind ? " curator-external-hidden" : ""}` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
+      hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
       React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
       React.createElement("div", { className: "card-section" },
@@ -3590,7 +3768,7 @@
         stickyScene && cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)
       ),
       stickyScene && React.createElement("div", { className: "sticky-card-footer" }, React.createElement(ExternalMetadataRow, { payload, items: tags, kind: "tag" })),
-      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const fallbackExplanation = payload.why?.length ? { summary: kind === "scene" ? findSceneSummary(item) : payload.why.join(" · "), evidence_rows: payload.why.map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })) } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: !stickyScene && React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(ExternalActions, { item, kind, onShortlist, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
+      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const dislikedNames = payload.curator_performer_dislike?.names || []; const fallbackExplanation = payload.why?.length || dislikedNames.length ? { summary: kind === "scene" ? findSceneSummary(item) : (payload.why || []).join(" · "), evidence_rows: [...(payload.why || []).map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })), ...(dislikedNames.length ? [{ code: "external.performer_dislike", label: `Not into ${dislikedNames.join(", ")}`, direction: "negative", confidence: 1 }] : [])] } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: !stickyScene && React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(React.Fragment, null, React.createElement(ExternalActions, { item, kind, onShortlist, onDismiss: onDismiss && !hiddenKind ? dismiss : undefined, onRestore: onDismiss && hiddenKind ? () => dismiss(null) : undefined, dismissBusy, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), dismissError && React.createElement("small", { className: "text-danger", role: "status" }, dismissError)), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }))))
     );
   });
@@ -3775,7 +3953,116 @@
         { className: "curator-record-list" },
         data.items.map((item) => React.createElement(FeedbackHistoryRow, { key: item.feedback_id, item, scene: scenes.get(String(item.scene_id)), onCorrect: () => setVersion((value) => value + 1) }))
       ),
-      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" })
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: page * data.page_size < data.total, loading, onPage: setPage, label: "Feedback history pages" }),
+      React.createElement(ExternalDismissalHistory),
+      React.createElement(ExternalPerformerDislikeHistory)
+    );
+  }
+
+  // StashDB performers outside the library the user is not into; Find ranks
+  // their scenes lower until undone.
+  function ExternalPerformerDislikeHistory() {
+    const [page, setPage] = useUrlPage("page_disliked");
+    const [data, setData] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [version, setVersion] = React.useState(0);
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "get_external_performer_dislikes", page }).then(
+        (result) => active && (setData(result), setError("")),
+        (failure) => active && setError(failure.message)
+      );
+      return () => { active = false; };
+    }, [page, version]);
+    async function undo(item) {
+      try {
+        await operation({ operation: "update_external_performer_dislike", performer_id: item.performer_id, disliked: false });
+        clearEndlessCache();
+        setVersion((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    if (!error && !data?.total) return null;
+    return React.createElement(
+      "div",
+      { className: "curator-external-dismissal-history" },
+      React.createElement("h5", null, "StashDB performers you're not into"),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && React.createElement(
+        "div",
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(
+          "div",
+          { key: item.performer_id, className: "curator-record-row curator-feedback-row" },
+          React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: faUser })),
+          React.createElement(
+            "div",
+            { className: "curator-record-main" },
+            React.createElement("div", { className: "curator-record-title" }, React.createElement("a", { href: stashboxEntityURL({}, "performers", item.performer_id), target: "_blank", rel: "noreferrer" }, item.name)),
+            React.createElement("div", { className: "curator-record-meta" }, `Scenes ranked lower in Find · ${new Date(item.created_at_ms).toLocaleString()}`)
+          ),
+          React.createElement("div", { className: "curator-feedback-correction" }, React.createElement(Button, { size: "sm", variant: "link", onClick: () => undo(item) }, "Undo"))
+        ))
+      ),
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, onPage: setPage, label: "Disliked StashDB performer pages" })
+    );
+  }
+
+  // StashDB scenes hidden from Find with Not interested or an unexpired Not now.
+  function ExternalDismissalHistory() {
+    const [page, setPage] = useUrlPage("page_hidden");
+    const [data, setData] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [version, setVersion] = React.useState(0);
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "get_external_dismissals", page }).then(
+        (result) => active && (setData(result), setError("")),
+        (failure) => active && setError(failure.message)
+      );
+      return () => { active = false; };
+    }, [page, version]);
+    React.useEffect(() => {
+      if (data?.page === page) {
+        const last = Math.max(1, Math.ceil(data.total / data.page_size));
+        if (page > last) setPage(last, { replace: true });
+      }
+    }, [data, page]);
+    async function undo(item) {
+      try {
+        await operation({ operation: "update_external_dismissal", external_id: item.id, kind: null });
+        clearEndlessCache();
+        setVersion((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      }
+    }
+    if (!error && !data?.total) return null;
+    return React.createElement(
+      "div",
+      { className: "curator-external-dismissal-history" },
+      React.createElement("h5", null, "Hidden StashDB scenes"),
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && React.createElement(
+        "div",
+        { className: "curator-record-list" },
+        data.items.map((item) => React.createElement(
+          "div",
+          { key: item.id, className: "curator-record-row curator-feedback-row" },
+          React.createElement("span", { className: "curator-record-icon" }, React.createElement(FontAwesomeIcon, { icon: item.kind === "not_now" ? faClock : faThumbsDown })),
+          React.createElement(
+            "div",
+            { className: "curator-record-main" },
+            React.createElement("div", { className: "curator-record-title" }, React.createElement("a", { href: stashboxEntityURL(item.payload || {}, "scenes", item.id), target: "_blank", rel: "noreferrer" }, item.payload?.title || item.id)),
+            React.createElement("div", { className: "curator-record-meta" }, item.kind === "not_now"
+              ? `Not Now · until ${new Date(item.expires_at_ms).toLocaleDateString()}`
+              : `Not Interested · ${new Date(item.created_at_ms).toLocaleString()}`)
+          ),
+          React.createElement("div", { className: "curator-feedback-correction" }, React.createElement(Button, { size: "sm", variant: "link", onClick: () => undo(item) }, "Undo"))
+        ))
+      ),
+      data && React.createElement(Pager, { page, total: data.total, pageSize: data.page_size, hasMore: data.has_more, onPage: setPage, label: "Hidden StashDB scene pages" })
     );
   }
 
@@ -4605,6 +4892,7 @@
     studios, onStudiosChange,
     favoriteOnly, onToggleFavorite,
     hidePhashMatches, onToggleHidePhash,
+    hideDismissed, onToggleHideDismissed,
     gender, onGenderChange,
     minimum, onMinimumChange,
     applyVisible = true, onApply,
@@ -4633,6 +4921,7 @@
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
         rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
         rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, "Hide exact PHash matches"),
+        onToggleHideDismissed && showScene && React.createElement(Button, { size: "sm", variant: hideDismissed ? "primary" : "secondary", "aria-pressed": hideDismissed, title: "Hide StashDB scenes you marked Not interested or Not now. Turn off to see them and show them again.", onClick: onToggleHideDismissed }, "Hide dismissed scenes"),
         sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
         rankingOnly && sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
         applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
@@ -4728,6 +5017,7 @@
         filterStudios: urlListField("sim_studios", initialFilters.studios || []),
         minimumSimilarity: urlNumberField("sim_min_sim", initialFilters.minimum ?? 0.18),
         hidePhashMatches: urlBoolField("sim_hide_phash", initialFilters.hidePhashMatches !== false),
+        hideDismissed: urlBoolField("sim_hide_dismissed", true),
         includeOwned: urlBoolField("sim_include_owned", true),
         excludedIds: {
           param: "sim_excluded",
@@ -4742,7 +5032,7 @@
       page: urlPageSpec("page_similar"),
     }), [initialFilters]);
     const [urlState, updateUrl] = useUrlState(similarSpec);
-    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity, hidePhashMatches, includeOwned, fetchTick } = urlState;
+    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity, hidePhashMatches, hideDismissed, includeOwned, fetchTick } = urlState;
     const [query, setQuery] = React.useState("");
     const [search, setSearch] = React.useState("");
     const [result, setResult] = React.useState(null);
@@ -4789,8 +5079,8 @@
     // filterStateRef, so filters stay lazy (applied on the next fetch) exactly
     // as before.
     const continuationRequest = React.useRef(null);
-    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity });
-    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity };
+    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity });
+    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity };
     const requestKey = selected
       ? [source, entityType, String(selected.id), selected.label || "", source === "stashdb" ? "s" : String(page), excludedIds.join(","), source === "stashdb" ? (includeOwned ? "1" : "0") : "s", fetchTick].join("|")
       : null;
@@ -4808,6 +5098,7 @@
         gender: filters.gender,
         favorite_only: filters.favoriteOnly,
         hide_phash_matches: filters.hidePhashMatches,
+        ...(source === "stashdb" ? { hide_dismissed: filters.hideDismissed } : {}),
         include_tags: filters.includeTags.map((item) => item.name),
         exclude_tags: filters.excludeTags.map((item) => item.name),
         performer_ids: filters.filterPerformers.map((item) => String(item.id)),
@@ -4897,10 +5188,11 @@
       } catch (failure) { setError(failure.message); }
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
+    const externalDismissals = useExternalDismissals(gender);
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     function renderSimilarPage(batch, onReady) {
       if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
-      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: findView === "thumbnails", onShortlist: shortlistExternal, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: findView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
     }
     return React.createElement(
       "section",
@@ -4935,6 +5227,7 @@
         studios: filterStudios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        ...(source === "stashdb" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })) } : {}),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
         minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
         applyVisible: Boolean(selected),
@@ -5115,6 +5408,7 @@
         includeTags: urlListField("hunt_include_tags", initialFilters.includeTags || []),
         excludeTags: urlListField("hunt_exclude_tags", initialFilters.excludeTags || []),
         hidePhashMatches: urlBoolField("hunt_hide_phash", initialFilters.hidePhashMatches !== false),
+        hideDismissed: urlBoolField("hunt_hide_dismissed", true),
       },
       page: urlPageSpec("page_hunt"),
     } : {
@@ -5144,6 +5438,7 @@
         studios: urlListField("exp_studios", initialFilters.studios || []),
         minimumScore: urlNumberField("exp_min_score", initialFilters.minimum ?? 0),
         hidePhashMatches: urlBoolField("exp_hide_phash", initialFilters.hidePhashMatches !== false),
+        hideDismissed: urlBoolField("exp_hide_dismissed", true),
       },
       page: urlPageSpec((state) => `page_expand_${state.entityType}`),
       prune(route, state) {
@@ -5153,7 +5448,7 @@
       },
     }, [huntOnly, initialFilters]);
     const [urlState, updateUrl] = useUrlState(expandSpec);
-    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, page, performer: huntPerformer, huntView, huntSort } = urlState;
+    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, hideDismissed, page, performer: huntPerformer, huntView, huntSort } = urlState;
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
@@ -5180,7 +5475,7 @@
         ? { operation: "get_shortlist", page }
         : entityType === "hunt"
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
-          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
+          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
       continuationRequest.current = request;
       operation(request, entityType === "hunt" ? 60000 : undefined).then(
         (result) => {
@@ -5194,7 +5489,7 @@
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id]);
+    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
       if (!data?.initializing || error || loading) return;
       const timer = setTimeout(() => setVersion((value) => value + 1), 3000);
@@ -5240,8 +5535,11 @@
       } catch (failure) { setError(failure.message); }
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
+    const externalDismissals = useExternalDismissals(gender);
+    // Shortlist is a saved list: no filters, sort, or dismissals.
+    const listView = entityType === "shortlist";
     const huntItemsRaw = entityType === "hunt"
-      ? (data?.items || []).filter((item) => !hidePhashMatches || item.match_type !== "phash")
+      ? (data?.items || []).filter((item) => (!hidePhashMatches || item.match_type !== "phash") && (!hideDismissed || !item.dismissed))
       : [];
     const huntCounts = {
       all: huntItemsRaw.length,
@@ -5271,7 +5569,7 @@
     function renderExpandPage(batch) {
       return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
         const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
-        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: findView === "thumbnails", onShortlist: shortlist, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
+        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: findView === "thumbnails", onShortlist: shortlist, onDismiss: listView ? undefined : externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
       }));
     }
     const pager = data?.ready && !endless && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
@@ -5286,9 +5584,9 @@
         !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
-        entityType !== "shortlist" && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        !listView && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
         entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
-        entityType !== "shortlist" && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
+        !listView && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from Stash-box." : "Refresh the bounded Stash-box candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
@@ -5310,9 +5608,10 @@
         includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
+        hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })),
         onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)),
       }),
-      entityType !== "shortlist" && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
+      !listView && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
         variant: "expand",
         entityType,
         includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
@@ -5321,6 +5620,7 @@
         studios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, studios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
+        ...(entityType === "scene" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, page: 1, hideDismissed: !s.hideDismissed })) } : {}),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
         minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
         onApply: () => { clearEndlessCache(); updateUrl((s) => ({ ...s, page: 1 })); setFilterVersion((value) => value + 1); },
@@ -5331,10 +5631,10 @@
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading candidates…")),
       data?.initializing && !error && React.createElement("div", { className: "alert alert-info", role: "status" }, data.initializing_reason === "endpoint" ? "Preparing candidates from the selected Stash-box endpoint. Results will appear automatically when this finishes. Progress is available in Manage → Tasks." : "Checking your library for scenes you already own. Candidates will appear automatically when this finishes. Progress is available in Manage → Tasks."),
       data && !data.ready && !data.initializing && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — Stash-box candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
-      data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : "No external candidates match these filters."),
+      data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : entityType === "shortlist" ? "Nothing shortlisted yet." : "No external candidates match these filters."),
       pager,
       data?.ready && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, findView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
+        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, findView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
         : renderExpandPage({ ...data, items: visibleItems })),
       pager
     );

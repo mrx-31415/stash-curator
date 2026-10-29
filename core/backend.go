@@ -189,6 +189,16 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opBackupControl(pluginDir, payload)
 	case "update_shortlist":
 		return opUpdateShortlist(pluginDir, payload)
+	case "update_external_dismissal":
+		return opUpdateExternalDismissal(pluginDir, payload)
+	case "get_external_dismissals":
+		return opGetExternalDismissals(pluginDir, payload)
+	case "update_external_performer_dislike":
+		return opUpdateExternalPerformerDislike(pluginDir, payload)
+	case "get_external_performer_dislikes":
+		return opGetExternalPerformerDislikes(pluginDir, payload)
+	case "submit_external_scene_reasons":
+		return opSubmitExternalSceneReasons(pluginDir, payload)
 	case "submit_feedback":
 		return opSubmitFeedback(pluginDir, payload)
 	case "correct_feedback":

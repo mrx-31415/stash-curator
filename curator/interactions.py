@@ -34,6 +34,7 @@ TAG_SENTIMENT_VALUES = {-1.0, -0.75, -0.5, 0.0, 0.5, 0.75, 1.0}
 BLOCKED_TAG_VALUE = -1.0  # Stored value when blocked=1; the blocked flag drives exclusion.
 SCENE_REASON_SUBJECTS = {"performer", "tag", "studio", "missing_tag", "scene"}
 SCENE_REASON_LIMIT = 20
+EXTERNAL_SCENE_REASON_SUBJECTS = {"performer", "tag", "studio"}
 SCENE_REASON_FLIP_STRENGTHS = {"mild", "strong"}
 
 
@@ -371,6 +372,72 @@ class InteractionStore:
             if inserted:
                 ModelUpdateCoordinator(self.connection).request("scene_reason")
         return inserted
+
+    def submit_external_scene_reasons(self, endpoint: str, entries: list[dict[str, Any]]) -> int:
+        """Store "What put you off?" answers for StashDB scenes; retries are ignored."""
+        normalized = [self._external_scene_reason_entry(entry) for entry in entries]
+        inserted = 0
+        with transaction(self.connection):
+            for entry in normalized:
+                cursor = self.connection.execute(
+                    """
+                    INSERT OR IGNORE INTO external_scene_reason_answer(
+                        answer_id, endpoint, external_id, polarity, occurred_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entry["answer_id"],
+                        endpoint.casefold(),
+                        entry["external_id"],
+                        entry["polarity"],
+                        entry["occurred_at_ms"],
+                    ),
+                )
+                if not cursor.rowcount:
+                    continue
+                inserted += 1
+                self.connection.executemany(
+                    """
+                    INSERT OR IGNORE INTO external_scene_reason(answer_id, subject_type, subject_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    [(entry["answer_id"], kind, subject) for kind, subject in entry["reasons"]],
+                )
+            if inserted:
+                ModelUpdateCoordinator(self.connection).request("scene_reason")
+        return inserted
+
+    @staticmethod
+    def _external_scene_reason_entry(entry: dict[str, Any]) -> dict[str, Any]:
+        answer_id = str(entry.get("answer_id") or "")
+        external_id = str(entry.get("external_id") or "")
+        occurred_at_ms = int(entry.get("occurred_at_ms", -1))
+        if not answer_id or not external_id or occurred_at_ms < 0:
+            raise ValueError("answer_id, external_id, and occurred_at_ms are required")
+        polarity = entry.get("polarity")
+        if isinstance(polarity, bool) or not isinstance(polarity, int) or polarity not in (-1, 1):
+            raise ValueError("polarity must be 1 or -1")
+        reasons = entry.get("reasons")
+        if not isinstance(reasons, list) or not reasons or len(reasons) > SCENE_REASON_LIMIT:
+            raise ValueError("reasons must be a list of 1 to 20 items")
+        subjects: list[tuple[str, str]] = []
+        for reason in reasons:
+            if not isinstance(reason, dict):
+                raise ValueError("each reason must be an object")
+            kind = str(reason.get("subject_type") or "")
+            if kind not in EXTERNAL_SCENE_REASON_SUBJECTS:
+                raise ValueError(f"unsupported reason subject: {kind}")
+            subject = str(reason.get("subject_id") or "")
+            if not subject:
+                raise ValueError("reason subject_id is required")
+            subjects.append((kind, subject))
+        return {
+            "answer_id": answer_id,
+            "external_id": external_id,
+            "polarity": polarity,
+            "reasons": subjects,
+            "occurred_at_ms": occurred_at_ms,
+        }
 
     def _scene_reason_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
         answer_id = str(entry.get("answer_id") or "")

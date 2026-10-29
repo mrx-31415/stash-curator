@@ -363,8 +363,28 @@ aliases filter remote results. Refresh Expand's cache to update that catalog.
 If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
 it sends only the scene you select. Use
 **Rate tags** to rate tags that map exactly to local tags.
-This does not create scene-level feedback for media
-outside the library. Saved candidates appear in **Expand → Shortlist**.
+Saved candidates appear in **Expand → Shortlist**.
+
+To stop seeing a StashDB scene, use the thumbs down (**Not interested**) or the clock
+(**Not now**, 30 days) on its card in Expand, StashDB Similar, or Performer Hunt.
+The card stays in place with **Undo** until the next load, then the scene is left
+out of all three views. Shortlisted scenes stay in the Shortlist. To see them, turn
+off **Hide dismissed scenes** in the view's **Filters**: hidden scenes return with a
+**Hidden** badge and **Show again**. A **Not now** scene returns on its own after
+30 days.
+These scenes are not in your library, so a dismissal does not train the model
+as scene feedback.
+After **Not interested**, Curator may offer an optional **What put you off?** card,
+anchored below the dismissed card, with the scene's performers, its studio if it is in your library, and its matching
+local content tags. Each chip for a performer, studio, or tag in your library counts
+against it the same way a **Why these?** reason does; Tag sentiment answers are not
+changed. A performer who is only on StashDB is marked as one you're not into: Expand,
+StashDB Similar, and Performer Hunt rank every scene with her lower, including scenes
+found by later refreshes, and the card says so. If she later appears in your library
+under the same StashDB id, the next model update counts the dislike against her
+local profile instead. **Manage → Feedback history** lists these performers with
+**Undo**. **Manage → Feedback history** also lists hidden StashDB scenes with
+**Undo**. Showing a scene again keeps any reasons you gave.
 
 ### Similar
 
