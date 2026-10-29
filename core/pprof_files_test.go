@@ -128,7 +128,7 @@ func TestPprofProfilesDirResolution(t *testing.T) {
 	pluginDir := t.TempDir()
 	payload := jvObj(jvKey("args", jvObj(jvKey("database_path", jvStr("/srv/data/curator.sqlite3")))))
 	got := pprofProfilesDir(pluginDir, payload, jvObj())
-	if got != "/srv/data/profiles" {
+	if got != filepath.Join(filepath.Dir(filepath.FromSlash("/srv/data/curator.sqlite3")), "profiles") {
 		t.Errorf("dir = %q", got)
 	}
 	// Default location: beside the plugin data dir.

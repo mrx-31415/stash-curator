@@ -177,7 +177,7 @@ func TestAttachBuildSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	// feature tables come from the attached feature generation.
-	if _, err := db.Query(`SELECT count(*) FROM feature_definition`); err != nil {
+	if err := db.QueryRow(`SELECT count(*) FROM feature_definition`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 }
