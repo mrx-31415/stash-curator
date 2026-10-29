@@ -262,7 +262,17 @@ class InteractionStore:
             ModelUpdateCoordinator(self.connection).request("feedback_correction")
 
     def submit_tag_preferences(self, entries: list[dict[str, Any]]) -> int:
-        normalized = [self._tag_preference_entry(entry) for entry in entries]
+        """Store direct tag answers; a retried preference_id is ignored.
+
+        An answer for a tag that is gone or no longer has a tag role can never
+        be stored, so it is dropped rather than failing the batch; otherwise
+        the browser outbox would retry it, and every later answer, forever.
+        """
+        normalized = [
+            item
+            for item in (self._tag_preference_entry(entry) for entry in entries)
+            if item is not None
+        ]
         inserted = 0
         with transaction(self.connection):
             for entry in normalized:
@@ -339,8 +349,16 @@ class InteractionStore:
         return inserted
 
     def submit_scene_reasons(self, entries: list[dict[str, Any]]) -> int:
-        """Store Why these? answers; a retried answer_id is ignored."""
-        normalized = [self._scene_reason_entry(entry) for entry in entries]
+        """Store Why these? answers; a retried answer_id is ignored.
+
+        Answers for a scene that is no longer in the library are dropped, like
+        tag answers for a removed tag.
+        """
+        normalized = [
+            item
+            for item in (self._scene_reason_entry(entry) for entry in entries)
+            if item is not None
+        ]
         inserted = 0
         with transaction(self.connection):
             for entry in normalized:
@@ -439,7 +457,7 @@ class InteractionStore:
             "occurred_at_ms": occurred_at_ms,
         }
 
-    def _scene_reason_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _scene_reason_entry(self, entry: dict[str, Any]) -> dict[str, Any] | None:
         answer_id = str(entry.get("answer_id") or "")
         scene_id = str(entry.get("scene_id") or "")
         occurred_at_ms = int(entry.get("occurred_at_ms", -1))
@@ -474,7 +492,7 @@ class InteractionStore:
             ).fetchone()
             is None
         ):
-            raise ValueError(f"unknown scene: {scene_id}")
+            return None
         return {
             "answer_id": answer_id,
             "scene_id": scene_id,
@@ -698,7 +716,7 @@ class InteractionStore:
             "payload": entry.get("payload") if isinstance(entry.get("payload"), dict) else {},
         }
 
-    def _tag_preference_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _tag_preference_entry(self, entry: dict[str, Any]) -> dict[str, Any] | None:
         preference_id = str(entry.get("preference_id") or "")
         tag_id = str(entry.get("tag_id") or "")
         occurred_at_ms = int(entry.get("occurred_at_ms", -1))
@@ -725,7 +743,7 @@ class InteractionStore:
             ).fetchone()
             is None
         ):
-            raise ValueError(f"unknown or unsupported tag: {tag_id}")
+            return None
         return {
             "preference_id": preference_id,
             "tag_id": tag_id,
