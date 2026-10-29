@@ -77,6 +77,24 @@ def snapshot() -> tuple[int, int, collections.Counter]:
     return total, stash, clients
 
 
+def tcp_opens() -> tuple[int, int]:
+    """Windows' cumulative TCP (active, passive) opens, from netstat -s: every
+    connection opened, whether or not it leaves a visible TIME_WAIT."""
+    out = subprocess.run(["netstat", "-s", "-p", "tcp"], capture_output=True, text=True).stdout
+    values = {}
+    for line in out.splitlines():
+        parts = line.split("=")
+        if len(parts) == 2 and parts[1].strip().isdigit():
+            values[parts[0].strip()] = int(parts[1].strip())
+    return values.get("Active Opens", -1), values.get("Passive Opens", -1)
+
+
+def report_opens(label: str, since: tuple[int, int]) -> tuple[int, int]:
+    now = tcp_opens()
+    print(f"{label}: +{now[0] - since[0]} active opens, +{now[1] - since[1]} passive opens", flush=True)
+    return now
+
+
 def wait_for_stash() -> None:
     for _ in range(120):
         try:
@@ -139,6 +157,7 @@ def main() -> None:
         baseline = snapshot()
         print(f"baseline TIME_WAIT total={baseline[0]} stash={baseline[1]} clients={dict(baseline[2])}", flush=True)
 
+        opens = tcp_opens()
         rows: list[list] = []
         peak = [0, 0]
         peak_clients: collections.Counter = collections.Counter()
@@ -176,10 +195,24 @@ def main() -> None:
             if jobs and not any(job["state"] in ("queued", "running") for job in jobs):
                 break
         elapsed = time.time() - started
-        time.sleep(60 if browser else 10)
+        opens = report_opens("during the task", opens)
         if browser:
+            page.reload(wait_until="networkidle")
+            time.sleep(60)
+            opens = report_opens("60 s on the loaded recommendations page", opens)
             page.screenshot(path=str(ROOT / "curator-page.png"))
             browser.close()
+        else:
+            time.sleep(10)
+        # Calibration: 50 deliberately unpooled requests must show up as ~50 opens.
+        for _ in range(50):
+            probe = http.client.HTTPConnection("127.0.0.1", PORT, timeout=5)
+            probe.request("GET", "/healthz")
+            probe.getresponse().read()
+            probe.close()
+        time.sleep(3)
+        report_opens("calibration, 50 new connections", opens)
+        print(f"TIME_WAIT after calibration: {snapshot()[:2]}", flush=True)
         stop.set()
         sampler.join()
 
