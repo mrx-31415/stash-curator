@@ -8,13 +8,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func withoutRetryDelays(t *testing.T) {
+	previous := requestRetryDelays
+	requestRetryDelays = []time.Duration{0, 0}
+	t.Cleanup(func() { requestRetryDelays = previous })
+}
 
 // Each failure a forum report has shown names the server and operation and
 // says what kind of failure it was, so a dropped connection, a foreign
 // response and an auth failure can be told apart from the message alone.
 func TestRequestFailuresAreDiagnosable(t *testing.T) {
+	withoutRetryDelays(t)
 	pluginDir := t.TempDir()
 	setNetworkFailureDir(pluginDir)
 	t.Cleanup(func() { networkFailureDir = "" })
@@ -49,7 +58,7 @@ func TestRequestFailuresAreDiagnosable(t *testing.T) {
 		name, base, category, kind string
 		want                       []string
 	}{
-		{"dropped", drop.URL, "stash", "reset", []string{"Stash request failed:", "(Probe, after ", "connection closed before a response"}},
+		{"dropped", drop.URL, "stash", "reset", []string{"Stash request failed:", "(Probe, after ", ", 3 attempts)", "connection closed before a response"}},
 		{"refused", refused, "stash", "refused", []string{"Stash request failed:", "check Stash's host and port"}},
 		{"empty 401", unauthorized.URL, "stashdb", "http_status", []string{"Stash-box returned an error status (Probe, HTTP 401): empty body", "API key"}},
 		{"html", html.URL, "stash", "unexpected_response", []string{`Stash returned invalid JSON (Probe, HTTP 200, text/html): "<html> <body>Router login</body> </html>"`, "did not come from Stash"}},
@@ -135,5 +144,61 @@ func TestFailureLogKeepsTheNewestEntries(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Size() > 32*1024 {
 		t.Fatalf("failure log was not trimmed: %v %v", info, err)
+	}
+}
+
+// Read-only queries survive a dropped connection or a gateway error; a
+// mutation, which may already have been applied, and a refused connection
+// fail at once.
+func TestTransientFailuresRetryQueriesOnly(t *testing.T) {
+	withoutRetryDelays(t)
+	var requests atomic.Int32
+	failFirst := func(failures int32, fail func(http.ResponseWriter)) *httptest.Server {
+		requests.Store(0)
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if requests.Add(1) <= failures {
+				fail(w)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"ok":true}}`)
+		}))
+	}
+	drop := func(w http.ResponseWriter) {
+		connection, _, _ := w.(http.Hijacker).Hijack()
+		connection.Close()
+	}
+	unavailable := func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }
+
+	for _, tc := range []struct {
+		name     string
+		failures int32
+		fail     func(http.ResponseWriter)
+		document string
+		ok       bool
+		requests int32
+	}{
+		{"dropped query", 2, drop, "query Probe { ok }", true, 3},
+		{"unavailable query", 1, unavailable, "query Probe { ok }", true, 2},
+		{"persistent drop", 5, drop, "query Probe { ok }", false, 3},
+		{"dropped mutation", 1, drop, "\nmutation Change { ok }", false, 1},
+	} {
+		server := failFirst(tc.failures, tc.fail)
+		_, err := graphqlQuery(server.URL, nil, tc.document, jvNull())
+		server.Close()
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: error %v, want ok=%v", tc.name, err, tc.ok)
+		}
+		if got := requests.Load(); got != tc.requests {
+			t.Errorf("%s: %d requests, want %d", tc.name, got, tc.requests)
+		}
+	}
+
+	listener, _ := net.Listen("tcp", "127.0.0.1:0")
+	refused := "http://" + listener.Addr().String()
+	listener.Close()
+	_, err := graphqlQuery(refused, nil, "query Probe { ok }", jvNull())
+	if err == nil || strings.Contains(err.Error(), "attempts") {
+		t.Fatalf("refused connection was retried: %v", err)
 	}
 }

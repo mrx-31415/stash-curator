@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ type requestError struct {
 	server      string // "Stash", "StashDB" or "Stash-box"
 	operation   string
 	elapsed     time.Duration
+	attempts    int
 	cause       error  // transport failure, when no response arrived
 	status      int    // HTTP status, when a response arrived
 	contentType string // response Content-Type
@@ -42,7 +44,7 @@ type requestError struct {
 func (e *requestError) Error() string {
 	if e.cause != nil {
 		kind := classifyNetworkError(e.cause)
-		message := fmt.Sprintf("%s request failed: %v (%s, after %s)", e.server, e.cause, e.operation, formatElapsed(e.elapsed))
+		message := fmt.Sprintf("%s request failed: %v (%s, after %s%s)", e.server, e.cause, e.operation, formatElapsed(e.elapsed), e.attemptsText())
 		if hint := networkHint(kind, e.server); hint != "" {
 			message += ". " + hint
 		}
@@ -57,6 +59,9 @@ func (e *requestError) Error() string {
 		verb = " "
 	}
 	details := []string{e.operation, fmt.Sprintf("HTTP %d", e.status)}
+	if e.attempts > 1 {
+		details = append(details, fmt.Sprintf("%d attempts", e.attempts))
+	}
 	if e.contentType != "" {
 		details = append(details, e.contentType)
 	}
@@ -73,6 +78,47 @@ func (e *requestError) Error() string {
 }
 
 func (e *requestError) Unwrap() error { return e.cause }
+
+func (e *requestError) attemptsText() string {
+	if e.attempts > 1 {
+		return fmt.Sprintf(", %d attempts", e.attempts)
+	}
+	return ""
+}
+
+// requestRetryDelays are the pauses before each retry of a read-only query.
+var requestRetryDelays = []time.Duration{250 * time.Millisecond, time.Second}
+
+// retryable reports a failure that a moment's wait can clear: a dropped
+// connection, a briefly exhausted port range, or a gateway error. Refused
+// connections, timeouts and answers from the server are not retried, since
+// retrying them would only repeat or lengthen the same failure.
+func (e *requestError) retryable() bool {
+	switch e.kind() {
+	case "reset", "ports_exhausted":
+		return true
+	case "http_status":
+		return e.status == http.StatusBadGateway || e.status == http.StatusServiceUnavailable || e.status == http.StatusGatewayTimeout
+	}
+	return false
+}
+
+// graphqlIsMutation reports a document whose operation is a mutation. Only
+// queries are retried: a mutation that failed after reaching the server may
+// already have been applied.
+func graphqlIsMutation(document string) bool {
+	return regexp.MustCompile(`^\s*mutation\b`).MatchString(stripGraphQLComments(document))
+}
+
+func stripGraphQLComments(document string) string {
+	lines := strings.Split(document, "\n")
+	for i, line := range lines {
+		if index := strings.IndexByte(line, '#'); index >= 0 {
+			lines[i] = line[:index]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 // kind is the privacy-safe failure class kept in the recent-failure log.
 func (e *requestError) kind() string {
