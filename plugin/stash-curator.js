@@ -1612,6 +1612,20 @@
     );
   }
 
+  // Stash and every plugin share one localStorage origin of a few MB. Durable
+  // outboxes keep their newest entries and send in bounded batches; a write
+  // that still fails returns false so callers can send directly instead.
+  const QUEUE_LIMIT = 1000;
+  const QUEUE_BATCH = 200;
+  function writeQueue(key, entries) {
+    try {
+      localStorage.setItem(key, JSON.stringify(entries.slice(-QUEUE_LIMIT)));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function readTagPreferenceQueue() {
     try {
       const value = JSON.parse(localStorage.getItem(TAG_PREFERENCE_QUEUE_KEY) || "[]");
@@ -1633,7 +1647,7 @@
   }
 
   async function drainTagPreferenceQueue() {
-    for (let entries = readTagPreferenceQueue(); entries.length; entries = readTagPreferenceQueue()) {
+    for (let entries = readTagPreferenceQueue().slice(0, QUEUE_BATCH); entries.length; entries = readTagPreferenceQueue().slice(0, QUEUE_BATCH)) {
       try {
         await operation({ operation: "submit_tag_preferences", entries });
       } catch (_) {
@@ -1641,7 +1655,7 @@
         return;
       }
       const sent = new Set(entries.map((entry) => entry.preference_id));
-      localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(readTagPreferenceQueue().filter((entry) => !sent.has(entry.preference_id))));
+      if (!writeQueue(TAG_PREFERENCE_QUEUE_KEY, readTagPreferenceQueue().filter((entry) => !sent.has(entry.preference_id)))) return;
       clearSlateCache();
       scheduleModelUpdate();
     }
@@ -1666,7 +1680,7 @@
   }
 
   async function drainSceneReasonQueue() {
-    for (let entries = readSceneReasonQueue(); entries.length; entries = readSceneReasonQueue()) {
+    for (let entries = readSceneReasonQueue().slice(0, QUEUE_BATCH); entries.length; entries = readSceneReasonQueue().slice(0, QUEUE_BATCH)) {
       try {
         await operation({ operation: "submit_scene_reasons", entries });
       } catch (_) {
@@ -1674,11 +1688,7 @@
         return;
       }
       const sent = new Set(entries.map((entry) => entry.answer_id));
-      try {
-        localStorage.setItem(SCENE_REASON_QUEUE_KEY, JSON.stringify(readSceneReasonQueue().filter((entry) => !sent.has(entry.answer_id))));
-      } catch (_) {
-        return;
-      }
+      if (!writeQueue(SCENE_REASON_QUEUE_KEY, readSceneReasonQueue().filter((entry) => !sent.has(entry.answer_id)))) return;
       clearSlateCache();
       scheduleModelUpdate();
     }
@@ -1686,9 +1696,7 @@
 
   function submitSceneReason(entry) {
     const answer = { answer_id: uuid(), occurred_at_ms: Date.now(), ...entry };
-    try {
-      localStorage.setItem(SCENE_REASON_QUEUE_KEY, JSON.stringify([...readSceneReasonQueue(), answer]));
-    } catch (_) {
+    if (!writeQueue(SCENE_REASON_QUEUE_KEY, [...readSceneReasonQueue(), answer])) {
       // Without storage, send this answer directly; a failure loses only it.
       operation({ operation: "submit_scene_reasons", entries: [answer] }).then(scheduleModelUpdate).catch(() => {});
       return;
@@ -1697,9 +1705,14 @@
   }
 
   function submitTagPreference(tagId, {value, blocked}) {
-    const queue = readTagPreferenceQueue();
-    queue.push({ preference_id: uuid(), tag_id: tagId, value, blocked: !!blocked, occurred_at_ms: Date.now() });
-    localStorage.setItem(TAG_PREFERENCE_QUEUE_KEY, JSON.stringify(queue));
+    const entry = { preference_id: uuid(), tag_id: tagId, value, blocked: !!blocked, occurred_at_ms: Date.now() };
+    if (!writeQueue(TAG_PREFERENCE_QUEUE_KEY, [...readTagPreferenceQueue(), entry])) {
+      // Without storage, send this answer directly; a failure loses only it.
+      operation({ operation: "submit_tag_preferences", entries: [entry] })
+        .then(() => { clearSlateCache(); scheduleModelUpdate(); })
+        .catch(() => {});
+      return;
+    }
     flushTagPreferenceQueue();
   }
 
@@ -8232,23 +8245,31 @@
     return entry.session_id || entry.event_id;
   }
 
+  function eventsSent(entries) {
+    if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
+      clearSlateCache(true);
+      scheduleModelUpdate();
+      schedulePlaySync();
+    }
+  }
+
+  // Drains in batches, including events queued while a batch was in flight.
   let flushing = false;
   async function flushQueue() {
     if (flushing) return;
-    const entries = readQueue();
-    if (!entries.length) return;
     flushing = true;
     try {
-      await operation({ operation: "submit_events", entries });
-      if (entries.some((entry) => entry.event_type !== "qualified_impression")) {
-        clearSlateCache(true);
-        scheduleModelUpdate();
-        schedulePlaySync();
+      for (let entries = readQueue().slice(0, QUEUE_BATCH); entries.length; entries = readQueue().slice(0, QUEUE_BATCH)) {
+        try {
+          await operation({ operation: "submit_events", entries });
+        } catch (_) {
+          // Durable queue retries on the next route, online event, or plugin page load.
+          return;
+        }
+        eventsSent(entries);
+        const sent = new Set(entries.map(queueId));
+        if (!writeQueue(EVENT_QUEUE_KEY, readQueue().filter((entry) => !sent.has(queueId(entry))))) return;
       }
-      const sent = new Set(entries.map(queueId));
-      localStorage.setItem(EVENT_QUEUE_KEY, JSON.stringify(readQueue().filter((entry) => !sent.has(queueId(entry)))));
-    } catch (_) {
-      // Durable queue retries on the next route, online event, or plugin page load.
     } finally {
       flushing = false;
     }
@@ -8256,8 +8277,15 @@
 
   function enqueue(entry) {
     const queue = readQueue();
-    if (!queue.some((item) => queueId(item) === queueId(entry))) queue.push(entry);
-    localStorage.setItem(EVENT_QUEUE_KEY, JSON.stringify(queue));
+    if (queue.some((item) => queueId(item) === queueId(entry))) {
+      flushQueue();
+      return;
+    }
+    if (!writeQueue(EVENT_QUEUE_KEY, [...queue, entry])) {
+      // Without storage, send this event directly; a failure loses only it.
+      operation({ operation: "submit_events", entries: [entry] }).then(() => eventsSent([entry])).catch(() => {});
+      return;
+    }
     flushQueue();
   }
 

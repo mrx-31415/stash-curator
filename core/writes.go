@@ -412,8 +412,9 @@ type tagPreferenceEntry struct {
 	occurredAtMs int64
 }
 
-// normalizeTagPreferenceEntry mirrors InteractionStore._tag_preference_entry.
-func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error) {
+// normalizeTagPreferenceEntry mirrors InteractionStore._tag_preference_entry;
+// ok is false for a tag that is gone or has no tag role, which is dropped.
+func normalizeTagPreferenceEntry(db dbx, entry jVal) (item tagPreferenceEntry, ok bool, err error) {
 	preferenceID := pythonStrOrEmpty(entry.get("preference_id"))
 	tagID := pythonStrOrEmpty(entry.get("tag_id"))
 	occurredAtMs := pythonIntErrOr(entry.get("occurred_at_ms"), -1)
@@ -421,11 +422,11 @@ func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error)
 	value := entry.get("value")
 	if value.kind != jNull {
 		if value.kind == jBool || !isJSONNumber(value) {
-			return tagPreferenceEntry{}, fmt.Errorf("tag sentiment must be numeric or null")
+			return tagPreferenceEntry{}, false, fmt.Errorf("tag sentiment must be numeric or null")
 		}
 		f, err := pythonFloat(value)
 		if err != nil || !tagSentimentValues[f] {
-			return tagPreferenceEntry{}, fmt.Errorf("tag sentiment must use the fixed seven-point scale")
+			return tagPreferenceEntry{}, false, fmt.Errorf("tag sentiment must use the fixed seven-point scale")
 		}
 		value = jvFloat(f)
 	}
@@ -433,20 +434,20 @@ func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error)
 		value = jvFloat(blockedTagValue)
 	}
 	if preferenceID == "" || tagID == "" || occurredAtMs < 0 {
-		return tagPreferenceEntry{}, fmt.Errorf("preference_id, tag_id, and occurred_at_ms are required")
+		return tagPreferenceEntry{}, false, fmt.Errorf("preference_id, tag_id, and occurred_at_ms are required")
 	}
 	configVersion, err := effectiveTagRoleConfigVersion(db)
 	if err != nil {
-		return tagPreferenceEntry{}, err
+		return tagPreferenceEntry{}, false, err
 	}
 	var one int
 	err = db.QueryRow(`SELECT 1 FROM tag_role WHERE config_version=? AND tag_id=?`,
 		configVersion, tagID).Scan(&one)
 	if err == sql.ErrNoRows {
-		return tagPreferenceEntry{}, fmt.Errorf("unknown or unsupported tag: %s", tagID)
+		return tagPreferenceEntry{}, false, nil
 	}
 	if err != nil {
-		return tagPreferenceEntry{}, err
+		return tagPreferenceEntry{}, false, err
 	}
 	return tagPreferenceEntry{
 		preferenceID: preferenceID,
@@ -454,7 +455,7 @@ func normalizeTagPreferenceEntry(db dbx, entry jVal) (tagPreferenceEntry, error)
 		value:        value,
 		blocked:      blocked,
 		occurredAtMs: occurredAtMs,
-	}, nil
+	}, true, nil
 }
 
 func opSubmitTagPreferences(pluginDir string, payload jVal) (jVal, error) {
@@ -473,13 +474,15 @@ func submitTagPreferencesBody(pluginDir string, payload, settings jVal) (jVal, e
 	}
 	defer db.Close()
 	ensureAutoWorker(pluginDir, payload, settings, db)
-	normalized := make([]tagPreferenceEntry, len(entries.arr))
-	for i, entry := range entries.arr {
-		item, err := normalizeTagPreferenceEntry(db, entry)
+	normalized := make([]tagPreferenceEntry, 0, len(entries.arr))
+	for _, entry := range entries.arr {
+		item, ok, err := normalizeTagPreferenceEntry(db, entry)
 		if err != nil {
 			return jvNull(), err
 		}
-		normalized[i] = item
+		if ok {
+			normalized = append(normalized, item)
+		}
 	}
 	inserted := int64(0)
 	err = withTxn(db, func(conn *sql.Conn) error {
@@ -585,36 +588,37 @@ type sceneReasonEntry struct {
 	occurredAtMs int64
 }
 
-// normalizeSceneReasonEntry mirrors InteractionStore._scene_reason_entry.
-func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
+// normalizeSceneReasonEntry mirrors InteractionStore._scene_reason_entry;
+// ok is false for a scene no longer in the library, which is dropped.
+func normalizeSceneReasonEntry(db dbx, entry jVal) (item sceneReasonEntry, ok bool, err error) {
 	answerID := pythonStrOrEmpty(entry.get("answer_id"))
 	sceneID := pythonStrOrEmpty(entry.get("scene_id"))
 	occurredAtMs := pythonIntErrOr(entry.get("occurred_at_ms"), -1)
 	if answerID == "" || sceneID == "" || occurredAtMs < 0 {
-		return sceneReasonEntry{}, fmt.Errorf("answer_id, scene_id, and occurred_at_ms are required")
+		return sceneReasonEntry{}, false, fmt.Errorf("answer_id, scene_id, and occurred_at_ms are required")
 	}
 	polarity := entry.get("polarity")
 	if !isJSONInt(polarity) || (polarity.num != "1" && polarity.num != "-1") {
-		return sceneReasonEntry{}, fmt.Errorf("polarity must be 1 or -1")
+		return sceneReasonEntry{}, false, fmt.Errorf("polarity must be 1 or -1")
 	}
 	reasons := entry.get("reasons")
 	if !isList(reasons) || len(reasons.arr) > sceneReasonLimit {
-		return sceneReasonEntry{}, fmt.Errorf("reasons must be a list of at most 20 items")
+		return sceneReasonEntry{}, false, fmt.Errorf("reasons must be a list of at most 20 items")
 	}
 	subjects := make([]sceneReasonSubject, 0, len(reasons.arr))
 	for _, reason := range reasons.arr {
 		if reason.kind != jObj {
-			return sceneReasonEntry{}, fmt.Errorf("each reason must be an object")
+			return sceneReasonEntry{}, false, fmt.Errorf("each reason must be an object")
 		}
 		kind := pythonStrOrEmpty(reason.get("subject_type"))
 		if !sceneReasonSubjects[kind] {
-			return sceneReasonEntry{}, fmt.Errorf("unsupported reason subject: %s", kind)
+			return sceneReasonEntry{}, false, fmt.Errorf("unsupported reason subject: %s", kind)
 		}
 		subject := ""
 		if kind != "scene" {
 			subject = pythonStrOrEmpty(reason.get("subject_id"))
 			if subject == "" {
-				return sceneReasonEntry{}, fmt.Errorf("reason subject_id is required")
+				return sceneReasonEntry{}, false, fmt.Errorf("reason subject_id is required")
 			}
 		}
 		subjects = append(subjects, sceneReasonSubject{kind: kind, id: subject})
@@ -622,18 +626,18 @@ func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
 	flipped := entry.get("flipped").truthy()
 	flipStrength := argsString(entry, "flip_strength", "mild")
 	if flipStrength != "mild" && flipStrength != "strong" {
-		return sceneReasonEntry{}, fmt.Errorf("flip_strength must be mild or strong")
+		return sceneReasonEntry{}, false, fmt.Errorf("flip_strength must be mild or strong")
 	}
 	if len(subjects) == 0 && !flipped {
-		return sceneReasonEntry{}, fmt.Errorf("an answer needs a reason or a flip")
+		return sceneReasonEntry{}, false, fmt.Errorf("an answer needs a reason or a flip")
 	}
 	var one int
-	err := db.QueryRow(`SELECT 1 FROM source_scene WHERE scene_id=?`, sceneID).Scan(&one)
+	err = db.QueryRow(`SELECT 1 FROM source_scene WHERE scene_id=?`, sceneID).Scan(&one)
 	if err == sql.ErrNoRows {
-		return sceneReasonEntry{}, fmt.Errorf("unknown scene: %s", sceneID)
+		return sceneReasonEntry{}, false, nil
 	}
 	if err != nil {
-		return sceneReasonEntry{}, err
+		return sceneReasonEntry{}, false, err
 	}
 	value := int64(1)
 	if polarity.num == "-1" {
@@ -642,7 +646,7 @@ func normalizeSceneReasonEntry(db dbx, entry jVal) (sceneReasonEntry, error) {
 	return sceneReasonEntry{
 		answerID: answerID, sceneID: sceneID, polarity: value, flipped: flipped,
 		flipStrength: flipStrength, reasons: subjects, occurredAtMs: occurredAtMs,
-	}, nil
+	}, true, nil
 }
 
 func opSubmitSceneReasons(pluginDir string, payload jVal) (jVal, error) {
@@ -661,13 +665,15 @@ func submitSceneReasonsBody(pluginDir string, payload, settings jVal) (jVal, err
 	}
 	defer db.Close()
 	ensureAutoWorker(pluginDir, payload, settings, db)
-	normalized := make([]sceneReasonEntry, len(entries.arr))
-	for i, entry := range entries.arr {
-		item, err := normalizeSceneReasonEntry(db, entry)
+	normalized := make([]sceneReasonEntry, 0, len(entries.arr))
+	for _, entry := range entries.arr {
+		item, ok, err := normalizeSceneReasonEntry(db, entry)
 		if err != nil {
 			return jvNull(), err
 		}
-		normalized[i] = item
+		if ok {
+			normalized = append(normalized, item)
+		}
 	}
 	inserted := int64(0)
 	err = withTxn(db, func(conn *sql.Conn) error {

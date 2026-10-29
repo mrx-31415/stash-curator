@@ -256,7 +256,7 @@ func statusHint(status int, server string) string {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		if server == "Stash" {
-			return "Stash rejected Curator's session; reload the page and sign in again"
+			return "The request was refused: Stash's session may have expired (reload the page and sign in again), or a proxy in front of Stash refused it"
 		}
 		return "Check the Stash-box API key in Stash settings"
 	case status == http.StatusTooManyRequests:

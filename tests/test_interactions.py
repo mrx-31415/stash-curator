@@ -82,8 +82,17 @@ def test_tag_preferences_validate_replace_clear_and_ignore_stale_retries(tmp_pat
 
     with pytest.raises(ValueError, match="seven-point"):
         store.submit_tag_preferences([{**positive, "preference_id": "bad", "value": 0.25}])
-    with pytest.raises(ValueError, match="unsupported"):
-        store.submit_tag_preferences([{**positive, "preference_id": "unknown", "tag_id": "x"}])
+    # A tag that is gone is dropped, not failed, so the rest of the batch lands
+    # and the browser outbox can drain.
+    unknown = {**positive, "preference_id": "unknown", "tag_id": "x"}
+    later = {**positive, "preference_id": "later", "occurred_at_ms": 35}
+    assert store.submit_tag_preferences([unknown, later]) == 1
+    assert (
+        connection.execute(
+            "SELECT preference_id FROM direct_tag_preference WHERE tag_id='good'"
+        ).fetchone()[0]
+        == "later"
+    )
 
     blocked = {
         "preference_id": "blocked",
