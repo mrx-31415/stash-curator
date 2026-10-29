@@ -14,6 +14,10 @@ jobs:
   probe:
     runs-on: windows-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        curator: [v0.45.0, v0.44.0, v0.42.2, v0.40.6, v0.38.2, v0.35.0]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
@@ -24,7 +28,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stash" | Out-Null
           Invoke-WebRequest -Uri https://github.com/stashapp/stash/releases/download/v0.31.1/stash-win.exe -OutFile "$env:RUNNER_TEMP\stash\stash-win.exe"
-          Invoke-WebRequest -Uri https://github.com/mrx-31415/stash-curator/releases/download/v0.45.0/stash-curator-windows-amd64.zip -OutFile "$env:RUNNER_TEMP\curator.zip"
+          Invoke-WebRequest -Uri https://github.com/mrx-31415/stash-curator/releases/download/${{ matrix.curator }}/stash-curator-windows-amd64.zip -OutFile "$env:RUNNER_TEMP\curator.zip"
       - name: Install browser
         shell: pwsh
         run: |
@@ -39,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-churn
+          name: windows-churn-${{ matrix.curator }}
           path: |
             ${{ runner.temp }}/stash/stash.log
             ${{ runner.temp }}/stash/churn.csv
