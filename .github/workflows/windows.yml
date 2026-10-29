@@ -1,0 +1,111 @@
+name: Windows
+
+# Curator's most frequent field failures come from native Windows installs,
+# which the Linux jobs cannot exercise: Windows socket errors, process
+# handling, and Stash's own Windows build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "core/**"
+      - "plugin/**"
+      - "scripts/build_plugin.py"
+      - "scripts/windows_smoke.py"
+      - ".github/workflows/windows.yml"
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Compiled core tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: core/go.sum
+      - name: Install zig (C compiler for the sqlite driver)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP"
+          "$env:RUNNER_TEMP\zig-x86_64-windows-0.15.2" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Vet and test
+        working-directory: core
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CC: zig cc -target x86_64-windows-gnu
+        run: |
+          go vet ./...
+          go test ./...
+
+  package:
+    name: Package Windows build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.21"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: core/go.sum
+      - name: Install zig (C cross-compiler for the sqlite driver)
+        run: |
+          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          tar -C "$HOME" -xf /tmp/zig.tar.xz
+          echo "$HOME/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
+      - run: uv run --frozen python scripts/build_plugin.py --platform windows/amd64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stash-curator-windows
+          path: dist/stash-curator.zip
+
+  smoke:
+    name: Native Stash smoke test (Windows)
+    runs-on: windows-latest
+    needs: package
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v7
+        with:
+          name: stash-curator-windows
+          path: ${{ runner.temp }}/curator
+      - name: Download Stash
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stash" | Out-Null
+          Invoke-WebRequest -Uri https://github.com/stashapp/stash/releases/download/v0.31.1/stash-win.exe -OutFile "$env:RUNNER_TEMP\stash\stash-win.exe"
+      - name: Install browser
+        run: |
+          python -m pip install playwright==1.62.0
+          python -m playwright install chromium
+      - name: Smoke test
+        run: python -u scripts/windows_smoke.py "${{ runner.temp }}\stash" "${{ runner.temp }}\curator\stash-curator.zip"
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-smoke-logs
+          path: |
+            ${{ runner.temp }}/stash/stash.log
+            ${{ runner.temp }}/stash/curator-page.png
+            ${{ runner.temp }}/stash/plugins/stash-curator/data/*.log
+            ${{ runner.temp }}/stash/plugins/stash-curator/data/*.jsonl
+          if-no-files-found: warn
