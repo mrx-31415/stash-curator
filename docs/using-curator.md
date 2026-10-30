@@ -15,7 +15,7 @@ excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
 ## Choose a lane
 
 <figure class="capture guide-capture">
-  <img src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" alt="For You recommendations with six scene previews and the six lane choices above them" width="960" height="675" loading="lazy">
+  <img src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" alt="For You recommendations with scene cards below the seven lane choices" width="960" height="675" loading="lazy">
   <figcaption>For You is one of seven recommendation lanes.</figcaption>
 </figure>
 
@@ -404,7 +404,7 @@ local profile instead. **Manage → Feedback history** lists these performers wi
 ### Similar
 
 <figure class="capture guide-capture">
-  <img src="{{ '/assets/showcase-find-poster.jpg' | relative_url }}" alt="Find with Expand, Similar, and Performer Hunt tabs above six related scene previews" width="960" height="675" loading="lazy">
+  <img src="{{ '/assets/showcase-find-poster.jpg' | relative_url }}" alt="Find's Similar view comparing a library scene with related scene cards below the Expand, Similar, and Performer Hunt tabs" width="960" height="675" loading="lazy">
   <figcaption>Similar results from the library for a selected scene.</figcaption>
 </figure>
 
