@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/mrx-31415/stash-curator/compare/v0.48.0...v0.49.0) (2026-10-30)
+
+
+### Features
+
+* add a swipe Deck view for triaging Find scenes ([#438](https://github.com/mrx-31415/stash-curator/issues/438)) ([c4c3fcc](https://github.com/mrx-31415/stash-curator/commit/c4c3fcc1c942c0e220a8a85fc472ff6a7f7c28fa))
+
 ## [0.48.0](https://github.com/mrx-31415/stash-curator/compare/v0.47.0...v0.48.0) (2026-10-30)
 
 
