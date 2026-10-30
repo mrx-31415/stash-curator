@@ -4961,3 +4961,360 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-home-editor h2[data-curator-label]:empty::before {
   content: attr(data-curator-label);
 }
+
+/* Find Deck: one Stash-box scene at a time. The card takes every touch
+   gesture (touch-action: none); the page still scrolls outside it. */
+.curator-deck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.75rem auto 0;
+  max-width: 34rem;
+  width: 100%;
+}
+
+.curator-deck-status {
+  color: var(--curator-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.curator-deck-status strong {
+  color: var(--curator-text);
+}
+
+.curator-deck-stage {
+  display: grid;
+  width: 100%;
+}
+
+.curator-deck-stage > * {
+  grid-area: 1 / 1;
+}
+
+.curator-deck-card {
+  background: var(--curator-card-surface);
+  border: 1px solid var(--curator-card-border);
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-card-shadow-lg);
+  color: var(--curator-card-text);
+  cursor: grab;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.curator-deck-card.curator-deck-dragging {
+  cursor: grabbing;
+}
+
+.curator-deck-card-back {
+  opacity: 0.6;
+  pointer-events: none;
+  transform: scale(0.96) translateY(0.5rem);
+}
+
+.curator-deck-leaving-left {
+  opacity: 0;
+  transform: translateX(-120%) rotate(-8deg) !important;
+}
+
+.curator-deck-leaving-right {
+  opacity: 0;
+  transform: translateX(120%) rotate(8deg) !important;
+}
+
+.curator-deck-leaving-up {
+  opacity: 0;
+  transform: translateY(-80%) !important;
+}
+
+.curator-deck-image {
+  aspect-ratio: 16 / 9;
+  background: var(--curator-wash-recessed);
+  position: relative;
+}
+
+.curator-deck-image .scene-card-image {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  width: 100%;
+}
+
+.curator-deck-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  left: 0.5rem;
+  position: absolute;
+  top: 0.5rem;
+}
+
+.curator-deck-badges > span {
+  position: static;
+}
+
+.curator-deck-badge {
+  background: var(--curator-accent);
+  border-radius: var(--curator-radius-sm);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.35rem;
+}
+
+.curator-deck-card .card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0.8rem 0.8rem;
+}
+
+.curator-deck-card .card-section-title {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.curator-deck-meta {
+  color: var(--curator-card-text-muted);
+  display: flex;
+  font-size: 0.85rem;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.curator-deck-score {
+  white-space: nowrap;
+}
+
+.curator-deck-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.curator-deck-people {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0 0.8rem 0.7rem;
+  touch-action: pan-x;
+}
+
+.curator-deck-person {
+  display: flex;
+  flex: 0 0 4.5rem;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.curator-deck-person-photo {
+  aspect-ratio: 2 / 3;
+  background: var(--curator-wash-recessed);
+  border: 2px solid transparent;
+  border-radius: var(--curator-radius-sm);
+  display: block;
+  overflow: hidden;
+  width: 4.5rem;
+}
+
+.curator-deck-person-local .curator-deck-person-photo {
+  border-color: #2b8a3e;
+}
+
+.curator-deck-person-photo img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.curator-deck-person-photo .curator-card-placeholder {
+  align-items: center;
+  display: flex;
+  font-size: 1.4rem;
+  height: 100%;
+  justify-content: center;
+}
+
+.curator-deck-person-name {
+  color: var(--curator-card-text);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curator-deck-person-local .curator-deck-person-name {
+  color: #8ce99a;
+}
+
+.curator-deck-people > .curator-deck-more {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.curator-deck-more {
+  color: var(--curator-card-text-muted);
+  font-size: 0.8rem;
+}
+
+.curator-deck-reason {
+  color: var(--curator-card-text-muted);
+  display: -webkit-box;
+  font-size: 0.85rem;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.curator-deck-reason-full {
+  display: block;
+}
+
+.curator-deck-details {
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.curator-deck-link {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0 0.8rem 0.7rem;
+}
+
+/* The swipe hint over the cover: the light action, the hold bar, then the
+   strong action. The current step is lit; a passed step is struck out. */
+.curator-deck-hint {
+  background: var(--curator-overlay);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius);
+  box-shadow: var(--curator-card-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  left: 50%;
+  min-width: 12rem;
+  padding: 0.55rem 0.8rem;
+  position: absolute;
+  top: 1rem;
+  transform: translateX(-50%);
+  z-index: 4;
+}
+
+.curator-deck-hint-step {
+  color: var(--curator-text-muted);
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  opacity: 0.7;
+}
+
+.curator-deck-hint-step small {
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.curator-deck-hint-step span {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.curator-deck-hint-step.curator-deck-hint-current {
+  color: var(--curator-deck-tone);
+  opacity: 1;
+}
+
+.curator-deck-hint-step.curator-deck-hint-current span {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.curator-deck-hint-step.curator-deck-hint-passed {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.curator-deck-hint-not_now,
+.curator-deck-hint-skip { --curator-deck-tone: #e9ecef; }
+.curator-deck-hint-not_interested { --curator-deck-tone: #ff6b6b; }
+.curator-deck-hint-shortlist { --curator-deck-tone: #74c0fc; }
+.curator-deck-hint-whisparr { --curator-deck-tone: #ffd43b; }
+
+.curator-deck-hold {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  height: 0.35rem;
+  overflow: hidden;
+}
+
+.curator-deck-hold > span {
+  background: var(--curator-deck-tone);
+  display: block;
+  height: 100%;
+}
+
+.curator-deck-follow-up,
+.curator-deck-empty {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 14rem;
+  text-align: center;
+}
+
+.curator-deck-follow-up .curator-tag-follow-up {
+  position: static;
+  text-align: left;
+  width: 100%;
+}
+
+.curator-deck-actions {
+  background: var(--curator-bg);
+  bottom: 0;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  padding: 0.4rem 0;
+  position: sticky;
+  width: 100%;
+  z-index: 5;
+}
+
+.curator-deck-action.btn {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  height: 2.75rem;
+  justify-content: center;
+  padding: 0;
+  width: 2.75rem;
+}
+
+.curator-deck-action-not_interested.btn:not(:disabled) { color: #ff6b6b; }
+.curator-deck-action-shortlist.btn:not(:disabled) { color: #74c0fc; }
+
+.curator-deck-notice {
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.curator-deck-shortcuts {
+  color: var(--curator-text-muted);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-deck-card {
+    transition: none;
+  }
+}

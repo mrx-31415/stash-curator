@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faInbox, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faForward, faGlobe, faHeart, faHistory, faInbox, faList, faMoon, faPlay, faPlayCircle, faRotateLeft, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -284,7 +284,10 @@
   }
   function useFindView() {
     const [view, setView] = React.useState(() => {
-      try { return window.localStorage.getItem(FIND_VIEW_KEY) === "thumbnails" ? "thumbnails" : "cards"; }
+      try {
+        const value = window.localStorage.getItem(FIND_VIEW_KEY);
+        return value === "thumbnails" || value === "deck" ? value : "cards";
+      }
       catch { return "cards"; }
     });
     function changeView(value) {
@@ -3950,6 +3953,435 @@
     );
   });
 
+  // Deck: one Stash-box scene at a time in Find, for quick triage. A short
+  // swipe (or arrow tap) takes the light action; dragging past the threshold
+  // and holding until the bar fills (or holding the arrow key) takes the
+  // strong one. Up is Skip. Every action reuses an existing operation.
+  const DECK_SWIPE_FRACTION = 0.25;
+  const DECK_SWIPE_MIN_PX = 60;
+  const DECK_TAP_SLOP_PX = 8;
+  const DECK_HOLD_MS = 700;
+  const DECK_LEAVE_MS = 180;
+  const DECK_WHISPARR_DELAY_MS = 3000;
+  const DECK_PREFETCH = 3;
+  const DECK_TAGS = 6;
+  const DECK_LABELS = { not_interested: "Not interested", not_now: "Not now", skip: "Skip", shortlist: "Shortlist", whisparr: "Whisparr" };
+  const DECK_EXIT = { not_interested: "left", not_now: "left", skip: "up", shortlist: "right", whisparr: "right" };
+  function deckThreshold(width) {
+    return Math.max(DECK_SWIPE_MIN_PX, width * DECK_SWIPE_FRACTION);
+  }
+  // The direction a drag leans toward, before it reaches the threshold.
+  function deckLean(dx, dy) {
+    if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? "left" : "right";
+    return dy < 0 ? "up" : null;
+  }
+  // The zone a drag has reached, or null while it is still inside the threshold.
+  function deckZone(dx, dy, width) {
+    const threshold = deckThreshold(width);
+    if (Math.abs(dx) >= threshold && Math.abs(dx) > Math.abs(dy)) return dx < 0 ? "left" : "right";
+    if (-dy >= threshold && -dy > Math.abs(dx)) return "up";
+    return null;
+  }
+  // Holding only upgrades right to Whisparr when Whisparr is configured.
+  function deckAction(zone, strong, whisparrEnabled) {
+    if (zone === "left") return strong ? "not_interested" : "not_now";
+    if (zone === "right") return strong && whisparrEnabled ? "whisparr" : "shortlist";
+    if (zone === "up") return "skip";
+    return null;
+  }
+  function deckHeld(drag, now) {
+    return Boolean(drag?.heldSince) && now - drag.heldSince >= DECK_HOLD_MS;
+  }
+  function uniqueDeckItems(items, seen) {
+    return (items || []).filter((item) => {
+      if (item.dismissed || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }
+
+  // What letting go does now, and what holding on will do. Before the drag
+  // reaches the threshold the hint fades in; once there, the light action is
+  // current and the bar counts down to the strong one, which then takes over.
+  function DeckHint({ side, armed, reach, progress, whisparrEnabled }) {
+    const light = deckAction(side, false, whisparrEnabled);
+    const strong = deckAction(side, true, whisparrEnabled);
+    const held = progress >= 1;
+    const step = (action, state, prefix) => React.createElement("div", {
+      className: `curator-deck-hint-step curator-deck-hint-${action}${state ? ` curator-deck-hint-${state}` : ""}`,
+    }, prefix && React.createElement("small", null, prefix), React.createElement("span", null, DECK_LABELS[action]));
+    return React.createElement("div", {
+      className: `curator-deck-hint curator-deck-hint-${side}${armed ? " curator-deck-hint-armed" : ""}`,
+      style: { opacity: armed ? 1 : 0.35 + 0.5 * reach }, "aria-hidden": true,
+    },
+      step(light, held ? "passed" : armed ? "current" : "", held ? "" : armed ? "Release for" : "Swipe for"),
+      strong !== light && React.createElement(React.Fragment, null,
+        React.createElement("div", { className: `curator-deck-hold curator-deck-hint-${strong}` }, React.createElement("span", { style: { width: `${Math.round(progress * 100)}%` } })),
+        step(strong, held ? "current" : "", held ? "Release for" : armed ? "Keep holding for" : "Then hold for"))
+    );
+  }
+
+  function DeckCard({ item, gender, expanded, back = false, handlers = {}, style, className = "", hint = null }) {
+    const payload = item.payload || {};
+    const image = externalImageProps(payload.images);
+    const cast = (payload.performers || []).map((value) => value.performer).filter(Boolean);
+    const people = gender ? cast.filter((person) => person.gender === gender) : cast;
+    const tags = payload.tags || [];
+    const meta = [payload.studio?.name, payload.release_date].filter(Boolean).join(" · ");
+    const score = item.similarity !== undefined ? `Similarity ${Number(item.similarity).toFixed(2)}` : `Match ${Number(item.score || 0).toFixed(2)}`;
+    const href = stashboxEntityURL(payload, "scenes", item.id);
+    return React.createElement(
+      "article",
+      { className: `curator-deck-card scene-card${back ? " curator-deck-card-back" : ""} ${className}`, style, "aria-hidden": back || undefined, ...handlers },
+      React.createElement("div", { className: "curator-deck-image thumbnail-section" },
+        image.src ? React.createElement("img", { key: image.key, className: "scene-card-image", src: image.src, onError: image.onError, alt: "", draggable: false })
+          : React.createElement("div", { className: "curator-card-placeholder" }, payload.title || item.id),
+        React.createElement("div", { className: "curator-deck-badges" },
+          payload.curator_local && React.createElement("span", { className: "curator-local-badge" }, "In library"),
+          payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge" }, "Likely local · exact PHash"),
+          item.shortlisted && React.createElement("span", { className: "curator-deck-badge" }, "Shortlisted"),
+          item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge" }, "Wildcard")
+        )
+      ),
+      hint,
+      React.createElement("div", { className: "card-section" },
+        React.createElement("h5", { className: "card-section-title" }, payload.title || item.id),
+        meta && React.createElement("div", { className: "curator-deck-meta" }, meta, React.createElement("span", { className: "curator-deck-score" }, score)),
+        tags.length > 0 && React.createElement("div", { className: "curator-deck-tags" },
+          (expanded ? tags : tags.slice(0, DECK_TAGS)).map((tag) => React.createElement("span", { key: tag.id, className: "tag-item badge badge-secondary" }, tag.name)),
+          !expanded && tags.length > DECK_TAGS && React.createElement("span", { className: "curator-deck-more" }, `+${tags.length - DECK_TAGS}`)),
+        React.createElement("p", { className: `curator-deck-reason${expanded ? " curator-deck-reason-full" : ""}` }, findSceneSummary(item)),
+        expanded && payload.details && React.createElement("p", { className: "curator-deck-details" }, payload.details)
+      ),
+      // Performer previews are controls, so they sit outside card-section and
+      // take their own pointer: the row scrolls sideways instead of swiping.
+      people.length > 0 && React.createElement("div", { className: "curator-deck-people", onPointerDown: (event) => event.stopPropagation() },
+        people.map((person) => {
+          const photo = externalImageProps(person.images);
+          const PersonLink = person.curator_local ? NavLink : "a";
+          const link = person.curator_local
+            ? { to: `/performers/${person.curator_local.id}`, title: "Open local performer profile" }
+            : { href: stashboxEntityURL(payload, "performers", person.id, person), target: "_blank", rel: "noreferrer", title: "Open external performer profile" };
+          return React.createElement("div", { key: person.id, className: `curator-deck-person${person.curator_local ? " curator-deck-person-local" : ""}` },
+            React.createElement("div", { className: "curator-performer-image-actions" },
+              React.createElement(PersonLink, { className: "curator-deck-person-photo", ...link },
+                photo.src ? React.createElement("img", { key: photo.key, src: photo.src, onError: photo.onError, loading: "lazy", draggable: false, alt: person.name || "" })
+                  : React.createElement("span", { className: "curator-card-placeholder" }, (person.name || "?").slice(0, 1))),
+              React.createElement(PerformerHuntLink, { performer: person, external: true })),
+            React.createElement(PersonLink, { className: "curator-deck-person-name", ...link }, person.name));
+        }),
+        cast.length > people.length && React.createElement("small", { className: "curator-deck-more" }, `+${cast.length - people.length} other performers`)),
+      expanded && href && React.createElement("a", { className: "curator-deck-link", href, target: "_blank", rel: "noreferrer", onPointerDown: (event) => event.stopPropagation() },
+        React.createElement(FontAwesomeIcon, { icon: faExternalLinkAlt }), " Open on Stash-box")
+    );
+  }
+
+  // `first` is the view's first batch; Expand pages further through
+  // `loadPage`, while Similar and Hunt hand over their whole list as
+  // `clientItems`. The deck keeps its own queue, so the parent only patches
+  // its items through `onItemChange` to stay in step for the grid views.
+  function TriageDeck({ first, clientItems = null, loadPage, gender, whisparrEnabled, onWhisparr, onItemChange }) {
+    const seen = React.useRef(new Set());
+    const [queue, setQueue] = React.useState(() => uniqueDeckItems(clientItems || first.items, seen.current));
+    const [index, setIndex] = React.useState(0);
+    const [history, setHistory] = React.useState([]);
+    const [drag, setDrag] = React.useState(null);
+    const [leaving, setLeaving] = React.useState(null);
+    const [expanded, setExpanded] = React.useState(false);
+    const [followUp, setFollowUp] = React.useState(null);
+    const [notice, setNotice] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [loading, setLoading] = React.useState(false);
+    const [, setTick] = React.useState(0);
+    const paging = React.useRef({ next: (first.page || 1) + 1, hasMore: !clientItems && Boolean(first.has_more), busy: false });
+    const mounted = React.useRef(true);
+    const pointer = React.useRef(null);
+    const dragRef = React.useRef(null);
+    const keyHold = React.useRef(null);
+    const pending = React.useRef(new Map());
+    const buzzed = React.useRef(false);
+    const latest = React.useRef(null);
+    const item = queue[index];
+
+    function updateDrag(value) {
+      dragRef.current = value;
+      buzzed.current = buzzed.current && Boolean(value?.heldSince);
+      setDrag(value);
+    }
+    function patch(id, change) {
+      setQueue((current) => current.map((value) => value.id === id ? { ...value, ...change } : value));
+      onItemChange?.(id, change);
+    }
+    function send(id) {
+      pending.current.delete(id);
+      setNotice({ id, text: "Sending to Whisparr…" });
+      onWhisparr(id).then(
+        (result) => setNotice({ id, text: result?.status === "already_exists" ? "Already in Whisparr." : "Added to Whisparr." }),
+        (failure) => setNotice({ id, text: `Whisparr: ${failure.message}`, error: true })
+      );
+    }
+    async function perform(action, target) {
+      setError("");
+      try {
+        if (action === "not_now" || action === "not_interested") {
+          await operation({ operation: "update_external_dismissal", external_id: target.id, kind: action });
+          clearEndlessCache();
+          patch(target.id, { dismissed: action });
+        } else if (action === "shortlist" && !target.shortlisted) {
+          await operation({ operation: "update_shortlist", entity_type: "scene", external_id: target.id, selected: true });
+          clearEndlessCache();
+          patch(target.id, { shortlisted: true });
+        } else if (action === "whisparr") {
+          // A short grace period so the toast's Undo can still cancel it.
+          pending.current.set(target.id, setTimeout(() => send(target.id), DECK_WHISPARR_DELAY_MS));
+          setNotice({ id: target.id, text: "Sending to Whisparr…", pending: true });
+        }
+      } catch (failure) {
+        setError(`${DECK_LABELS[action]} was not saved: ${failure.message}`);
+      }
+    }
+    function act(action) {
+      if (!action || !item || leaving || followUp) return;
+      updateDrag(null);
+      setLeaving(DECK_EXIT[action]);
+      setHistory((current) => [...current, { index, action, item, added: action === "shortlist" && !item.shortlisted }]);
+      perform(action, item);
+      setTimeout(() => {
+        if (action === "not_interested") setFollowUp(item);
+        setLeaving(null);
+        setExpanded(false);
+        setIndex((value) => value + 1);
+      }, DECK_LEAVE_MS);
+    }
+    async function undo() {
+      const entry = history.at(-1);
+      if (!entry || leaving) return;
+      setHistory((current) => current.slice(0, -1));
+      setIndex(entry.index);
+      setFollowUp(null);
+      setExpanded(false);
+      setError("");
+      const { item: target } = entry;
+      try {
+        if (entry.action === "not_now" || entry.action === "not_interested") {
+          await operation({ operation: "update_external_dismissal", external_id: target.id, kind: null });
+          clearEndlessCache();
+          patch(target.id, { dismissed: null });
+        } else if (entry.added) {
+          await operation({ operation: "update_shortlist", entity_type: "scene", external_id: target.id, selected: false });
+          clearEndlessCache();
+          patch(target.id, { shortlisted: false });
+        } else if (entry.action === "whisparr") {
+          const timer = pending.current.get(target.id);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            pending.current.delete(target.id);
+            setNotice({ id: target.id, text: "Whisparr send cancelled." });
+          } else {
+            setNotice({ id: target.id, text: "Already sent to Whisparr; remove it there if needed." });
+          }
+        }
+      } catch (failure) {
+        setError(`Undo failed: ${failure.message}`);
+      }
+    }
+    latest.current = { act, undo, whisparrEnabled, onWhisparr, blocked: Boolean(followUp) };
+
+    // Keep a few cards ahead: page Expand forward as the queue runs low.
+    React.useEffect(() => {
+      mounted.current = true;
+      return () => { mounted.current = false; };
+    }, []);
+    React.useEffect(() => {
+      if (paging.current.busy || !paging.current.hasMore || queue.length - index > DECK_PREFETCH) return;
+      paging.current.busy = true;
+      setLoading(true);
+      loadPage(paging.current.next).then(
+        (batch) => {
+          if (!mounted.current) return;
+          paging.current = { next: paging.current.next + 1, hasMore: Boolean(batch?.has_more) && (batch?.items || []).length > 0, busy: false };
+          const added = uniqueDeckItems(batch?.items, seen.current);
+          setQueue((current) => [...current, ...added]);
+          setLoading(false);
+        },
+        (failure) => {
+          if (!mounted.current) return;
+          paging.current = { ...paging.current, hasMore: false, busy: false };
+          setError(failure.message);
+          setLoading(false);
+        }
+      );
+    }, [index, queue.length, loading]);
+    // Warm the next covers so a swipe never reveals a blank card.
+    React.useEffect(() => {
+      for (const next of queue.slice(index + 1, index + 1 + DECK_PREFETCH)) {
+        const src = externalImageProps(next.payload?.images).src;
+        if (src) new Image().src = src;
+      }
+    }, [index, queue.length]);
+    // Repaint while a hold is filling; buzz once when it completes.
+    React.useEffect(() => {
+      if (!drag?.heldSince) return undefined;
+      let frame = requestAnimationFrame(function step() {
+        if (!buzzed.current && deckHeld(dragRef.current, performance.now())) {
+          buzzed.current = true;
+          navigator.vibrate?.(15);
+        }
+        setTick((value) => value + 1);
+        frame = requestAnimationFrame(step);
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [drag?.heldSince]);
+    // Arrow keys mirror the gestures: the light action fires on release, a
+    // hold past DECK_HOLD_MS takes the strong one, and Shift is instant.
+    React.useEffect(() => {
+      const typing = (target) => target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ""));
+      // Space still activates a focused button or link.
+      const pressable = (target) => /^(BUTTON|A)$/.test(target?.tagName || "");
+      function down(event) {
+        if (typing(event.target) || event.altKey || event.ctrlKey || event.metaKey) return;
+        const api = latest.current;
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          if (event.repeat || keyHold.current || api.blocked) return;
+          const zone = event.key === "ArrowLeft" ? "left" : "right";
+          if (event.shiftKey) return api.act(deckAction(zone, true, api.whisparrEnabled));
+          keyHold.current = { key: event.key, zone };
+          updateDrag({ dx: 0, dy: 0, zone, key: true, heldSince: zone === "left" || api.whisparrEnabled ? performance.now() : null });
+        } else if (event.key === "ArrowUp" || (event.key === " " && !pressable(event.target))) {
+          event.preventDefault();
+          if (!event.repeat) api.act("skip");
+        } else if (event.key === "Backspace") {
+          event.preventDefault();
+          api.undo();
+        }
+      }
+      function up(event) {
+        const hold = keyHold.current;
+        if (!hold || event.key !== hold.key) return;
+        keyHold.current = null;
+        const api = latest.current;
+        api.act(deckAction(hold.zone, deckHeld(dragRef.current, performance.now()), api.whisparrEnabled));
+      }
+      function cancel() {
+        if (!keyHold.current) return;
+        keyHold.current = null;
+        updateDrag(null);
+      }
+      window.addEventListener("keydown", down);
+      window.addEventListener("keyup", up);
+      window.addEventListener("blur", cancel);
+      return () => {
+        window.removeEventListener("keydown", down);
+        window.removeEventListener("keyup", up);
+        window.removeEventListener("blur", cancel);
+      };
+    }, []);
+    // Leaving the deck sends any Whisparr request still in its grace period.
+    React.useEffect(() => () => {
+      for (const [id, timer] of pending.current) {
+        clearTimeout(timer);
+        latest.current.onWhisparr(id).catch(() => {});
+      }
+      pending.current.clear();
+    }, []);
+
+    const handlers = {
+      onPointerDown(event) {
+        if ((event.pointerType === "mouse" && event.button !== 0) || leaving || followUp) return;
+        pointer.current = { id: event.pointerId, x: event.clientX, y: event.clientY, width: event.currentTarget.offsetWidth, moved: false };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+      },
+      onPointerMove(event) {
+        const start = pointer.current;
+        if (!start || start.id !== event.pointerId) return;
+        const dx = event.clientX - start.x, dy = event.clientY - start.y;
+        if (!start.moved && Math.hypot(dx, dy) < DECK_TAP_SLOP_PX) return;
+        start.moved = true;
+        const zone = deckZone(dx, dy, start.width);
+        const previous = dragRef.current;
+        const holdable = zone === "left" || (zone === "right" && whisparrEnabled);
+        const lean = deckLean(dx, dy);
+        const reach = Math.min(1, (lean === "up" ? -dy : Math.abs(dx)) / deckThreshold(start.width));
+        updateDrag({ dx, dy, zone, lean, reach, heldSince: !holdable ? null : previous?.zone === zone && previous.heldSince ? previous.heldSince : performance.now() });
+      },
+      onPointerUp(event) {
+        const start = pointer.current;
+        if (!start || start.id !== event.pointerId) return;
+        pointer.current = null;
+        if (!start.moved) return setExpanded((value) => !value);
+        const current = dragRef.current;
+        const action = deckAction(current?.zone, deckHeld(current, performance.now()), whisparrEnabled);
+        if (action) act(action);
+        else updateDrag(null);
+      },
+      onPointerCancel() {
+        pointer.current = null;
+        updateDrag(null);
+      },
+    };
+
+    const counts = history.reduce((total, entry) => ({ ...total, [entry.action]: (total[entry.action] || 0) + 1 }), {});
+    const summary = ["whisparr", "shortlist", "not_now", "not_interested", "skip"]
+      .filter((action) => counts[action]).map((action) => `${counts[action]} ${action === "whisparr" ? "to Whisparr" : DECK_LABELS[action].toLowerCase()}`);
+    let hint = null, style;
+    if (drag) {
+      const now = performance.now();
+      const dx = drag.key ? (drag.zone === "left" ? -48 : 48) : drag.dx;
+      const dy = drag.key ? 0 : drag.dy;
+      style = { transform: `translate(${dx}px, ${Math.min(dy, 0) * 0.6 + Math.max(dy, 0) * 0.2}px) rotate(${dx / 24}deg)`, transition: "none" };
+      const side = drag.zone || drag.lean;
+      if (side) hint = React.createElement(DeckHint, {
+        side, armed: Boolean(drag.zone), reach: drag.zone ? 1 : drag.reach || 0, whisparrEnabled,
+        progress: drag.heldSince ? Math.min(1, (now - drag.heldSince) / DECK_HOLD_MS) : 0,
+      });
+    }
+    const exhausted = !item && !loading && !paging.current.hasMore;
+    const shortcuts = window.matchMedia?.("(hover: hover) and (pointer: fine)").matches
+      ? "← Not now (hold: Not interested) · → Shortlist (hold: Whisparr) · ↑ or Space Skip · Backspace Undo"
+      : "Swipe ← Not now, hold for Not interested · → Shortlist, hold for Whisparr · ↑ Skip";
+    const button = (action, icon, extra = {}) => React.createElement(Button, {
+      className: `curator-deck-action curator-deck-action-${action}`, variant: "secondary", title: DECK_LABELS[action], "aria-label": DECK_LABELS[action],
+      disabled: !item || Boolean(leaving) || Boolean(followUp), onClick: () => act(action), ...extra,
+    }, icon);
+    const last = history.at(-1);
+    return React.createElement(
+      "section",
+      { className: "curator-deck", "aria-label": "Scene deck" },
+      React.createElement("div", { className: "curator-deck-status", role: "status" },
+        React.createElement("strong", null, `${history.length} reviewed`),
+        summary.length > 0 && React.createElement("span", null, ` · ${summary.join(" · ")}`)),
+      React.createElement("div", { className: "curator-deck-stage" },
+        followUp
+          ? React.createElement("div", { className: "curator-deck-follow-up" }, React.createElement(ExternalDismissFollowUp, { key: followUp.id, item: followUp, gender, onDismiss: () => setFollowUp(null) }))
+          : item
+            ? React.createElement(React.Fragment, null,
+              queue[index + 1] && React.createElement(DeckCard, { key: queue[index + 1].id, item: queue[index + 1], gender, back: true }),
+              React.createElement(DeckCard, { key: item.id, item, gender, expanded, handlers, style, hint, className: leaving ? `curator-deck-leaving curator-deck-leaving-${leaving}` : drag ? "curator-deck-dragging" : "" }))
+            : React.createElement("div", { className: "curator-deck-empty" },
+              exhausted
+                ? React.createElement(React.Fragment, null,
+                  React.createElement("strong", null, history.length ? "That's every scene matching these filters." : "No scenes match these filters."),
+                  summary.length > 0 && React.createElement("p", null, summary.join(" · ")))
+                : React.createElement("span", { className: "curator-loading" }, "Loading more scenes…"))),
+      React.createElement("div", { className: "curator-deck-actions" },
+        React.createElement(Button, { className: "curator-deck-action curator-deck-action-undo", variant: "secondary", title: "Undo", "aria-label": "Undo", disabled: !last || Boolean(leaving), onClick: undo }, React.createElement(FontAwesomeIcon, { icon: faRotateLeft })),
+        button("not_interested", React.createElement(FontAwesomeIcon, { icon: faThumbsDown })),
+        button("not_now", React.createElement(FontAwesomeIcon, { icon: faClock })),
+        button("skip", React.createElement(FontAwesomeIcon, { icon: faForward })),
+        button("shortlist", React.createElement(FontAwesomeIcon, { icon: faList })),
+        onWhisparr && button("whisparr", React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() })), {
+          disabled: !item || Boolean(leaving) || Boolean(followUp) || !whisparrEnabled,
+          title: whisparrEnabled ? "Send to Whisparr" : "Whisparr requires the StashDB endpoint and configured Whisparr credentials",
+        })
+      ),
+      notice && React.createElement("div", { className: `curator-deck-notice${notice.error ? " text-danger" : ""}`, role: "status" }, notice.text,
+        notice.pending && last?.action === "whisparr" && last.item.id === notice.id && React.createElement(Button, { size: "sm", variant: "link", onClick: undo }, "Undo")),
+      error && React.createElement("div", { className: "curator-deck-notice text-danger", role: "alert" }, error),
+      React.createElement("small", { className: "curator-deck-shortcuts" }, shortcuts)
+    );
+  }
+
   const SourceReference = Api.register.component("stash-curator.SourceReference", function SourceReference(props) {
     const { entity, type, fallback } = transformComponentProps("stash-curator.SourceReference", props);
     const href = `/${type}s/${entity?.id || fallback.id}`;
@@ -5235,7 +5667,10 @@
     }
     const codeVersionRef = React.useRef("");
     const [findView, changeFindView] = useFindView();
-    const endless = endlessSetting && (findView === "thumbnails" || source !== "library" || entityType !== "scene" || !wall);
+    // Deck covers Stash-box scenes only; elsewhere a stored "deck" shows cards.
+    const deck = findView === "deck" && source === "stashdb" && entityType === "scene";
+    const gridView = findView === "thumbnails" ? "thumbnails" : "cards";
+    const endless = endlessSetting && (gridView === "thumbnails" || source !== "library" || entityType !== "scene" || !wall);
     useCuratorActivity("similar", loading, "Finding close matches…");
     const sceneSearch = GQL.useFindScenesQuery({
       variables: { filter: { q: search, per_page: 8 } },
@@ -5370,12 +5805,15 @@
         setResult((current) => ({ ...current, items: current.items.map((value) => value.id === item.id ? { ...value, shortlisted: !item.shortlisted } : value) }));
       } catch (failure) { setError(failure.message); }
     }
+    function patchExternal(id, change) {
+      setResult((current) => current && { ...current, items: current.items.map((value) => value.id === id ? { ...value, ...change } : value) });
+    }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     const externalDismissals = useExternalDismissals(gender);
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     function renderSimilarPage(batch, onReady) {
-      if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
-      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: findView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
+      if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView: gridView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
     }
     return React.createElement(
       "section",
@@ -5397,7 +5835,7 @@
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
-        React.createElement(RecommendationViewSelector, { label: "Find view", views: source === "library" && entityType === "scene" ? ["cards", "thumbnails", "wall"] : ["cards", "thumbnails"], view: findView === "thumbnails" ? "thumbnails" : source === "library" && entityType === "scene" && wall ? "wall" : "cards", onChange: (value) => { changeFindView(value === "thumbnails" ? "thumbnails" : "cards"); if (wall !== (value === "wall")) toggleWall(); } }),
+        React.createElement(RecommendationViewSelector, { label: "Find view", views: source === "library" && entityType === "scene" ? ["cards", "thumbnails", "wall"] : source === "stashdb" && entityType === "scene" ? ["cards", "thumbnails", "deck"] : ["cards", "thumbnails"], view: deck ? "deck" : gridView === "thumbnails" ? "thumbnails" : source === "library" && entityType === "scene" && wall ? "wall" : "cards", onChange: (value) => { changeFindView(value === "thumbnails" || value === "deck" ? value : "cards"); if (wall !== (value === "wall")) toggleWall(); } }),
         React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
       filtersOpen && React.createElement(FilterBar, {
@@ -5427,10 +5865,11 @@
       loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Finding close matches…")),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
-      result && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: requestKey, cacheKey: endlessBatchKey(result, ["similar", continuationRequest.current, findView, wall, pageSize]), first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
+      result && deck && !loading && React.createElement(TriageDeck, { key: requestKey, first: result, clientItems: externalItems, gender, whisparrEnabled, onWhisparr: sendWhisparr, onItemChange: patchExternal }),
+      result && !deck && (endless
+        ? !loading && React.createElement(EndlessFindResults, { key: requestKey, cacheKey: endlessBatchKey(result, ["similar", continuationRequest.current, gridView, wall, pageSize]), first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
         : renderSimilarPage({ ...result, page, items })),
-      result && !endless && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
+      result && !deck && !endless && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
   }
 
@@ -5643,6 +6082,9 @@
     const [pageSize, setPageSize] = React.useState(20);
     useCuratorActivity(huntOnly ? "performer-hunt" : "expand", loading, "Working");
     const [findView, changeFindView] = useFindView();
+    const deckAvailable = entityType === "scene" || entityType === "hunt";
+    const deck = deckAvailable && findView === "deck";
+    const gridView = findView === "thumbnails" ? "thumbnails" : "cards";
     const continuationRequest = React.useRef(null);
     React.useEffect(() => {
       let active = true;
@@ -5658,7 +6100,7 @@
         ? { operation: "get_shortlist", page }
         : entityType === "hunt"
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
-          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
+          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed && !deck, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
       continuationRequest.current = request;
       operation(request, entityType === "hunt" ? 60000 : undefined).then(
         (result) => {
@@ -5672,7 +6114,7 @@
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id]);
+    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, deck, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
       if (!data?.initializing || error || loading) return;
       const timer = setTimeout(() => setVersion((value) => value + 1), 3000);
@@ -5717,6 +6159,9 @@
         }
       } catch (failure) { setError(failure.message); }
     }
+    function patchItem(id, change) {
+      setData((current) => current && { ...current, items: current.items.map((value) => value.id === id ? { ...value, ...change } : value) });
+    }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     const externalDismissals = useExternalDismissals(gender);
     // Shortlist is a saved list: no filters, sort, or dismissals.
@@ -5750,12 +6195,12 @@
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
     function renderExpandPage(batch) {
-      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && findView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
         const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
-        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: findView === "thumbnails", onShortlist: shortlist, onDismiss: listView ? undefined : externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
+        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlist, onDismiss: listView ? undefined : externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
       }));
     }
-    const pager = data?.ready && !endless && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
+    const pager = data?.ready && !endless && !deck && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
@@ -5763,7 +6208,7 @@
       React.createElement(
         "div",
         { className: "curator-expand-toolbar" },
-        React.createElement(RecommendationViewSelector, { view: findView, onChange: changeFindView, views: ["cards", "thumbnails"], label: "Find view" }),
+        React.createElement(RecommendationViewSelector, { view: deck ? "deck" : gridView, onChange: changeFindView, views: deckAvailable ? ["cards", "thumbnails", "deck"] : ["cards", "thumbnails"], label: "Find view" }),
         !huntOnly && React.createElement("div", { className: "btn-group", role: "group", "aria-label": "Explore external content" }, [["scene", "Scenes", faPlayCircle], ["performer", "Performers", faUser]].map(([value, label, icon]) => React.createElement(Button, { key: value, size: "sm", variant: entityType === value ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: value, performerId: null })) }, React.createElement(FontAwesomeIcon, { icon }), ` ${label}`))),
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
@@ -5816,8 +6261,9 @@
       data && !data.ready && !data.initializing && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "Expand has not been prepared yet — Stash-box candidates need to be collected first."), React.createElement(Button, { size: "sm", variant: "primary", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Prepare now")),
       data?.ready && visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, entityType === "hunt" ? "No scenes match this view." : entityType === "shortlist" ? "Nothing shortlisted yet." : "No external candidates match these filters."),
       pager,
-      data?.ready && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, findView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
+      data?.ready && deck && !loading && React.createElement(TriageDeck, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort]), first: data, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), gender, whisparrEnabled, onWhisparr: sendWhisparr, onItemChange: patchItem }),
+      data?.ready && !deck && (endless
+        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, gridView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
         : renderExpandPage({ ...data, items: visibleItems })),
       pager
     );
