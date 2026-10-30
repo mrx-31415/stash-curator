@@ -81,6 +81,7 @@ from curator.profiling import (  # noqa: E402
     span,
 )
 from curator.ranking import SlateBuilder  # noqa: E402
+from curator.ranking.policy import LANES  # noqa: E402
 from curator.storage import (  # noqa: E402
     MigrationRunner,
     backup_database,
@@ -722,6 +723,34 @@ def _round_trip(payload: dict[str, Any]) -> dict[str, object]:
     }
 
 
+def _slate(api: CuratorAPI, args: dict[str, Any]) -> dict[str, object]:
+    config = api.config()["config"]
+    excluded = args.get("exclude_scene_ids", [])
+    if not isinstance(excluded, list):
+        raise ValueError("exclude_scene_ids must be a list")
+    count = int(
+        args.get("count") or (config.get("page_size", 20) if isinstance(config, dict) else 20)
+    )
+    return api.get_slate(
+        str(args.get("lane") or "for_you"),
+        count,
+        page=int(args.get("page") or 1),
+        impression_id=str(args["impression_id"]) if args.get("impression_id") else None,
+        context=args.get("context") if isinstance(args.get("context"), dict) else None,
+        exclude_scene_ids={str(value) for value in excluded},
+        exploration=float(args.get("exploration") or 0),
+        draw_seed=str(args.get("draw_seed") or ""),
+        together_mode=bool(args.get("together_mode")),
+        mood_id=str(args["mood_id"] or "") if "mood_id" in args else None,
+        draw_at_ms=int(args["draw_at_ms"]) if args.get("draw_at_ms") is not None else None,
+        include_tags=_string_list(args.get("include_tags")),
+        exclude_tags=_string_list(args.get("exclude_tags")),
+        performer_ids=_string_list(args.get("performer_ids")),
+        studio_ids=_string_list(args.get("studio_ids")),
+        gender=str(args.get("gender") or ""),
+    )
+
+
 def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> dict[str, object]:
     _configure_stashbox(settings)
     connection = _open(payload, settings)
@@ -730,32 +759,19 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         endpoint = _stashbox_endpoint(settings)
         api = CuratorAPI(connection, endpoint)
         if operation == "get_slate":
-            config = api.config()["config"]
-            excluded = args.get("exclude_scene_ids", [])
-            if not isinstance(excluded, list):
-                raise ValueError("exclude_scene_ids must be a list")
-            count = int(
-                args.get("count")
-                or (config.get("page_size", 20) if isinstance(config, dict) else 20)
-            )
-            return api.get_slate(
-                str(args.get("lane") or "for_you"),
-                count,
-                page=int(args.get("page") or 1),
-                impression_id=str(args["impression_id"]) if args.get("impression_id") else None,
-                context=args.get("context") if isinstance(args.get("context"), dict) else None,
-                exclude_scene_ids={str(value) for value in excluded},
-                exploration=float(args.get("exploration") or 0),
-                draw_seed=str(args.get("draw_seed") or ""),
-                together_mode=bool(args.get("together_mode")),
-                mood_id=str(args["mood_id"] or "") if "mood_id" in args else None,
-                draw_at_ms=int(args["draw_at_ms"]) if args.get("draw_at_ms") is not None else None,
-                include_tags=_string_list(args.get("include_tags")),
-                exclude_tags=_string_list(args.get("exclude_tags")),
-                performer_ids=_string_list(args.get("performer_ids")),
-                studio_ids=_string_list(args.get("studio_ids")),
-                gender=str(args.get("gender") or ""),
-            )
+            return _slate(api, args)
+        if operation == "get_slates":
+            entries = args.get("slates")
+            limit = len(LANES) + 1  # every lane plus for_you
+            if not isinstance(entries, list) or not entries or len(entries) > limit:
+                raise ValueError(f"slates must be a non-empty list of at most {limit} lanes")
+            shared = {key: value for key, value in args.items() if key != "slates"}
+            slates = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("each slate must be an object")
+                slates.append(_slate(api, {**shared, **entry}))
+            return {"slates": slates}
         if operation == "get_score_review":
             config = api.config()["config"]
             count = int(

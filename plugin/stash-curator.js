@@ -19,42 +19,49 @@
   const LANES = [
     {
       value: "for_you",
+      homeKey: "homeForYou",
       label: "For You",
       icon: faStar,
       description: "A balanced shelf of strong matches, timely revisits, and a little discovery.",
     },
     {
       value: "best_bets",
+      homeKey: "homeBestBets",
       label: "Best Bets",
       icon: faBullseye,
       description: "The strongest unwatched matches for when you want a dependable choice now.",
     },
     {
       value: "new_arrivals",
+      homeKey: "homeNewArrivals",
       label: "New Arrivals",
       icon: faInbox,
       description: "Your best matches among the scenes added to your library most recently.",
     },
     {
       value: "revisit",
+      homeKey: "homeRevisit",
       label: "Revisit",
       icon: faHistory,
       description: "Scenes you have enjoyed before, brought back after enough time away.",
     },
     {
       value: "stretch",
+      homeKey: "homeStretch",
       label: "Stretch",
       icon: faExpandArrowsAlt,
       description: "Mostly your taste, with one boundary gently challenged to find something new.",
     },
     {
       value: "blind_spots",
+      homeKey: "homeBlindSpots",
       label: "Blind Spots",
       icon: faEyeSlash,
       description: "Corroborated dark corners of your library — studios or tags you barely watch, worth teaching the model about.",
     },
     {
       value: "dormant",
+      homeKey: "homeDormant",
       label: "Dormant",
       icon: faBed,
       description: "A performer, studio, or tag you used to watch a lot, parked for a while.",
@@ -153,6 +160,37 @@
   const PRIMARY_NAV_ITEMS = NAV_ITEMS.filter((item) => !item.maintenance);
   const MAINTENANCE_ITEMS = NAV_ITEMS.filter((item) => item.maintenance);
   const laneByValue = new Map(LANES.map((lane) => [lane.value, lane]));
+  // Front-page rows: one plugin setting per lane (its homeKey).
+  // Stash shows an unset BOOLEAN as off, so Curator writes For You's default
+  // once (ensureHomeDefaults) and the switch matches the page.
+  const HOME_DEFAULT_LANES = new Set(["for_you"]);
+  function homeLanes(settings) {
+    return LANES.filter((lane) => settings[lane.homeKey] ?? HOME_DEFAULT_LANES.has(lane.value));
+  }
+  // Each enabled lane is an entry in Stash's own home page list
+  // (ui.frontPageContent), so Customise can move or delete it. Stash renders
+  // nothing for a type it doesn't know, so the rows vanish without Curator.
+  // The settings decide which lanes are listed; the list decides where.
+  const HOME_ENTRY_TYPE = "CuratorLane";
+  function isHomeEntry(entry) {
+    return entry?.__typename === HOME_ENTRY_TYPE;
+  }
+  // The list with disabled, unknown and repeated Curator entries dropped and
+  // newly enabled lanes added at the top, or null when it is already right.
+  function reconcileHomeContent(content, settings) {
+    if (!Array.isArray(content)) return null;
+    const enabled = new Set(homeLanes(settings).map((lane) => lane.value));
+    const seen = new Set();
+    const kept = content.filter((entry) => {
+      if (!isHomeEntry(entry)) return true;
+      if (!enabled.has(entry.lane) || seen.has(entry.lane)) return false;
+      seen.add(entry.lane);
+      return true;
+    });
+    const added = LANES.filter((lane) => enabled.has(lane.value) && !seen.has(lane.value))
+      .map((lane) => ({ __typename: HOME_ENTRY_TYPE, lane: lane.value }));
+    return added.length || kept.length !== content.length ? [...added, ...kept] : null;
+  }
   const RECOMMENDATIONS_NAV_ITEM = {
     value: "recommendations",
     label: "Recommendations",
@@ -988,21 +1026,11 @@
       .then(async (initial) => {
         let data = initial;
         if (generation !== cacheGeneration) return data;
-        const modelChanged = cachedModelId && cachedModelId !== data.model_id;
-        const rotationModelChanged = rotation.modelId && rotation.modelId !== data.model_id;
-        const configChanged = cachedConfigUpdatedAtMs !== null && cachedConfigUpdatedAtMs !== data.config_updated_at_ms;
-        if (modelChanged || rotationModelChanged || configChanged) {
-          clearSlateCache();
-          if (modelChanged || rotationModelChanged) laneExclusions.clear();
-          rotation.lanes = {};
-          saveRotation();
+        if (resetForStaleSlate(data)) {
           const draw = rotationLane(lane);
           data = await operation({ ...args, exclude_scene_ids: [...(laneExclusions.get(lane) || [])], draw_seed: draw.seed, draw_at_ms: draw.atMs });
         }
-        rotation.modelId = data.model_id;
-        saveRotation();
-        cachedModelId = data.model_id;
-        cachedConfigUpdatedAtMs = data.config_updated_at_ms;
+        adoptSlateIdentity(data);
         if (!hasFilters && !togetherMode) {
           slateCache.set(slateKey(lane, page), data);
           persistSlateCache();
@@ -1012,6 +1040,68 @@
       .finally(() => slateRequests.delete(key));
     if (!hasFilters && !togetherMode) slateRequests.set(key, request);
     return request;
+  }
+
+  // A slate served for another model or config invalidates every cached lane
+  // and the rotation draws; the caller then re-requests with fresh draws.
+  function resetForStaleSlate(data) {
+    const modelChanged = cachedModelId && cachedModelId !== data.model_id;
+    const rotationModelChanged = rotation.modelId && rotation.modelId !== data.model_id;
+    const configChanged = cachedConfigUpdatedAtMs !== null && cachedConfigUpdatedAtMs !== data.config_updated_at_ms;
+    if (!(modelChanged || rotationModelChanged || configChanged)) return false;
+    clearSlateCache();
+    if (modelChanged || rotationModelChanged) laneExclusions.clear();
+    rotation.lanes = {};
+    saveRotation();
+    return true;
+  }
+
+  function adoptSlateIdentity(data) {
+    rotation.modelId = data.model_id;
+    saveRotation();
+    cachedModelId = data.model_id;
+    cachedConfigUpdatedAtMs = data.config_updated_at_ms;
+  }
+
+  // Stash's front page shows the first page of several lanes. They share
+  // loadSlate's cache, so View all opens the same scenes, and the lanes not
+  // cached yet are served together by one get_slates launch.
+  async function loadHomeSlates(lanes) {
+    rotateDay();
+    const togetherMode = readTogetherMode();
+    const slates = new Map();
+    for (const lane of lanes) {
+      if (!togetherMode && slateCache.has(slateKey(lane))) slates.set(lane, slateCache.get(slateKey(lane)));
+    }
+    let missing = lanes.filter((lane) => !slates.has(lane));
+    if (!missing.length) return slates;
+    const request = (wanted) => operation({
+      operation: "get_slates",
+      together_mode: togetherMode,
+      mood_id: readMoodID(),
+      page: 1,
+      exploration: 0,
+      context: { route: location.pathname, front_page: true },
+      slates: wanted.map((lane) => ({ lane, exclude_scene_ids: [...(laneExclusions.get(lane) || [])], draw_seed: rotationLane(lane).seed, draw_at_ms: rotationLane(lane).atMs })),
+    }).then((data) => data.slates);
+    const generation = cacheGeneration;
+    let served = await request(missing);
+    if (generation !== cacheGeneration) {
+      missing.forEach((lane, index) => slates.set(lane, served[index]));
+      return slates;
+    }
+    if (resetForStaleSlate(served[0])) {
+      slates.clear();
+      missing = lanes;
+      served = await request(missing);
+    }
+    adoptSlateIdentity(served[0]);
+    missing.forEach((lane, index) => {
+      slates.set(lane, served[index]);
+      if (!togetherMode) slateCache.set(slateKey(lane), served[index]);
+    });
+    if (!togetherMode) persistSlateCache();
+    return slates;
   }
 
   function prefetchLane(lane) {
@@ -1061,6 +1151,25 @@
     document.body.classList.toggle("curator-hide-card-badges", settings.hideCardRatings === true);
     document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(settings.detailPageControls) ? settings.detailPageControls : "large";
     return settings;
+  }
+
+  // Writes each default-on home lane setting once, so Stash's plugin settings
+  // show the row that the home page already renders.
+  async function ensureHomeDefaults(settings) {
+    const missing = LANES.filter((lane) => HOME_DEFAULT_LANES.has(lane.value) && settings[lane.homeKey] === undefined);
+    if (!missing.length) return settings;
+    return configurePlugin({ ...settings, ...Object.fromEntries(missing.map((lane) => [lane.homeKey, true])) });
+  }
+
+  // A Curator row deleted in Customise turns its lane's setting off, so the
+  // next home page load doesn't add it back.
+  async function saveHomeRemovals(content) {
+    if (!Array.isArray(content)) return;
+    const settings = await getPluginSettings();
+    const listed = new Set(content.filter(isHomeEntry).map((entry) => entry.lane));
+    const removed = homeLanes(settings).filter((lane) => !listed.has(lane.value));
+    if (!removed.length) return;
+    await configurePlugin({ ...settings, ...Object.fromEntries(removed.map((lane) => [lane.homeKey, false])) });
   }
 
   async function getStashBoxEndpoints() {
@@ -4596,16 +4705,8 @@
       startPage > slate.page && React.createElement("div", { ref: earlier, style: { position: "absolute", top: 0 } }, React.createElement(Button, { disabled: loading || restoring, onClick: () => loadMore(false, -1) }, "Load earlier results"))
     );
   }
-  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes }) {
-    const { SceneCard } = Api.components;
-    const card = React.useRef(null);
-    const [explanation, setExplanation] = React.useState(
-      item.explanation
-        ? { summary: typeof item.explanation === "string" ? item.explanation : item.explanation.summary, ...(typeof item.explanation === "object" ? item.explanation : {}), supporting_reasons: item.supporting_reasons || [] }
-        : null
-    );
-    const [explanationLoading, setExplanationLoading] = React.useState(false);
-    const [explanationError, setExplanationError] = React.useState("");
+  // A recommendation counts as seen once half of it stays on screen for 1 s.
+  function useQualifiedImpression(node, item) {
     React.useEffect(() => {
       let timer;
       let qualified = false;
@@ -4631,25 +4732,38 @@
         },
         { threshold: 0.5 }
       );
-      observer.observe(card.current);
+      observer.observe(node.current);
       return () => {
         clearTimeout(timer);
         observer.disconnect();
       };
     }, [item.impression_id, item.scene_id]);
-    function rememberOrigin(event) {
-      if (!event.target.closest("a")) return;
-      sessionStorage.setItem(
-        ORIGIN_KEY,
-        JSON.stringify({
-          scene_id: item.scene_id,
-          impression_id: item.impression_id,
-          lane: slate.lane,
-          impression_position: item.position,
-          model_id: slate.model_id,
-        })
-      );
-    }
+  }
+  function rememberRecommendationOrigin(event, item, slate) {
+    if (!event.target.closest("a")) return;
+    sessionStorage.setItem(
+      ORIGIN_KEY,
+      JSON.stringify({
+        scene_id: item.scene_id,
+        impression_id: item.impression_id,
+        lane: slate.lane,
+        impression_position: item.position,
+        model_id: slate.model_id,
+      })
+    );
+  }
+  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes }) {
+    const { SceneCard } = Api.components;
+    const card = React.useRef(null);
+    const [explanation, setExplanation] = React.useState(
+      item.explanation
+        ? { summary: typeof item.explanation === "string" ? item.explanation : item.explanation.summary, ...(typeof item.explanation === "object" ? item.explanation : {}), supporting_reasons: item.supporting_reasons || [] }
+        : null
+    );
+    const [explanationLoading, setExplanationLoading] = React.useState(false);
+    const [explanationError, setExplanationError] = React.useState("");
+    useQualifiedImpression(card, item);
+    const rememberOrigin = (event) => rememberRecommendationOrigin(event, item, slate);
     async function explain(event) {
       if (!event.currentTarget.open || explanation || explanationLoading) return;
       setExplanationLoading(true);
@@ -6684,6 +6798,14 @@
     { value: "", label: "All genders" },
   ];
   const SETTINGS_FIELD_GROUPS = [
+    {
+      title: "Home page",
+      fields: LANES.map((lane) => ({
+        key: lane.homeKey, type: "BOOLEAN", default: HOME_DEFAULT_LANES.has(lane.value),
+        label: `${lane.label} row`,
+        description: `Show ${lane.label} on the home page; move it with Customize there.${HOME_DEFAULT_LANES.has(lane.value) ? " On by default." : ""}`,
+      })),
+    },
     {
       title: "Page settings",
       fields: [
@@ -8946,6 +9068,162 @@
   // Pages use after, not instead: Stash wraps each later instead patch in a new
   // Proxy per render, so a plugin rendering its continuation as <Original />
   // would remount the page (and reset its tabs) whenever it re-renders.
+  // Stash's carousel settings for a row of `count` cards: fewer slides per
+  // view on narrower screens, and one-card swipes on touch devices.
+  function homeSliderSettings(count, isTouch) {
+    const at = (show) => ({ infinite: !isTouch && count > show, slidesToShow: Math.min(show, count), slidesToScroll: isTouch ? 1 : Math.min(show, count) });
+    return {
+      dots: !isTouch, arrows: !isTouch, speed: 300, variableWidth: true, swipeToSlide: true, ...at(5),
+      responsive: [[1909, 4], [1542, 3], [1170, 2], [801, 1]].map(([breakpoint, show]) => ({ breakpoint, settings: at(show) })),
+    };
+  }
+  function HomeSceneCard({ item, scene, slate, index }) {
+    const { SceneCard } = Api.components;
+    const node = React.useRef(null);
+    useQualifiedImpression(node, item);
+    return React.createElement("div", { ref: node, className: "curator-home-card", onClickCapture: (event) => rememberRecommendationOrigin(event, item, slate) },
+      React.createElement(SceneCard, { scene, index, zoomIndex: 1 }));
+  }
+  function CuratorHomeRow({ lane, slate }) {
+    const { RecommendationRow } = Api.components;
+    const Slider = libraries.ReactSlick.default;
+    const items = slate?.items || [];
+    const ids = items.map((item) => Number(item.scene_id));
+    const query = GQL.useFindScenesQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids }, skip: !ids.length });
+    if (slate && !items.length) return null;
+    const scenes = new Map((query.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    const shown = items.filter((item) => scenes.has(String(item.scene_id)));
+    const loading = !slate || query.loading;
+    if (!loading && !shown.length) return null;
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const count = loading ? Math.max(1, items.length || 5) : shown.length;
+    const header = React.createElement("span", { className: `curator-home-row-title curator-lane-${lane.value}`, title: lane.description },
+      React.createElement(FontAwesomeIcon, { className: "curator-home-row-icon", icon: lane.icon }), " ", lane.label);
+    return React.createElement(RecommendationRow, {
+      className: `scene-recommendations curator-home-row curator-home-row-${lane.value}`,
+      header,
+      link: React.createElement(NavLink, { to: `/plugins/stash-curator?view=${lane.value}` }, "View All"),
+    }, React.createElement(Slider, homeSliderSettings(count, isTouch), loading
+      ? [...Array(count)].map((_, index) => React.createElement("div", { key: `skeleton-${index}`, className: "scene-skeleton skeleton-card" }))
+      : shown.map((item, index) => React.createElement(HomeSceneCard, { key: `${item.impression_id}:${item.scene_id}`, item, slate, index, scene: scenes.get(String(item.scene_id)) }))));
+  }
+  // Every Curator row on the page shares one get_slates call.
+  const HomeSlatesContext = React.createContext({ lanes: [], slates: null, error: "" });
+  function CuratorHomeSlates({ lanes, children }) {
+    const [state, setState] = React.useState({ slates: null, error: "" });
+    const key = lanes.join(",");
+    React.useEffect(() => {
+      let active = true;
+      setState({ slates: null, error: "" });
+      if (lanes.length) {
+        loadHomeSlates(lanes)
+          .then((slates) => { if (active) setState({ slates, error: "" }); })
+          .catch((failure) => { if (active) setState({ slates: new Map(), error: failure.message }); });
+      }
+      return () => { active = false; };
+    }, [key]);
+    return React.createElement(HomeSlatesContext.Provider, { value: { lanes, ...state } }, children);
+  }
+  function CuratorHomeLane({ lane }) {
+    const { lanes, slates, error } = React.useContext(HomeSlatesContext);
+    const loadingComponents = Api.hooks.useLoadComponents([Api.loadableComponents.SceneCard]);
+    if (loadingComponents || !Api.components.RecommendationRow) return null;
+    if (error) {
+      return lanes[0] === lane.value
+        ? React.createElement("div", { className: "curator-home-error text-muted" }, `Curator could not load its home page lanes: ${error}`)
+        : null;
+    }
+    return React.createElement(CuratorHomeRow, { lane, slate: slates?.get(lane.value) || null });
+  }
+  // Brings Stash's home page list in line with the lane settings. It saves
+  // the whole UI config the way Stash's own Customise does, and waits for
+  // Stash to write its default list on a fresh install.
+  function CuratorHomeSync() {
+    const { StashService } = Api.utils;
+    const { data } = StashService.useConfiguration();
+    const [saveUI] = StashService.useConfigureUI();
+    const ui = data?.configuration?.ui;
+    React.useEffect(() => {
+      if (!ui?.frontPageContent) return;
+      let active = true;
+      getPluginSettings()
+        .then((settings) => {
+          const content = reconcileHomeContent(ui.frontPageContent, settings);
+          if (active && content) return saveUI({ variables: { input: { ...ui, frontPageContent: content } } });
+        })
+        .catch((error) => console.warn("Curator could not update the home page rows:", error.message));
+      return () => { active = false; };
+    }, [ui]);
+    return null;
+  }
+  // Customise draws a blank title for entries it doesn't know. Label Curator's
+  // from the entry each row renders (read from React's fiber, without touching
+  // the nodes React owns); CSS shows the label in the empty heading.
+  function labelHomeEditorRows(root) {
+    for (const heading of root.querySelectorAll(".recommendation-row-head h2")) {
+      const fiberKey = Object.keys(heading).find((key) => key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$"));
+      let fiber = fiberKey ? heading[fiberKey] : null;
+      while (fiber && !fiber.memoizedProps?.content) fiber = fiber.return;
+      const lane = isHomeEntry(fiber?.memoizedProps.content) ? laneByValue.get(fiber.memoizedProps.content.lane) : null;
+      if (lane) heading.dataset.curatorLabel = `Curator: ${lane.label}`;
+      else delete heading.dataset.curatorLabel;
+    }
+  }
+  function CuratorHomeEditor({ children }) {
+    const node = React.useRef(null);
+    React.useEffect(() => {
+      const root = node.current;
+      let frame = 0;
+      // Dragging two Curator rows past each other changes no DOM, so relabel
+      // after drag events as well as mutations.
+      const relabel = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => labelHomeEditorRows(root)); };
+      const observer = new MutationObserver(relabel);
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+      const events = ["dragenter", "drop", "dragend", "click"];
+      events.forEach((type) => root.addEventListener(type, relabel, true));
+      relabel();
+      return () => {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+        events.forEach((type) => root.removeEventListener(type, relabel, true));
+      };
+    }, []);
+    return React.createElement("div", { ref: node, className: "curator-home-editor" }, children);
+  }
+  // Swaps each Curator entry Stash's rows view renders (as a Control that
+  // draws nothing) for that lane's row, in place. Null if the view's shape
+  // isn't the one Curator knows.
+  function placeHomeRows(result) {
+    const [list, ...rest] = [result.props.children].flat(Infinity);
+    if (!React.isValidElement(list)) return null;
+    const lanes = [];
+    const rows = [list.props.children].flat(Infinity).map((child) => {
+      const entry = child?.props?.content;
+      const lane = isHomeEntry(entry) ? laneByValue.get(entry.lane) : null;
+      if (!lane) return child;
+      lanes.push(lane.value);
+      return React.createElement(CuratorHomeLane, { key: child.key ?? `curator-${lane.value}`, lane });
+    });
+    return React.createElement(CuratorHomeSlates, { lanes },
+      React.createElement(CuratorHomeSync, { key: "curator-home-sync" }),
+      React.cloneElement(result, {}, React.cloneElement(list, {}, rows), ...rest));
+  }
+  // The rows view gets Curator's rows; the Customise editor gets labels and
+  // turns off the lanes deleted there; the saving spinner is left alone.
+  Api.patch.after("FrontPage", function (props, ...args) {
+    const result = args[args.length - 1];
+    if (typeof result?.props?.onClose === "function") {
+      const { onClose } = result.props;
+      const close = (content) => {
+        saveHomeRemovals(content)
+          .catch((error) => console.warn("Curator could not turn off the deleted home page rows:", error.message))
+          .finally(() => onClose(content));
+      };
+      return React.createElement(CuratorHomeEditor, null, React.cloneElement(result, { onClose: close }));
+    }
+    if (!String(result?.props?.className || "").split(/\s+/).includes("recommendations-container")) return result;
+    return placeHomeRows(result) || result;
+  });
   Api.patch.after("ScenePage", function (props, ...args) {
     const result = args[args.length - 1];
     return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "scene", id: props.scene.id, label: props.scene.title || `Scene ${props.scene.id}`, scene: props.scene }), React.createElement(LanePlaylistControls, { sceneId: props.scene.id }));
@@ -8958,7 +9236,7 @@
     attachPlayer(event.detail.data.location.pathname);
     flushQueue();
   });
-  getPluginSettings().catch((error) => console.warn("Curator could not load card display settings:", error.message));
+  getPluginSettings().then(ensureHomeDefaults).catch((error) => console.warn("Curator could not load its plugin settings:", error.message));
   window.addEventListener("online", flushQueue);
   window.addEventListener("online", flushTagPreferenceQueue);
   window.addEventListener("online", flushSceneReasonQueue);

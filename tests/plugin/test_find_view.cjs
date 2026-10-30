@@ -116,7 +116,7 @@ assert.equal(nodes(nodes(fallback).find(node => node.type === "score").props.evi
 context.React.useRef = initial => ({ current: initial });
 context.laneByValue = new Map([["for_you", { label: "For You" }]]);
 context.faCompass = {};
-vm.runInNewContext(source.slice(source.indexOf("  function RecommendationCard("), source.indexOf("  function RecommendationHistoryRow(")), context);
+vm.runInNewContext(source.slice(source.indexOf("  function useQualifiedImpression("), source.indexOf("  function RecommendationHistoryRow(")), context);
 const recommendationItem = { scene_id: "1", source_lane: "for_you", impression_id: "fixture", appeal: 0.8, lane_value: 0.9 };
 const recommendation = context.RecommendationCard({ item: recommendationItem, scene: { id: "1" }, slate: { lane: "for_you" } });
 assert.ok(recommendation.props.className.includes("curator-compact-card"));

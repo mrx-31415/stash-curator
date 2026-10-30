@@ -17,8 +17,12 @@ is submitted directly; check its confirmation or error before moving on.
 ## Stash and StashDB boundaries
 
 Stash GraphQL remains authoritative for your library. Normal sync and recommendation
-work is read-only. Curator's sole intentional Stash mutation is an explicit Prune
-action that adds or removes the configured tag; it never deletes media.
+work is read-only. Curator's sole intentional change to your library is an explicit
+Prune action that adds or removes the configured tag; it never deletes media. Curator
+also saves its own plugin settings in Stash: the ones you change in its Settings
+panel, and the home page For You row's default the first time it loads. To place
+its home page rows, it adds and removes its own entries in Stash's home page
+layout, the list that **Customize** edits.
 
 StashDB discovery is optional and uses the StashDB connection and API key configured
 in Stash. Using external discovery or refreshing its cache sends read-only metadata

@@ -43,6 +43,7 @@ test("endpoint dropdown uses configured servers and saves without losing other s
     useCuratorActivity() {}, clearEndlessCache() {}, Button: "button",
     configurePlugin: async (values) => { saved = values; },
     getPluginSettings: async () => saved,
+    LANES: [], HOME_DEFAULT_LANES: new Set(),
   });
   vm.runInContext(source.slice(source.indexOf("  const SETTINGS_GENDER_OPTIONS"), source.indexOf("  // Manage shell")), context);
   function render() {

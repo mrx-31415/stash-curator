@@ -61,8 +61,55 @@ func getSlateBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	if err != nil {
 		return jvNull(), err
 	}
-	cfg := config.get("config")
+	return slateFromArgs(db, config, payload.get("args"))
+}
+
+func opGetSlates(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_slates",
+		func(settings jVal) (jVal, error) { return getSlatesBody(pluginDir, payload, settings) })
+}
+
+// getSlatesBody serves several lanes in one launch for Stash's front page:
+// each entry of args.slates overrides the shared args and is served exactly
+// as a get_slate with the merged args would be, in request order.
+func getSlatesBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	args := payload.get("args")
+	entries := args.get("slates")
+	if !isList(entries) || len(entries.arr) == 0 || len(entries.arr) > len(slateLanes) {
+		return jvNull(), fmt.Errorf("slates must be a non-empty list of at most %d lanes", len(slateLanes))
+	}
+	db, err := openAPISidecar(pluginDir, payload, settings)
+	if err != nil {
+		return jvNull(), err
+	}
+	defer db.Close()
+	config, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	shared := jvObj()
+	for _, p := range args.obj {
+		if p.key != "slates" {
+			shared.obj = append(shared.obj, p)
+		}
+	}
+	slates := jvArr()
+	for _, entry := range entries.arr {
+		if entry.kind != jObj {
+			return jvNull(), fmt.Errorf("each slate must be an object")
+		}
+		slate, err := slateFromArgs(db, config, mergeObjects(shared, entry))
+		if err != nil {
+			return jvNull(), err
+		}
+		slates.arr = append(slates.arr, slate)
+	}
+	return jvObj(jvKey("slates", slates)), nil
+}
+
+// slateFromArgs coerces get_slate's args and serves the slate.
+func slateFromArgs(db dbx, config, args jVal) (jVal, error) {
+	cfg := config.get("config")
 	excluded := args.get("exclude_scene_ids")
 	if args.has("exclude_scene_ids") && !isList(excluded) {
 		return jvNull(), fmt.Errorf("exclude_scene_ids must be a list")
