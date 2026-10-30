@@ -14,7 +14,7 @@ for optional external metadata leads scored against your local taste model.
 <details open>
   <summary>Animated tour (show or hide)</summary>
   <p align="center">
-    <img src="docs/assets/showcase-tour.gif" alt="Stash Curator tour showing moving scene previews in Recommendations and Find, then a Pair picks choice advancing to a new pair" width="760">
+    <img src="docs/assets/showcase-tour.gif" alt="Stash Curator tour: the For You row on Stash's home page, For You recommendations with Why this? and moving previews, a Roulette spin landing in Stash's player, Similar scenes in Find, and a Tag question in Curate" width="760">
   </p>
 </details>
 
@@ -50,6 +50,12 @@ Revisit, Stretch, Blind Spots, and Dormant. Each offers a different way to find 
 to watch.
 [Learn how to choose a lane](docs/using-curator.md#choose-a-lane).
 
+Lanes also appear as rows on Stash's home page and as a **Curator Lane** filter on
+Stash's scene list. **Play lane** turns a lane into a continuous playlist, and
+**Roulette** spins a wheel of the lane's picks and plays the winner.
+[Play a lane](docs/using-curator.md#play-a-lane) ·
+[Roulette](docs/using-curator.md#roulette).
+
 ### Find
 
 Find opens on Expand. After you connect StashDB and refresh its candidate cache,
@@ -58,15 +64,15 @@ or performers in your library or on StashDB; Performer Hunt follows one performe
 catalog. An external result does not mean you have the scene.
 
 <p align="center">
-  <img src="docs/assets/showcase-find-poster.jpg" alt="Find showing Expand, Similar, and Performer Hunt above six related scene previews" width="760">
+  <img src="docs/assets/showcase-find-poster.jpg" alt="Find's Similar view comparing a library scene with related scene cards" width="760">
 </p>
 
 [Learn how to use Find](docs/using-curator.md#find).
 
 ### Curate
 
-Answer a few Tag questions, rate tags in Tag sentiment, or give direct feedback on a
-scene to help Curator learn.
+Answer a few Tag questions, tell Curator what makes your hits work in Why these?,
+rate tags in Tag sentiment, or give direct feedback on a scene to help Curator learn.
 Open **Why this?** on a result to inspect its reasons. After a model build, Impact
 shows what your feedback changed.
 
