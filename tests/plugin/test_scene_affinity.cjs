@@ -34,6 +34,9 @@ let effect, state, contextScores;
 const element = (type, props, ...children) => ({ type, props: { ...props, children } });
 const context = {
   URLSearchParams, NavLink: "NavLink", faClone: "clone",
+  LANES: [{ value: "for_you", label: "For You" }, { value: "revisit", label: "Revisit" }],
+  window: { location: { pathname: "/scenes" } }, rotateDay() {}, uuid: () => "impression-1",
+  rotationLane: (lane) => ({ seed: `seed-${lane}`, atMs: 5 }),
   Api: { utils: { StashService: { getClient: () => client } }, patch: {
     before: (name, callback) => patches.set(`before:${name}`, callback),
     after: (name, callback) => patches.set(`after:${name}`, callback),
@@ -50,6 +53,9 @@ const context = {
   operation: async (args, timeout) => {
     operations.push(args);
     if (failScores) throw new Error("Scores failed");
+    if (args.operation === "get_lane_scene_page") {
+      return { scene_ids: args.page > 1 ? [] : ["4", "1"], count: 7, lane: args.lane, model_id: "model-a", impression_id: args.impression_id ?? null };
+    }
     if (args.operation === "get_scene_affinities") return { affinities: { "3": { appeal: 0.2, confidence: 0.8 }, "2": { appeal: 0, confidence: 0.4 } } };
     assert.equal(timeout, 120000, "Allow full-library native metadata aggregation to finish");
     const empty = args.per_page === 0 || args.page > 2;
@@ -75,7 +81,20 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.ok(patched.filterHook(filter).preserved);
   context.addSceneAffinitySortOption(element("list", null, element("toolbar", { filter })));
   context.addSceneAffinitySortOption(element("toolbar", { filter }));
-  assert.equal(filter.options.sortByOptions.length, 2);
+  assert.deepEqual([...filter.options.sortByOptions.map((item) => item.value)], ["title", "curator_appeal", "curator_lane_picks", "curator_lane_rank"]);
+  // The lane filter lists the lanes by label and sends the lane's value.
+  const laneOption = options.criterionOptions.find((item) => item.type === "curator_lane");
+  assert.deepEqual(Array.from(laneOption.options), ["For You", "Revisit"]);
+  assert.deepEqual(Array.from(laneOption.modifierOptions), ["EQUALS"]);
+  const laneCriterion = laneOption.makeCriterion(); laneCriterion.value = "Revisit";
+  assert.ok(laneCriterion.isValid());
+  assert.deepEqual(plain(laneCriterion.toCriterionInput()), { modifier: "EQUALS", value: "revisit" });
+  laneCriterion.value = "Nope"; assert.equal(laneCriterion.isValid(), false);
+  const decodedLane = context.configureLaneFilter({ options, criteria: [{
+    criterionOption: { type: "curator_lane", messageID: "unsupported_criterion" },
+    toQueryParams: () => ({ modifier: "EQUALS", value: "For You" }),
+  }] });
+  assert.deepEqual(plain(decodedLane.criteria[0].toCriterionInput()), { modifier: "EQUALS", value: "for_you" });
   assert.equal(options.sortByOptions.length, 1);
   const option = options.criterionOptions.find((item) => item.type === "curator_appeal");
   const criterion = option.makeCriterion(); criterion.value = "0.15";
@@ -88,6 +107,64 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
     toQueryParams: () => ({ modifier: "LESS_THAN", value: "-0.15" }),
   }] }, "curator_appeal");
   assert.equal(restored.criteria[0].toCriterionInput().value, -0.15);
+  // A lane request asks Curator for the page, then Stash for those scenes.
+  const laneRequest = (sort, lane = { modifier: "EQUALS", value: "for_you" }) => {
+    const item = request(sort);
+    item.variables.scene_filter = { rating100: { modifier: "GREATER_THAN", value: 20 }, ...(lane ? { curator_lane: lane } : {}) };
+    return item;
+  };
+  const ranked = await context.laneSortedScenes(client, laneRequest("curator_lane_rank"));
+  assert.deepEqual(Array.from(ranked.data.findScenes.scenes, (item) => item.id), ["4", "1"]);
+  assert.equal(ranked.data.findScenes.count, 7);
+  assert.equal(ranked.data.findScenes.duration, 0);
+  assert.equal(ranked.data.findScenes.filesize, 0);
+  assert.deepEqual(plain(operations.at(-1)), {
+    operation: "get_lane_scene_page", lane: "for_you", order: "rank", scene_ids: [1, 2, 3, 4, 5],
+    filter: { sort: "title", direction: "ASC", page: 1, per_page: 2, q: "query" },
+    scene_filter: { rating100: { modifier: "GREATER_THAN", value: 20 } },
+    direction: "DESC", page: 1, per_page: 2, impression_id: "impression-1",
+  });
+  // The shown page's cards are lane views; Curator's orders credit clicks.
+  assert.deepEqual(plain(context.laneListView("4")), {
+    impression_id: "impression-1", scene_id: "4", position: 0, lane: "for_you", model_id: "model-a", credited: true,
+  });
+  assert.equal(context.laneListView("1").position, 1);
+  assert.equal(context.laneListView("9"), null);
+  const picks = laneRequest("curator_lane_picks"); picks.variables.filter.page = 2;
+  await context.laneSortedScenes(client, picks);
+  assert.equal(operations.at(-1).order, "picks");
+  assert.equal(operations.at(-1).draw_seed, "seed-for_you");
+  assert.equal(operations.at(-1).draw_at_ms, 5);
+  assert.equal(operations.at(-1).filter.sort, "title");
+  assert.deepEqual(plain(calls.at(-1).variables.scene_ids), [4, 1]);
+  await context.laneSortedScenes(client, laneRequest("date", { modifier: "EQUALS", value: "Revisit" }));
+  assert.equal(operations.at(-1).order, "stash");
+  assert.equal(operations.at(-1).draw_seed, undefined);
+  assert.equal(operations.at(-1).lane, "revisit");
+  assert.equal(context.laneListView("4").credited, false, "Stash's sort order doesn't credit plays to the lane");
+  context.window.location.pathname = "/scenes/4";
+  assert.equal(context.laneListView("4"), null, "Only Stash's scenes page counts lane views");
+  await context.laneSortedScenes(client, laneRequest("date"));
+  assert.equal(operations.at(-1).impression_id, undefined, "Queue lookups off the list are not impressions");
+  context.window.location.pathname = "/scenes";
+  assert.equal(operations.at(-1).filter.sort, "date");
+  const lonely = laneRequest("date"); lonely.variables.scene_filter = { curator_lane: { modifier: "EQUALS", value: "for_you" } };
+  await context.laneSortedScenes(client, lonely);
+  assert.equal(operations.at(-1).scene_filter, null);
+  const pastEnd = laneRequest("curator_lane_rank"); pastEnd.variables.filter.page = 3;
+  const lanePageCalls = calls.length;
+  assert.equal((await context.laneSortedScenes(client, pastEnd)).data.findScenes.count, 7);
+  assert.equal(calls.length, lanePageCalls, "An empty page needs no Stash query");
+  await assert.rejects(context.laneSortedScenes(client, laneRequest("curator_lane_rank", null)), /Add a Curator Lane filter to sort by a Curator lane order/);
+  await assert.rejects(context.laneSortedScenes(client, laneRequest("date", { modifier: "EQUALS", value: "Nope" })), /Choose a Curator lane/);
+  const mixed = laneRequest("curator_appeal");
+  await assert.rejects(context.laneSortedScenes(client, mixed), /Curator Lane filter can't be combined with Curator Appeal/);
+  let laneEmitted = false;
+  adapter.callback(laneRequest("date"), () => assert.fail("Unexpected native query")).subscribe({
+    next() { laneEmitted = true; }, complete() {}, error(error) { throw error; },
+  });
+  await new Promise((resolve) => setImmediate(resolve)); assert.ok(laneEmitted);
+  assert.equal(operations.at(-1).operation, "get_lane_scene_page");
   const first = await context.affinitySortedScenes(client, request());
   assert.deepEqual(Array.from(first.data.findScenes.scenes, (item) => item.id), ["3", "2"]);
   assert.equal(first.data.findScenes.count, 5);

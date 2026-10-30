@@ -54,7 +54,7 @@ for package_root in (PLUGIN_DIR, PLUGIN_DIR.parent):
         sys.path.insert(0, str(package_root))
 
 from curator import __version__  # noqa: E402
-from curator.api import CuratorAPI  # noqa: E402
+from curator.api import CuratorAPI, _draw_slate  # noqa: E402
 from curator.events import HistoricalEventStore  # noqa: E402
 from curator.events.contracts import OBSERVED_PLAYBACK_SQL  # noqa: E402
 from curator.expand import (  # noqa: E402
@@ -64,6 +64,7 @@ from curator.expand import (  # noqa: E402
     normalize_phash,
 )
 from curator.graphql import GraphQLClient  # noqa: E402
+from curator.interactions import InteractionStore  # noqa: E402
 from curator.local_matches import (  # noqa: E402
     backfill_scene_matches,
     ensure_scene_matches,
@@ -751,6 +752,102 @@ def _slate(api: CuratorAPI, args: dict[str, Any]) -> dict[str, object]:
     )
 
 
+LANE_SCENE_IDS_QUERY = """query CuratorLaneSceneIds(
+  $filter: FindFilterType, $scene_filter: SceneFilterType, $scene_ids: [Int!]
+) {
+  findScenes(filter: $filter, scene_filter: $scene_filter, scene_ids: $scene_ids) { scenes { id } }
+}"""
+
+
+LANE_SCENE_ORDERS = ("rank", "picks", "stash")
+
+
+def _lane_scene_page(
+    api: CuratorAPI, connection: sqlite3.Connection, client: Any, args: dict[str, Any]
+) -> dict[str, object]:
+    """One page of a lane as a Stash scene list: the lane's scenes that match
+    Stash's filters, in lane order (rank), today's draw of it (picks), or
+    Stash's sort order (stash). With an impression_id the page is recorded
+    as an impression of the lane, so views count for rotation."""
+    lane = str(args.get("lane") or "")
+    if lane not in {"for_you", *LANES}:
+        raise ValueError(f"unknown lane: {lane}")
+    page, per_page = int(args.get("page", 1)), int(args.get("per_page", 40))
+    if page < 1 or per_page < -1:
+        raise ValueError("invalid scene page")
+    direction = str(args.get("direction", "DESC"))
+    if direction not in ("ASC", "DESC"):
+        raise ValueError("direction must be ASC or DESC")
+    order = str(args.get("order") or "stash")
+    if order not in LANE_SCENE_ORDERS:
+        raise ValueError("order must be rank, picks, or stash")
+    ranked = order != "stash"
+    config = api.config()["config"]
+    assert isinstance(config, dict)
+    entries = api.lane_scene_order(lane)
+    now_ms = time.time_ns() // 1_000_000
+    if order == "picks" and args.get("draw_seed"):
+        entries = list(
+            _draw_slate(
+                connection,
+                lane,
+                tuple(entries),
+                str(args["draw_seed"]),
+                int(args["draw_at_ms"]) if args.get("draw_at_ms") is not None else now_ms,
+                int(config["page_size"]),
+                int(config["rotation_cooldown_days"]),
+            )
+        )
+    raw_filter = args.get("filter")
+    find_filter: dict[str, Any] = raw_filter if isinstance(raw_filter, dict) else {}
+    scene_filter = args.get("scene_filter") or None
+    scene_ids = args.get("scene_ids") or None
+    # Curator's orders need Stash only to narrow the lane; any other sort is Stash's.
+    if not ranked or scene_filter or find_filter.get("q") or scene_ids:
+        sort = {"sort": "title", "direction": "ASC"} if ranked else {}
+        data = client.execute(
+            LANE_SCENE_IDS_QUERY,
+            {
+                "filter": {**find_filter, "page": 1, "per_page": -1, **sort},
+                "scene_filter": scene_filter,
+                "scene_ids": scene_ids,
+            },
+        )
+        matching = [str(scene["id"]) for scene in data["findScenes"]["scenes"]]
+        if ranked:
+            keep = set(matching)
+            entries = [entry for entry in entries if entry.scene_id in keep]
+        else:
+            in_lane = {entry.scene_id: entry for entry in entries}
+            entries = [in_lane[scene_id] for scene_id in matching if scene_id in in_lane]
+    if ranked and direction == "ASC":
+        entries.reverse()
+    start = 0 if per_page < 0 else (page - 1) * per_page
+    page_entries = entries if per_page < 0 else entries[start : page * per_page]
+    model_id = RecommendationModelStore(connection).current_model_id()
+    impression_id = str(args["impression_id"]) if args.get("impression_id") else None
+    if impression_id and model_id and page_entries:
+        InteractionStore(connection).record_ranked_impression(
+            impression_id,
+            lane,
+            model_id,
+            (
+                (entry.scene_id, position, entry.utility, ("eligibility.lane",))
+                for position, entry in enumerate(page_entries, start=start)
+            ),
+            now_ms,
+            {"order": order, "surface": "stash_scene_list"},
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "model_id": model_id,
+        "lane": lane,
+        "impression_id": impression_id,
+        "scene_ids": [entry.scene_id for entry in page_entries],
+        "count": len(entries),
+    }
+
+
 def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> dict[str, object]:
     _configure_stashbox(settings)
     connection = _open(payload, settings)
@@ -1195,6 +1292,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 "scene_ids": [row["scene_id"] for row in page_rows],
                 **metadata,
             }
+        if operation == "get_lane_scene_page":
+            return _lane_scene_page(api, connection, _client(payload), args)
         if operation == "get_inspector_entity":
             return api.inspector(
                 str(args.get("entity_type") or ""),

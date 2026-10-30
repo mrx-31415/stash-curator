@@ -81,9 +81,10 @@ the **Home page … row** switches in Stash's plugin settings. A lane you turn o
 appears at the top. Use **Customize** at the bottom of the home page to drag
 Curator's rows among Stash's own, labeled **Curator: For You** and so on;
 deleting one there turns its lane off. Each row is the lane's current first
-page, marked with the lane's icon, and **View All** opens the same picks in
-Curator. Scenes you see in a home row count as viewed for rotation, just as
-they do on the lane's own page. Turning every row off leaves Stash's home page
+page, marked with the lane's icon. **View All** opens the lane as a Stash scene
+list sorted by **Curator Lane Picks** (see the **Curator Lane** filter below);
+**View in Curator** opens the lane's own page with the same picks. Scenes you see in a home row count as
+viewed for rotation, just as they do on the lane's own page. Turning every row off leaves Stash's home page
 unchanged. If you remove Curator, its saved rows draw nothing; delete them in
 **Customize** to tidy the list.
 
@@ -467,6 +468,27 @@ apply to the matching scenes. Scores are looked up in batches, and sorting and
 filtering run in the backend. This uses the existing published model's Appeal on
 the -1 to +1 scale; Current Fit and lane ranking remain separate. Newly added scenes
 may lack an estimate until the next sync and model build.
+
+To work with a lane's scenes in Stash itself, add the **Curator Lane** filter in a
+scene list's filter dialog and pick a lane. The list then holds every scene the
+lane could show now, so you can select, tag, and bulk edit them as usual. A home
+row's **View All** opens this list for its lane.
+
+- **Curator Lane Picks** starts with today's rotated picks, the same draw the
+  lane's home row and Curator page show in this browser, followed by the rest of
+  the lane in rank order.
+- **Curator Lane Rank** is the lane's full ranking from the published model. It
+  changes only when the model is rebuilt.
+- Any of Stash's sorts orders the lane's scenes by that field instead.
+
+Stash's search and other filters narrow the lane. Mood, together mode, and the
+lane page's own filters don't apply. On the **Scenes** page, cards you see in the
+grid count as viewed for rotation, as on the lane page. With **Curator Lane
+Picks** or **Curator Lane Rank**, a scene you open from the list is credited to
+the lane; with Stash's sorts it plays as an ordinary Stash scene, so the model
+doesn't learn from an order Curator didn't choose. The list shows a count but no
+total duration or size, and it can't be combined with **Curator Appeal**. Save it
+as a Stash filter to come back to it.
 
 The **Hide exact PHash matches** filter is enabled by default. It also applies to
 Expand and StashDB Similar scenes. Disable it to inspect candidates marked

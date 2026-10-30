@@ -4708,6 +4708,7 @@
   // A recommendation counts as seen once half of it stays on screen for 1 s.
   function useQualifiedImpression(node, item) {
     React.useEffect(() => {
+      if (!item || !node.current) return undefined;
       let timer;
       let qualified = false;
       function record() {
@@ -4737,7 +4738,7 @@
         clearTimeout(timer);
         observer.disconnect();
       };
-    }, [item.impression_id, item.scene_id]);
+    }, [item?.impression_id, item?.scene_id]);
   }
   function rememberRecommendationOrigin(event, item, slate) {
     if (!event.target.closest("a")) return;
@@ -8958,15 +8959,117 @@
     return { ...result, data: { ...result.data, findScenes: { ...result.data.findScenes, ...metadata,
       scenes: details.scene_ids.map((id) => scenes.get(id)).filter(Boolean) } } };
   }
+  // The Curator lane filter on Stash's scenes page: "Curator lane = For You"
+  // lists the lane's scenes there, in lane order with the lane rank sort or
+  // in any of Stash's sorts, so they can be selected and edited natively.
+  const LANE_FILTER = "curator_lane";
+  const LANE_RANK_SORT = "curator_lane_rank";
+  // Today's rotated draw of the lane, the same one its home row and page show.
+  const LANE_PICKS_SORT = "curator_lane_picks";
+  // Stash's option list shows and stores the label; old URLs may hold the value.
+  function laneFromCriterionValue(value) {
+    return LANES.find((lane) => lane.label === value || lane.value === value)?.value || null;
+  }
+  function configureLaneFilter(filter) {
+    const options = filter.options.criterionOptions;
+    let option = options.find((item) => item.type === LANE_FILTER);
+    if (!option) {
+      const textOption = options.find((item) => item.type === "title");
+      option = new textOption.constructor({
+        type: LANE_FILTER, messageID: LANE_FILTER,
+        modifierOptions: ["EQUALS"], defaultModifier: "EQUALS",
+        options: LANES.map((lane) => lane.label),
+      });
+      const makeCriterion = option.makeCriterionFn;
+      option.makeCriterionFn = (type, config) => {
+        const criterion = makeCriterion(type, config);
+        criterion.isValid = function () { return laneFromCriterionValue(this.value) !== null; };
+        criterion.toCriterionInput = function () { return { modifier: "EQUALS", value: laneFromCriterionValue(this.value) }; };
+        return criterion;
+      };
+      options.push(option);
+    }
+    // A URL decoded before the option existed holds a generic criterion.
+    filter.criteria = filter.criteria.map((criterion) => {
+      if (criterion.criterionOption.type !== LANE_FILTER || criterion.criterionOption === option) return criterion;
+      const restored = option.makeCriterion();
+      restored.fromDecodedParams(criterion.toQueryParams());
+      return restored;
+    });
+    return filter;
+  }
+  // Stash's scenes page filtered to a lane, in lane order.
+  function laneSceneListURL(lane) {
+    const criterion = JSON.stringify({ type: LANE_FILTER, modifier: "EQUALS", value: lane.label }).replace(/^\{/, "(").replace(/\}$/, ")");
+    return `/scenes?c=${encodeURIComponent(criterion)}&sortby=${LANE_PICKS_SORT}&sortdir=desc`;
+  }
+  function isLaneSceneRequest(variables) {
+    return [LANE_RANK_SORT, LANE_PICKS_SORT].includes(variables.filter?.sort) || Boolean(variables.scene_filter?.[LANE_FILTER]);
+  }
+  // The scenes on the lane list Stash's scenes page is showing, by scene id,
+  // each with the impression its page was recorded under. Cards seen there
+  // count as lane views for rotation; in Curator's orders a click also
+  // credits a play to the lane, as on the lane page.
+  let laneListViews = new Map();
+  function laneListView(sceneID) {
+    return window.location.pathname === "/scenes" ? laneListViews.get(String(sceneID)) || null : null;
+  }
+  async function laneSortedScenes(client, request) {
+    const variables = request.variables;
+    const { [LANE_FILTER]: criterion, ...sceneFilter } = variables.scene_filter || {};
+    const sort = variables.filter?.sort;
+    const order = sort === LANE_RANK_SORT ? "rank" : sort === LANE_PICKS_SORT ? "picks" : "stash";
+    const lane = laneFromCriterionValue(criterion?.value);
+    if (!lane) throw new Error(order === "stash" ? "Choose a Curator lane." : "Add a Curator Lane filter to sort by a Curator lane order.");
+    if (sort === SCENE_AFFINITY_SORT || sceneFilter[SCENE_AFFINITY_SORT]) {
+      throw new Error("The Curator Lane filter can't be combined with Curator Appeal.");
+    }
+    rotateDay();
+    const draw = rotationLane(lane);
+    const page = variables.filter?.page ?? 1;
+    const perPage = variables.filter?.per_page ?? 40;
+    // Only the page Stash's scenes page shows is an impression; counts and
+    // the scene player's queue lookups are not.
+    const shown = window.location.pathname === "/scenes" && perPage > 0;
+    const details = await operation({
+      operation: "get_lane_scene_page", lane, order, scene_ids: variables.scene_ids,
+      filter: { ...variables.filter, ...(order === "stash" ? {} : { sort: "title", direction: "ASC" }) },
+      scene_filter: Object.keys(sceneFilter).length ? sceneFilter : null,
+      direction: variables.filter?.direction || "DESC", page, per_page: perPage,
+      ...(order === "picks" ? { draw_seed: draw.seed, draw_at_ms: draw.atMs } : {}),
+      ...(shown ? { impression_id: uuid() } : {}),
+    }, 120000);
+    if (shown && details.impression_id) {
+      const start = perPage < 0 ? 0 : (page - 1) * perPage;
+      laneListViews = new Map(details.scene_ids.map((id, index) => [String(id), {
+        impression_id: details.impression_id, scene_id: String(id), position: start + index,
+        lane, model_id: details.model_id, credited: order !== "stash",
+      }]));
+    }
+    // Duration and size would mean loading every matching scene; Stash hides
+    // the byline when both are zero.
+    const metadata = { __typename: "FindScenesResultType", count: details.count, duration: 0, filesize: 0 };
+    if (!details.scene_ids.length) return { data: { findScenes: { ...metadata, scenes: [] } } };
+    const result = await client.query({
+      query: request.query, context: request.getContext(), fetchPolicy: "no-cache",
+      variables: { ...variables, scene_ids: details.scene_ids.map(Number), scene_filter: null,
+        filter: { ...variables.filter, page: 1, per_page: details.scene_ids.length, sort: "title" } },
+    });
+    const scenes = new Map(result.data.findScenes.scenes.map((scene) => [String(scene.id), scene]));
+    return { ...result, data: { ...result.data, findScenes: { ...result.data.findScenes, ...metadata,
+      scenes: details.scene_ids.map((id) => scenes.get(id)).filter(Boolean) } } };
+  }
   function installSceneAffinitySort() {
     if (sceneSortInstalled) return;
     const client = Api.utils.StashService.getClient();
     const { ApolloLink, Observable } = libraries.Apollo;
     const adapter = new ApolloLink((request, forward) => {
-      if (request.operationName !== "FindScenes" || (request.variables.filter?.sort !== SCENE_AFFINITY_SORT && !request.variables.scene_filter?.[SCENE_AFFINITY_SORT])) return forward(request);
+      if (request.operationName !== "FindScenes") return forward(request);
+      const lane = isLaneSceneRequest(request.variables);
+      if (!lane && request.variables.filter?.sort !== SCENE_AFFINITY_SORT && !request.variables.scene_filter?.[SCENE_AFFINITY_SORT]) return forward(request);
       return new Observable((observer) => {
         let active = true;
-        affinitySortedScenes(client, request).then(
+        (lane ? laneSortedScenes : affinitySortedScenes)(client, request).then(
           (result) => { if (active) { observer.next(result); observer.complete(); } },
           (error) => { if (active) observer.error(error); }
         );
@@ -8982,23 +9085,30 @@
     const existingHook = props.filterHook;
     return [{ ...props, filterHook: (filter) => {
       configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
+      configureLaneFilter(filter);
       return existingHook ? existingHook(filter) : filter;
     } }, ...args];
   });
   function addSceneAffinitySortOption(element) {
     if (!React.isValidElement(element)) return;
     const filter = element.props.filter;
-    if (filter?.options?.criterionOptions) configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
-    if (filter?.options?.sortByOptions && !filter.options.sortByOptions.some((option) => option.value === SCENE_AFFINITY_SORT)) {
+    if (filter?.options?.criterionOptions) {
+      configureAffinityFilter(filter, SCENE_AFFINITY_SORT);
+      configureLaneFilter(filter);
+    }
+    const added = [SCENE_AFFINITY_SORT, LANE_PICKS_SORT, LANE_RANK_SORT].filter((value) => !filter?.options?.sortByOptions?.some((option) => option.value === value));
+    if (filter?.options?.sortByOptions && added.length) {
       filter.options = { ...filter.options, sortByOptions: [...filter.options.sortByOptions,
-        { value: SCENE_AFFINITY_SORT, messageID: SCENE_AFFINITY_SORT }] };
+        ...added.map((value) => ({ value, messageID: value }))] };
     }
     React.Children.forEach(element.props.children, addSceneAffinitySortOption);
   }
   function CuratorSceneSortLocale({ children }) {
     const intl = libraries.Intl.useIntl();
     return React.createElement(libraries.Intl.IntlProvider, {
-      ...intl, messages: { ...intl.messages, [SCENE_AFFINITY_SORT]: "Curator Appeal" },
+      ...intl, messages: { ...intl.messages, [SCENE_AFFINITY_SORT]: "Curator Appeal",
+        [LANE_FILTER]: "Curator Lane", [LANE_RANK_SORT]: "Curator Lane Rank",
+        [LANE_PICKS_SORT]: "Curator Lane Picks" },
     }, children);
   }
   Api.patch.after("FilteredSceneList", function (props, ...args) {
@@ -9041,9 +9151,26 @@
     const result = next.call(this, props, ...args);
     if (props.curatorAppeal !== undefined || props.scene?.id == null) return result;
     return React.createElement(React.Fragment, null,
-      result, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title })
+      result, React.createElement(CuratorSceneAffinityPill, { id: props.scene.id, label: props.scene.title }),
+      React.createElement(CuratorLaneListView, { id: props.scene.id })
     );
   });
+  // A hidden marker inside a card on the Curator Lane list: it watches the
+  // card for a qualified view and, in Curator's orders, credits a click.
+  function CuratorLaneListView({ id }) {
+    const marker = React.useRef(null);
+    const card = React.useMemo(() => ({ get current() { return marker.current?.closest(".scene-card") || marker.current; } }), []);
+    const item = laneListView(id);
+    useQualifiedImpression(card, item);
+    React.useEffect(() => {
+      const node = card.current;
+      if (!item?.credited || !node) return undefined;
+      const remember = (event) => rememberRecommendationOrigin(event, item, item);
+      node.addEventListener("click", remember, true);
+      return () => node.removeEventListener("click", remember, true);
+    }, [item?.impression_id, item?.scene_id]);
+    return item ? React.createElement("span", { ref: marker, hidden: true, className: "curator-lane-list-view" }) : null;
+  }
   function CuratorPerformerCardBadge({ performer }) {
     const [details, setDetails] = React.useState(null);
     React.useEffect(() => {
@@ -9102,7 +9229,9 @@
     return React.createElement(RecommendationRow, {
       className: `scene-recommendations curator-home-row curator-home-row-${lane.value}`,
       header,
-      link: React.createElement(NavLink, { to: `/plugins/stash-curator?view=${lane.value}` }, "View All"),
+      link: React.createElement("span", { className: "curator-home-row-links" },
+        React.createElement(NavLink, { to: `/plugins/stash-curator?view=${lane.value}` }, "View in Curator"),
+        React.createElement(NavLink, { to: laneSceneListURL(lane) }, "View All")),
     }, React.createElement(Slider, homeSliderSettings(count, isTouch), loading
       ? [...Array(count)].map((_, index) => React.createElement("div", { key: `skeleton-${index}`, className: "scene-skeleton skeleton-card" }))
       : shown.map((item, index) => React.createElement(HomeSceneCard, { key: `${item.impression_id}:${item.scene_id}`, item, slate, index, scene: scenes.get(String(item.scene_id)) }))));

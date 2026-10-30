@@ -49,6 +49,7 @@ ADVENTUROUS_PATTERN = (
     "blind_spots",
 )
 QUERIED_SCORE_FIRST_LANES = frozenset({"best_bets", "revisit", "stretch"})
+LANE_NAMES = frozenset({"for_you", *LANES})
 SCORE_FIRST_RANKING_JSON = json.dumps(
     {
         "penalties": {
@@ -150,6 +151,15 @@ class RecommendationItem:
     eligibility: dict[str, object]
     qualification: dict[str, object]
     reason_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LaneEntry:
+    """One scene in a lane's full order, with what the draw and impressions need."""
+
+    scene_id: str
+    source_lane: str
+    utility: float
 
 
 @dataclass(frozen=True)
@@ -546,15 +556,7 @@ class SlateBuilder:
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
-        if lane not in {
-            "for_you",
-            "best_bets",
-            "revisit",
-            "stretch",
-            "blind_spots",
-            "dormant",
-            "new_arrivals",
-        }:
+        if lane not in LANE_NAMES:
             raise ValueError(f"unknown lane: {lane}")
         if count < 1:
             raise ValueError("count must be positive")
@@ -870,22 +872,70 @@ class SlateBuilder:
             self._save_prepared_slate(slate)
         return slate
 
-    def _load_materialized_slate(
+    def lane_order(self, lane: str) -> list[LaneEntry]:
+        """Every scene the lane ranks and could show now, in lane order."""
+        if lane not in LANE_NAMES:
+            raise ValueError(f"unknown lane: {lane}")
+        model_id = RecommendationModelStore(self.connection).current_model_id()
+        if model_id is None:
+            raise RuntimeError("no published model; run build-model first")
+        if self.connection.execute(
+            "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+        ).fetchone():
+            ordering = "varied" if self.diversity_enabled else "score_first"
+            if not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES:
+                count = self.connection.execute(
+                    "SELECT count(*) FROM model_scene_lane WHERE model_id=? AND lane=?",
+                    (model_id, lane),
+                ).fetchone()[0]
+            else:
+                count = self.connection.execute(
+                    "SELECT count(*) FROM model_lane_order"
+                    " WHERE model_id=? AND lane=? AND ordering=?",
+                    (model_id, lane, ordering),
+                ).fetchone()[0]
+            if not count:
+                return []
+            now_ms = time.time_ns() // 1_000_000
+            direct_plays, unrecovered = self._direct_play_filters(now_ms)
+            rows = self._materialized_rows(
+                model_id, lane, int(count), None, now_ms, direct_plays, unrecovered
+            )
+            return [
+                LaneEntry(str(row["scene_id"]), str(row["source_lane"]), float(row["utility"]))
+                for row in rows
+            ]
+        if lane == "for_you":
+            count = self.connection.execute(
+                "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=?",
+                (model_id,),
+            ).fetchone()[0]
+        else:
+            count = self.connection.execute(
+                "SELECT count(DISTINCT scene_id) FROM model_scene_lane WHERE model_id=? AND lane=?",
+                (model_id, lane),
+            ).fetchone()[0]
+        if not count:
+            return []
+        return [
+            LaneEntry(item.scene_id, item.source_lane, item.final_utility)
+            for item in self.recommend(lane, int(count)).items
+        ]
+
+    def _materialized_rows(
         self,
         model_id: str,
         lane: str,
         count: int,
-        scene_filter: Callable[[str], bool] | None = None,
-    ) -> Slate | None:
-        started = time.perf_counter()
-        if not self.connection.execute(
-            "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
-        ).fetchone():
-            return None
+        scene_filter: Callable[[str], bool] | None,
+        now_ms: int,
+        direct_plays: dict[str, int],
+        unrecovered_direct_plays: set[str],
+    ) -> list[sqlite3.Row]:
+        """Up to count of the lane's published rows, in order, that are
+        eligible now and pass scene_filter."""
         ordering = "varied" if self.diversity_enabled else "score_first"
         query_score_first = not self.diversity_enabled and lane in QUERIED_SCORE_FIRST_LANES
-        now_ms = time.time_ns() // 1_000_000
-        direct_plays, unrecovered_direct_plays = self._direct_play_filters(now_ms)
         selected_rows: list[sqlite3.Row] = []
         offset = 0
         chunk_size = max(100, count)
@@ -928,7 +978,25 @@ class SlateBuilder:
             )
             if len(rows) < chunk_size:
                 break
-        selected_rows = selected_rows[:count]
+        return selected_rows[:count]
+
+    def _load_materialized_slate(
+        self,
+        model_id: str,
+        lane: str,
+        count: int,
+        scene_filter: Callable[[str], bool] | None = None,
+    ) -> Slate | None:
+        started = time.perf_counter()
+        if not self.connection.execute(
+            "SELECT 1 FROM model_lane_order_state WHERE model_id=?", (model_id,)
+        ).fetchone():
+            return None
+        now_ms = time.time_ns() // 1_000_000
+        direct_plays, unrecovered_direct_plays = self._direct_play_filters(now_ms)
+        selected_rows = self._materialized_rows(
+            model_id, lane, count, scene_filter, now_ms, direct_plays, unrecovered_direct_plays
+        )
         scene_ids = {str(row["scene_id"]) for row in selected_rows}
         scores = RecommendationModelStore(self.connection).scores(model_id, scene_ids)
         classifications: dict[tuple[str, str], LaneClassification] = {}
