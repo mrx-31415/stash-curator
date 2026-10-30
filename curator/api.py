@@ -28,6 +28,7 @@ from curator.ranking import SlateBuilder
 from curator.ranking.slate import LaneEntry, Slate
 from curator.similarity import SimilarityService
 from curator.storage import transaction
+from curator.taste_summary import taste_summary
 
 API_SCHEMA_VERSION = 2
 # Tag questions: the For You pool an answer is measured against, the fewest
@@ -1182,6 +1183,9 @@ class CuratorAPI:
             "model_id": model_id,
             "items": items,
         }
+
+    def taste_summary(self) -> dict[str, object]:
+        return {"schema_version": API_SCHEMA_VERSION, **taste_summary(self.connection)}
 
     def external_tag_search(self, query: str = "") -> dict[str, object]:
         if not isinstance(query, str) or len(query.encode()) > 100:

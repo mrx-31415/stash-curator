@@ -43,6 +43,8 @@
   --curator-hue-expand: #e46258;
   --curator-hue-prune: #9aa1ab;
   --curator-hue-curate: #4cc2a8;
+  --curator-insight-more: #4f8ce0;
+  --curator-insight-less: #d9763a;
 
   --curator-radius-sm: var(--radius-sm, 4px);
   --curator-radius: var(--radius, 7px);
@@ -101,6 +103,8 @@
   --curator-hue-expand: #d53d32;
   --curator-hue-prune: #7c838c;
   --curator-hue-curate: #2f9c85;
+  --curator-insight-more: #1d5fb8;
+  --curator-insight-less: #c15415;
 }
 
 /* Stash's own native scene/performer card (Api.components.SceneCard,
@@ -4960,4 +4964,299 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 }
 .curator-home-editor h2[data-curator-label]:empty::before {
   content: attr(data-curator-label);
+}
+
+/* Insights -> Your taste. Sections are cards in a responsive grid; the
+   diverging pair (more / less than your library) is validated for both
+   themes. */
+.curator-sfw-probe {
+  height: 1px;
+  left: -9999px;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  width: 1px;
+}
+.curator-insights {
+  align-items: start;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  margin-top: 1rem;
+}
+.curator-insight-section {
+  background: var(--curator-surface);
+  border: 1px solid var(--curator-border);
+  border-radius: var(--curator-radius-lg);
+  box-shadow: var(--curator-shadow-sm);
+  color: var(--curator-text);
+  min-width: 0;
+  padding: 1rem 1.1rem;
+  transition: filter 0.25s ease;
+}
+.curator-insight-section h3 {
+  font-size: 1.05rem;
+  font-weight: 650;
+  margin: 0 0 0.25rem;
+}
+.curator-insight-hint,
+.curator-insight-caption {
+  color: var(--curator-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+.curator-insight-caption {
+  margin: 0.5rem 0 0;
+}
+.curator-insight-hero,
+.curator-insight-likes,
+.curator-insight-again {
+  grid-column: 1 / -1;
+}
+.curator-insight-hero {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--curator-insight-more) 22%, var(--curator-surface)), var(--curator-surface) 70%);
+}
+.curator-insight-hero h2 {
+  font-family: var(--curator-font-display);
+  font-size: 1.9rem;
+  margin: 0 0 0.25rem;
+}
+.curator-insight-hero p {
+  color: var(--curator-text-muted);
+  margin: 0;
+}
+.curator-insight-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 1rem 0 0;
+}
+.curator-insight-stats dt {
+  color: var(--curator-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.curator-insight-stats dd {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  margin: 0;
+}
+.curator-insight-list {
+  display: grid;
+  gap: 0.15rem 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+.curator-insight-list li {
+  align-items: center;
+  border-bottom: 1px solid var(--curator-border);
+  display: flex;
+  gap: 0.6rem;
+  min-height: 2.6rem;
+}
+.curator-insight-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.curator-insight-said {
+  color: var(--curator-insight-more);
+  font-size: 0.8em;
+  margin-left: 0.4rem;
+}
+.curator-insight-value {
+  color: var(--curator-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.curator-insight-spark {
+  flex: none;
+  overflow: visible;
+}
+.curator-insight-spark polyline {
+  fill: none;
+  stroke: var(--curator-insight-more);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+.curator-insight-spark-area {
+  fill: var(--curator-insight-more);
+  fill-opacity: 0.16;
+  stroke: none;
+}
+.curator-insight-spark-base {
+  stroke: var(--curator-border);
+  stroke-width: 1;
+}
+.curator-insight-spark-dot,
+.curator-insight-spark-end {
+  fill: var(--curator-insight-more);
+}
+.curator-insight-spark-end {
+  stroke: var(--curator-surface);
+  stroke-width: 2;
+}
+.curator-insight-spark-hit {
+  fill: transparent;
+}
+.curator-insight-spark-hit:hover {
+  fill: var(--curator-wash-raised);
+}
+.curator-insight-apart-section h4 {
+  color: var(--curator-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin: 0.75rem 0 0.35rem;
+  text-transform: uppercase;
+}
+.curator-insight-apart-key {
+  display: flex;
+  font-size: 0.75rem;
+  gap: 1rem;
+  margin: 0;
+}
+.curator-insight-apart-key span::before {
+  border-radius: 2px;
+  content: "";
+  display: inline-block;
+  height: 0.6rem;
+  margin-right: 0.35rem;
+  width: 0.9rem;
+}
+.curator-insight-apart-key-you::before {
+  background: var(--curator-insight-more);
+}
+.curator-insight-apart-key-library::before {
+  background: var(--curator-text-muted);
+  opacity: 0.5;
+}
+.curator-insight-apart {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.curator-insight-apart li {
+  align-items: center;
+  display: grid;
+  font-size: 0.85rem;
+  gap: 0.15rem 0.6rem;
+  grid-template-areas: "name ratio" "bars shares";
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.curator-insight-apart-name {
+  grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.curator-insight-apart-ratio {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  grid-area: ratio;
+  text-align: right;
+}
+.curator-insight-more .curator-insight-apart-ratio {
+  color: var(--curator-insight-more);
+}
+.curator-insight-less .curator-insight-apart-ratio {
+  color: var(--curator-insight-less);
+}
+.curator-insight-apart-bars {
+  display: grid;
+  gap: 2px;
+  grid-area: bars;
+}
+.curator-insight-apart-bars span {
+  border-radius: 0 3px 3px 0;
+  display: block;
+  height: 5px;
+  min-width: 2px;
+}
+.curator-insight-apart-you {
+  background: var(--curator-insight-more);
+}
+.curator-insight-apart-library {
+  background: var(--curator-text-muted);
+  opacity: 0.5;
+}
+.curator-insight-apart-shares {
+  color: var(--curator-text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  grid-area: shares;
+  text-align: right;
+  white-space: nowrap;
+}
+.curator-insight-shift .curator-insight-list {
+  grid-template-columns: 1fr;
+}
+.curator-insight-shift-up svg {
+  color: var(--curator-insight-more);
+}
+.curator-insight-shift-down svg {
+  color: var(--curator-insight-less);
+}
+.curator-insight-chips {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+.curator-insight-chips-label {
+  color: var(--curator-text-muted);
+  flex-basis: 100%;
+  font-size: 0.8rem;
+}
+.curator-insight-chip {
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border);
+  border-left: 3px solid var(--curator-insight-more);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+.curator-insight-chip-less {
+  border-left-color: var(--curator-insight-less);
+}
+.curator-insight-chip small {
+  color: var(--curator-text-muted);
+}
+.curator-insight-rediscovered .curator-insight-caption {
+  padding: 0 0.75rem 0.75rem;
+}
+.curator-insight-rediscovered {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+}
+/* SFW Switch (or Stash's SFW content mode): blur every Insights card,
+   names and charts included; hovering one peeks, like Stash's own cards. */
+.curator-sfw .curator-insight-section,
+.sfw-content-mode .curator-insight-section {
+  filter: blur(12px);
+}
+.curator-sfw .curator-insight-section:hover,
+.sfw-content-mode .curator-insight-section:hover {
+  filter: blur(0);
+}
+@media (max-width: 576px) {
+  .curator-insight-hero h2 {
+    font-size: 1.5rem;
+  }
+  .curator-insight-spark {
+    width: 96px;
+  }
 }
