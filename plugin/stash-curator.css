@@ -4945,6 +4945,12 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-home-row-icon {
   color: var(--lane-color, var(--curator-accent));
 }
+.curator-home-row-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  justify-content: flex-end;
+}
 .curator-home-error {
   padding: 15px 0;
 }

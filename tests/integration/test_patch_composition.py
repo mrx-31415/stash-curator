@@ -93,12 +93,19 @@ def test_patched_stash_page_with_companion(
             timeout=30_000
         )
         expect(page.locator(".curator-home-row-for_you")).to_contain_text(scene["title"])
-        expect(
-            page.locator(".curator-home-row-for_you").get_by_role("link", name="View All")
-        ).to_have_attribute("href", "/plugins/stash-curator?view=for_you")
+        row = page.locator(".curator-home-row-for_you")
+        expect(row.get_by_role("link", name="View in Curator")).to_have_attribute(
+            "href", "/plugins/stash-curator?view=for_you"
+        )
         expect(rows.first).to_have_class(re.compile(r"\bcurator-home-row-for_you\b"))
         expect(page.locator(".recommendation-row:not(.curator-home-row)").first).to_be_visible()
         expect(page.locator(".curator-home-row-for_you h2")).to_contain_text("For You")
+        # View All opens Stash's scenes page filtered to the lane, in lane order.
+        row.get_by_role("link", name="View All").click()
+        expect(page).to_have_url(re.compile(r"/scenes\?.*curator_lane.*sortby=curator_lane_picks"))
+        tags = page.locator(".filter-tags, .filter-tag-list").first
+        expect(tags).to_contain_text("Curator Lane", timeout=30_000)
+        expect(tags).to_contain_text("For You")
     expect(page.locator("body")).not_to_contain_text("Something went wrong")
     assert not errors, f"{surface}: JavaScript errors: {errors}"
 

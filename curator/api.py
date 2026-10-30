@@ -11,7 +11,7 @@ import time
 from collections import defaultdict
 from collections.abc import Set
 from dataclasses import asdict, replace
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from curator import curation
@@ -25,7 +25,7 @@ from curator.interactions import InteractionStore
 from curator.model import ModelUpdateCoordinator, RecommendationModelStore
 from curator.profiling import record_duration, span
 from curator.ranking import SlateBuilder
-from curator.ranking.slate import RecommendationItem, Slate
+from curator.ranking.slate import LaneEntry, Slate
 from curator.similarity import SimilarityService
 from curator.storage import transaction
 
@@ -121,15 +121,23 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
 }
 
 
-def _draw_slate(
+class _Drawable(Protocol):
+    @property
+    def scene_id(self) -> str: ...
+
+    @property
+    def source_lane(self) -> str: ...
+
+
+def _draw_slate[DrawnT: _Drawable](
     connection: sqlite3.Connection,
     lane: str,
-    items: tuple[RecommendationItem, ...],
+    items: tuple[DrawnT, ...],
     seed: str,
     at_ms: int,
     page_size: int,
     cooldown_days: int,
-) -> tuple[RecommendationItem, ...]:
+) -> tuple[DrawnT, ...]:
     """Weighted, repeatable draw from the best few pages; lane slots stay intact."""
     pool_size = min(len(items), max(100, min(500, 5 * page_size)))
     pool = items[:pool_size]
@@ -158,7 +166,7 @@ def _draw_slate(
     ):
         if (row["impression_id"], row["scene_id"]) not in picked:
             exposures.setdefault(str(row["scene_id"]), []).append(int(row["shown_at_ms"]))
-    groups: dict[str, list[tuple[float, str, RecommendationItem]]] = {}
+    groups: dict[str, list[tuple[float, str, DrawnT]]] = {}
     for index, item in enumerate(pool):
         recent = exposures.get(item.scene_id, [])
         weight = 1 + 4 * (pool_size - index) / pool_size
@@ -623,6 +631,13 @@ class CuratorAPI:
             "model_id": model_id,
             "affinities": affinities,
         }
+
+    def lane_scene_order(self, lane: str) -> list[LaneEntry]:
+        """Every scene a lane could show now, in the lane's published order."""
+        config = self.config()["config"]
+        assert isinstance(config, dict)
+        builder = SlateBuilder(self.connection, diversity_enabled=bool(config["diversity_enabled"]))
+        return builder.lane_order(lane)
 
     def scene_affinity_rows(
         self,

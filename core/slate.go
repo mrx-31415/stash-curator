@@ -623,33 +623,34 @@ func rankValue(laneValue, laneMax float64) float64 {
 // second return value is false when the model has no materialized lanes.
 // sceneFilter, when non-nil, additionally gates each row (get_slate's
 // include/exclude tag, performer, studio, and gender filters).
-func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityEnabled bool, sceneFilter func(string) bool) (builtSlate, bool, error) {
-	exists, err := scanExists(db, `SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID)
-	if err != nil || !exists {
-		return builtSlate{}, false, err
-	}
-	ordering := "varied"
+// materializedRow is one row of a lane's published order.
+type materializedRow struct {
+	position    int64
+	sceneID     string
+	sourceLane  string
+	utility     float64
+	rankingJSON string
+}
+
+// laneOrdering is the published order a lane is read in: diversity off uses
+// score_first, which three lanes read straight from model_scene_lane.
+func laneOrdering(lane string, diversityEnabled bool) (ordering string, queryScoreFirst bool) {
 	if !diversityEnabled {
-		ordering = "score_first"
+		return "score_first", queriedScoreFirstLanes[lane]
 	}
-	queryScoreFirst := !diversityEnabled && queriedScoreFirstLanes[lane]
-	now := nowMs()
-	filter, err := directPlayFilters(db, now)
-	if err != nil {
-		return builtSlate{}, false, err
-	}
-	type slateRow struct {
-		position    int64
-		sceneID     string
-		sourceLane  string
-		utility     float64
-		rankingJSON string
-	}
-	var selectedRows []slateRow
+	return "varied", false
+}
+
+// materializedLaneRows reads up to count of a lane's published rows in order,
+// keeping the ones that are eligible now and pass sceneFilter.
+func materializedLaneRows(db dbx, modelID, lane string, count int64, diversityEnabled bool, sceneFilter func(string) bool, now int64, filter directPlayFilter) ([]materializedRow, error) {
+	ordering, queryScoreFirst := laneOrdering(lane, diversityEnabled)
+	var selectedRows []materializedRow
 	offset := int64(0)
 	chunkSize := maxInt64(100, count)
 	for int64(len(selectedRows)) < count {
 		var rows *sql.Rows
+		var err error
 		if queryScoreFirst {
 			rows, err = db.Query(`SELECT 0 AS position, scene_id, lane AS source_lane,
 	                           lane_value AS utility, ? AS ranking_json
@@ -664,20 +665,20 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 	                    ORDER BY position LIMIT ? OFFSET ?`, modelID, lane, ordering, chunkSize, offset)
 		}
 		if err != nil {
-			return builtSlate{}, false, err
+			return nil, err
 		}
-		chunk := make([]slateRow, 0, chunkSize)
+		chunk := make([]materializedRow, 0, chunkSize)
 		for rows.Next() {
-			var row slateRow
+			var row materializedRow
 			if err := rows.Scan(&row.position, &row.sceneID, &row.sourceLane, &row.utility, &row.rankingJSON); err != nil {
 				rows.Close()
-				return builtSlate{}, false, err
+				return nil, err
 			}
 			chunk = append(chunk, row)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return builtSlate{}, false, err
+			return nil, err
 		}
 		if len(chunk) == 0 {
 			break
@@ -689,7 +690,7 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 		}
 		eligibility, err := sceneEligibility(db, now, sceneIDs)
 		if err != nil {
-			return builtSlate{}, false, err
+			return nil, err
 		}
 		for _, row := range chunk {
 			if materializedRowIsEligible(row.sceneID, row.sourceLane, eligibility, filter) &&
@@ -703,6 +704,23 @@ func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityE
 	}
 	if int64(len(selectedRows)) > count {
 		selectedRows = selectedRows[:count]
+	}
+	return selectedRows, nil
+}
+
+func loadMaterializedSlate(db dbx, modelID, lane string, count int64, diversityEnabled bool, sceneFilter func(string) bool) (builtSlate, bool, error) {
+	exists, err := scanExists(db, `SELECT 1 FROM model_lane_order_state WHERE model_id=?`, modelID)
+	if err != nil || !exists {
+		return builtSlate{}, false, err
+	}
+	now := nowMs()
+	filter, err := directPlayFilters(db, now)
+	if err != nil {
+		return builtSlate{}, false, err
+	}
+	selectedRows, err := materializedLaneRows(db, modelID, lane, count, diversityEnabled, sceneFilter, now, filter)
+	if err != nil {
+		return builtSlate{}, false, err
 	}
 	sceneIDs := make(map[string]bool, len(selectedRows))
 	for _, row := range selectedRows {
