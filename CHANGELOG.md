@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.47.0](https://github.com/mrx-31415/stash-curator/compare/v0.46.0...v0.47.0) (2026-10-30)
+
+
+### Features
+
+* list a Curator lane on Stash's scenes page ([#434](https://github.com/mrx-31415/stash-curator/issues/434)) ([560a7b8](https://github.com/mrx-31415/stash-curator/commit/560a7b84c1956e64c474b68b4469a153166718b1))
+* show Curator lanes on the Stash home page ([#432](https://github.com/mrx-31415/stash-curator/issues/432)) ([e2ce371](https://github.com/mrx-31415/stash-curator/commit/e2ce371d8c7315e3911b9b1964e00fc145fd96fb))
+
 ## [0.46.0](https://github.com/mrx-31415/stash-curator/compare/v0.45.0...v0.46.0) (2026-10-29)
 
 
