@@ -305,6 +305,28 @@ Impact compares model builds so you can see how your feedback changed preference
 and recommendations. Use **Manage** for tasks, backups, feedback history,
 diagnostics, and settings.
 
+## Insights
+
+**Insights → Your taste** sums up what Curator already knows about you. It adds
+no new modelling, and nothing leaves your Stash:
+
+- **What you watch most**: tags the model is confident you like, ordered by
+  how many of your watched scenes carry them. Each has a line showing its share of
+  your watching per quarter. A tick marks the tags you rated yourself.
+- **What sets you apart**: tags whose share of what you watch differs most
+  from their share of your library. One list shows tags you watch far more of
+  than your library holds (on at least 1.5% of what you watch); the other shows
+  common library tags you mostly pass over. Each row shows both shares and their
+  ratio.
+- **Lately**: tags whose share of your watching changed most in the last 90 days.
+- **Then and never**: performers, studios and tags you used to watch a lot (the
+  Dormant lane's evidence), and the tags you like least.
+- **In your words**: what you pick most often in Why these?
+- **Rediscovered**: scenes you came back to after six months or more.
+
+Windows end at your latest recorded play, not today. When the SFW Switch is on,
+every card is blurred until you hover it.
+
 ## Find
 
 Find opens on Expand. Connect StashDB and refresh its candidate cache to see external

@@ -178,6 +178,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetFeedbackHistory(pluginDir, payload)
 	case "get_taste_profile":
 		return opGetTasteProfile(pluginDir, payload)
+	case "get_taste_summary":
+		return opGetTasteSummary(pluginDir, payload)
 	case "get_connection_check":
 		return opGetConnectionCheck(pluginDir, payload)
 	case "get_diagnostics":

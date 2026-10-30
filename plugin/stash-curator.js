@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faInbox, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
+  const { faArrowTrendDown, faArrowTrendUp, faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faGlobe, faHeart, faHistory, faInbox, faLightbulb, faList, faMoon, faPlay, faPlayCircle, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench, faXmark } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -74,6 +74,12 @@
       label: "Curate",
       icon: faBullseye,
       description: "Compare scenes, rate tags, and see how your feedback changes recommendations.",
+    },
+    {
+      value: "insights",
+      label: "Insights",
+      icon: faLightbulb,
+      description: "Your taste at a glance: what you watch most, how it has shifted, and what you came back to.",
     },
     {
       value: "expand",
@@ -3589,6 +3595,260 @@
         "The impact report compares two model builds — it appears once Curator has built the model at least twice."
       )
     );
+  }
+
+  // Insights -> Your taste: a summary of what Curator already knows
+  // (get_taste_summary). Every section is a card, so the SFW Switch can blur
+  // each one (.curator-sfw) while hover peeks, like Stash's own cards.
+  const INSIGHT_MONTH_MS = 30 * 86400000;
+  function insightPercent(value) {
+    return `${Math.round(Number(value) * 100)}%`;
+  }
+  function insightMonth(ms) {
+    return new Date(ms).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  }
+  function insightRange(window) {
+    return `${insightMonth(window.start_ms + 1)} – ${insightMonth(window.end_ms)}`;
+  }
+
+  // One tag's share of watched scenes per window, on the scale every row
+  // shares, so lines compare. Gaps are windows with too few watches to say.
+  function TasteSparkline({ values, windows, max, label }) {
+    const width = 132;
+    const height = 32;
+    const pad = 4;
+    const step = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0;
+    const x = (index) => pad + index * step;
+    const y = (value) => height - pad - (max > 0 ? (value / max) * (height - pad * 2) : 0);
+    const segments = [];
+    let current = [];
+    values.forEach((value, index) => {
+      if (value === null) {
+        if (current.length) segments.push(current);
+        current = [];
+      } else {
+        current.push(`${x(index).toFixed(1)},${y(value).toFixed(1)}`);
+      }
+    });
+    if (current.length) segments.push(current);
+    const lastIndex = values.length - 1;
+    const last = values[lastIndex];
+    const slot = values.length ? width / values.length : width;
+    return React.createElement(
+      "svg",
+      { className: "curator-insight-spark", viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": label },
+      React.createElement("line", { className: "curator-insight-spark-base", x1: pad, x2: width - pad, y1: height - pad, y2: height - pad }),
+      segments.map((points, index) => points.length > 1 && React.createElement("polygon", {
+        key: `area-${index}`,
+        className: "curator-insight-spark-area",
+        points: `${points[0].split(",")[0]},${height - pad} ${points.join(" ")} ${points[points.length - 1].split(",")[0]},${height - pad}`,
+      })),
+      segments.map((points, index) => points.length > 1
+        ? React.createElement("polyline", { key: index, points: points.join(" ") })
+        : React.createElement("circle", { key: index, className: "curator-insight-spark-dot", cx: points[0].split(",")[0], cy: points[0].split(",")[1], r: 2 })),
+      last !== null && last !== undefined && React.createElement("circle", { className: "curator-insight-spark-end", cx: x(lastIndex), cy: y(last), r: 3.5 }),
+      values.map((value, index) => React.createElement(
+        "rect",
+        { key: `hit-${index}`, className: "curator-insight-spark-hit", x: index * slot, y: 0, width: slot, height },
+        React.createElement("title", null, `${insightRange(windows[index])}: ${value === null ? `too few watches (${windows[index].scenes})` : `${insightPercent(value)} of ${windows[index].scenes} watched scenes`}`)
+      ))
+    );
+  }
+
+  // What sets you apart: tags whose share of what you watch differs most from
+  // their share of your library. Each row pairs the two shares (you above,
+  // library below) on the list's own scale, with the ratio beside them.
+  function insightRatio(lift) {
+    return `${Math.exp(lift).toFixed(1)}×`;
+  }
+  function insightShare(value) {
+    return value >= 0.1 ? `${Math.round(value * 100)}%` : `${(value * 100).toFixed(1)}%`;
+  }
+  function ApartList({ items, tone }) {
+    const scale = Math.max(0.001, ...items.flatMap((item) => [item.watched_share, item.library_share]));
+    return React.createElement(
+      "ol",
+      { className: `curator-insight-apart curator-insight-${tone}` },
+      items.map((item) => React.createElement(
+        "li",
+        { key: item.tag_id, title: `${item.name}: ${insightShare(item.watched_share)} of what you watch, ${insightShare(item.library_share)} of your library` },
+        React.createElement("span", { className: "curator-insight-apart-name" }, item.name),
+        React.createElement(
+          "span",
+          { className: "curator-insight-apart-bars", "aria-hidden": "true" },
+          React.createElement("span", { className: "curator-insight-apart-you", style: { width: `${(item.watched_share / scale) * 100}%` } }),
+          React.createElement("span", { className: "curator-insight-apart-library", style: { width: `${(item.library_share / scale) * 100}%` } })
+        ),
+        React.createElement("span", { className: "curator-insight-apart-shares" }, `${insightShare(item.watched_share)} vs ${insightShare(item.library_share)}`),
+        React.createElement("span", { className: "curator-insight-apart-ratio" }, insightRatio(item.lift))
+      ))
+    );
+  }
+
+  function InsightChip({ children, title, tone }) {
+    return React.createElement("span", { className: `curator-insight-chip${tone ? ` curator-insight-chip-${tone}` : ""}`, title }, children);
+  }
+
+  function InsightSection({ title, hint, className, children }) {
+    return React.createElement(
+      "section",
+      { className: `curator-insight-section${className ? ` ${className}` : ""}` },
+      React.createElement("h3", null, title),
+      hint && React.createElement("p", { className: "curator-insight-hint" }, hint),
+      children
+    );
+  }
+
+  function RediscoveredScenes({ items }) {
+    const { SceneCard } = Api.components;
+    const ids = items.map((item) => Number(item.scene_id));
+    const query = GQL.useFindScenesQuery({ variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids }, skip: !ids.length });
+    const scenes = new Map((query.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    if (query.loading) return React.createElement("div", { role: "status", className: "curator-insight-hint" }, "Loading scenes…");
+    return React.createElement(
+      "div",
+      { className: "curator-insight-rediscovered" },
+      items.map((item) => {
+        const scene = scenes.get(String(item.scene_id));
+        if (!scene) return null;
+        const months = Math.max(6, Math.round(item.longest_gap_ms / INSIGHT_MONTH_MS));
+        return React.createElement(
+          "article",
+          { key: item.scene_id, className: "curator-card" },
+          React.createElement(SceneCard, { scene }),
+          React.createElement("p", { className: "curator-insight-caption" },
+            item.returns > 1 ? `Came back ${item.returns} times · longest gap ${months} months` : `Came back after ${months} months`,
+            ` · ${item.plays} plays`)
+        );
+      })
+    );
+  }
+
+  function TasteSummary({ onOpenSentiment }) {
+    const [data, setData] = React.useState(null);
+    const [error, setError] = React.useState("");
+    useCuratorActivity("insights", !data && !error, "Reading your taste…");
+    React.useEffect(() => {
+      let active = true;
+      operation({ operation: "get_taste_summary" }).then(
+        (value) => active && setData(value),
+        (failure) => active && setError(failure.message)
+      );
+      return () => { active = false; };
+    }, []);
+    if (error) return React.createElement("div", { className: "alert alert-danger" }, error);
+    if (!data) return React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Reading your taste…"));
+    const { totals, windows } = data;
+    if (!totals.plays) {
+      return React.createElement("div", { className: "alert alert-info" }, "Your taste summary needs play history. Watch a few scenes and run “Sync and build recommendations”.");
+    }
+    const sparkMax = Math.max(0.01, ...data.likes.flatMap((item) => item.trend.filter((value) => value !== null)));
+    const stats = [
+      ["Plays", totals.plays],
+      ["Scenes watched", totals.scenes_played],
+      ["Tags you rated", totals.answered_tags],
+      ["Why these? answers", totals.reason_answers],
+    ];
+    const shiftRow = (item, tone) => React.createElement(
+      "li",
+      { key: item.tag_id, className: `curator-insight-shift-${tone}` },
+      React.createElement(FontAwesomeIcon, { icon: tone === "up" ? faArrowTrendUp : faArrowTrendDown, "aria-hidden": "true" }),
+      React.createElement("span", { className: "curator-insight-name" }, item.name),
+      React.createElement("span", { className: "curator-insight-value" }, `${insightPercent(item.before)} → ${insightPercent(item.recent)}`)
+    );
+    return React.createElement(
+      "div",
+      { className: "curator-insights" },
+      React.createElement(
+        "section",
+        { className: "curator-insight-section curator-insight-hero" },
+        React.createElement("h2", null, "Your taste"),
+        React.createElement("p", null, `From ${totals.scenes_played.toLocaleString()} scenes you've watched since ${insightMonth(totals.first_played_at_ms)}. Last play ${new Date(totals.as_of_ms).toLocaleDateString()}.`),
+        React.createElement(
+          "dl",
+          { className: "curator-insight-stats" },
+          stats.map(([label, value]) => React.createElement("div", { key: label }, React.createElement("dt", null, label), React.createElement("dd", null, Number(value).toLocaleString())))
+        )
+      ),
+      React.createElement(
+        InsightSection,
+        { title: "What you watch most", hint: "Tags Curator is confident you like, by how many of your watched scenes carry them. Lines show each tag's share of your watching per quarter.", className: "curator-insight-likes" },
+        data.likes.length
+          ? React.createElement("ol", { className: "curator-insight-list" }, data.likes.map((item) => React.createElement(
+            "li",
+            { key: item.tag_id },
+            React.createElement("span", { className: "curator-insight-name" }, item.name, item.answer !== null && item.answer > 0 && React.createElement("span", { className: "curator-insight-said", title: "You told Curator you like this tag", "aria-label": "You said you like this" }, React.createElement(FontAwesomeIcon, { icon: faCheckCircle }))),
+            React.createElement("span", { className: "curator-insight-value", title: `${item.watched_scenes} watched scenes` }, insightPercent(item.watched_scenes / totals.scenes_played)),
+            React.createElement(TasteSparkline, { values: item.trend, windows, max: sparkMax, label: `${item.name}: share of watched scenes per quarter, ${item.trend.map((value) => value === null ? "no data" : insightPercent(value)).join(", ")}` })
+          )))
+          : React.createElement("p", { className: "curator-insight-hint" }, "No tag is a confident like yet. Tag questions and Why these? help."),
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: onOpenSentiment }, React.createElement(FontAwesomeIcon, { icon: faTag }), " Adjust in Tag sentiment")
+      ),
+      React.createElement(
+        InsightSection,
+        { title: "What sets you apart", hint: "Tags whose share of what you watch differs most from their share of your library.", className: "curator-insight-apart-section" },
+        data.apart.more.length || data.apart.passed.length
+          ? React.createElement(
+            React.Fragment,
+            null,
+            React.createElement("p", { className: "curator-insight-apart-key", "aria-hidden": "true" },
+              React.createElement("span", { className: "curator-insight-apart-key-you" }, "what you watch"),
+              React.createElement("span", { className: "curator-insight-apart-key-library" }, "your library")),
+            data.apart.more.length > 0 && React.createElement("h4", null, "You watch far more of"),
+            data.apart.more.length > 0 && React.createElement(ApartList, { items: data.apart.more, tone: "more" }),
+            data.apart.passed.length > 0 && React.createElement("h4", null, "Your library is full of, you pass over"),
+            data.apart.passed.length > 0 && React.createElement(ApartList, { items: data.apart.passed, tone: "less" })
+          )
+          : React.createElement("p", { className: "curator-insight-hint" }, "Nothing stands out from your library yet.")
+      ),
+      React.createElement(
+        InsightSection,
+        { title: "Lately", hint: windows.length ? `Your last 90 days against everything before, as a share of watched scenes.` : null, className: "curator-insight-shift" },
+        data.shift.rising.length || data.shift.fading.length
+          ? React.createElement(
+            "ul",
+            { className: "curator-insight-list" },
+            data.shift.rising.map((item) => shiftRow(item, "up")),
+            data.shift.fading.map((item) => shiftRow(item, "down"))
+          )
+          : React.createElement("p", { className: "curator-insight-hint" }, "Nothing has moved much recently, or there are too few recent plays to tell.")
+      ),
+      (data.dormant.length > 0 || data.dislikes.length > 0) && React.createElement(
+        InsightSection,
+        { title: "Then and never", className: "curator-insight-then" },
+        data.dormant.length > 0 && React.createElement(
+          "div",
+          { className: "curator-insight-chips" },
+          React.createElement("span", { className: "curator-insight-chips-label" }, "Used to watch a lot"),
+          data.dormant.map((item) => React.createElement(InsightChip, { key: `${item.entity_type}:${item.entity_id}`, title: `${item.play_count} plays` }, item.name, React.createElement("small", null, ` · ${item.entity_type} · last ${insightMonth(item.last_played_at_ms)}`)))
+        ),
+        data.dislikes.length > 0 && React.createElement(
+          "div",
+          { className: "curator-insight-chips" },
+          React.createElement("span", { className: "curator-insight-chips-label" }, "Not for you"),
+          data.dislikes.map((item) => React.createElement(InsightChip, { key: item.tag_id, tone: "less", title: item.answer !== null ? "Your answer" : "Learned from what you watch and skip" }, item.name))
+        )
+      ),
+      (data.reasons.hits.length > 0 || data.reasons.misses.length > 0) && React.createElement(
+        InsightSection,
+        { title: "In your words", hint: "What you picked most often in Why these?", className: "curator-insight-words" },
+        [["hits", "Makes a scene work", "more"], ["misses", "Puts you off", "less"]].map(([key, label, tone]) => data.reasons[key].length > 0 && React.createElement(
+          "div",
+          { key, className: "curator-insight-chips" },
+          React.createElement("span", { className: "curator-insight-chips-label" }, label),
+          data.reasons[key].map((item) => React.createElement(InsightChip, { key: `${item.subject_type}:${item.subject_id}`, tone, title: `${item.answers} answers` }, item.name, React.createElement("small", null, ` ×${item.answers}`)))
+        ))
+      ),
+      data.rediscovered.length > 0 && React.createElement(
+        InsightSection,
+        { title: "Rediscovered", hint: "Scenes you came back to after six months or more.", className: "curator-insight-again" },
+        React.createElement(RediscoveredScenes, { items: data.rediscovered })
+      )
+    );
+  }
+
+  function InsightsPanel({ onOpenSentiment }) {
+    return React.createElement(TasteSummary, { onOpenSentiment });
   }
 
   function CuratePanel({ section, onSelectSection, sentimentQuery }) {
@@ -8327,6 +8587,7 @@
       followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
       configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { endless: endlessEnabled }),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
+      lane === "insights" && !loadingComponents && React.createElement(InsightsPanel, { onOpenSentiment: () => openCurate("sentiment") }),
       configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand", endless: endlessEnabled }),
       configReady && lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, endless: endlessEnabled }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so
@@ -9374,21 +9635,26 @@
   flushQueue();
   flushTagPreferenceQueue();
   flushSceneReasonQueue();
-  // Mirror Stash's SFW blur onto the preview wall. Stash's own scene-card
-  // classes break custom wall tiles, so detect SFW from whether the wall media
-  // is actually blurred and apply a strong Curator-side blur when it is. Stash
-  // mutates the DOM often, so the check is debounced.
+  // Mirror the SFW Switch onto Curator's own surfaces (the preview wall,
+  // Insights). The switch enables a stylesheet that blurs `.card-section`,
+  // so a hidden probe carrying that class shows whether it is on, on every
+  // page. Reading the probe rather than Curator's own tiles keeps Curator's
+  // stronger blur from latching the state on. Stash's built-in SFW content
+  // mode counts too. Stash mutates the DOM often, so the check is debounced.
   let sfwTimer = null;
+  let sfwProbe = null;
   function syncSfwBlur() {
     clearTimeout(sfwTimer);
     sfwTimer = setTimeout(() => {
-      const media = document.querySelectorAll(".curator-preview-tile .card-section, .curator-preview-tile .curator-preview-video");
-      let blurred = false;
-      for (const el of media) {
-        const filter = window.getComputedStyle(el).filter;
-        if (filter && filter !== "none") { blurred = true; break; }
+      if (!sfwProbe || !sfwProbe.isConnected) {
+        sfwProbe = document.createElement("div");
+        sfwProbe.className = "card-section curator-sfw-probe";
+        sfwProbe.setAttribute("aria-hidden", "true");
+        document.body.appendChild(sfwProbe);
       }
-      document.body.classList.toggle("curator-sfw", blurred);
+      const filter = window.getComputedStyle(sfwProbe).filter;
+      const blurred = (Boolean(filter) && filter !== "none") || Boolean(document.querySelector(".sfw-content-mode"));
+      if (document.body.classList.contains("curator-sfw") !== blurred) document.body.classList.toggle("curator-sfw", blurred);
     }, 100);
   }
   if (typeof MutationObserver !== "undefined") {
