@@ -125,6 +125,9 @@ case "${1:-}" in
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
+    # Stash creates none of these itself; when they are missing it only warns, then
+    # fails every cover, preview, sprite, and temporary file it tries to write.
+    mkdir -p /tmp/stash-curator-integration/{generated,cache,blobs}
     # ── start stash ──
     cleanup() {
       echo "[verify] tearing down Stash …"
