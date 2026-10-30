@@ -4934,3 +4934,24 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-external-hidden .scene-card-image {
   opacity: 0.55;
 }
+
+/* Stash front page: Curator lane rows among the native rows. The header
+   icon takes the lane hue so the rows read as Curator's. */
+.curator-home-row-title {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.45rem;
+}
+.curator-home-row-icon {
+  color: var(--lane-color, var(--curator-accent));
+}
+.curator-home-error {
+  padding: 15px 0;
+}
+/* Customize labels Curator's rows, whose headings Stash leaves empty. */
+.curator-home-editor {
+  display: contents;
+}
+.curator-home-editor h2[data-curator-label]:empty::before {
+  content: attr(data-curator-label);
+}

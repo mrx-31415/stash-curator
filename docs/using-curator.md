@@ -73,6 +73,20 @@ Returning to the page keeps the current draw; a new local day or a new model
 refreshes it. Refreshing the same lane twice in one tab also draws again; a
 single refresh keeps the current cards in place.
 
+### Lanes on the Stash home page
+
+Curator adds lane rows to Stash's home page. **For You** is on by default;
+turn each lane's row on or off under **Manage → Settings → Home page** or with
+the **Home page … row** switches in Stash's plugin settings. A lane you turn on
+appears at the top. Use **Customize** at the bottom of the home page to drag
+Curator's rows among Stash's own, labeled **Curator: For You** and so on;
+deleting one there turns its lane off. Each row is the lane's current first
+page, marked with the lane's icon, and **View All** opens the same picks in
+Curator. Scenes you see in a home row count as viewed for rotation, just as
+they do on the lane's own page. Turning every row off leaves Stash's home page
+unchanged. If you remove Curator, its saved rows draw nothing; delete them in
+**Customize** to tidy the list.
+
 ## Play a lane
 
 Choose a recommendation lane and your filters or mood, then click **Play lane**.

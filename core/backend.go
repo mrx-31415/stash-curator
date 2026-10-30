@@ -160,6 +160,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetJobStatus(pluginDir, payload)
 	case "get_slate":
 		return opGetSlate(pluginDir, payload)
+	case "get_slates":
+		return opGetSlates(pluginDir, payload)
 	case "get_score_review":
 		return opGetScoreReview(pluginDir, payload)
 	case "get_similar":

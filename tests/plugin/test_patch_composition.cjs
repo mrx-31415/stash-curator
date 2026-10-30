@@ -5,6 +5,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../../plugin/stash-curator.js"), "utf8");
 const hooks = [];
 const element = (type, props = {}, ...children) => ({ type, key: props?.key, props: { ...props, children } });
+const homeRemovals = [];
 const children = (value) => [value].flat(Infinity).filter((item) => item != null);
 const context = vm.createContext({
   Api: { patch: Object.fromEntries(["before", "instead", "after"].map((kind) => [kind,
@@ -27,8 +28,17 @@ const context = vm.createContext({
   CuratorPerformerCardBadge: "performer-badge", CuratorContextLink: "context-link",
   LanePlaylistControls: "playlist", CuratorPerformerSortLocale: "performer-locale",
   CuratorSceneSortLocale: "scene-locale", CuratorSceneAffinityCards: "affinity-cards",
-  PerformerHuntLink: "hunt", formatAppealValue: () => "0.8", SCENE_AFFINITY_SORT: "curator_appeal",
+  PerformerHuntLink: "hunt", CuratorHomeSlates: "home-slates", CuratorHomeSync: "home-sync", CuratorHomeLane: "home-lane",
+  CuratorHomeEditor: "home-editor", HOME_ENTRY_TYPE: "CuratorLane", laneByValue: new Map([["for_you", { value: "for_you" }]]),
+  saveHomeRemovals: async (content) => { homeRemovals.push(content); }, formatAppealValue: () => "0.8", SCENE_AFFINITY_SORT: "curator_appeal",
 });
+
+// The FrontPage patch's own helpers run for real.
+for (const name of ["isHomeEntry", "placeHomeRows"]) {
+  const start = source.indexOf(`  function ${name}(`);
+  assert.ok(start >= 0, name);
+  vm.runInContext(source.slice(start, source.indexOf("\n  }\n", start) + "\n  }\n".length), context);
+}
 
 // Load every registered callback, so adding a patch also requires a coverage case.
 for (const match of source.matchAll(/^  Api\.patch\.(before|instead|after)\("([^\"]+)", function/gm)) {
@@ -74,6 +84,7 @@ const cases = {
   "PerformerCard.Overlays": { performer: { id: "1", name: "Performer" } },
   ScenePage: { scene: { id: "1", title: "Scene" } },
   PerformerPage: { performer: { id: "1", name: "Performer" } },
+  FrontPage: {},
 };
 assert.deepEqual([...new Set(hooks.map((hook) => hook.name))].sort(), Object.keys(cases).sort());
 function contains(tree, value) {
@@ -139,3 +150,52 @@ assert.equal(children(patched.props.children).filter((child) => child.type === "
 const repeated = navbar({ children: [nativeChild] }, patched);
 assert.equal(children(repeated.props.children).filter((child) => child.type === "curator-nav").length, 1);
 console.log(`${checks} hook composition cases passed across ${Object.keys(cases).length} Stash surfaces`);
+
+// FrontPage: each Curator entry in Stash's rows view becomes that lane's row
+// in place, unknown lanes and Stash's rows (with any other plugin's
+// additions) survive, the Customise editor keeps its onClose contract, and
+// the saving spinner is left alone.
+const frontPage = hooks.find((hook) => hook.name === "FrontPage").callback;
+const control = (key, content) => element("control", { key, content });
+const otherRows = element("other-plugin-rows");
+const footer = element("div", { className: "recommendations-footer" });
+const rowsView = (...rows) => element("div", { className: "recommendations-container" }, element("div", {}, rows), footer);
+(async () => {
+  for (const extra of [[], [{ pluginContext: true }, "another-argument"]]) {
+    const native = control(0, { __typename: "CustomFilter" });
+    const retired = control(2, { __typename: "CuratorLane", lane: "retired_lane" });
+    const front = frontPage({}, ...extra, rowsView(native, control(1, { __typename: "CuratorLane", lane: "for_you" }), retired, otherRows));
+    assert.equal(front.type, "home-slates");
+    assert.deepEqual([...front.props.lanes], ["for_you"]);
+    const [sync, view] = front.props.children;
+    assert.equal(sync.type, "home-sync");
+    assert.equal(view.props.className, "recommendations-container");
+    const rows = children(view.props.children[0].props.children);
+    assert.deepEqual(rows.map((row) => row.type), ["control", "home-lane", "control", "other-plugin-rows"]);
+    assert.equal(rows[1].key, 1);
+    assert.equal(rows[1].props.lane.value, "for_you");
+    assert.ok(rows.includes(native) && rows.includes(retired) && contains(view, footer));
+    // No list yet (a fresh install before Stash writes its default).
+    const empty = frontPage({}, ...extra, element("div", { className: "recommendations-container" }, element("div", {}, undefined), footer));
+    assert.deepEqual([...empty.props.lanes], []);
+  }
+  const closed = [];
+  const editor = element("front-page-config", { onClose: (content) => closed.push(content) });
+  const wrapped = frontPage({}, editor);
+  assert.equal(wrapped.type, "home-editor");
+  const config = children(wrapped.props.children)[0];
+  assert.equal(config.type, "front-page-config");
+  const saved = [{ __typename: "CustomFilter" }];
+  config.props.onClose(saved);
+  config.props.onClose(undefined);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(closed, [saved, undefined]);
+  assert.deepEqual(homeRemovals, [saved, undefined]);
+  assert.equal(frontPage({}, null), null);
+  const plain = element("front-page-config");
+  assert.equal(frontPage({}, plain), plain);
+  const spinner = element("div", { className: "recommendations-container-edit" });
+  assert.equal(frontPage({}, spinner), spinner);
+  const unknown = element("div", { className: "recommendations-container" }, "text");
+  assert.equal(frontPage({}, unknown), unknown);
+})().catch((error) => { console.error(error); process.exitCode = 1; });

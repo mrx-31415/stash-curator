@@ -905,7 +905,8 @@ vm.runInContext(source.slice(source.indexOf('  async function configurePlugin(')
     + String.raw`\.curator-hide-card-badges \.scene-card `
     + String.raw`\.curator-scene-card-badge\s*\{\s*display: none;`;
   assert.match(css, new RegExp(selector));
-  assert.ok(source.includes('getPluginSettings().catch('), 'load settings when Stash starts');
+  const startup = 'getPluginSettings().then(ensureHomeDefaults).catch(';
+  assert.ok(source.includes(startup), 'load settings when Stash starts');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """,
             str(root / "plugin" / "stash-curator.js"),
@@ -994,6 +995,8 @@ def test_settings_panel_mirrors_plugin_settings_schema() -> None:
     start = source.index("const SETTINGS_FIELD_GROUPS = [")
     end = source.index("function SettingsField({")
     panel_keys = set(re.findall(r'key: "([A-Za-z][A-Za-z0-9]*)"', source[start:end]))
+    # The Home page group is built from each lane's homeKey in LANES.
+    panel_keys |= set(re.findall(r'homeKey: "([A-Za-z][A-Za-z0-9]*)"', source[:start]))
 
     assert manifest_keys - panel_keys == {"diversityDisabled"}
     assert panel_keys - manifest_keys == set()

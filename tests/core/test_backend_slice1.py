@@ -194,6 +194,14 @@ def assert_slice1_identical(
         return
     assert set(py_out) == {"output"} and set(go_out) == {"output"}
     a, b = py_out["output"], go_out["output"]
+    # get_slates nests one slate per lane; each carries its own timings.
+    pairs = zip(a["slates"], b["slates"], strict=True) if "slates" in a else [(a, b)]
+    for left, right in pairs:
+        _drop_timings(left, right, timing_fields)
+    assert_equivalent(a, b)
+
+
+def _drop_timings(a: dict, b: dict, timing_fields: tuple[str, ...]) -> None:
     for field in timing_fields:
         if isinstance(a[field], dict):
             assert set(a[field]) == set(b[field])
@@ -204,7 +212,6 @@ def assert_slice1_identical(
             assert a[field] >= 0 and b[field] >= 0
         a.pop(field)
         b.pop(field)
-    assert_equivalent(a, b)
 
 
 # ── byte-identical Slice-1 ops on a builder-seeded sidecar ──────────────────
@@ -339,6 +346,60 @@ def test_get_slate_byte_identical(model_sidecar: Path, binary: Path, stub_stash:
         same_path=model_sidecar,
         timing_fields=("timings_ms", "ranking_timings_ms"),
     )
+
+
+def test_get_slates_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str, tmp_path: Path
+) -> None:
+    """The front page's batch: per-lane overrides on shared args, in order."""
+    # get_slates writes impressions, so run on a private copy of the sidecar.
+    path = tmp_path / model_sidecar.name
+    shutil.copy2(model_sidecar, path)
+    shutil.copytree(
+        model_sidecar.parent / f"{model_sidecar.stem}-derived",
+        tmp_path / f"{path.stem}-derived",
+    )
+    raw = payload(
+        "get_slates",
+        path,
+        stub_stash,
+        count=4,
+        page=1,
+        draw_at_ms=REFERENCE_MS,
+        context={"route": "/", "front_page": True},
+        slates=[
+            {"lane": "for_you", "impression_id": "fixed-front-for-you", "draw_seed": "seed-a"},
+            {"lane": "revisit", "impression_id": "fixed-front-revisit", "draw_seed": "seed-b"},
+            {
+                "lane": "best_bets",
+                "impression_id": "fixed-front-best",
+                "exclude_scene_ids": ["old-good"],
+            },
+        ],
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=path,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+    output = json.loads(run_backend(binary, PLUGIN_DIR, raw).stdout)["output"]
+    assert [slate["lane"] for slate in output["slates"]] == ["for_you", "revisit", "best_bets"]
+    assert [slate["impression_id"] for slate in output["slates"]] == [
+        "fixed-front-for-you",
+        "fixed-front-revisit",
+        "fixed-front-best",
+    ]
+    assert "old-good" not in {item["scene_id"] for item in output["slates"][2]["items"]}
+
+
+@pytest.mark.parametrize("slates", [[], "for_you", [None]])
+def test_get_slates_rejects_bad_batches(
+    model_sidecar: Path, binary: Path, stub_stash: str, slates: object
+) -> None:
+    raw = payload("get_slates", model_sidecar, stub_stash, slates=slates)
+    assert_slice1_identical(binary, PLUGIN_DIR, raw, same_path=model_sidecar)
 
 
 def test_get_slate_draw_byte_identical(

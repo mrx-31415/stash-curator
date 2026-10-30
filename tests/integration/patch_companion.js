@@ -20,7 +20,7 @@
       }
       const surfaces = ["MainNavBar.MenuItems", "ScenePlayer", "HoverPopover", "FilteredSceneList",
         "FilteredPerformerList", "SceneList", "ScenePage", "PerformerPage", "SceneCard.Details",
-        "SceneCard.Popovers", "SceneCard.Overlays", "PerformerCard.Overlays"];
+        "SceneCard.Popovers", "SceneCard.Overlays", "PerformerCard.Overlays", "FrontPage"];
       const arraySurfaces = new Set(["SceneCard.Details", "SceneCard.Popovers", "SceneCard.Overlays", "PerformerCard.Overlays"]);
       const themed = new Set();
       for (const name of surfaces) {
