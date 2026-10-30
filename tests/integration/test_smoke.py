@@ -115,6 +115,10 @@ TABS: list[tuple[str, list[str]]] = [
             "no published model",
         ],
     ),
+    (
+        "?view=insights",
+        ["Your taste", "Your taste summary needs play history", "no published model"],
+    ),
     ("?view=hunt", ["Select a local performer linked to Stash-box"]),
     (
         "?view=feedback",

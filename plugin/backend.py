@@ -1103,6 +1103,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             return api.submit_external_scene_reasons(entries)
         if operation == "get_taste_profile":
             return api.taste_profile()
+        if operation == "get_taste_summary":
+            return api.taste_summary()
         if operation == "get_tag_questions":
             excluded = args.get("exclude_tag_ids") or []
             if not isinstance(excluded, list):
