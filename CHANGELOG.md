@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.48.0](https://github.com/mrx-31415/stash-curator/compare/v0.47.0...v0.48.0) (2026-10-30)
+
+
+### Features
+
+* add an Insights page summarising your taste ([#439](https://github.com/mrx-31415/stash-curator/issues/439)) ([0b0fab6](https://github.com/mrx-31415/stash-curator/commit/0b0fab6b5ee3843e1cf489a7d8b8bd9a1d6b4e0f))
+
+
+### Bug Fixes
+
+* **test:** create Stash's generated directories for the integration stack ([#437](https://github.com/mrx-31415/stash-curator/issues/437)) ([9c57c4f](https://github.com/mrx-31415/stash-curator/commit/9c57c4f605d1c44ae620d4c7330a4e78416297d1))
+
+
+### Documentation
+
+* re-record the tour and describe current features ([#435](https://github.com/mrx-31415/stash-curator/issues/435)) ([e88105e](https://github.com/mrx-31415/stash-curator/commit/e88105e3da18ead10d1372eeabe7eb601ae11f10))
+
 ## [0.47.0](https://github.com/mrx-31415/stash-curator/compare/v0.46.0...v0.47.0) (2026-10-30)
 
 
