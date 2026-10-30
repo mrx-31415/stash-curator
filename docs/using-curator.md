@@ -337,6 +337,25 @@ Find remembers this choice separately from Recommendations. Thumbnails show only
 the image; switch to Cards for match details and actions. Library scene thumbnails
 play previews on hover; external results and performers show still images.
 
+Expand scenes, StashDB Similar scenes, and Performer Hunt also offer **Deck**. Deck shows
+one scene at a time so you can work through candidates quickly. It follows the view's
+filters and sort and always leaves out dismissed scenes. Tap the card to see its
+description, all of its tags, and a Stash-box link.
+
+| Action | Touch | Keyboard |
+|---|---|---|
+| **Not now** | Swipe left | Tap ← |
+| **Not interested** | Swipe left and hold until the bar fills | Hold ←, or Shift+← |
+| **Shortlist** | Swipe right | Tap → |
+| **Send to Whisparr** | Swipe right and hold until the bar fills | Hold →, or Shift+→ |
+| **Skip** (no feedback) | Swipe up | ↑ or Space |
+| **Undo** | Undo button | Backspace |
+
+The buttons below the card do the same. If Whisparr is not configured, holding right
+only shortlists. A Whisparr request waits three seconds before it is sent, so **Undo**
+can still cancel it. **Undo** steps back one scene at a time and reverses that scene's
+dismissal or new shortlist entry.
+
 The **Virtual endless scrolling** switch in **Page settings** applies to Find too.
 Both Cards and Thumbnails load the next batch early as you approach the bottom.
 They restore your position and nearby batches when you return from another Stash page.
