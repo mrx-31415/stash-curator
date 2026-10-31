@@ -93,7 +93,8 @@ unchanged. If you remove Curator, its saved rows draw nothing; delete them in
 Choose a recommendation lane and your filters or mood, then click **Play lane**.
 Playback starts with the current picks. Use **Next** beside the player or the
 player's next-track button to advance; Curator fetches another batch from the
-same lane when needed. Filters and mood stay fixed for that playlist, and scenes
+same lane when needed. Stash's `p n` and `p p` shortcuts and the player's
+previous-track button also step through the playlist. Filters and mood stay fixed for that playlist, and scenes
 already queued do not repeat. Deleted scenes are skipped.
 
 The playlist stays in the current browser tab, including after a refresh.

@@ -50,6 +50,8 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.equal(context.readLanePlaylist(), null);
   const ordinary = { scene: { id: "1" }, onNext: () => "ordinary", onPrevious: () => "ordinary" };
   assert.equal(patches.get("ScenePlayer")(ordinary)[0], ordinary);
+  const ordinaryPage = { scene: { id: "1" }, onQueueNext: () => "ordinary", onQueuePrevious: () => "ordinary" };
+  assert.equal(patches.get("ScenePage")(ordinaryPage, "extra")[0], ordinaryPage);
   start();
   assert.equal(context.location.pathname, "/scenes/1");
   assert.equal(new URLSearchParams(context.location.search).get("autoplay"), "true");
@@ -63,6 +65,17 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.equal(context.location.pathname, "/scenes/2");
   assert.equal(requests.length, 0); // Queued picks don't need another recommendation request.
   assert.equal(JSON.parse(storage.get("origin")).impression_position, 1);
+  // Stash's "p p" / "p n" shortcuts call ScenePage's queue callbacks.
+  const page = patches.get("ScenePage")({ ...ordinaryPage, scene: { id: "2" } }, "extra");
+  assert.equal(page[1], "extra");
+  assert.equal(typeof patches.get("ScenePlayer")({ ...ordinary, scene: { id: "2" } })[0].onPrevious, "function");
+  page[0].onQueuePrevious();
+  assert.equal(context.location.pathname, "/scenes/1");
+  assert.equal(JSON.parse(storage.get("origin")).impression_position, 0);
+  context.previousLanePlaylist("1", history);
+  assert.equal(context.location.pathname, "/scenes/1");
+  await patches.get("ScenePage")(ordinaryPage)[0].onQueueNext();
+  assert.equal(context.location.pathname, "/scenes/2");
   context.readMoodID = () => "changed-mood";
   context.readTogetherMode = () => false;
   let resolve;
@@ -96,6 +109,12 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.equal(context.location.pathname, "/scenes/4");
   const count = requests.length;
   await context.nextLanePlaylist("4", history);
+  assert.equal(requests.length, count);
+  // Stepping back from the end can replay the picks already fetched.
+  context.previousLanePlaylist("4", history);
+  assert.equal(context.location.pathname, "/scenes/2");
+  await context.nextLanePlaylist("2", history);
+  assert.equal(context.location.pathname, "/scenes/4");
   assert.equal(requests.length, count);
   // Deleted queued scenes are skipped, and an entirely deleted batch fetches again.
   start();
@@ -148,5 +167,5 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.throws(start, /Storage full/);
   assert.equal(context.lanePlaylist, null);
   assert.equal(context.location.pathname, "/scenes/77");
-  console.log("PASS: continuous lane playback, frozen filters and mood, origin metadata, reload, duplicate clicks, deleted scenes, retry, end, cancellation, and native Next isolation");
+  console.log("PASS: continuous lane playback, frozen filters and mood, origin metadata, reload, previous/next shortcuts, duplicate clicks, deleted scenes, retry, end, cancellation, and native Next isolation");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
