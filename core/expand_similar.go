@@ -49,6 +49,10 @@ func (s *expandService) similar(entityType, entityID string, count int64, candid
 		if err != nil {
 			return jvNull(), err
 		}
+		sentToWhisparr, err := whisparrSentScenes(s.db)
+		if err != nil {
+			return jvNull(), err
+		}
 		disliked, err := dislikedPerformers(s.db)
 		if err != nil {
 			return jvNull(), err
@@ -281,6 +285,7 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 				jvKey("sources", sources),
 				jvKey("shortlisted", jvBool(shortlisted[externalID])),
 				jvKey("dismissed", dismissedValue(dismissed, externalID)),
+				jvKey("in_whisparr", jvBool(sentToWhisparr[externalID])),
 				jvKey("payload", itemPayload),
 			))
 		}

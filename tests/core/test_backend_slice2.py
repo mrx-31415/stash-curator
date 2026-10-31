@@ -986,6 +986,29 @@ def test_send_whisparr_already_exists_byte_identical(
         _StubExpand.plugin_settings = {}
 
 
+def test_send_whisparr_records_the_scene(
+    tmp_path: Path, binary: Path, stub_stash: str, stub_whisparr: str
+) -> None:
+    _StubWhisparr.movies = [{"stashId": "cand-2", "foreignId": "cand-2", "id": 55}]
+    _StubExpand.plugin_settings = {"whisparrUrl": stub_whisparr, "whisparrApiKey": "test-key"}
+    try:
+        for runner in (None, binary):
+            sidecar = tmp_path / f"{'go' if runner else 'py'}.sqlite3"
+            make_expand_sidecar(sidecar)
+            raw = payload("send_whisparr", sidecar, stub_stash, external_id="cand-2")
+            for _ in range(2):
+                result = run_backend_env(runner, PLUGIN_DIR, raw, stub_stash)
+                assert result.returncode == 0, result.stdout + result.stderr
+            with sqlite3.connect(sidecar) as connection:
+                rows = connection.execute(
+                    "SELECT endpoint, external_id FROM external_whisparr_sent"
+                ).fetchall()
+            assert rows == [("https://stashdb.org/graphql", "cand-2")]
+    finally:
+        _StubWhisparr.movies = []
+        _StubExpand.plugin_settings = {}
+
+
 def test_send_whisparr_not_in_expand_byte_identical(
     expand_sidecar: Path, binary: Path, stub_stash: str, stub_whisparr: str
 ) -> None:

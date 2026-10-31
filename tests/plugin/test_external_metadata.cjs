@@ -8,6 +8,7 @@ const React = {
   Fragment: "fragment",
   createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter(Boolean) }),
   useState: (initial) => [initial, () => {}],
+  useEffect: () => {},
 };
 const context = {
   React, URL, window: {}, NavLink: "NavLink", Button: "Button", ButtonGroup: "ButtonGroup",

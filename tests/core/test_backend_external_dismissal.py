@@ -120,6 +120,67 @@ def test_dismissal_hides_scene_until_undone(binary: Path, stub_stash: str, sidec
     assert _expand_ids(binary, sidecar, stub_stash) == before
 
 
+def test_batch_dismissal_matches_and_skips_uncached(
+    binary: Path, stub_stash: str, sidecar: Path
+) -> None:
+    for args in [
+        {"external_ids": ["cand-1", "not-in-cache", "cand-2"], "kind": "not_now"},
+        {"external_ids": ["cand-1"], "kind": "not_interested"},
+        {"external_ids": ["cand-1", "cand-2"], "kind": None},
+        {"external_ids": [], "kind": "not_now"},
+        {"external_ids": ["cand-1"], "kind": "never"},
+        {"external_ids": "cand-1", "kind": "not_now"},
+        {"external_ids": ["x"] * 501, "kind": "not_now"},
+    ]:
+        raw = payload("update_external_dismissal", sidecar, stub_stash, **args)
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, sidecar, stub_stash)
+
+    before = _expand_ids(binary, sidecar, stub_stash)
+    swept = before[:3]
+    raw = payload(
+        "update_external_dismissal",
+        sidecar,
+        stub_stash,
+        external_ids=[*swept, "not-in-cache"],
+        kind="not_now",
+    )
+    assert _output(binary, raw, stub_stash) == {
+        "schema_version": 2,
+        "external_ids": swept,
+        "kind": "not_now",
+    }
+    assert set(_expand_ids(binary, sidecar, stub_stash)) == set(before) - set(swept)
+    raw = payload("update_external_dismissal", sidecar, stub_stash, external_ids=swept)
+    assert _output(binary, raw, stub_stash)["external_ids"] == swept
+    assert set(_expand_ids(binary, sidecar, stub_stash)) == set(before)
+
+
+def test_find_items_mark_scenes_sent_to_whisparr(
+    binary: Path, stub_stash: str, sidecar: Path
+) -> None:
+    similar_args = {"entity_type": "scene", "entity_id": "recent-good"}
+    expand = payload("get_expand", sidecar, stub_stash, gender="", hide_phash_matches=False)
+    hunt = payload("get_performer_hunt", sidecar, stub_stash, performer_id="ext-p3")
+    similar = payload("get_external_similar", sidecar, stub_stash, **similar_args)
+    sent = {_output(binary, raw, stub_stash)["items"][0]["id"] for raw in (expand, hunt, similar)}
+    with sqlite3.connect(sidecar) as connection:
+        connection.executemany(
+            "INSERT INTO external_whisparr_sent(endpoint, external_id, sent_at_ms)"
+            " VALUES ('https://stashdb.org/graphql', ?, 1)",
+            [(id,) for id in sorted(sent)],
+        )
+    for raw in (expand, hunt):
+        assert_slice2_identical(binary, PLUGIN_DIR, raw, sidecar, stub_stash)
+    assert_slice2_identical(
+        binary, PLUGIN_DIR, similar, sidecar, stub_stash, timing_fields=("timings_ms",)
+    )
+    for raw in (expand, hunt, similar):
+        items = _output(binary, raw, stub_stash)["items"]
+        assert {item["id"] for item in items if item["in_whisparr"]} == sent & {
+            item["id"] for item in items
+        }
+
+
 def test_find_views_skip_active_dismissals(binary: Path, stub_stash: str, sidecar: Path) -> None:
     similar_args = {"entity_type": "scene", "entity_id": "recent-good"}
     hunt = payload("get_performer_hunt", sidecar, stub_stash, performer_id="ext-p3")

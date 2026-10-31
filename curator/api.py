@@ -991,6 +991,11 @@ class CuratorAPI:
     def update_external_dismissal(self, external_id: str, kind: str | None) -> None:
         ExpandService(self.connection, self.stashbox_endpoint).dismiss(external_id, kind)
 
+    def update_external_dismissals(self, external_ids: list[str], kind: str | None) -> list[str]:
+        return ExpandService(self.connection, self.stashbox_endpoint).dismiss_many(
+            external_ids, kind
+        )
+
     def update_external_performer_dislike(
         self, performer_id: str, name: str, disliked: bool
     ) -> None:

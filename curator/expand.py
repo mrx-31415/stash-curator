@@ -748,6 +748,7 @@ class ExpandService:
             )
         }
         dismissed = self.dismissed_scenes()
+        sent_to_whisparr = self.whisparr_sent_scenes()
         disliked = self.disliked_performers()
         scenes = [self._with_performer_dislike(scene, disliked) for scene in scenes]
         items = [
@@ -760,6 +761,7 @@ class ExpandService:
                 "match_type": (scene["payload"].get("curator_local_match") or {}).get("type"),
                 "shortlisted": scene["id"] in shortlisted,
                 "dismissed": dismissed.get(scene["id"]),
+                "in_whisparr": scene["id"] in sent_to_whisparr,
             }
             for scene in scenes
             if self._scene_matches(
@@ -850,6 +852,7 @@ class ExpandService:
         exclude_groups = equivalent_tag_names(self.connection, exclude_tags)
         blocked_groups = self._blocked_tag_name_groups()
         dismissed = self.dismissed_scenes() if entity_type == "scene" else {}
+        sent_to_whisparr = self.whisparr_sent_scenes() if entity_type == "scene" else set()
         disliked = self.disliked_performers() if entity_type == "scene" else {}
         for row in self.connection.execute(
             "SELECT * FROM external_entity WHERE entity_type=? AND pool='candidate' "
@@ -920,7 +923,10 @@ class ExpandService:
                     "payload": payload,
                     "shortlisted": str(row["external_id"]) in shortlisted,
                     **(
-                        {"dismissed": dismissed.get(str(row["external_id"]))}
+                        {
+                            "dismissed": dismissed.get(str(row["external_id"])),
+                            "in_whisparr": str(row["external_id"]) in sent_to_whisparr,
+                        }
                         if entity_type == "scene"
                         else {}
                     ),
@@ -1078,6 +1084,16 @@ class ExpandService:
             )
         }
 
+    def whisparr_sent_scenes(self) -> set[str]:
+        """StashDB scenes Curator sent to Whisparr."""
+        return {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT external_id FROM external_whisparr_sent WHERE endpoint=?",
+                (self.stashbox_endpoint.casefold(),),
+            )
+        }
+
     def disliked_performers(self) -> dict[str, str]:
         """StashDB performers the user is not into: name by StashDB id."""
         return {
@@ -1178,43 +1194,62 @@ class ExpandService:
 
     def dismiss(self, external_id: str, kind: str | None) -> None:
         """Hide an external scene from Find, or clear its dismissal when kind is None."""
+        self._dismiss([external_id], kind, strict=True)
+
+    def dismiss_many(self, external_ids: list[str], kind: str | None) -> list[str]:
+        """Dismiss (or restore) a batch, skipping scenes no longer in the cache.
+
+        Returns the ids that changed, in request order.
+        """
+        return self._dismiss(external_ids, kind, strict=False)
+
+    def _dismiss(self, external_ids: list[str], kind: str | None, *, strict: bool) -> list[str]:
         if kind is not None and kind not in EXTERNAL_DISMISSAL_KINDS:
             raise ValueError("invalid dismissal kind")
         endpoint = self.stashbox_endpoint.casefold()
+        changed: list[str] = []
+        now_ms = time.time_ns() // 1_000_000
+        expires_at_ms = (
+            now_ms + int(DEFAULT_CONFIG.model.not_now_days * 86_400_000)
+            if kind == "not_now"
+            else None
+        )
         with transaction(self.connection):
-            if kind is None:
+            for external_id in external_ids:
+                if kind is None:
+                    self.connection.execute(
+                        "DELETE FROM external_dismissal WHERE endpoint=? AND external_id=?",
+                        (endpoint, external_id),
+                    )
+                    changed.append(external_id)
+                    continue
+                row = self.connection.execute(
+                    "SELECT payload_json FROM external_entity "
+                    "WHERE entity_type='scene' AND external_id=?",
+                    (external_id,),
+                ).fetchone()
+                if row is None:
+                    if not strict:
+                        continue
+                    raise ValueError("external entity is not in the current Expand cache")
+                source = str(json.loads(row["payload_json"]).get("curator_endpoint") or STASHDB)
+                if source.rstrip("/").casefold() != endpoint:
+                    if not strict:
+                        continue
+                    raise ValueError("external entity is not in the selected endpoint's cache")
                 self.connection.execute(
-                    "DELETE FROM external_dismissal WHERE endpoint=? AND external_id=?",
-                    (endpoint, external_id),
+                    """
+                    INSERT INTO external_dismissal(
+                      endpoint, external_id, kind, created_at_ms, expires_at_ms, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(endpoint, external_id) DO UPDATE SET
+                      kind=excluded.kind, created_at_ms=excluded.created_at_ms,
+                      expires_at_ms=excluded.expires_at_ms, payload_json=excluded.payload_json
+                    """,
+                    (endpoint, external_id, kind, now_ms, expires_at_ms, row["payload_json"]),
                 )
-                return
-            row = self.connection.execute(
-                "SELECT payload_json FROM external_entity "
-                "WHERE entity_type='scene' AND external_id=?",
-                (external_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError("external entity is not in the current Expand cache")
-            source = str(json.loads(row["payload_json"]).get("curator_endpoint") or STASHDB)
-            if source.rstrip("/").casefold() != endpoint:
-                raise ValueError("external entity is not in the selected endpoint's cache")
-            now_ms = time.time_ns() // 1_000_000
-            expires_at_ms = (
-                now_ms + int(DEFAULT_CONFIG.model.not_now_days * 86_400_000)
-                if kind == "not_now"
-                else None
-            )
-            self.connection.execute(
-                """
-                INSERT INTO external_dismissal(
-                  endpoint, external_id, kind, created_at_ms, expires_at_ms, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(endpoint, external_id) DO UPDATE SET
-                  kind=excluded.kind, created_at_ms=excluded.created_at_ms,
-                  expires_at_ms=excluded.expires_at_ms, payload_json=excluded.payload_json
-                """,
-                (endpoint, external_id, kind, now_ms, expires_at_ms, row["payload_json"]),
-            )
+                changed.append(external_id)
+        return changed
 
     def dismissal_results(self, *, page: int = 1, count: int = 20) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 100:
@@ -1362,6 +1397,7 @@ class ExpandService:
             targets = [profiles[value] for value in target_performers if value in profiles]
             weights = dict(DEFAULT_CONFIG.feature.performer_block_weights)
             dismissed = self.dismissed_scenes()
+            sent_to_whisparr = self.whisparr_sent_scenes()
             disliked = self.disliked_performers()
             items = []
             for row in self.connection.execute(
@@ -1471,6 +1507,7 @@ class ExpandService:
                         "sources": json.loads(row["sources_json"]),
                         "shortlisted": str(row["external_id"]) in shortlisted,
                         "dismissed": dismissed.get(str(row["external_id"])),
+                        "in_whisparr": str(row["external_id"]) in sent_to_whisparr,
                         "payload": {
                             **payload,
                             "why": [

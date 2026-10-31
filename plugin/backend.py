@@ -999,6 +999,14 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
         if operation == "update_external_dismissal":
             external_id = str(args.get("external_id") or "")
             kind = str(args["kind"]) if args.get("kind") else None
+            batch = args.get("external_ids")
+            if batch is not None:
+                if not isinstance(batch, list) or len(batch) > 500:
+                    raise ValueError("external_ids must be a list of at most 500 ids")
+                changed = api.update_external_dismissals(
+                    [str(value or "") for value in batch], kind
+                )
+                return {"schema_version": SCHEMA_VERSION, "external_ids": changed, "kind": kind}
             api.update_external_dismissal(external_id, kind)
             return {
                 "schema_version": SCHEMA_VERSION,
@@ -1054,13 +1062,20 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             key = str(settings.get("whisparrApiKey") or "").strip()
             root = str(settings.get("whisparrRootFolder") or "").strip()
             profile = int(settings.get("whisparrQualityProfileId") or 0)
-            return WhisparrClient(url, key).send_scene(
+            result = WhisparrClient(url, key).send_scene(
                 external_id,
                 str(payload_json.get("title") or "Added by Stash Curator"),
                 root,
                 profile,
                 search=bool(settings.get("whisparrSearchImmediately", True)),
             )
+            with transaction(connection):
+                connection.execute(
+                    "INSERT OR IGNORE INTO external_whisparr_sent"
+                    "(endpoint, external_id, sent_at_ms) VALUES (?, ?, ?)",
+                    (STASHDB.casefold(), external_id, time.time_ns() // 1_000_000),
+                )
+            return result
         if operation == "submit_feedback":
             entries = args.get("entries")
             if not isinstance(entries, list):

@@ -4899,6 +4899,67 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   gap: 0.5rem;
 }
 
+/* Find's seen sweep: fixed to the bottom of the viewport (a sticky bar after
+   an endless list would only appear at its end), centred and only as wide
+   as its controls. */
+.curator-sweep-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 1030;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--curator-border-strong);
+  border-radius: 999px;
+  background: var(--curator-surface-raised);
+  box-shadow: var(--curator-card-shadow-lg);
+  color: var(--curator-text);
+}
+
+.curator-sweep-bar small { color: var(--curator-text-muted); }
+
+/* Seen cards: dashed when the sweep would hide them, solid with the reason
+   when it keeps them. The outline sits inside the card so the grid does not
+   clip it. */
+.curator-external-card[data-curator-sweep] {
+  outline-offset: -2px;
+  outline-width: 2px;
+}
+
+.curator-external-card[data-curator-sweep="hide"] {
+  outline-style: dashed;
+  outline-color: var(--curator-insight-less);
+}
+
+.curator-external-card[data-curator-sweep="keep"] {
+  outline-style: solid;
+  outline-color: var(--curator-hue-stretch);
+}
+
+.curator-external-card[data-curator-sweep="keep"]::after {
+  content: attr(data-curator-sweep-reason);
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--curator-radius-sm);
+  background: var(--curator-hue-stretch);
+  color: #0b1f17;
+  font-size: 0.7rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* A thumbnail hidden in this view keeps its slot, dimmed, until the next fetch. */
+.curator-find-thumbnail-hidden { opacity: 0.3; }
+
 .curator-external-dismissal-history {
   margin-top: 1.5rem;
 }
