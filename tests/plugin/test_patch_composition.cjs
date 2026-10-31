@@ -21,12 +21,12 @@ const context = vm.createContext({
     },
   },
   window: { location: { pathname: "/performers" } },
-  useHistory: () => ({}), activeLanePlaylist: () => null,
+  useHistory: () => ({}),
   installPerformerAffinitySort() {}, installSceneAffinitySort() {}, configureAffinityFilter() {}, configureLaneFilter() {},
   addPerformerAffinitySortOption() {}, addSceneAffinitySortOption() {},
   CuratorNavItem: "curator-nav", EvidenceScore: "score", CuratorSceneAffinityPill: "scene-pill", CuratorLaneListView: "lane-view",
   CuratorPerformerCardBadge: "performer-badge", CuratorContextLink: "context-link",
-  LanePlaylistControls: "playlist", CuratorPerformerSortLocale: "performer-locale",
+  CuratorPerformerSortLocale: "performer-locale",
   CuratorSceneSortLocale: "scene-locale", CuratorSceneAffinityCards: "affinity-cards",
   PerformerHuntLink: "hunt", CuratorHomeSlates: "home-slates", CuratorHomeSync: "home-sync", CuratorHomeLane: "home-lane",
   CuratorHomeEditor: "home-editor", HOME_ENTRY_TYPE: "CuratorLane", laneByValue: new Map([["for_you", { value: "for_you" }]]),
@@ -73,7 +73,6 @@ function invoke(name, target, args, receiver, otherFirst, extra) {
 
 const nativeChild = element("native-child");
 const cases = {
-  ScenePlayer: { scene: { id: "1" } },
   HoverPopover: { className: "unrelated-popover", content: nativeChild },
   "SceneCard.Details": {},
   "MainNavBar.MenuItems": { children: [nativeChild] },

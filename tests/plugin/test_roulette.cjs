@@ -53,7 +53,7 @@ const context = {
   React: { useCallback() {} },
 };
 vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf("  function playlistOrigins("), source.indexOf("  function startLanePlaylist(")), context);
+vm.runInContext(source.slice(source.indexOf("  function playlistOrigins("), source.indexOf("  // Play lane hands")), context);
 vm.runInContext(source.slice(source.indexOf("  function createRouletteSession("), source.indexOf("  const rouletteTimestamp")), context);
 const sources = [], buses = [];
 const parameter = () => ({
