@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/mrx-31415/stash-curator/compare/v0.51.0...v0.52.0) (2026-10-31)
+
+
+### Features
+
+* play lanes through Stash's native scene queue ([#447](https://github.com/mrx-31415/stash-curator/issues/447)) ([3d8900f](https://github.com/mrx-31415/stash-curator/commit/3d8900fd0494c5724375da5ef0670e1ed24fc853))
+
 ## [0.51.0](https://github.com/mrx-31415/stash-curator/compare/v0.50.0...v0.51.0) (2026-10-31)
 
 
