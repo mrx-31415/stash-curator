@@ -561,9 +561,19 @@
     if (!result.data || Object.keys(result.data).length !== items.length) throw new Error("Could not load the next playlist scenes.");
     return new Set(Object.values(result.data).filter(Boolean).map((scene) => String(scene.id)));
   }
+  // Stepping back from the end keeps the fetched picks ahead playable.
+  function lanePlaylistAtEnd(playlist) {
+    return playlist.finished && playlist.index + 1 >= playlist.items.length;
+  }
+  function previousLanePlaylist(sceneId, history) {
+    const current = activeLanePlaylist(sceneId);
+    if (!current || current.index === 0 || lanePlaylistPending) return;
+    lanePlaylistError = "";
+    openPlaylistScene({ ...current, index: current.index - 1 }, history);
+  }
   async function nextLanePlaylist(sceneId, history) {
     const current = activeLanePlaylist(sceneId);
-    if (!current || current.finished || lanePlaylistPending) return;
+    if (!current || lanePlaylistAtEnd(current) || lanePlaylistPending) return;
     lanePlaylistPending = true;
     lanePlaylistError = "";
     notifyLanePlaylist();
@@ -621,10 +631,10 @@
         React.createElement(FontAwesomeIcon, { icon: faList, "aria-hidden": "true" }),
         laneByValue.get(playlist.lane).label,
         React.createElement("span", { className: "curator-playlist-count", title: "Position in playlist" }, playlist.index + 1),
-        playlist.finished && "End of recommendations"
+        lanePlaylistAtEnd(playlist) && "End of recommendations"
       ),
       React.createElement(ButtonGroup, { size: "sm", className: "curator-playlist-actions" },
-        React.createElement(Button, { className: "curator-playlist-next", variant: "link", disabled: lanePlaylistPending || playlist.finished, "aria-busy": lanePlaylistPending, onClick: () => nextLanePlaylist(sceneId, history), title: "Play the next recommendation from this lane" }, React.createElement(FontAwesomeIcon, { icon: faPlay, "aria-hidden": "true" }), lanePlaylistPending ? "Loading…" : lanePlaylistError ? "Retry next" : "Next"),
+        React.createElement(Button, { className: "curator-playlist-next", variant: "link", disabled: lanePlaylistPending || lanePlaylistAtEnd(playlist), "aria-busy": lanePlaylistPending, onClick: () => nextLanePlaylist(sceneId, history), title: "Play the next recommendation from this lane" }, React.createElement(FontAwesomeIcon, { icon: faPlay, "aria-hidden": "true" }), lanePlaylistPending ? "Loading…" : lanePlaylistError ? "Retry next" : "Next"),
         React.createElement(Button, { className: "curator-playlist-stop", variant: "link", title: "Stop playlist", "aria-label": "Stop playlist", onClick: () => { saveLanePlaylist(null); history.replace(`/scenes/${sceneId}`); } }, React.createElement(FontAwesomeIcon, { icon: faXmark, "aria-hidden": "true" }))
       ),
       lanePlaylistError && React.createElement("small", { className: "curator-playlist-error text-danger", role: "alert" }, lanePlaylistError)
@@ -633,7 +643,13 @@
   }
   Api.patch.before("ScenePlayer", function (props, ...args) {
     const history = useHistory();
-    return [activeLanePlaylist(props.scene.id) ? { ...props, onNext: () => nextLanePlaylist(props.scene.id, history), onPrevious: undefined } : props, ...args];
+    const playlist = activeLanePlaylist(props.scene.id);
+    return [playlist ? { ...props, onNext: () => nextLanePlaylist(props.scene.id, history), onPrevious: playlist.index > 0 ? () => previousLanePlaylist(props.scene.id, history) : undefined } : props, ...args];
+  });
+  // Stash binds the "p n" and "p p" shortcuts to these ScenePage queue callbacks.
+  Api.patch.before("ScenePage", function (props, ...args) {
+    const history = useHistory();
+    return [activeLanePlaylist(props.scene.id) ? { ...props, onQueueNext: () => nextLanePlaylist(props.scene.id, history), onQueuePrevious: () => previousLanePlaylist(props.scene.id, history) } : props, ...args];
   });
 
   function localDay() {
