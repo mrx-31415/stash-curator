@@ -178,6 +178,25 @@ const rowsView = (...rows) => element("div", { className: "recommendations-conta
     // No list yet (a fresh install before Stash writes its default).
     const empty = frontPage({}, ...extra, element("div", { className: "recommendations-container" }, element("div", {}, undefined), footer));
     assert.deepEqual([...empty.props.lanes], []);
+    // Another plugin's FrontPage patch ran first: it wrapped the view, or put
+    // its own rows before Stash's list. Curator still finds the list.
+    const lane = () => control(1, { __typename: "CuratorLane", lane: "for_you" });
+    const wrapped = frontPage({}, ...extra, element("other-plugin-wrapper", {}, otherRows, rowsView(native, lane())));
+    assert.deepEqual([...wrapped.props.lanes], ["for_you"]);
+    const wrapper = wrapped.props.children[1];
+    assert.equal(wrapper.type, "other-plugin-wrapper");
+    assert.equal(children(wrapper.props.children)[0], otherRows);
+    const wrappedRows = children(children(wrapper.props.children)[1].props.children[0].props.children);
+    assert.deepEqual(wrappedRows.map((row) => row.type), ["control", "home-lane"]);
+    const ahead = element("div", { className: "recommendations-container" }, element("other-plugin-list", {}, otherRows), element("div", {}, [native, lane()]), footer);
+    const aheadView = frontPage({}, ...extra, ahead).props.children[1];
+    const [theirs, list, foot] = children(aheadView.props.children);
+    assert.equal(theirs.type, "other-plugin-list");
+    assert.deepEqual(children(list.props.children).map((row) => row.type), ["control", "home-lane"]);
+    assert.equal(foot, footer);
+    // A view nested deeper than Curator looks is left alone.
+    const deep = element("a", {}, element("b", {}, element("c", {}, element("d", {}, rowsView(lane())))));
+    assert.equal(frontPage({}, ...extra, deep), deep);
   }
   const closed = [];
   const editor = element("front-page-config", { onClose: (content) => closed.push(content) });
