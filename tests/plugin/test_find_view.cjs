@@ -10,6 +10,7 @@ const context = {
   window: { localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } },
   React: {
     useState: initial => [state = typeof initial === "function" ? initial() : initial, value => { state = value; }],
+    useEffect: () => {},
     createElement: (type, props, ...children) => ({ type, props, children }),
   },
   Button: "button", ButtonGroup: "group",

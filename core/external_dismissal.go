@@ -29,6 +29,24 @@ AND (expires_at_ms IS NULL OR expires_at_ms>?)`, stashdbEndpoint, nowMs())
 	return dismissed, rows.Err()
 }
 
+// whisparrSentScenes is the set of StashDB scenes Curator sent to Whisparr.
+func whisparrSentScenes(db dbx) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT external_id FROM external_whisparr_sent WHERE endpoint=lower(?)`, stashdbEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sent := map[string]bool{}
+	for rows.Next() {
+		var externalID string
+		if err := rows.Scan(&externalID); err != nil {
+			return nil, err
+		}
+		sent[externalID] = true
+	}
+	return sent, rows.Err()
+}
+
 // dismissedValue is an item's "dismissed" field: its kind, or null.
 func dismissedValue(dismissed map[string]string, externalID string) jVal {
 	if kind, ok := dismissed[externalID]; ok {
@@ -42,12 +60,28 @@ func opUpdateExternalDismissal(pluginDir string, payload jVal) (jVal, error) {
 		func(settings jVal) (jVal, error) { return updateExternalDismissalBody(pluginDir, payload, settings) })
 }
 
+// externalDismissalBatchLimit bounds one batch dismissal (a page sweep).
+const externalDismissalBatchLimit = 500
+
 func updateExternalDismissalBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	args := payload.get("args")
 	externalID := pythonStrOrEmpty(args.get("external_id"))
 	kind := ""
 	if args.get("kind").truthy() {
 		kind = pythonStrOrEmpty(args.get("kind"))
+	}
+	// external_ids dismisses a batch; scenes that left the Expand cache are
+	// skipped rather than failing the batch.
+	batch := args.get("external_ids")
+	var externalIDs []string
+	if batch.kind != jNull {
+		if !isList(batch) || len(batch.arr) > externalDismissalBatchLimit {
+			return jvNull(), fmt.Errorf("external_ids must be a list of at most 500 ids")
+		}
+		externalIDs = []string{}
+		for _, value := range batch.arr {
+			externalIDs = append(externalIDs, pythonStrOrEmpty(value))
+		}
 	}
 	db, err := openAPISidecar(pluginDir, payload, settings)
 	if err != nil {
@@ -57,49 +91,71 @@ func updateExternalDismissalBody(pluginDir string, payload, settings jVal) (jVal
 	if kind != "" && kind != "not_interested" && kind != "not_now" {
 		return jvNull(), fmt.Errorf("invalid dismissal kind")
 	}
+	strict := externalIDs == nil
+	if strict {
+		externalIDs = []string{externalID}
+	}
+	changed := []string{}
 	err = withTxn(db, func(conn *sql.Conn) error {
+		changed = changed[:0]
 		ctx := context.Background()
-		if kind == "" {
-			_, err := conn.ExecContext(ctx,
-				`DELETE FROM external_dismissal WHERE endpoint=lower(?) AND external_id=?`,
-				stashdbEndpoint, externalID)
-			return err
-		}
-		var payloadJSON string
-		err := conn.QueryRowContext(ctx,
-			`SELECT payload_json FROM external_entity WHERE entity_type='scene' AND external_id=?`,
-			externalID).Scan(&payloadJSON)
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("external entity is not in the current Expand cache")
-		}
-		if err != nil {
-			return err
-		}
-		stored, err := parseJSON([]byte(payloadJSON))
-		if err != nil {
-			return err
-		}
-		source := pythonStrOrEmpty(stored.get("curator_endpoint"))
-		if source == "" {
-			source = "https://stashdb.org/graphql"
-		}
-		if !strings.EqualFold(strings.TrimRight(source, "/"), stashdbEndpoint) {
-			return fmt.Errorf("external entity is not in the selected endpoint's cache")
-		}
 		now := nowMs()
 		var expiresAtMs any
 		if kind == "not_now" {
 			expiresAtMs = now + int64(notNowDays*86_400_000)
 		}
-		_, err = conn.ExecContext(ctx, `
+		for _, externalID := range externalIDs {
+			if kind == "" {
+				_, err := conn.ExecContext(ctx,
+					`DELETE FROM external_dismissal WHERE endpoint=lower(?) AND external_id=?`,
+					stashdbEndpoint, externalID)
+				if err != nil {
+					return err
+				}
+				changed = append(changed, externalID)
+				continue
+			}
+			var payloadJSON string
+			err := conn.QueryRowContext(ctx,
+				`SELECT payload_json FROM external_entity WHERE entity_type='scene' AND external_id=?`,
+				externalID).Scan(&payloadJSON)
+			if err == sql.ErrNoRows {
+				if !strict {
+					continue
+				}
+				return fmt.Errorf("external entity is not in the current Expand cache")
+			}
+			if err != nil {
+				return err
+			}
+			stored, err := parseJSON([]byte(payloadJSON))
+			if err != nil {
+				return err
+			}
+			source := pythonStrOrEmpty(stored.get("curator_endpoint"))
+			if source == "" {
+				source = "https://stashdb.org/graphql"
+			}
+			if !strings.EqualFold(strings.TrimRight(source, "/"), stashdbEndpoint) {
+				if !strict {
+					continue
+				}
+				return fmt.Errorf("external entity is not in the selected endpoint's cache")
+			}
+			_, err = conn.ExecContext(ctx, `
 INSERT INTO external_dismissal(
   endpoint, external_id, kind, created_at_ms, expires_at_ms, payload_json
 ) VALUES (lower(?), ?, ?, ?, ?, ?)
 ON CONFLICT(endpoint, external_id) DO UPDATE SET
   kind=excluded.kind, created_at_ms=excluded.created_at_ms,
   expires_at_ms=excluded.expires_at_ms, payload_json=excluded.payload_json`,
-			stashdbEndpoint, externalID, kind, now, expiresAtMs, payloadJSON)
-		return err
+				stashdbEndpoint, externalID, kind, now, expiresAtMs, payloadJSON)
+			if err != nil {
+				return err
+			}
+			changed = append(changed, externalID)
+		}
+		return nil
 	})
 	if err != nil {
 		return jvNull(), err
@@ -107,6 +163,13 @@ ON CONFLICT(endpoint, external_id) DO UPDATE SET
 	kindVal := jvNull()
 	if kind != "" {
 		kindVal = jvStr(kind)
+	}
+	if !strict {
+		return jvObj(
+			jvKey("schema_version", jvInt(apiSchemaVersion)),
+			jvKey("external_ids", jvStrList(changed)),
+			jvKey("kind", kindVal),
+		), nil
 	}
 	return jvObj(
 		jvKey("schema_version", jvInt(apiSchemaVersion)),

@@ -417,7 +417,8 @@ both local tags and the cached StashDB tag catalog in Expand, Performer Hunt, an
 StashDB Similar. StashDB-only tags do not need to exist in your library; names and
 aliases filter remote results. Refresh Expand's cache to update that catalog.
 If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
-it sends only the scene you select. Use
+it sends only the scene you select. Curator remembers the send, so the card shows
+**Sent to Whisparr** on later visits. Use
 **Rate tags** to rate tags that map exactly to local tags.
 Saved candidates appear in **Expand → Shortlist**.
 
@@ -428,6 +429,17 @@ out of all three views. Shortlisted scenes stay in the Shortlist. To see them, t
 off **Hide dismissed scenes** in the view's **Filters**: hidden scenes return with a
 **Hidden** badge and **Show again**. A **Not now** scene returns on its own after
 30 days.
+
+To clear many scenes at once, scroll through the results and use **Not now · N seen**
+at the bottom of the screen. Scrolling down selects scenes: when a card's centre passes
+the middle of the screen it gets a dashed orange outline, and the button marks every
+outlined scene as **Not now**. Reaching the end of a page selects the rest of what is on
+screen. Scenes you shortlisted, sent to Whisparr, or already dismissed or restored show a
+solid green outline with the reason from the start and are always skipped; scenes you
+have not reached yet are never selected. With endless scrolling, everything you
+scrolled past counts; with pages, only the current page does. **Undo** beside the count
+restores the whole batch. The **Sweep** button next to **Filters** turns scroll selection,
+its outlines and the bar off or on; the choice is remembered in this browser.
 These scenes are not in your library, so a dismissal does not train the model
 as scene feedback.
 After **Not interested**, Curator may offer an optional **What put you off?** card,

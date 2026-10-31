@@ -34,6 +34,8 @@ open browser tab.
 
 Whisparr is a separate optional integration and receives only an item you
 explicitly send with **Send to Whisparr**; it is never sent automatically.
+Curator records the StashDB ids of scenes it has sent, in the local database only,
+to mark them in Find.
 Sending a scene also requests a release search by default, controlled by the
 **Search Whisparr immediately** setting.
 

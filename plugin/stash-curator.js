@@ -264,6 +264,7 @@
   const WALL_CAP = 20;
   const RECOMMENDATION_VIEW_KEY = "stash-curator:recommendation-view:v1";
   const FIND_VIEW_KEY = "stash-curator:find-view:v1";
+  const FIND_SWEEP_KEY = "stash-curator:find-sweep:v1";
   const ROULETTE_ANIMATION_KEY = "stash-curator:roulette-animation:v1";
   let rouletteAnimationEnabled = true;
   try { rouletteAnimationEnabled = localStorage.getItem(ROULETTE_ANIMATION_KEY) !== "false"; } catch (_) {}
@@ -3437,12 +3438,206 @@
     );
   }
 
+  // The scenes a Find view has shown and the user left alone, for a batch
+  // Not now. Scrolling down selects ("sees") a card once its centre moves
+  // above the middle of the viewport, so the selection visibly follows the
+  // scroll; reaching the end of a paged list selects the rest of what was
+  // shown. A card stops counting when it unmounts (page change or refetch);
+  // with endless scrolling cards stay mounted, so everything scrolled past
+  // stays selected. Shortlisted, Whisparr'd, dismissed and restored scenes are
+  // never swept and are marked as kept from the start. Marks are data
+  // attributes on the card elements (data-curator-sweep is "hide" or "keep",
+  // with the reason for a keep) rather than React state, so scrolling never
+  // re-renders the grid.
+  function createSweepStore() {
+    const items = new Map();
+    const elements = new Map();
+    const ids = new Map();
+    // Cards on screen and their last centre, relative to the viewport.
+    const centres = new Map();
+    const seen = new Set();
+    const kept = new Map();
+    const listeners = new Set();
+    let dismissals = {};
+    let observer = null;
+    let end = null;
+    let pending = null;
+    let frame = null;
+    function notify() {
+      if (pending) return;
+      pending = setTimeout(() => { pending = null; listeners.forEach((listener) => listener()); }, 100);
+    }
+    // Why a scene is left out of the sweep, or "" when it can be hidden.
+    function keepReason(id, current) {
+      const item = items.get(id);
+      if (current[id] === "restored") return "Restored";
+      if (item.shortlisted) return "Shortlisted";
+      if (item.in_whisparr) return "In Whisparr";
+      if (kept.has(id)) return kept.get(id);
+      if (item.dismissed) return "Hidden";
+      return "";
+    }
+    function paint(id) {
+      const element = elements.get(id);
+      if (!element) return;
+      const reason = id in dismissals && dismissals[id] !== "restored" ? null : keepReason(id, dismissals);
+      if (reason) {
+        element.dataset.curatorSweep = "keep";
+        element.dataset.curatorSweepReason = reason;
+      } else if (reason === "" && seen.has(id)) {
+        element.dataset.curatorSweep = "hide";
+        delete element.dataset.curatorSweepReason;
+      } else {
+        delete element.dataset.curatorSweep;
+        delete element.dataset.curatorSweepReason;
+      }
+    }
+    function select(id) {
+      centres.delete(id);
+      if (!seen.has(id)) { seen.add(id); paint(id); notify(); }
+    }
+    const middle = () => window.innerHeight / 2;
+    // On scroll: select the on-screen cards whose centre moved up past the middle.
+    function scan() {
+      frame = null;
+      const line = middle();
+      centres.forEach((previous, id) => {
+        const rect = elements.get(id)?.getBoundingClientRect();
+        if (!rect) return;
+        const centre = rect.top + rect.height / 2;
+        if (centre < previous && centre < line) select(id);
+        else centres.set(id, centre);
+      });
+    }
+    function onScroll() {
+      if (frame === null) frame = requestAnimationFrame(scan);
+    }
+    function intersect(entries) {
+      for (const entry of entries) {
+        if (entry.target === end) {
+          if (entry.isIntersecting) [...centres.keys()].forEach(select);
+          continue;
+        }
+        const id = ids.get(entry.target);
+        if (id === undefined || seen.has(id)) continue;
+        const rect = entry.boundingClientRect;
+        if (entry.isIntersecting) centres.set(id, rect.top + rect.height / 2);
+        // Flung from the screen past its top between two frames.
+        else if (centres.has(id) && rect.bottom <= (entry.rootBounds ? entry.rootBounds.top : 0)) select(id);
+        else centres.delete(id);
+      }
+    }
+    function watch(element) {
+      if (!observer && typeof IntersectionObserver === "function") {
+        observer = new IntersectionObserver(intersect, { threshold: 0 });
+        // Capture also sees scrolls of a nested scroll container.
+        if (typeof document !== "undefined") document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+      }
+      observer?.observe(element);
+    }
+    return {
+      observe(element, item) {
+        if (!element) return undefined;
+        items.set(item.id, item);
+        elements.set(item.id, element);
+        ids.set(element, item.id);
+        paint(item.id);
+        watch(element);
+        return () => {
+          ids.delete(element);
+          observer?.unobserve(element);
+          delete element.dataset.curatorSweep;
+          delete element.dataset.curatorSweepReason;
+          if (elements.get(item.id) === element) elements.delete(item.id);
+          items.delete(item.id);
+          centres.delete(item.id);
+          if (seen.delete(item.id)) notify();
+        };
+      },
+      // The end of a paged list: once it is on screen, everything on screen counts.
+      observeEnd(element) {
+        if (!element) return undefined;
+        end = element;
+        watch(element);
+        return () => {
+          observer?.unobserve(element);
+          if (end === element) end = null;
+        };
+      },
+      scan,
+      update(item) { if (items.has(item.id)) { items.set(item.id, item); paint(item.id); } },
+      // A null reason releases the keep (an undone shortlist).
+      keep(id, reason) {
+        if (reason) kept.set(id, reason);
+        else kept.delete(id);
+        paint(id);
+        notify();
+      },
+      setDismissals(value) { dismissals = value; elements.forEach((_element, id) => paint(id)); },
+      candidates(current) {
+        return [...seen].filter((id) => items.has(id) && !(id in current) && !keepReason(id, current));
+      },
+      subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      dispose() {
+        observer?.disconnect();
+        observer = null;
+        if (typeof document !== "undefined") document.removeEventListener("scroll", onScroll, { capture: true });
+        clearTimeout(pending);
+      },
+    };
+  }
+
+  // Stash moves its navbar to the bottom of the screen on a phone held
+  // upright; the bar then sits just above it.
+  function bottomNavbarHeight() {
+    if (typeof document === "undefined") return 0;
+    const rect = document.querySelector(".top-nav")?.getBoundingClientRect();
+    return rect && rect.top > window.innerHeight / 2 ? Math.max(0, window.innerHeight - rect.top) : 0;
+  }
+
+  function SweepSeenBar({ sweep, dismissals, paged, last, busy, error, onSweep, onUndo }) {
+    const [, setTick] = React.useState(0);
+    const [lift, setLift] = React.useState(bottomNavbarHeight);
+    const [endElement, setEndElement] = React.useState(null);
+    React.useEffect(() => sweep.subscribe(() => setTick((value) => value + 1)), [sweep]);
+    React.useEffect(() => paged ? sweep.observeEnd(endElement) : undefined, [paged, endElement]);
+    React.useEffect(() => {
+      if (typeof window.addEventListener !== "function") return undefined;
+      const place = () => setLift(bottomNavbarHeight());
+      place();
+      window.addEventListener("resize", place);
+      return () => window.removeEventListener("resize", place);
+    }, []);
+    const count = sweep.candidates(dismissals).length;
+    // The bar is fixed; its in-flow wrapper marks the end of the results.
+    return React.createElement("div", { ref: setEndElement, className: "curator-sweep-end" }, Boolean(count > 0 || last || error) && React.createElement("div", { className: "curator-sweep-bar", role: "region", "aria-label": "Hide seen scenes", style: lift ? { bottom: `calc(${lift}px + 0.75rem)` } : undefined },
+      count > 0 && React.createElement(Button, {
+        size: "sm", variant: "secondary", disabled: busy, onClick: onSweep,
+        title: `Mark the ${count} scene${count === 1 ? "" : "s"} you scrolled past, outlined with dashes, as Not now (hidden from Find for 30 days). Cards with a solid outline are kept: shortlisted, sent to Whisparr, or restored.`,
+      }, React.createElement(FontAwesomeIcon, { icon: faClock }), ` Not now · ${count} seen`),
+      last && React.createElement("small", { role: "status" }, `${last.length} hidden`),
+      last && React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: onUndo }, "Undo"),
+      error && React.createElement("small", { className: "text-danger", role: "status" }, error)
+    ));
+  }
+
   // Not interested / Not now in a Find view. Dismissed scenes stay as stubs
   // until the next fetch (the backend then leaves them out); Not interested
   // offers the reason follow-up beside the dismissed card.
   function useExternalDismissals(gender) {
     const [dismissals, setDismissals] = React.useState({});
     const [followUp, setFollowUp] = React.useState(null);
+    const [sweep] = React.useState(createSweepStore);
+    // Scroll-to-select is on unless turned off in this browser.
+    const [sweepOn, setSweepOn] = React.useState(() => {
+      try { return window.localStorage.getItem(FIND_SWEEP_KEY) !== "off"; }
+      catch { return true; }
+    });
+    const [lastSweep, setLastSweep] = React.useState(null);
+    const [sweepBusy, setSweepBusy] = React.useState(false);
+    const [sweepError, setSweepError] = React.useState("");
+    React.useEffect(() => sweep.setDismissals(dismissals), [dismissals]);
+    React.useEffect(() => () => sweep.dispose(), []);
     async function dismiss(item, kind) {
       await operation({ operation: "update_external_dismissal", external_id: item.id, kind });
       clearEndlessCache();
@@ -3454,7 +3649,44 @@
     const followUpFor = (id) => followUp?.id === id
       ? React.createElement(ExternalDismissFollowUp, { key: followUp.id, item: followUp, gender, onDismiss: () => setFollowUp(null) })
       : null;
-    return { dismissals, dismiss, followUpFor };
+    async function runSweep(ids, kind) {
+      setSweepBusy(true);
+      setSweepError("");
+      try {
+        const result = await operation({ operation: "update_external_dismissal", external_ids: ids, kind });
+        clearEndlessCache();
+        setDismissals((current) => {
+          const next = { ...current };
+          for (const id of result.external_ids) {
+            if (kind) next[id] = kind;
+            else delete next[id];
+          }
+          return next;
+        });
+        setLastSweep(kind ? result.external_ids : null);
+      } catch (failure) {
+        setSweepError(failure.message);
+      } finally {
+        setSweepBusy(false);
+      }
+    }
+    // Undo returns the swept scenes to undecided, so a later sweep may take them.
+    const sweepBar = (paged) => React.createElement(SweepSeenBar, {
+      sweep, dismissals, paged, last: lastSweep, busy: sweepBusy, error: sweepError,
+      onSweep: () => runSweep(sweep.candidates(dismissals), "not_now"),
+      onUndo: () => runSweep(lastSweep, null),
+    });
+    function toggleSweep() {
+      const value = !sweepOn;
+      setSweepOn(value);
+      try { window.localStorage.setItem(FIND_SWEEP_KEY, value ? "on" : "off"); } catch {}
+    }
+    const sweepToggle = () => React.createElement(Button, {
+      size: "sm", variant: sweepOn ? "primary" : "secondary", "aria-pressed": sweepOn, onClick: toggleSweep,
+      title: sweepOn ? "Scroll to select is on: scenes you scroll past are outlined for a batch Not now. Click to turn it off." : "Turn on scroll to select: outline scenes as you scroll past them, then hide them all with one Not now.",
+    }, React.createElement(FontAwesomeIcon, { icon: faBroom }), " Sweep");
+    // Off: cards get no sweep, which also clears their marks.
+    return { dismissals, dismiss, followUpFor, sweep: sweepOn ? sweep : undefined, sweepBar: (paged) => sweepOn ? sweepBar(paged) : null, sweepToggle };
   }
 
   // After a model update started from Tag questions or Why these?: what the
@@ -3958,8 +4190,8 @@
     );
   }
 
-  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true }) {
-    return React.createElement("article", { className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card` },
+  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true, articleRef, hidden = false }) {
+    return React.createElement("article", { ref: articleRef, className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card${hidden ? " curator-find-thumbnail-hidden" : ""}`, title: hidden ? "Hidden from Find" : undefined },
       React.createElement("div", { className: "curator-external-thumbnail thumbnail-section" },
         React.createElement("a", { className: `${kind}-card-link`, href, "aria-label": title, target: external ? "_blank" : undefined, rel: external ? "noreferrer" : undefined },
           image ? React.createElement("img", { key: imageKey, className: `${kind}-card-image`, src: image, onError: onImageError, loading: "lazy", alt: "" })
@@ -4067,7 +4299,7 @@
 
   const ExternalCard = Api.register.component("stash-curator.ExternalCard", function ExternalCard(props) {
     const { HoverPopover } = Api.components;
-    const { item, kind, gender, onShortlist, onDismiss, dismissal, followUp, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
+    const { item, kind, gender, onShortlist, onDismiss, dismissal, followUp, sweep, onShowScenes, onWhisparr, whisparrEnabled, thumbnails = false } = transformComponentProps("stash-curator.ExternalCard", props);
     const [whisparr, setWhisparr] = React.useState(null);
     const [dismissBusy, setDismissBusy] = React.useState(false);
     const [dismissError, setDismissError] = React.useState("");
@@ -4078,6 +4310,11 @@
     const [tagError, setTagError] = React.useState("");
     const [ratingAnchor, setRatingAnchor] = React.useState(null);
     useCuratorActivity(`external-tags-${kind}-${item.id}`, tagLoading, "Matching local tags…");
+    // The card (or thumbnail) element, observed for the view's seen sweep.
+    const [cardElement, setCardElement] = React.useState(null);
+    const sweepable = Boolean(sweep && kind === "scene");
+    React.useEffect(() => sweepable ? sweep.observe(cardElement, item) : undefined, [sweepable, cardElement, item.id]);
+    React.useEffect(() => { if (sweepable) sweep.update(item); }, [sweepable, item]);
     const payload = item.payload;
     if (!payload) return null;
     const imageProps = externalImageProps(payload.images);
@@ -4091,7 +4328,9 @@
     const tags = kind === "scene" ? payload.tags || [] : [];
     const stickyCards = !window.Sticky?.off && window.Sticky?.cards;
     const stickyScene = kind === "scene" && typeof stickyCards?.formatDate === "function";
-    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind });
+    const stubKind = dismissal && dismissal !== "restored" ? dismissal : null;
+    const hiddenKind = !dismissal && item.dismissed ? item.dismissed : null;
+    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind, articleRef: setCardElement, hidden: Boolean(stubKind) });
     async function dismiss(value) {
       setDismissBusy(true);
       setDismissError("");
@@ -4106,8 +4345,6 @@
     // Dismissed in this view: a stub until the next fetch, so the grid does not
     // reflow under the pointer and Undo stays one tap away. Dismissed earlier
     // (shown with Hide dismissed scenes off): a full card with Show again.
-    const stubKind = dismissal && dismissal !== "restored" ? dismissal : null;
-    const hiddenKind = !dismissal && item.dismissed ? item.dismissed : null;
     if (stubKind) {
       return React.createElement(
         "article",
@@ -4153,6 +4390,7 @@
       }), cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)))
     );
     async function addToWhisparr() {
+      if (sweepable) sweep.keep(item.id, "In Whisparr");
       setWhisparr({ status: "adding", message: "Adding to Whisparr…" });
       try {
         const result = await onWhisparr(item.id);
@@ -4185,7 +4423,7 @@
     }
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}${hiddenKind ? " curator-external-hidden" : ""}` },
+      { ref: setCardElement, className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}${hiddenKind ? " curator-external-hidden" : ""}` },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
@@ -4208,7 +4446,7 @@
         stickyScene && cast.length > people.length && React.createElement("small", null, `+${cast.length - people.length} other performers`)
       ),
       stickyScene && React.createElement("div", { className: "sticky-card-footer" }, React.createElement(ExternalMetadataRow, { payload, items: tags, kind: "tag" })),
-      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const dislikedNames = payload.curator_performer_dislike?.names || []; const fallbackExplanation = payload.why?.length || dislikedNames.length ? { summary: kind === "scene" ? findSceneSummary(item) : (payload.why || []).join(" · "), evidence_rows: [...(payload.why || []).map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })), ...(dislikedNames.length ? [{ code: "external.performer_dislike", label: `Not into ${dislikedNames.join(", ")}`, direction: "negative", confidence: 1 }] : [])] } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: !stickyScene && React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(React.Fragment, null, React.createElement(ExternalActions, { item, kind, onShortlist, onDismiss: onDismiss && !hiddenKind ? dismiss : undefined, onRestore: onDismiss && hiddenKind ? () => dismiss(null) : undefined, dismissBusy, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr, onAddToWhisparr: addToWhisparr }), dismissError && React.createElement("small", { className: "text-danger", role: "status" }, dismissError)), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
+      React.createElement("div", { className: "curator-card-body" }, (() => { const score = Number(item.score || 0); const label = item.similarity === undefined ? "Match" : "Similarity"; const detail = item.similarity === undefined ? `Match ${score.toFixed(2)} (0..1) · found via ${item.sources.join(", ")}` : `Similarity ${Number(item.similarity).toFixed(2)} (0..1) · Appeal ${formatSigned((Number(item.appeal || 0) * 2) - 1)}`; const dislikedNames = payload.curator_performer_dislike?.names || []; const fallbackExplanation = payload.why?.length || dislikedNames.length ? { summary: kind === "scene" ? findSceneSummary(item) : (payload.why || []).join(" · "), evidence_rows: [...(payload.why || []).map((value) => ({ code: "external.fact", label: value, direction: "positive", confidence: 1 })), ...(dislikedNames.length ? [{ code: "external.performer_dislike", label: `Not into ${dislikedNames.join(", ")}`, direction: "negative", confidence: 1 }] : [])] } : null; return React.createElement("div", { className: "curator-card-details" }, React.createElement(EvidenceScore, { evidenceContent: payload.explanation ? React.createElement(ExplanationView, { explanation: payload.explanation }) : fallbackExplanation ? React.createElement(ExplanationView, { explanation: fallbackExplanation }) : kind === "scene" ? React.createElement(FindSceneReason, { item }) : null, dateContent: !stickyScene && React.createElement("span", { className: "curator-card-date" }, payload.release_date || payload.birth_date || ""), metadataContent: metadataControls, descriptionContent: kind === "scene" && payload.details && React.createElement("p", { className: "card-section curator-card-description" }, payload.details), actionsContent: React.createElement(React.Fragment, null, React.createElement(ExternalActions, { item, kind, onShortlist: sweepable ? (value, ...rest) => { sweep.keep(value.id, value.shortlisted ? null : "Shortlisted"); return onShortlist(value, ...rest); } : onShortlist, onDismiss: onDismiss && !hiddenKind ? dismiss : undefined, onRestore: onDismiss && hiddenKind ? () => dismiss(null) : undefined, dismissBusy, tagsAvailable: tags.length > 0, tagsActive: tagChoices !== null, tagLoading, onRateTags: rateTags, onShowScenes, whisparrEnabled, canWhisparr: Boolean(onWhisparr), whisparr: whisparr || (item.in_whisparr ? { status: "already_exists", message: "Sent to Whisparr." } : null), onAddToWhisparr: addToWhisparr }), dismissError && React.createElement("small", { className: "text-danger", role: "status" }, dismissError)), scoreBarContent: null, scoreLabel: label, scoreSummary: score.toFixed(2), scoreContent: React.createElement("p", null, detail) })); })()),
       kind === "scene" && tagChoices !== null && React.createElement(RatingPopover, { anchor: ratingAnchor, onClose: () => { setTagChoices(null); } }, React.createElement("div", { className: "curator-external-tag-rating" }, React.createElement("div", { className: "curator-external-tag-rating-header" }, React.createElement("strong", null, "Rate tags")), tagLoading && React.createElement("small", { role: "status" }, "Matching local tags…"), tagError && React.createElement("small", { className: "text-danger", role: "status" }, tagError), !tagLoading && !tagError && React.createElement(React.Fragment, null, React.createElement(RatingSection, { title: "Matching local tags", rows: tagChoices.map((tag) => ({ key: tag.tag_id, tag_id: tag.tag_id, name: tag.name, direct_value: tag.direct_value, direct_blocked: tag.direct_blocked })), onAnswer: answerTag, emptyLabel: "No matching local tags." }))))
     );
   });
@@ -6077,7 +6315,7 @@
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     function renderSimilarPage(batch, onReady) {
       if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView: gridView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
-      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
+      return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), sweep: externalDismissals.sweep, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
     }
     return React.createElement(
       "section",
@@ -6099,6 +6337,7 @@
         ),
         source === "stashdb" && React.createElement(Button, { className: "curator-include-owned", size: "sm", variant: includeOwned ? "primary" : "secondary", "aria-pressed": includeOwned, title: `Include ${entityType}s already in your library so the remote ranking can be compared with the local search`, "aria-label": includeOwned ? `Hide library ${entityType}s` : `Include library ${entityType}s`, onClick: () => updateUrl((s) => ({ ...s, includeOwned: !s.includeOwned, page: 1, excludedIds: [] })) }, "Local"),
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        !deck && source === "stashdb" && entityType === "scene" && externalDismissals.sweepToggle(),
         React.createElement(RecommendationViewSelector, { label: "Find view", views: source === "library" && entityType === "scene" ? ["cards", "thumbnails", "wall"] : source === "stashdb" && entityType === "scene" ? ["cards", "thumbnails", "deck"] : ["cards", "thumbnails"], view: deck ? "deck" : gridView === "thumbnails" ? "thumbnails" : source === "library" && entityType === "scene" && wall ? "wall" : "cards", onChange: (value) => { changeFindView(value === "thumbnails" || value === "deck" ? value : "cards"); if (wall !== (value === "wall")) toggleWall(); } }),
         React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
@@ -6133,6 +6372,7 @@
       result && !deck && (endless
         ? !loading && React.createElement(EndlessFindResults, { key: requestKey, cacheKey: endlessBatchKey(result, ["similar", continuationRequest.current, gridView, wall, pageSize]), first: result, page, pageSize: source === "stashdb" ? pageSize : result.page_size || pageSize, clientItems: source === "stashdb" ? externalItems : null, metadata: source === "library", loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }, 30000), renderPage: renderSimilarPage })
         : renderSimilarPage({ ...result, page, items })),
+      result && !deck && source === "stashdb" && entityType === "scene" && externalDismissals.sweepBar(!endless),
       result && !deck && !endless && React.createElement(Pager, { page, total: source === "stashdb" ? externalItems.length : result.total, pageSize: source === "stashdb" ? pageSize : result.page_size, hasMore: source === "stashdb" ? page * pageSize < externalItems.length : result.has_more, loading, onPage: changePage, label: "Similar pages" })
     );
   }
@@ -6461,7 +6701,7 @@
     function renderExpandPage(batch) {
       return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
         const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
-        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlist, onDismiss: listView ? undefined : externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
+        return React.createElement(ExternalCard, { key: `${kind}-${item.id}`, item, kind, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlist, onDismiss: listView ? undefined : externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), sweep: listView ? undefined : externalDismissals.sweep, onShowScenes: showPerformerScenes, onWhisparr: sendWhisparr, whisparrEnabled });
       }));
     }
     const pager = data?.ready && !endless && !deck && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
@@ -6477,6 +6717,7 @@
         !huntOnly && React.createElement(Button, { className: "curator-shortlist-tab", size: "sm", variant: entityType === "shortlist" ? "primary" : "secondary", onClick: () => updateUrl((s) => ({ ...s, entityType: "shortlist", performerId: null })) }, React.createElement(FontAwesomeIcon, { icon: faList }), " Shortlist"),
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         !listView && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
+        !deck && !listView && entityType !== "performer" && externalDismissals.sweepToggle(),
         entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
         !listView && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
@@ -6529,6 +6770,7 @@
       data?.ready && !deck && (endless
         ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, gridView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
         : renderExpandPage({ ...data, items: visibleItems })),
+      data?.ready && !deck && !listView && entityType !== "performer" && externalDismissals.sweepBar(!endless),
       pager
     );
   }

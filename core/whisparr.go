@@ -198,5 +198,14 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 	if title == "" {
 		title = "Added by Stash Curator"
 	}
-	return sendWhisparrScene(url, key, externalID, title, root, profile, search)
+	result, err := sendWhisparrScene(url, key, externalID, title, root, profile, search)
+	if err != nil {
+		return jvNull(), err
+	}
+	// Remember the send so Find can mark the scene and batch dismissals skip it.
+	if err := execImmediate(db, `INSERT OR IGNORE INTO external_whisparr_sent(endpoint, external_id, sent_at_ms)
+VALUES (lower(?), ?, ?)`, stashdbEndpoint, externalID, nowMs()); err != nil {
+		return jvNull(), err
+	}
+	return result, nil
 }

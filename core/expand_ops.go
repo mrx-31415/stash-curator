@@ -175,8 +175,12 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		return jvNull(), err
 	}
 	dismissed := map[string]string{}
+	sentToWhisparr := map[string]bool{}
 	if entityType == "scene" {
 		if dismissed, err = dismissedScenes(db); err != nil {
+			return jvNull(), err
+		}
+		if sentToWhisparr, err = whisparrSentScenes(db); err != nil {
 			return jvNull(), err
 		}
 	}
@@ -232,6 +236,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 		)
 		if entityType == "scene" {
 			item.set("dismissed", dismissedValue(dismissed, row.externalID))
+			item.set("in_whisparr", jvBool(sentToWhisparr[row.externalID]))
 		}
 		return item
 	}
@@ -658,6 +663,10 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	if err != nil {
 		return jvNull(), err
 	}
+	sentToWhisparr, err := whisparrSentScenes(db)
+	if err != nil {
+		return jvNull(), err
+	}
 	disliked, err := dislikedPerformers(db)
 	if err != nil {
 		return jvNull(), err
@@ -686,6 +695,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 		item.set("match_type", match.get("type"))
 		item.set("shortlisted", jvBool(shortlisted[scene.id]))
 		item.set("dismissed", dismissedValue(dismissed, scene.id))
+		item.set("in_whisparr", jvBool(sentToWhisparr[scene.id]))
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
