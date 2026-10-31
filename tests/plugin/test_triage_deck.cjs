@@ -251,6 +251,13 @@ const pointer = (x, y, extra = {}) => ({ pointerId: 1, pointerType: "touch", but
     const app = harness();
     const render = app.deck();
     let tree = render();
+    // The title links to the scene on Stash-box and keeps its pointer to itself.
+    const titleLink = nodes(card(tree)).find((node) => node.props?.className === "curator-deck-title-link");
+    assert.equal(titleLink.props.href, "https://stashdb.org/scenes/x");
+    assert.equal(titleLink.props.target, "_blank");
+    let stopped = false;
+    titleLink.props.onPointerDown({ stopPropagation: () => { stopped = true; } });
+    assert.equal(stopped, true);
     drag(tree).onPointerDown(pointer(200, 200));
     drag(tree).onPointerUp(pointer(202, 201));
     tree = render();

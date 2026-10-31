@@ -5483,6 +5483,15 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   margin: 0;
 }
 
+.curator-deck-title-link {
+  color: inherit;
+}
+
+.curator-deck-title-link:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .curator-deck-link {
   display: inline-block;
   font-size: 0.85rem;

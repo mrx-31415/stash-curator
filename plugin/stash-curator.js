@@ -4305,7 +4305,11 @@
       ),
       hint,
       React.createElement("div", { className: "card-section" },
-        React.createElement("h5", { className: "card-section-title" }, payload.title || item.id),
+        // The title opens the scene on Stash-box; it takes its own pointer so a
+        // click there neither starts a swipe nor toggles the details.
+        React.createElement("h5", { className: "card-section-title" }, href && !back
+          ? React.createElement("a", { className: "curator-deck-title-link", href, target: "_blank", rel: "noreferrer", title: "Open on Stash-box", draggable: false, onPointerDown: (event) => event.stopPropagation() }, payload.title || item.id)
+          : payload.title || item.id),
         meta && React.createElement("div", { className: "curator-deck-meta" }, meta, React.createElement("span", { className: "curator-deck-score" }, score)),
         tags.length > 0 && React.createElement("div", { className: "curator-deck-tags" },
           (expanded ? tags : tags.slice(0, DECK_TAGS)).map((tag) => React.createElement("span", { key: tag.id, className: "tag-item badge badge-secondary" }, tag.name)),
