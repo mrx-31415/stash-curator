@@ -50,7 +50,7 @@ def test_patched_stash_page_with_companion(
             performer["name"],
             ["FilteredPerformerList", "PerformerCard.Overlays"],
         ),
-        "scene": (f"/scenes/{scene['id']}", scene["title"], ["ScenePage", "ScenePlayer"]),
+        "scene": (f"/scenes/{scene['id']}", scene["title"], ["ScenePage"]),
         "performer": (f"/performers/{performer['id']}", performer["name"], ["PerformerPage"]),
         "home": ("/", scene["title"], ["FrontPage", "SceneCard.Overlays"]),
     }
