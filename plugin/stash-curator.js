@@ -10273,22 +10273,40 @@
     return React.createElement("div", { ref: node, className: "curator-home-editor" }, children);
   }
   // Swaps each Curator entry Stash's rows view renders (as a Control that
-  // draws nothing) for that lane's row, in place. Null if the view's shape
-  // isn't the one Curator knows.
+  // draws nothing) for that lane's row, in place. Another plugin's FrontPage
+  // patch may run first, wrap the view or add rows beside Stash's list, so
+  // the view is found a few levels down and the list by its Controls. Null if
+  // there is no view of the shape Curator knows.
   function placeHomeRows(result) {
-    const [list, ...rest] = [result.props.children].flat(Infinity);
-    if (!React.isValidElement(list)) return null;
     const lanes = [];
-    const rows = [list.props.children].flat(Infinity).map((child) => {
-      const entry = child?.props?.content;
-      const lane = isHomeEntry(entry) ? laneByValue.get(entry.lane) : null;
-      if (!lane) return child;
-      lanes.push(lane.value);
-      return React.createElement(CuratorHomeLane, { key: child.key ?? `curator-${lane.value}`, lane });
-    });
-    return React.createElement(CuratorHomeSlates, { lanes },
-      React.createElement(CuratorHomeSync, { key: "curator-home-sync" }),
-      React.cloneElement(result, {}, React.cloneElement(list, {}, rows), ...rest));
+    const place = (view) => {
+      const parts = [view.props.children].flat(Infinity);
+      const elements = parts.filter((part) => React.isValidElement(part));
+      const list = elements.find((part) => [part.props.children].flat(Infinity).some((child) => child?.props?.content !== undefined)) || elements[0];
+      if (!list) return null;
+      const rows = [list.props.children].flat(Infinity).map((child) => {
+        const entry = child?.props?.content;
+        const lane = isHomeEntry(entry) ? laneByValue.get(entry.lane) : null;
+        if (!lane) return child;
+        lanes.push(lane.value);
+        return React.createElement(CuratorHomeLane, { key: child.key ?? `curator-${lane.value}`, lane });
+      });
+      return React.cloneElement(view, {}, ...parts.map((part) => part === list ? React.cloneElement(list, {}, rows) : part));
+    };
+    const search = (node, depth) => {
+      if (!React.isValidElement(node)) return null;
+      if (String(node.props.className || "").split(/\s+/).includes("recommendations-container")) return place(node);
+      if (depth === 0) return null;
+      const parts = [node.props.children].flat(Infinity);
+      for (const [index, part] of parts.entries()) {
+        const placed = search(part, depth - 1);
+        if (placed) return React.cloneElement(node, {}, ...parts.map((other, at) => at === index ? placed : other));
+      }
+      return null;
+    };
+    const placed = search(result, 3);
+    return placed && React.createElement(CuratorHomeSlates, { lanes },
+      React.createElement(CuratorHomeSync, { key: "curator-home-sync" }), placed);
   }
   // The rows view gets Curator's rows; the Customise editor gets labels and
   // turns off the lanes deleted there; the saving spinner is left alone.
@@ -10303,7 +10321,6 @@
       };
       return React.createElement(CuratorHomeEditor, null, React.cloneElement(result, { onClose: close }));
     }
-    if (!String(result?.props?.className || "").split(/\s+/).includes("recommendations-container")) return result;
     return placeHomeRows(result) || result;
   });
   Api.patch.after("ScenePage", function (props, ...args) {
