@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.51.0](https://github.com/mrx-31415/stash-curator/compare/v0.50.0...v0.51.0) (2026-10-31)
+
+
+### Features
+
+* step through lane playback with Stash's p n / p p shortcuts ([#446](https://github.com/mrx-31415/stash-curator/issues/446)) ([05c069b](https://github.com/mrx-31415/stash-curator/commit/05c069b423525ad242ace19f259c1ca92d9749fc))
+
+
+### Bug Fixes
+
+* keep home lanes when another plugin patches the front page first ([#444](https://github.com/mrx-31415/stash-curator/issues/444)) ([edbbe6b](https://github.com/mrx-31415/stash-curator/commit/edbbe6b8f633fa52d45dc7f76ae7ff12fd3531fd))
+
 ## [0.50.0](https://github.com/mrx-31415/stash-curator/compare/v0.49.0...v0.50.0) (2026-10-31)
 
 
