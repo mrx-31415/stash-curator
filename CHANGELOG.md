@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.50.0](https://github.com/mrx-31415/stash-curator/compare/v0.49.0...v0.50.0) (2026-10-31)
+
+
+### Features
+
+* open the scene on Stash-box from the deck card title ([#441](https://github.com/mrx-31415/stash-curator/issues/441)) ([d28690f](https://github.com/mrx-31415/stash-curator/commit/d28690fd3b537d76fce7bf70ccffd19dcf4cddd8))
+* select Find scenes by scrolling and hide them in one Not now ([#443](https://github.com/mrx-31415/stash-curator/issues/443)) ([119a476](https://github.com/mrx-31415/stash-curator/commit/119a4764bc925b2c85d675292bcf59dfc2edd5ae))
+
 ## [0.49.0](https://github.com/mrx-31415/stash-curator/compare/v0.48.0...v0.49.0) (2026-10-30)
 
 
