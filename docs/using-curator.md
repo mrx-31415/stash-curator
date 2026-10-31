@@ -91,16 +91,12 @@ unchanged. If you remove Curator, its saved rows draw nothing; delete them in
 ## Play a lane
 
 Choose a recommendation lane and your filters or mood, then click **Play lane**.
-Playback starts with the current picks. Use **Next** beside the player or the
-player's next-track button to advance; Curator fetches another batch from the
-same lane when needed. Stash's `p n` and `p p` shortcuts and the player's
-previous-track button also step through the playlist. Filters and mood stay fixed for that playlist, and scenes
-already queued do not repeat. Deleted scenes are skipped.
-
-The playlist stays in the current browser tab, including after a refresh.
-**Stop playlist** returns the current scene to ordinary playback. When no more
-scenes qualify, Curator shows **End of recommendations**. A failed fetch keeps
-the current scene playing and offers **Retry next**. Moving on is manual.
+Curator queues the current picks followed by the next best scenes from the same
+lane, up to 100 in total, and opens them in Stash's normal scene queue. Use the
+player's next and previous buttons, the **Queue** tab, or Stash's `p n` and `p p`
+shortcuts to move through it. Stash's **Continue** setting decides whether the
+next scene starts on its own. Filters and mood are fixed when the queue starts;
+click **Play lane** again for a fresh batch.
 
 ## Roulette
 
