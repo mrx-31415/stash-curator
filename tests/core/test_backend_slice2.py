@@ -370,6 +370,8 @@ class _StubWhisparr(BaseHTTPRequestHandler):
     """A minimal Whisparr /api/v3 stub with deterministic responses."""
 
     movies: ClassVar[list[dict[str, object]]] = []
+    # When set, POST /movie answers with this (status, body) instead of adding.
+    add_rejection: ClassVar[tuple[int, object] | None] = None
 
     def do_GET(self) -> None:
         if self.path.startswith("/api/v3/movie"):
@@ -385,6 +387,9 @@ class _StubWhisparr(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
+        if "/api/v3/movie" in self.path and self.add_rejection is not None:
+            self._respond(self.add_rejection[1], self.add_rejection[0])
+            return
         if "/api/v3/movie" in self.path:
             data: object = {"id": 77, "title": "added"}
         elif "/api/v3/command" in self.path:
@@ -393,9 +398,9 @@ class _StubWhisparr(BaseHTTPRequestHandler):
             data = {}
         self._respond(data)
 
-    def _respond(self, data: object) -> None:
+    def _respond(self, data: object, status: int = 200) -> None:
         raw = json.dumps(data, separators=(",", ":")).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -1233,4 +1238,37 @@ def test_slice2_network_ops_record_stashdb_spans(
             assert ("stash", "CuratorStashBoxes") in categories[name]
             assert ("stashdb", "CuratorExpandScenes") in categories[name]
     finally:
+        _StubExpand.plugin_settings = {}
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        (409, {"message": "This scene has been excluded"}),
+        (400, [{"propertyName": "ForeignId", "errorMessage": "Scene is excluded"}]),
+    ],
+)
+def test_send_whisparr_rejection_is_not_recorded(
+    tmp_path: Path, binary: Path, stub_stash: str, stub_whisparr: str, rejection
+) -> None:
+    """A refused add (e.g. an excluded scene) fails with Whisparr's message in
+    both backends and leaves no saved send behind."""
+    _StubWhisparr.movies = []
+    _StubWhisparr.add_rejection = rejection
+    _StubExpand.plugin_settings = {"whisparrUrl": stub_whisparr, "whisparrApiKey": "test-key"}
+    try:
+        outputs = []
+        for runner in (None, binary):
+            sidecar = tmp_path / f"{'go' if runner else 'py'}.sqlite3"
+            make_expand_sidecar(sidecar)
+            raw = payload("send_whisparr", sidecar, stub_stash, external_id="cand-2")
+            result = run_backend_env(runner, PLUGIN_DIR, raw, stub_stash)
+            outputs.append(result.stdout)
+            assert b"rejected the request (HTTP" in result.stdout, result.stdout + result.stderr
+            assert b"excluded" in result.stdout
+            with sqlite3.connect(sidecar) as connection:
+                assert connection.execute("SELECT * FROM external_whisparr_sent").fetchall() == []
+        assert outputs[0] == outputs[1]
+    finally:
+        _StubWhisparr.add_rejection = None
         _StubExpand.plugin_settings = {}

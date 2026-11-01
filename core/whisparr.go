@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,11 +39,44 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 	if err != nil {
 		return jvNull(), fmt.Errorf("Whisparr request failed: %v", err)
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return jvNull(), errors.New(whisparrRejection(resp.StatusCode, raw))
+	}
 	parsed, err := parseJSON(raw)
 	if err != nil {
 		return jvNull(), errors.New("Whisparr returned invalid JSON")
 	}
 	return parsed, nil
+}
+
+// whisparrRejection mirrors whisparr._rejection: describe a non-2xx reply with
+// Whisparr's own message when it gives one — {"message": ...} for errors,
+// [{"errorMessage": ...}] for validation failures.
+func whisparrRejection(status int, raw []byte) string {
+	var messages []string
+	if body, err := parseJSON(raw); err == nil {
+		switch body.kind {
+		case jObj:
+			messages = append(messages, strings.TrimSpace(pythonStrOrEmpty(body.get("message"))))
+		case jArr:
+			for _, item := range body.arr {
+				if item.kind == jObj {
+					messages = append(messages, strings.TrimSpace(pythonStrOrEmpty(item.get("errorMessage"))))
+				}
+			}
+		}
+	}
+	var detail []string
+	for _, message := range messages {
+		if message != "" {
+			detail = append(detail, message)
+		}
+	}
+	text := fmt.Sprintf("Whisparr rejected the request (HTTP %d)", status)
+	if len(detail) > 0 {
+		text += ": " + strings.Join(detail, "; ")
+	}
+	return text
 }
 
 // sendWhisparrScene mirrors WhisparrClient.send_scene for the send_whisparr
@@ -138,6 +172,9 @@ func sendWhisparrScene(baseURL, apiKey, stashdbID, title, rootFolder string, qua
 		return jvNull(), errors.New("Whisparr returned an invalid add response")
 	}
 	movieID := created.get("id")
+	if id, err := strconv.ParseInt(movieID.num, 10, 64); movieID.kind != jNum || err != nil || id < 1 {
+		return jvNull(), errors.New("Whisparr did not return the added scene")
+	}
 	if search {
 		if _, err := whisparrRequest("POST", baseURL, headers, "/command",
 			jvObj(jvKey("name", jvStr("MoviesSearch")), jvKey("movieIds", jvArr(movieID)))); err != nil {
