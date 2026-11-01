@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from curator.whisparr import WhisparrClient
+from curator.whisparr import WhisparrClient, _rejection
 
 
 def test_whisparr_send_checks_duplicates_and_honors_search_toggle() -> None:
@@ -77,3 +77,41 @@ def test_whisparr_authentication_error_is_exposed() -> None:
     client = WhisparrClient("http://whisparr.local", "bad", transport=transport)
     with pytest.raises(RuntimeError, match="401"):
         client.send_scene("scene", "Scene", "/media", 3)
+
+
+def test_whisparr_rejected_add_is_an_error_not_a_send() -> None:
+    """Whisparr refuses excluded scenes with a non-2xx reply; that must
+    surface its message rather than a "sent" result with no id."""
+    requests: list[str] = []
+
+    def transport(method: str, url: str, _headers, _body: bytes | None) -> bytes:
+        requests.append(f"{method} {url}")
+        if method == "GET":
+            return b"[]"
+        raise RuntimeError(_rejection(400, b'[{"errorMessage":"Scene is excluded"}]'))
+
+    client = WhisparrClient("http://whisparr.local", "secret", transport=transport)
+    with pytest.raises(RuntimeError, match=r"rejected the request \(HTTP 400\): Scene is excluded"):
+        client.send_scene("scene", "Scene", "/media", 3)
+    assert not any("/command" in request for request in requests)
+
+
+def test_whisparr_add_without_id_is_not_searched() -> None:
+    requests: list[str] = []
+
+    def transport(method: str, url: str, _headers, _body: bytes | None) -> bytes:
+        requests.append(f"{method} {url}")
+        return b"[]" if method == "GET" else b'{"message":"nothing"}'
+
+    client = WhisparrClient("http://whisparr.local", "secret", transport=transport)
+    with pytest.raises(RuntimeError, match="did not return the added scene"):
+        client.send_scene("scene", "Scene", "/media", 3)
+    assert not any("/command" in request for request in requests)
+
+
+def test_whisparr_rejection_message_shapes() -> None:
+    assert (
+        _rejection(500, b'{"message":"Boom"}') == "Whisparr rejected the request (HTTP 500): Boom"
+    )
+    assert _rejection(400, b'[{"errorMessage":"a"},{"errorMessage":"b"}]').endswith(": a; b")
+    assert _rejection(502, b"<html>") == "Whisparr rejected the request (HTTP 502)"

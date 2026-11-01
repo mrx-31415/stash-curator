@@ -265,7 +265,8 @@ function harness() {
 
   // A scene card registers its element once mounted; shortlisting or sending
   // to Whisparr keeps it out of the sweep, and a saved Whisparr send shows
-  // as already sent after a reload.
+  // as sent after a reload while staying clickable, since Whisparr may not
+  // have kept it.
   const cardRuntime = createRuntime();
   app.context.React = cardRuntime.React;
   const registered = [];
@@ -294,7 +295,12 @@ function harness() {
   const sentRuntime = createRuntime();
   app.context.React = sentRuntime.React;
   tree = sentRuntime.render(() => app.context.ExternalCard({ item: scene("sent", { in_whisparr: true }), kind: "scene", onWhisparr: async () => ({}), whisparrEnabled: true }));
-  assert.equal(actionsOf(tree).whisparr.status, "already_exists");
+  const sentActions = actionsOf(tree);
+  assert.equal(sentActions.whisparr.status, "recorded");
+  assert.equal(sentActions.whisparr.message, "Sent to Whisparr.");
+  const sentButton = nodes(app.context.ExternalActions(sentActions)).find((child) => child.props?.className?.includes("curator-whisparr-action"));
+  assert.equal(sentButton.props.disabled, false);
+  assert.match(sentButton.props.title, /send to Whisparr again/);
   // Thumbnails register too, and a hidden one is dimmed in place.
   const thumbRuntime = createRuntime();
   app.context.React = thumbRuntime.React;

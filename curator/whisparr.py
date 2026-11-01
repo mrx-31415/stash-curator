@@ -17,8 +17,29 @@ def _transport(method: str, url: str, headers: Mapping[str, str], body: bytes | 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return cast(bytes, response.read())
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(_rejection(error.code, error.read())) from error
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"Whisparr request failed: {error}") from error
+
+
+def _rejection(status: int, raw: bytes) -> str:
+    """Describe a non-2xx Whisparr reply with its own message when it gives one:
+    `{"message": ...}` for errors, `[{"errorMessage": ...}]` for validation."""
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if isinstance(body, dict):
+        messages = [str(body.get("message") or "").strip()]
+    elif isinstance(body, list):
+        messages = [
+            str(item.get("errorMessage") or "").strip() for item in body if isinstance(item, dict)
+        ]
+    else:
+        messages = []
+    detail = "; ".join(message for message in messages if message)
+    return f"Whisparr rejected the request (HTTP {status})" + (f": {detail}" if detail else "")
 
 
 class WhisparrClient:
@@ -95,6 +116,8 @@ class WhisparrClient:
         if not isinstance(created, dict):
             raise RuntimeError("Whisparr returned an invalid add response")
         movie_id = created.get("id")
+        if not isinstance(movie_id, int) or isinstance(movie_id, bool) or movie_id < 1:
+            raise RuntimeError("Whisparr did not return the added scene")
         if search:
             self._request("POST", "/command", {"name": "MoviesSearch", "movieIds": [movie_id]})
         return {"status": "sent", "id": movie_id}
