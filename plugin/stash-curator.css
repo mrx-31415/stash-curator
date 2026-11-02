@@ -2927,6 +2927,23 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   position: absolute;
 }
 
+/* Marks a Find scene Curator has sent to Whisparr: the logo on a dark
+   rounded square at the image's bottom-right (the Deck lays it out in its
+   badge row). */
+.curator-whisparr-badge {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: var(--curator-radius-sm);
+  bottom: 0.4rem;
+  display: inline-flex;
+  height: 1.5rem;
+  justify-content: center;
+  position: absolute;
+  right: 0.4rem;
+  width: 1.5rem;
+  z-index: 3;
+}
+
 .curator-whisparr-status {
   flex-basis: 100%;
 }
