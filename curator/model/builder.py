@@ -160,6 +160,65 @@ def _clamp(value: float, lower: float = -1.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, value))
 
 
+RATING_SIGNALS = frozenset({"scene_rating", "curation_rating"})
+
+
+def _rating_line(rating100: int) -> float:
+    """The uncalibrated reading of a Stash rating: 50 neutral, 0 and 100 the ends."""
+    return _clamp((rating100 - 50) / 50)
+
+
+def _rating_calibration(
+    behavior: list[tuple[int, list[tuple[float, float, str]]]], support: float
+) -> list[float]:
+    """What each rating bucket (0, 10, ..., 100) means for this library.
+
+    Ranking plugins (ELO percentiles, tiers, brackets) and users who only rate
+    what they keep put well-liked scenes low on the scale, where the plain line
+    reads them as dislikes. Each bucket's value is the mean non-rating outcome
+    (plays, repeats, O's, thumbs) of its rated scenes, shrunk toward the line
+    by ``support`` pseudo-scenes and made non-decreasing in the rating. The
+    caller only ever lifts a rating to this value, never lowers it.
+    ``behavior`` is (rating100, non-rating signals) in a fixed scene order.
+    """
+    weights = [0.0] * 11
+    sums = [0.0] * 11
+    for rating100, scene_signals in behavior:
+        evidence = sum(confidence for _, confidence, _ in scene_signals)
+        if evidence <= 0:
+            continue
+        outcome = sum(value * confidence for value, confidence, _ in scene_signals) / evidence
+        weight = 1 - math.exp(-evidence)
+        bucket = min(10, max(0, (rating100 + 5) // 10))
+        weights[bucket] += weight
+        sums[bucket] += weight * outcome
+    # Pool adjacent violators: merge buckets until the means never decrease.
+    blocks: list[tuple[float, float, int]] = []  # (weighted sum, weight, bucket count)
+    for bucket in range(11):
+        weight = weights[bucket] + support
+        total = sums[bucket] + support * _rating_line(bucket * 10)
+        count = 1
+        while blocks and blocks[-1][0] / blocks[-1][1] >= total / weight:
+            previous_total, previous_weight, previous_count = blocks.pop()
+            total += previous_total
+            weight += previous_weight
+            count += previous_count
+        blocks.append((total, weight, count))
+    result: list[float] = []
+    for total, weight, count in blocks:
+        result.extend([total / weight] * count)
+    return result
+
+
+def _calibrated_rating(rating100: int, calibration: list[float]) -> float:
+    rating100 = min(100, max(0, rating100))
+    low = rating100 // 10
+    high = min(10, low + 1)
+    fraction = (rating100 - low * 10) / 10
+    calibrated = calibration[low] + fraction * (calibration[high] - calibration[low])
+    return max(_rating_line(rating100), _clamp(calibrated))
+
+
 def _soft_bound(value: float, bound: float, knee: float = 0.8) -> float:
     """Bound a component without collapsing ordering at the cap.
 
@@ -729,12 +788,17 @@ class PreferenceModelBuilder:
                     "curation_rating",
                 )
             )
+        # A Stash rating keeps its place in the scene's signal order; its value
+        # is filled in below, once the non-rating evidence it is calibrated
+        # against is known.
+        ratings: dict[str, tuple[int, int]] = {}
         for row in self.connection.execute(
             "SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL"
         ):
-            value = _clamp((float(row["rating100"]) - 50) / 50)
-            signals[str(row["scene_id"])].append(
-                (value, self.config.model.scene_rating_confidence, "scene_rating")
+            scene_id = str(row["scene_id"])
+            ratings[scene_id] = (len(signals[scene_id]), int(row["rating100"]))
+            signals[scene_id].append(
+                (0.0, self.config.model.scene_rating_confidence, "scene_rating")
             )
         for row in self.connection.execute(
             """SELECT scene_id, value FROM feedback
@@ -792,6 +856,22 @@ class PreferenceModelBuilder:
                     "scene_reason_flip",
                 )
             signals[str(row["scene_id"])].append(signal)
+        calibration = _rating_calibration(
+            [
+                (
+                    rating100,
+                    [item for item in signals[scene_id] if item[2] not in RATING_SIGNALS],
+                )
+                for scene_id, (_, rating100) in sorted(ratings.items())
+            ],
+            self.config.model.scene_rating_calibration_support,
+        )
+        for scene_id, (index, rating100) in ratings.items():
+            signals[scene_id][index] = (
+                _calibrated_rating(rating100, calibration),
+                self.config.model.scene_rating_confidence,
+                "scene_rating",
+            )
         labels: dict[str, _SceneLabel] = {}
         self._training_overrides: dict[str, _SceneLabel | None] = {}
         for scene_id, scene_signals in signals.items():

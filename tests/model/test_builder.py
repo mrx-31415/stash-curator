@@ -158,6 +158,56 @@ def test_curation_rating_feeds_scene_labels(tmp_path: Path) -> None:
     assert "unusual" not in labels
 
 
+def _watched(value: float) -> list[tuple[float, float, str]]:
+    return [(value, 1.0, "view"), (value, 1.0, "repeat")]
+
+
+def test_rating_calibration_lifts_low_ratings_that_behave_like_liked_scenes() -> None:
+    """A ranking plugin spreads kept scenes over the whole scale: the bottom of
+    it is still watched like the top, so it is not read as a dislike."""
+    behavior = [(rating, _watched(0.5)) for rating in (10, 10, 20, 20, 30, 30) for _ in range(5)]
+    behavior += [(rating, _watched(0.7)) for rating in (80, 90, 100) for _ in range(5)]
+    calibration = builder_module._rating_calibration(behavior, 3.0)
+    assert calibration == sorted(calibration)
+    assert builder_module._rating_line(20) == pytest.approx(-0.6)
+    assert builder_module._calibrated_rating(20, calibration) > 0.1
+    # Never below the line: the top of the scale keeps its strength.
+    assert builder_module._calibrated_rating(100, calibration) == 1.0
+    assert builder_module._calibrated_rating(90, calibration) == pytest.approx(0.8)
+    # Low ratings that really are skipped stay dislikes.
+    skipped = [(rating, _watched(-0.8)) for rating in (10, 20) for _ in range(10)]
+    calibration = builder_module._rating_calibration(skipped + behavior[30:], 3.0)
+    assert builder_module._calibrated_rating(20, calibration) < -0.5
+
+
+def test_rating_calibration_without_behavior_is_the_plain_line() -> None:
+    calibration = builder_module._rating_calibration([(20, [])], 3.0)
+    for rating in (0, 15, 50, 73, 100):
+        assert builder_module._calibrated_rating(rating, calibration) == pytest.approx(
+            builder_module._rating_line(rating)
+        )
+
+
+def test_stash_rating_label_reads_the_calibrated_value(tmp_path: Path) -> None:
+    connection = _database(tmp_path / "curator.sqlite3")
+    connection.executemany(
+        "UPDATE source_scene SET rating100=? WHERE scene_id=?",
+        ((20, "old-good"), (20, "recent-good"), (20, "unseen-good")),
+    )
+    labels = PreferenceModelBuilder(
+        connection, DEFAULT_CONFIG, clock_ms=lambda: REFERENCE_MS
+    )._scene_labels()
+    # Two O'd scenes rated 20 lift the bucket, the unplayed scene rated 20
+    # shares it, and the rating keeps its slot after the behavior signals.
+    assert labels["old-good"].signal_types == ("o", "scene_rating")
+    assert labels["unseen-good"].signal_types == ("scene_rating",)
+    # The lifted bucket rises above the 30 bucket's line (-0.4), so the two pool.
+    weight = 2 * (1 - math.exp(-1.0))
+    expected = (weight * 1.0 + 3.0 * -0.6 + 3.0 * -0.4) / (weight + 6.0)
+    assert labels["unseen-good"].outcome == pytest.approx(expected)
+    assert expected > -0.6
+
+
 def test_impact_correction_feeds_scene_absolute_sentiment(tmp_path: Path) -> None:
     connection = _database(tmp_path / "curator.sqlite3")
     connection.execute(

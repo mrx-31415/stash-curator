@@ -108,6 +108,94 @@ func clamp(value float64) float64 {
 	return clampValue(value, -1, 1)
 }
 
+// sceneRatingConfidence and sceneRatingCalibrationSupport mirror
+// ModelConfig.scene_rating_confidence and scene_rating_calibration_support.
+const (
+	sceneRatingConfidence         = 0.90
+	sceneRatingCalibrationSupport = 3.0
+)
+
+// ratingBehavior is one rated scene's rating and non-rating signals.
+type ratingBehavior struct {
+	rating100   int64
+	values      []float64
+	confidences []float64
+}
+
+// ratingLine mirrors _rating_line.
+func ratingLine(rating100 int64) float64 {
+	return clamp(float64(rating100-50) / 50)
+}
+
+// ratingCalibration mirrors _rating_calibration: per rating bucket (0, 10,
+// ..., 100) the mean non-rating outcome of its rated scenes, shrunk toward the
+// line by support pseudo-scenes and made non-decreasing in the rating.
+func ratingCalibration(behavior []ratingBehavior, support float64) []float64 {
+	weights := make([]float64, 11)
+	sums := make([]float64, 11)
+	for _, item := range behavior {
+		evidence := sumFloats(item.confidences)
+		if evidence <= 0 {
+			continue
+		}
+		products := make([]float64, len(item.values))
+		for i, value := range item.values {
+			products[i] = value * item.confidences[i]
+		}
+		outcome := sumFloats(products) / evidence
+		weight := 1 - math.Exp(-evidence)
+		bucket := (item.rating100 + 5) / 10
+		if bucket < 0 {
+			bucket = 0
+		} else if bucket > 10 {
+			bucket = 10
+		}
+		weights[bucket] += weight
+		sums[bucket] += weight * outcome
+	}
+	type block struct {
+		total, weight float64
+		count         int
+	}
+	blocks := []block{}
+	for bucket := 0; bucket < 11; bucket++ {
+		current := block{sums[bucket] + support*ratingLine(int64(bucket*10)), weights[bucket] + support, 1}
+		for len(blocks) > 0 && blocks[len(blocks)-1].total/blocks[len(blocks)-1].weight >= current.total/current.weight {
+			previous := blocks[len(blocks)-1]
+			blocks = blocks[:len(blocks)-1]
+			current.total += previous.total
+			current.weight += previous.weight
+			current.count += previous.count
+		}
+		blocks = append(blocks, current)
+	}
+	result := make([]float64, 0, 11)
+	for _, item := range blocks {
+		for i := 0; i < item.count; i++ {
+			result = append(result, item.total/item.weight)
+		}
+	}
+	return result
+}
+
+// calibratedRating mirrors _calibrated_rating: the calibration interpolated at
+// the rating, never below the plain line.
+func calibratedRating(rating100 int64, calibration []float64) float64 {
+	if rating100 < 0 {
+		rating100 = 0
+	} else if rating100 > 100 {
+		rating100 = 100
+	}
+	low := rating100 / 10
+	high := low + 1
+	if high > 10 {
+		high = 10
+	}
+	fraction := float64(rating100-low*10) / 10
+	calibrated := calibration[low] + fraction*(calibration[high]-calibration[low])
+	return math.Max(ratingLine(rating100), clamp(calibrated))
+}
+
 // modelSceneLabels mirrors PreferenceModelBuilder._scene_labels.
 // sceneReasonFlipValue and sceneReasonFlipConfidence mirror
 // ModelConfig.scene_reason_flip_value and scene_reason_flip_confidence.
@@ -208,6 +296,14 @@ ORDER BY scene_id, occurred_at_ms`)
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
+	// A Stash rating keeps its place in the scene's signal order; its value is
+	// filled in below, once the non-rating evidence it is calibrated against
+	// is known (mirrors _scene_labels).
+	type pendingRating struct {
+		index     int
+		rating100 int64
+	}
+	ratings := map[string]pendingRating{}
 	rows, err = db.Query(`SELECT scene_id, rating100 FROM source_scene WHERE rating100 IS NOT NULL`)
 	if err != nil {
 		return nil, nil, err
@@ -219,9 +315,8 @@ ORDER BY scene_id, occurred_at_ms`)
 			rows.Close()
 			return nil, nil, err
 		}
-		signals[sceneID] = append(signals[sceneID], signal{
-			clamp((float64(rating100) - 50) / 50), 0.90, "scene_rating",
-		})
+		ratings[sceneID] = pendingRating{len(signals[sceneID]), rating100}
+		signals[sceneID] = append(signals[sceneID], signal{0, sceneRatingConfidence, "scene_rating"})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -303,6 +398,21 @@ ORDER BY a.scene_id, a.occurred_at_ms, a.answer_id`)
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
+	}
+	behavior := make([]ratingBehavior, 0, len(ratings))
+	for _, sceneID := range sortedStringKeys(ratings) {
+		item := ratingBehavior{rating100: ratings[sceneID].rating100}
+		for _, entry := range signals[sceneID] {
+			if entry.signalType != "scene_rating" && entry.signalType != "curation_rating" {
+				item.values = append(item.values, entry.value)
+				item.confidences = append(item.confidences, entry.confidence)
+			}
+		}
+		behavior = append(behavior, item)
+	}
+	calibration := ratingCalibration(behavior, sceneRatingCalibrationSupport)
+	for sceneID, pending := range ratings {
+		signals[sceneID][pending.index].value = calibratedRating(pending.rating100, calibration)
 	}
 	aggregate := func(sceneSignals []signal) (sceneLabel, bool) {
 		confidences := make([]float64, 0, len(sceneSignals))

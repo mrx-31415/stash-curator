@@ -19,6 +19,14 @@ Tags, performers, and studios connect those signals to other
 scenes. Better metadata and a few deliberate answers give it more useful evidence;
 you do not need to rate the whole library.
 
+Stash scene ratings are read against how you treat rated scenes. A rating of 5/10
+starts as neutral, but if the scenes you rate low are still played, repeated, or
+O'd, those low ratings are read as milder or as positive, never as harsher than
+the plain scale. This keeps ratings written by ranking plugins (ELO percentiles,
+tiers, brackets), or a habit of rating only what you keep, from burying scenes you
+like. Until a rating step has enough rated scenes with viewing history, it keeps
+the plain reading.
+
 Tag ratings express a preference for that feature. **Strong dislike** lowers preference;
 **Never** is a hard exclusion for matching content. **Clear answer** removes the
 direct preference or block. These are separate from **Never show**, which suppresses
