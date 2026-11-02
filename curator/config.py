@@ -121,6 +121,10 @@ class ModelConfig:
     performer_rating_bound: float = 0.10
     studio_favorite_prior: float = 0.04
     scene_rating_confidence: float = 0.90
+    # Pseudo-scenes at the plain rating line in each rating bucket when Stash
+    # ratings are calibrated against the library's viewing behavior: a bucket
+    # moves off the line only as its rated scenes' plays and thumbs agree.
+    scene_rating_calibration_support: float = 3.0
     curation_rating_confidence: float = 0.80
     # Deliberate "this impact move is wrong" correction: a per-scene signal the
     # user posts from the impact report to pull a wrongly promoted/demoted

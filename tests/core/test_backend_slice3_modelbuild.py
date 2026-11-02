@@ -359,6 +359,42 @@ def test_model_build_artifact_parity_with_scene_reasons(binary: Path, tmp_path: 
     assert len(changed) >= 5
 
 
+def test_model_build_artifact_parity_with_calibrated_ratings(binary: Path, tmp_path: Path) -> None:
+    """Stash ratings are calibrated against viewing behavior identically in
+    both builds; a low rating sharing a bucket with an O'd scene is lifted."""
+    built = []
+    for name in ("py", "go"):
+        directory = tmp_path / name
+        directory.mkdir()
+        db = directory / "curator.sqlite3"
+        make_feature_sidecar(db)
+        connection = sqlite3.connect(db)
+        try:
+            connection.executemany(
+                "UPDATE source_scene SET rating100=? WHERE scene_id=?",
+                [
+                    (20, "old-good"),
+                    (24, "unseen-good"),
+                    (90, "recent-good"),
+                    (10, "disliked"),
+                    (57, "unlabeled"),
+                ],
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        built.append(_run_go_build(binary, db) if name == "go" else _run_python_build(db))
+    (py_model, py_artifact), (go_model, go_artifact) = built
+    assert go_model == py_model
+    assert artifact_tolerant_diff(go_artifact, py_artifact) == ""
+    connection = connect_database(tmp_path / "py" / "curator.sqlite3", attach_artifacts=False)
+    try:
+        labels = PreferenceModelBuilder(connection, clock_ms=lambda: REFERENCE_MS)._scene_labels()
+    finally:
+        connection.close()
+    assert labels["unseen-good"].outcome > -0.52
+
+
 def test_a_new_scene_reason_changes_the_model_id(binary: Path, tmp_path: Path) -> None:
     """A reason is model evidence: with everything else unchanged, the next
     build must not reuse the previous artifact."""
