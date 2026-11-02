@@ -1,6 +1,6 @@
 services:
   stash:
-    image: stashapp/stash:latest
+    image: ${STASH_IMAGE:-stashapp/stash:latest}
     ports:
       - "${STASH_PORT:-9999}:9999"
     environment:
