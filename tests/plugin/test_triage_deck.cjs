@@ -224,6 +224,8 @@ const pointer = (x, y, extra = {}) => ({ pointerId: 1, pointerType: "touch", but
     app.key("keydown", "ArrowRight", { shiftKey: true });
     app.advance(3200);
     assert.deepEqual(plain(app.calls.whisparr), ["a"]);
+    await settle();
+    assert.ok(plain(app.calls.patches).some(([id, change]) => id === "a" && change.in_whisparr === true), "a completed send marks the scene for its badge");
     render();
     app.key("keydown", "ArrowRight", { shiftKey: true });
     app.advance(200);

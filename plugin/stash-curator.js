@@ -4094,13 +4094,20 @@
     );
   }
 
-  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true, articleRef, hidden = false }) {
+  // A small Whisparr mark on a scene's image once Curator has sent it there.
+  function WhisparrBadge() {
+    return React.createElement("span", { className: "curator-whisparr-badge", title: "Sent to Whisparr", "aria-label": "Sent to Whisparr", role: "img" },
+      React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() })));
+  }
+
+  function FindThumbnail({ image, imageKey, onImageError, title, href, kind, external = true, articleRef, hidden = false, inWhisparr = false }) {
     return React.createElement("article", { ref: articleRef, className: `curator-card curator-find-thumbnail curator-external-card curator-external-${kind} grid-card ${kind}-card${hidden ? " curator-find-thumbnail-hidden" : ""}`, title: hidden ? "Hidden from Find" : undefined },
       React.createElement("div", { className: "curator-external-thumbnail thumbnail-section" },
         React.createElement("a", { className: `${kind}-card-link`, href, "aria-label": title, target: external ? "_blank" : undefined, rel: external ? "noreferrer" : undefined },
           image ? React.createElement("img", { key: imageKey, className: `${kind}-card-image`, src: image, onError: onImageError, loading: "lazy", alt: "" })
             : React.createElement("div", { className: "curator-card-placeholder" }, title)
-        )
+        ),
+        inWhisparr && React.createElement(WhisparrBadge)
       ),
       React.createElement("div", { className: "card-section", hidden: true }, React.createElement("span", { className: "card-section-title" }, title))
     );
@@ -4234,7 +4241,8 @@
     const stickyScene = kind === "scene" && typeof stickyCards?.formatDate === "function";
     const stubKind = dismissal && dismissal !== "restored" ? dismissal : null;
     const hiddenKind = !dismissal && item.dismissed ? item.dismissed : null;
-    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind, articleRef: setCardElement, hidden: Boolean(stubKind) });
+    const inWhisparr = kind === "scene" && (whisparr ? whisparr.status === "sent" || whisparr.status === "already_exists" : Boolean(item.in_whisparr));
+    if (thumbnails) return React.createElement(FindThumbnail, { image, imageKey: imageProps.key, onImageError: imageProps.onError, title, href, kind, articleRef: setCardElement, hidden: Boolean(stubKind), inWhisparr });
     async function dismiss(value) {
       setDismissBusy(true);
       setDismissError("");
@@ -4332,7 +4340,7 @@
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name)),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name), inWhisparr && React.createElement(WhisparrBadge)),
       React.createElement("div", { className: "card-section" },
         stickyScene && React.createElement("div", { className: "sticky-card-top" },
           React.createElement(ExternalStudioLink, { key: payload.studio?.id, payload }),
@@ -4442,6 +4450,7 @@
           payload.curator_local && React.createElement("span", { className: "curator-local-badge" }, "In library"),
           payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge" }, "Likely local · exact PHash"),
           item.shortlisted && React.createElement("span", { className: "curator-deck-badge" }, "Shortlisted"),
+          item.in_whisparr && React.createElement(WhisparrBadge),
           item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge" }, "Wildcard")
         )
       ),
@@ -4522,7 +4531,10 @@
       pending.current.delete(id);
       setNotice({ id, text: "Sending to Whisparr…" });
       onWhisparr(id).then(
-        (result) => setNotice({ id, text: result?.status === "already_exists" ? "Already in Whisparr." : "Added to Whisparr." }),
+        (result) => {
+          patch(id, { in_whisparr: true });
+          setNotice({ id, text: result?.status === "already_exists" ? "Already in Whisparr." : "Added to Whisparr." });
+        },
         (failure) => setNotice({ id, text: `Whisparr: ${failure.message}`, error: true })
       );
     }

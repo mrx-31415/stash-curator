@@ -290,8 +290,12 @@ function harness() {
   await actionsOf(tree).onShortlist(scene("card"), "scene");
   assert.deepEqual(kept, [["card", "Shortlisted"]]);
   assert.deepEqual(shortlisted, ["card"]);
+  // A card gets the Whisparr badge once its send succeeds.
+  const badges = (node) => nodes(node).filter((child) => child.type === app.context.WhisparrBadge).length;
+  assert.equal(badges(tree), 0);
   await actionsOf(tree).onAddToWhisparr();
   assert.deepEqual(kept, [["card", "Shortlisted"], ["card", "In Whisparr"]]);
+  assert.equal(badges(card()), 1);
   const sentRuntime = createRuntime();
   app.context.React = sentRuntime.React;
   tree = sentRuntime.render(() => app.context.ExternalCard({ item: scene("sent", { in_whisparr: true }), kind: "scene", onWhisparr: async () => ({}), whisparrEnabled: true }));
@@ -301,6 +305,10 @@ function harness() {
   const sentButton = nodes(app.context.ExternalActions(sentActions)).find((child) => child.props?.className?.includes("curator-whisparr-action"));
   assert.equal(sentButton.props.disabled, false);
   assert.match(sentButton.props.title, /send to Whisparr again/);
+  // The saved send also shows the Whisparr badge on the image and thumbnail.
+  assert.equal(badges(tree), 1);
+  const sentThumb = sentRuntime.render(() => app.context.ExternalCard({ item: scene("sent", { in_whisparr: true }), kind: "scene", thumbnails: true }));
+  assert.equal(badges(sentThumb.type(sentThumb.props)), 1);
   // Thumbnails register too, and a hidden one is dimmed in place.
   const thumbRuntime = createRuntime();
   app.context.React = thumbRuntime.React;
