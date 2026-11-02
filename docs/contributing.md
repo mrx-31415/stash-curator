@@ -72,6 +72,9 @@ before Curator in the isolated Stash browser environment. It checks scene and
 performer grids and detail pages, card details/popovers/overlays, player and popover
 hook execution, retained navbar entries, and JavaScript errors. Run it through
 `scripts/verify integration`; it does not require access to a personal library.
+Each run starts from a fresh Stash library. Set `STASH_IMAGE` (default
+`stashapp/stash:latest`) to check an upcoming release, for example
+`STASH_IMAGE=stashapp/stash:development scripts/verify integration`.
 The destructive fresh-install reset test runs last, after pytest groups fixture
 parameters, so it cannot invalidate later model-dependent pages or background tasks.
 

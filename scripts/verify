@@ -129,15 +129,23 @@ case "${1:-}" in
     # fails every cover, preview, sprite, and temporary file it tries to write.
     mkdir -p /tmp/stash-curator-integration/{generated,cache,blobs}
     # ── start stash ──
+    stash_image="${STASH_IMAGE:-stashapp/stash:latest}"
     cleanup() {
       echo "[verify] tearing down Stash …"
       cd "$(dirname "$0")/.."
-      STASH_CONFIG=/tmp/stash-curator-integration \
+      STASH_IMAGE="$stash_image" STASH_CONFIG=/tmp/stash-curator-integration \
         docker compose -f "$compose_file" down --volumes 2>/dev/null || true
     }
     trap cleanup EXIT
+    # Stash keeps its own database and blobs in the config directory. Start every run
+    # from a fresh library so earlier runs cannot leak state, and a newer STASH_IMAGE
+    # cannot stop at NEEDS_MIGRATION on a database left by an older one. Empty the
+    # directories created above rather than removing them.
+    echo "[verify] resetting Stash library ($stash_image) …"
+    docker run --rm -v /tmp/stash-curator-integration:/stash "$stash_image" \
+      sh -c 'rm -rf /stash/stash-go.sqlite* /stash/blobs/* /stash/generated/* /stash/cache/*'
     echo "[verify] starting Stash …"
-    STASH_CONFIG=/tmp/stash-curator-integration \
+    STASH_IMAGE="$stash_image" STASH_CONFIG=/tmp/stash-curator-integration \
       docker compose -f "$compose_file" up -d --wait
     # The sidecar database and its artifact directory are created inside the container as
     # root in WAL mode. Host tests read it read-only, and a WAL read needs to create the
@@ -145,7 +153,7 @@ case "${1:-}" in
     # root container every run so the integration environment starts from a clean sidecar
     # instead of leftover state, including root-owned artifact subdirectories.
     echo "[verify] resetting Curator sidecar …"
-    docker run --rm -v "$plugin_dir":/plugin stashapp/stash:latest \
+    docker run --rm -v "$plugin_dir":/plugin "$stash_image" \
       sh -c 'rm -rf /plugin/data && mkdir -p /plugin/data && chmod 777 /plugin/data'
     # ── seed ──
     echo "[verify] seeding data …"

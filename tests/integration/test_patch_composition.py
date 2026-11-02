@@ -17,6 +17,69 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 COMPANION = Path(__file__).with_name("patch_companion.js").read_text()
+CLIP = Path(__file__).with_name("fixtures") / "roulette.mp4"
+
+
+def _serve_scene_file(page: Page, base_url: str, scene_id: str) -> None:
+    """Give the seeded scene a playable file; Stash mounts ScenePlayer only for scenes with one."""
+    stream = base_url + "/composition-test/stream"
+    poster = base_url + "/composition-test/poster.svg"
+    page.route(
+        "**/composition-test/stream*",
+        lambda route: route.fulfill(content_type="video/mp4", body=CLIP.read_bytes()),
+    )
+    page.route(
+        "**/composition-test/poster.svg",
+        lambda route: route.fulfill(
+            content_type="image/svg+xml",
+            body='<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"/>',
+        ),
+    )
+
+    def graphql(route: Route) -> None:
+        payload = route.request.post_data_json or {}
+        variables = payload.get("variables") or {}
+        if payload.get("operationName") != "FindScene" or str(variables.get("id")) != scene_id:
+            route.fallback()
+            return
+        response = route.fetch()
+        data = response.json()
+        scene = data["data"]["findScene"]
+        scene["files"] = [
+            {
+                "__typename": "VideoFile",
+                "id": "900000",
+                "path": "/synthetic/roulette.mp4",
+                "size": 2000,
+                "mod_time": "2026-01-01T00:00:00Z",
+                "duration": 10,
+                "video_codec": "h264",
+                "audio_codec": "",
+                "width": 160,
+                "height": 90,
+                "frame_rate": 5,
+                "bit_rate": 1000,
+                "fingerprints": [],
+            }
+        ]
+        # The synthetic file has no generated media; only the stream and poster exist.
+        scene["paths"] = {
+            **{key: None for key in scene["paths"] if key != "__typename"},
+            "__typename": "ScenePathsType",
+            "screenshot": poster,
+            "stream": stream,
+        }
+        scene["sceneStreams"] = [
+            {
+                "__typename": "SceneStreamEndpoint",
+                "url": stream,
+                "mime_type": "video/mp4",
+                "label": "MP4",
+            }
+        ]
+        route.fulfill(response=response, json=data)
+
+    page.route("**/graphql", graphql)
 
 
 @pytest.mark.parametrize("extra_context", [False, True], ids=["props-only", "extra-arguments"])
@@ -67,6 +130,8 @@ def test_patched_stash_page_with_companion(
     )
     if surface == "home":
         _serve_home_slate(page, scene["id"])
+    if surface == "scene":
+        _serve_scene_file(page, base_url, scene["id"])
     page.goto(base_url + route, wait_until="domcontentloaded")
     _dismiss_modals(page)
     expect(page.locator("body")).to_contain_text(title)
