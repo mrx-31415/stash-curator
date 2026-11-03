@@ -27,6 +27,10 @@ settings:
     displayName: Hide card ratings and confidence
     description: Hide Curator's badges on Stash scene and performer cards. Off by default. Refresh the browser after changing this in Stash's plugin settings.
     type: BOOLEAN
+  hideRankingComments:
+    displayName: Hide comments in ranking plugins
+    description: Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default; takes effect the next time the ranking plugin opens.
+    type: BOOLEAN
   homeForYou:
     displayName: Home page For You row
     description: Show Curator's For You lane on the Stash home page; move it with Customize there. On by default.

@@ -24,7 +24,7 @@ const context = vm.createContext({
   useHistory: () => ({}),
   installPerformerAffinitySort() {}, installSceneAffinitySort() {}, configureAffinityFilter() {}, configureLaneFilter() {},
   addPerformerAffinitySortOption() {}, addSceneAffinitySortOption() {},
-  CuratorNavItem: "curator-nav", EvidenceScore: "score", CuratorSceneAffinityPill: "scene-pill", CuratorLaneListView: "lane-view",
+  CuratorNavItem: "curator-nav", RankingBridge: "ranking-bridge", EvidenceScore: "score", CuratorSceneAffinityPill: "scene-pill", CuratorLaneListView: "lane-view",
   CuratorPerformerCardBadge: "performer-badge", CuratorContextLink: "context-link",
   CuratorPerformerSortLocale: "performer-locale",
   CuratorSceneSortLocale: "scene-locale", CuratorSceneAffinityCards: "affinity-cards",
@@ -148,6 +148,10 @@ assert.ok(contains(patched, themeItem));
 assert.equal(children(patched.props.children).filter((child) => child.type === "curator-nav").length, 1);
 const repeated = navbar({ children: [nativeChild] }, patched);
 assert.equal(children(repeated.props.children).filter((child) => child.type === "curator-nav").length, 1);
+// The ranking-plugin listener rides along once, beside the nav item.
+assert.equal(children(patched.props.children).filter((child) => child.type === "ranking-bridge").length, 1);
+assert.equal(children(repeated.props.children).filter((child) => child.type === "ranking-bridge").length, 1);
+assert.ok(contains(repeated, themeItem));
 console.log(`${checks} hook composition cases passed across ${Object.keys(cases).length} Stash surfaces`);
 
 // FrontPage: each Curator entry in Stash's rows view becomes that lane's row

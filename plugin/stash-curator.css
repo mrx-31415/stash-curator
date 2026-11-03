@@ -5654,3 +5654,409 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
     transition: none;
   }
 }
+
+/* Ranking plugins' slots (the stash-ranking events). Their modals are dark
+   whatever Stash's theme, so the panel carries its own colours. */
+.curator-ranking {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #e9ecef;
+  margin: 0.5rem auto;
+  max-width: 56rem;
+  padding: 0.6rem 0.75rem;
+  position: relative;
+  text-align: left;
+}
+
+/* Hides the comments for the session; kept clear of the text. */
+.curator-ranking-dismiss {
+  background: none;
+  border: 0;
+  color: #adb5bd;
+  cursor: pointer;
+  font-size: 1.15rem;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  position: absolute;
+  right: 0.25rem;
+  top: 0.2rem;
+}
+
+.curator-ranking-dismiss:hover,
+.curator-ranking-dismiss:focus-visible {
+  color: #f1f3f5;
+}
+
+.curator-ranking-match,
+.curator-ranking-wrap {
+  padding-right: 2rem;
+}
+
+.curator-ranking-wrap {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.25rem 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+/* A slot in a dialog footer (Cherry Pick) takes a row of its own above the
+   buttons; the footer is always in view, so nothing needs pinning. */
+.modal-footer > [data-ranking-slot]:not(:empty) {
+  flex: 0 0 100%;
+  margin: 0 0 0.5rem;
+  position: static;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-match {
+  border-left-width: 2px;
+  border-radius: 8px;
+  box-shadow: none;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  margin: 0;
+  max-width: none;
+  padding: 0.2rem 2rem 0.2rem 0.5rem;
+}
+
+/* Every pixel of a footer comes out of the dialog's body, so there the strip
+   is compact: a small face, the sender's name as a chat app shows it, and
+   one short line per message. */
+.modal-footer > [data-ranking-slot] .curator-ranking-name {
+  font-size: 0.62rem;
+  line-height: 1;
+  padding-left: 0.5rem;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-mood {
+  font-size: 1.1rem;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-speech {
+  gap: 0.2rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-bubble {
+  font-size: 0.85rem;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.15rem 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-typing {
+  padding: 0.4rem 0.65rem;
+}
+
+.modal-footer > [data-ranking-slot] .curator-ranking-dismiss {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+@media (max-width: 576px) {
+  .modal-footer > [data-ranking-slot] .curator-ranking-tally {
+    display: none;
+  }
+}
+
+.curator-ranking-muted {
+  color: #adb5bd;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.curator-ranking-head {
+  align-items: center;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 600;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.curator-ranking-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.curator-ranking-picks {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+}
+
+.curator-ranking-pick.scene-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  width: auto;
+}
+
+.curator-ranking-pick.scene-card:hover,
+.curator-ranking-pick.scene-card:focus-visible {
+  border-color: #5cc19c;
+}
+
+.curator-ranking-thumb.scene-card-image {
+  aspect-ratio: 16 / 9;
+  background: #111;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+}
+
+.curator-ranking-thumb img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.curator-ranking-text.card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem 0.45rem;
+}
+
+.curator-ranking-pick-title.card-section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curator-ranking-reason {
+  color: #adb5bd;
+  display: -webkit-box;
+  font-size: 0.72rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.curator-ranking-result .curator-ranking-picks {
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+}
+
+/* A match area can be taller than the view (Ascension's is at least 600px in
+   a scrolling modal), so the match slot is pinned to the bottom as a strip. */
+[data-ranking-slot="match"]:not(:empty) {
+  bottom: 0;
+  position: sticky;
+  z-index: 5;
+}
+
+.curator-ranking-match {
+  align-items: center;
+  backdrop-filter: blur(6px);
+  background: rgba(22, 24, 28, 0.94);
+  border-left: 3px solid #adb5bd;
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 -0.4rem 1rem rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.6rem;
+  margin: 0.5rem auto 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.curator-ranking-dependable,
+.curator-ranking-agree {
+  border-left-color: #5cc19c;
+}
+
+.curator-ranking-surprise,
+.curator-ranking-twist {
+  border-left-color: #f0b84a;
+}
+
+.curator-ranking-unknown {
+  border-left-color: #7aa7e0;
+}
+
+.curator-ranking-mood {
+  animation: curator-ranking-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.curator-ranking-speech {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 12rem;
+}
+
+.curator-ranking-name {
+  color: #adb5bd;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding-left: 0.6rem;
+  text-transform: uppercase;
+}
+
+.curator-ranking-bubble {
+  align-self: flex-start;
+  animation: curator-ranking-in 0.25s ease-out;
+  background: #34373d;
+  border-radius: 1.1rem 1.1rem 1.1rem 0.3rem;
+  color: #f1f3f5;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  max-width: 100%;
+  padding: 0.35rem 0.85rem 0.4rem;
+}
+
+/* The untyped rest of the line keeps its space so the bubble doesn't grow. */
+.curator-ranking-ghost {
+  visibility: hidden;
+}
+
+.curator-ranking-typing {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.65rem 0.85rem;
+}
+
+.curator-ranking-typing i {
+  animation: curator-ranking-dot 1s infinite ease-in-out;
+  background: #adb5bd;
+  border-radius: 50%;
+  display: block;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.curator-ranking-typing i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.curator-ranking-typing i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.curator-ranking-sr {
+  clip: rect(0 0 0 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.curator-ranking-kicker.curator-ranking-bubble {
+  background: #2f5f50;
+  color: #d8f5ea;
+}
+
+.curator-ranking-kicker-broken.curator-ranking-bubble,
+.curator-ranking-kicker-puzzled.curator-ranking-bubble,
+.curator-ranking-kicker-flip.curator-ranking-bubble {
+  background: #6a5222;
+  color: #fbe7bf;
+}
+
+.curator-ranking-kicker-milestone.curator-ranking-bubble,
+.curator-ranking-kicker-upset.curator-ranking-bubble,
+.curator-ranking-kicker-opener.curator-ranking-bubble,
+.curator-ranking-kicker-cheer.curator-ranking-bubble,
+.curator-ranking-kicker-reunion.curator-ranking-bubble,
+.curator-ranking-kicker-night.curator-ranking-bubble,
+.curator-ranking-kicker-morning.curator-ranking-bubble,
+.curator-ranking-kicker-rematch.curator-ranking-bubble {
+  background: #2f4b72;
+  color: #dbe8f8;
+}
+
+.curator-ranking-kicker-roll.curator-ranking-bubble,
+.curator-ranking-kicker-theme.curator-ranking-bubble {
+  background: #673a5a;
+  color: #f8dcef;
+}
+
+.curator-ranking-twist {
+  animation: curator-ranking-shake 0.4s ease-in-out;
+}
+
+.curator-ranking-meter {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.35rem;
+  margin-right: 0.4rem;
+  overflow: hidden;
+  vertical-align: middle;
+  width: 3.5rem;
+}
+
+.curator-ranking-meter-fill {
+  background: linear-gradient(90deg, #f0b84a, #5cc19c);
+  display: block;
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+
+.curator-ranking-tally {
+  color: #adb5bd;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.curator-ranking-result .curator-ranking-muted {
+  margin: 0;
+}
+
+@keyframes curator-ranking-dot {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-0.2rem);
+  }
+}
+
+@keyframes curator-ranking-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@keyframes curator-ranking-shake {
+  25% { transform: translateX(-4px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-2px); }
+}
+
+@keyframes curator-ranking-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.3rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-ranking-mood,
+  .curator-ranking-bubble,
+  .curator-ranking-typing i,
+  .curator-ranking-twist {
+    animation: none;
+  }
+}
