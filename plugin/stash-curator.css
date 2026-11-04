@@ -360,6 +360,7 @@
 
 .curator-view-copy {
   min-width: 0;
+  position: relative;
 }
 
 .curator-view-stats {
@@ -5919,6 +5920,141 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   line-height: 1.35;
   max-width: 100%;
   padding: 0.35rem 0.85rem 0.4rem;
+}
+
+/* Curator's comments beside the Recommendations heading. They float in the
+   empty space on the heading's line and never take layout room of their own. */
+.curator-page-chat-anchor {
+  display: contents;
+}
+
+.curator-page-chat-probe {
+  left: -9999px;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.curator-page-chat {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+/* No room on the heading's line: the chat gets a line of its own under it,
+   in a slot held open for the visit so bubbles never push the page. */
+.curator-page-chat-slot {
+  display: block;
+  height: 3.4rem;
+  margin: 0.1rem 0 0.3rem;
+  position: relative;
+}
+
+.curator-page-chat.curator-page-chat-inline {
+  left: 0;
+  max-width: 100%;
+  top: 0.1rem;
+  transform: none;
+  white-space: normal;
+  width: fit-content;
+}
+
+.curator-page-chat-ask.curator-page-chat-ask-inline {
+  left: 0;
+  top: 100%;
+}
+
+.curator-page-chat-mood {
+  animation: curator-ranking-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.curator-page-chat .curator-page-chat-bubble {
+  box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.3);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.curator-page-chat-dismiss {
+  align-items: center;
+  background: #4a4e56;
+  border: 0;
+  border-radius: 50%;
+  color: #f1f3f5;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.85rem;
+  height: 1.1rem;
+  justify-content: center;
+  line-height: 1;
+  opacity: 0.7;
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+  right: -0.45rem;
+  top: -0.55rem;
+  transition: opacity 0.15s;
+  width: 1.1rem;
+}
+
+.curator-page-chat:hover .curator-page-chat-dismiss,
+.curator-page-chat-dismiss:focus-visible {
+  opacity: 1;
+}
+
+.curator-page-chat-welcome,
+.curator-page-chat-lane {
+  pointer-events: auto;
+}
+
+.curator-page-chat-ask {
+  background: #2b2e33;
+  border: 1px solid #45494f;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.4rem rgba(0, 0, 0, 0.45);
+  color: #f1f3f5;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  gap: 0.15rem;
+  padding: 0.6rem;
+  position: absolute;
+  width: 15rem;
+  z-index: 6;
+}
+
+.curator-page-chat-ask-text {
+  margin-bottom: 0.25rem;
+}
+
+.curator-page-chat-ask button {
+  background: none;
+  border: 0;
+  border-radius: 0.3rem;
+  color: inherit;
+  padding: 0.3rem 0.45rem;
+  text-align: left;
+}
+
+.curator-page-chat-ask button:hover,
+.curator-page-chat-ask button:focus-visible {
+  background: #3a3e45;
+}
+
+.curator-page-chat-ask .curator-page-chat-off {
+  color: #8bb8f0;
+}
+
+.curator-page-chat-ask small {
+  color: #adb5bd;
+  margin-top: 0.25rem;
 }
 
 /* The untyped rest of the line keeps its space so the bubble doesn't grow. */

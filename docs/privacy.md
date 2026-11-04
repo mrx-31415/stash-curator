@@ -14,7 +14,10 @@ only in Curator's database; Curator never adds it to the scene in Stash. The
 browser keeps retry queues for playback events, tag/term answers, and scene reasons. Scene feedback
 is submitted directly; check its confirmation or error before moving on. Comments in ranking
 plugins read your played scenes and performer details from Stash and Curator's own scores; the
-browser keeps only which comment lines it has shown, so they don't repeat.
+browser keeps only which comment lines it has shown, so they don't repeat. Comments on Curator's page read
+the same data plus scenes added since your last visit; the browser also keeps the time
+of your last visit, which days you visited in the last two weeks (for greetings and streaks), and
+which kinds of comment each lane has made during the current visit.
 
 ## Stash and StashDB boundaries
 
