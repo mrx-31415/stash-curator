@@ -29,6 +29,7 @@ from curator.ranking.slate import LaneEntry, Slate
 from curator.similarity import SimilarityService
 from curator.storage import transaction
 from curator.taste_summary import taste_summary
+from curator.taxonomy.store import performer_describing_tag_ids
 
 API_SCHEMA_VERSION = 2
 # Tag questions: the For You pool an answer is measured against, the fewest
@@ -1127,7 +1128,7 @@ class CuratorAPI:
             direct[str(row["tag_id"])] = (float(row["value"]), bool(row["blocked"]))
         items: list[dict[str, object]] = []
         config_version = effective_tag_role_config_version(self.connection)
-        for row in self.connection.execute(
+        rows = self.connection.execute(
             """
             WITH scene_counts AS (
               SELECT tag_id, count(DISTINCT scene_id) AS scene_count
@@ -1145,7 +1146,19 @@ class CuratorAPI:
             ORDER BY t.name, t.tag_id
             """,
             (config_version, feature_version, model_id),
-        ):
+        ).fetchall()
+        # Display-only: tags about who is in the scene (nationality, body, age
+        # group), so a client doesn't read them as a choice of scene. Roles and
+        # the model are untouched.
+        about_performer = performer_describing_tag_ids(
+            self.connection,
+            (
+                (str(row["tag_id"]), row["name"])
+                for row in rows
+                if row["role"] != "performer_attribute"
+            ),
+        )
+        for row in rows:
             tag_id = str(row["tag_id"])
             scene_count = int(row["scene_count"])
             affinity = float(row["affinity"] or 0)
@@ -1171,6 +1184,8 @@ class CuratorAPI:
                     "prompt": prompt,
                     "role": str(row["role"]),
                     "inherited_value": inherited,
+                    "describes_performer": row["role"] == "performer_attribute"
+                    or tag_id in about_performer,
                 }
             )
         items.sort(
