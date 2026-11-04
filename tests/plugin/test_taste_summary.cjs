@@ -37,7 +37,12 @@ const context = {
     Fragment: "fragment",
     useState: (initial) => [states.length ? states.shift() : initial, () => {}],
     useEffect: () => {},
+    useMemo: (make) => make(),
   },
+  // The page chat has its own tests; here it only has to be mounted.
+  PageChat: () => null,
+  pageChatInsightsFeed: (data) => ({ key: data.model_id }),
+  announcePageChatHover: () => {},
   Api: { components: { SceneCard: "scene-card" } },
   GQL: { useFindScenesQuery: () => ({ loading: false, data: { findScenes: { scenes: [{ id: "7" }] } } }) },
   Button: "button",

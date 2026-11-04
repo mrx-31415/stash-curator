@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -151,6 +152,13 @@ def test_patched_stash_page_with_companion(
         expect(
             panel.get_by_role("link", name=f"Find similar {surface}s with Curator", exact=True)
         ).to_have_count(1)
+        # The comment has a host of its own between native blocks: after
+        # Curator's row under the scene toolbar, after the performer's name.
+        anchor = {
+            "scene": ".scene-toolbar + .curator-entity-panel-host + ",
+            "performer": ".performer-head > h2 + ",
+        }[surface]
+        expect(page.locator(f"{anchor}.curator-page-chat-host-{surface}")).to_have_count(1)
     if surface == "home":
         # Curator's For You row (on by default) comes before Stash's own rows.
         rows = page.locator(".recommendations-container .recommendation-row")
@@ -279,3 +287,69 @@ def test_card_affinity_survives_replaced_popovers(page: Page, base_url: str, see
     expect(page.locator(".curator-card-affinity .curator-score-scale").first).to_be_visible()
     expect(page.locator(".scene-card .card-section-title").first).to_be_visible()
     assert not errors, f"Scene cards: JavaScript errors: {errors}"
+
+
+@pytest.mark.parametrize("surface", ["scene", "performer"])
+def test_entity_page_comments_respect_settings(
+    page: Page, base_url: str, seeded: None, surface: str
+) -> None:
+    """Hidden comments hold no space on Stash's pages, and with the SFW Switch
+    on a comment is blurred while the native page stays as Stash renders it."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import expect
+
+    query = '{configuration{interface{sfwContentMode} plugins(include:["stash-curator"])}}'
+    original = _gql(base_url, query)["configuration"]
+    settings = original["plugins"].get("stash-curator") or {}
+    data = _gql(
+        base_url,
+        "{findScenes(filter:{per_page:1}){scenes{id title}} "
+        "findPerformers(filter:{per_page:1}){performers{id name}}}",
+    )
+    entity = (
+        data["findScenes"]["scenes"][0]
+        if surface == "scene"
+        else data["findPerformers"]["performers"][0]
+    )
+    route = f"/{surface}s/{entity['id']}"
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.add_init_script(f"delete Navigator.prototype.wakeLock;\n{COMPANION}")
+    configure = 'mutation($input: Map!){configurePlugin(plugin_id:"stash-curator", input:$input)}'
+    try:
+        _gql(base_url, configure, {"input": {**settings, "hidePageComments": True}})
+        page.goto(base_url + route, wait_until="domcontentloaded")
+        _dismiss_modals(page)
+        expect(page.get_by_label("Curator affinity details")).to_have_count(1)
+        expect(page.locator(f".curator-page-chat-host-{surface}")).to_have_count(1)
+        page.wait_for_timeout(1500)
+        expect(page.locator(".curator-page-chat-slot, .curator-page-chat")).to_have_count(0)
+        assert (
+            page.locator(f".curator-page-chat-host-{surface}").evaluate("node => node.offsetHeight")
+            == 0
+        )
+
+        _gql(base_url, configure, {"input": {**settings, "hidePageComments": False}})
+        _gql(
+            base_url,
+            "mutation{configureInterface(input:{sfwContentMode:true}){sfwContentMode}}",
+        )
+        page.goto(base_url + route, wait_until="domcontentloaded")
+        _dismiss_modals(page)
+        expect(page.locator("body")).to_have_class(re.compile(r"\bcurator-sfw\b"))
+        expect(page.locator("body")).to_contain_text(entity.get("title") or entity.get("name"))
+        # The seeded library may give Curator nothing true to say here.
+        bubble = page.locator(".curator-page-chat-bubble").first
+        with contextlib.suppress(PlaywrightTimeout):
+            bubble.wait_for(timeout=8_000)
+        if bubble.count():
+            assert "blur" in bubble.evaluate("node => getComputedStyle(node).filter")
+        assert not errors, f"{surface}: JavaScript errors: {errors}"
+    finally:
+        _gql(base_url, configure, {"input": settings})
+        _gql(
+            base_url,
+            "mutation($on: Boolean){configureInterface(input:{sfwContentMode:$on})"
+            "{sfwContentMode}}",
+            {"on": bool(original["interface"]["sfwContentMode"])},
+        )

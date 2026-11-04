@@ -5045,6 +5045,7 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   grid-column: 1 / -1;
 }
 .curator-insight-hero {
+  position: relative;
   background: linear-gradient(135deg, color-mix(in srgb, var(--curator-insight-more) 22%, var(--curator-surface)), var(--curator-surface) 70%);
 }
 .curator-insight-hero h2 {
@@ -5970,6 +5971,40 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 .curator-page-chat-ask.curator-page-chat-ask-inline {
   left: 0;
   top: 100%;
+}
+
+/* Stash's scene and performer pages: the host takes no room unless the
+   chat holds a slot in it. */
+.curator-page-chat-host {
+  height: auto;
+  position: relative;
+}
+
+.curator-page-chat-host-scene .curator-page-chat-slot {
+  margin: 0.4rem 0 0;
+}
+
+/* The SFW Switch blurs what Curator says too; hover peeks. */
+.curator-sfw .curator-page-chat-bubble {
+  filter: blur(6px);
+}
+
+.curator-sfw .curator-page-chat:hover .curator-page-chat-bubble {
+  filter: none;
+}
+
+/* Names in a comment open their Stash page. */
+.curator-page-chat-bubble .curator-page-chat-link {
+  color: inherit;
+  pointer-events: auto;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.45);
+  text-underline-offset: 0.15em;
+}
+
+.curator-page-chat-bubble .curator-page-chat-link:hover,
+.curator-page-chat-bubble .curator-page-chat-link:focus-visible {
+  text-decoration-color: currentColor;
 }
 
 .curator-page-chat-mood {
