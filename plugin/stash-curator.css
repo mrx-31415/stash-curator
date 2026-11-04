@@ -642,10 +642,13 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   margin: 0.35rem 0 0.8rem;
   overflow-x: auto;
   padding-bottom: 0.2rem;
+}
+
 /* Section head under the Curate switcher — same shape as Manage's detail
    head, since Curate no longer uses the side-menu shell. */
 .curator-curate-head {
   margin-bottom: 0.9rem;
+  position: relative;
 }
 
 .curator-curate-head h2 {
@@ -657,7 +660,6 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   color: var(--curator-text-muted);
   font-size: 0.8rem;
   margin: 0;
-}
 }
 
 /* ---------- Manage shell (two-pane list + detail) ---------- */
@@ -6010,7 +6012,8 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
 }
 
 .curator-page-chat-welcome,
-.curator-page-chat-lane {
+.curator-page-chat-lane,
+.curator-page-chat-react {
   pointer-events: auto;
 }
 

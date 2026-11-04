@@ -21,7 +21,7 @@ function load(pick = cycling()) {
     rankingWhen: () => "March",
     rankingViewing: (affinities, id) => affinities[id] || { value: 0, basis: "none" },
   });
-  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatLaneTalk, pageChatRef, pageChatShortTitle, PAGE_CHAT_LINES };`, context);
+  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
   return context.chat;
 }
 
@@ -68,7 +68,9 @@ test("the welcome follows up with what's true, new scenes weighted highest", () 
 });
 
 test("a lane talks about what its shelf holds", () => {
-  const { pageChatShelf, pageChatLaneTalk } = load();
+  const { pageChatShelf, pageChatTalk, pageChatLaneIntro } = load();
+  const pageChatLaneTalk = (lane, items, facts, context, recent, options) => pageChatTalk(
+    pageChatShelf(lane, items, facts, context, Date.now(), options.random), () => pageChatLaneIntro(lane, items, facts, Date.now(), options.random), recent, options);
   const now = Date.UTC(2026, 10, 4);
   const ann = { id: 1, name: "Ann" };
   const scenes = [
@@ -147,4 +149,123 @@ test("big studios hold at least a fifth of all plays", () => {
     { play_count: 6, studio: { name: "North" } }, { play_count: 20, studio: { name: "South" } }, { play_count: 3, studio: { name: "East" } },
   ]);
   assert.deepEqual([...studios.big].sort(), ["North", "South"]);
+});
+
+// A Stash-box scene as get_expand and get_performer_hunt serve it.
+// Objects made inside the VM have another realm's prototype.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function external(id, { title = `Scene ${id}`, performers = [], studio = null, released = null, ...rest } = {}) {
+  return { id: String(id), payload: { title, studio: studio && { name: studio }, release_date: released, performers: performers.map((performer) => ({ performer })) }, ...rest };
+}
+
+test("Expand talks about your regulars, studios and release dates in what you don't have", () => {
+  const { pageChatExpandShelf } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const day = (back) => new Date(now - back * DAY).toISOString().slice(0, 10);
+  const ann = { id: "a", name: "Ann", curator_local: { id: 1 } };
+  const bea = { id: "b", name: "Bea", curator_local: { id: 2, favorite: true } };
+  const cat = { id: "c", name: "Cat", curator_local: { id: 3 } };
+  const items = [
+    external(1, { performers: [ann, bea], studio: "North", released: day(3) }),
+    external(2, { performers: [ann, bea], studio: "North", released: day(400) }),
+    external(3, { performers: [cat], studio: "South", released: day(4000), in_whisparr: true }),
+    external(4, { performers: [], studio: "South", released: day(20), in_whisparr: true }),
+  ];
+  const context = {
+    affinities: { 1: { value: 0.2, basis: "watched" }, 3: { value: 0.05, basis: "guessed" } },
+    plays: new Map([["1", { plays: 12 }]]),
+    studios: { big: new Set(["North"]) },
+  };
+  const shelf = new Map(pageChatExpandShelf(items, context, now, () => 0).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(shelf.get("expandRegular").values), { p: "Ann", n: 2 });
+  assert.equal(shelf.get("expandFavourite").values.p, "Bea");
+  assert.equal(shelf.get("expandUnwatched").values.p, "Cat");
+  assert.deepEqual(plain(shelf.get("expandStudio").values), { s: "North", n: 2 });
+  assert.equal(shelf.get("expandNewRelease").scene, 0);
+  assert.equal(shelf.get("expandDeepCut").values.y, 2015);
+  assert.equal(shelf.get("whisparrRun").values.n, 2);
+  // Without viewing evidence nobody is called a regular.
+  assert.ok(!pageChatExpandShelf(items, {}, now).some(([, spec]) => spec.key === "expandRegular"));
+});
+
+test("a hunt counts what you own of the performer's catalogue", () => {
+  const { pageChatHuntShelf } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const day = (back) => new Date(now - back * DAY).toISOString().slice(0, 10);
+  const ann = { id: "a", name: "Ann", curator_local: { id: 1 } };
+  const items = [
+    external(1, { performers: [ann], released: day(10), linked_locally: true }),
+    external(2, { performers: [ann], released: day(100) }),
+    external(3, { performers: [ann], released: day(2000) }),
+  ];
+  const data = { performer_id: "a", performer_name: "Ann", items };
+  const keys = (options) => new Map(options.map(([, spec]) => [spec.key, spec]));
+  const shelf = keys(pageChatHuntShelf(data, { affinities: { 1: { value: 0.2, basis: "watched" } } }, now, () => 0));
+  assert.deepEqual(plain(shelf.get("huntOwned").values), { p: "Ann", n: 3, own: 1 });
+  assert.ok(shelf.has("huntRegular"));
+  assert.equal(shelf.get("huntRecent").values.n, 2);
+  assert.equal(shelf.get("huntFirst").values.y, 2021);
+  // On screen the hunt sorts and filters itself: no "the first one".
+  assert.equal(shelf.get("expandNewRelease").values.r, "Scene 1");
+  assert.ok(keys(pageChatHuntShelf({ ...data, items: items.map((item) => ({ ...item, linked_locally: true })) }, {}, now)).has("huntComplete"));
+  assert.ok(keys(pageChatHuntShelf({ ...data, items: items.slice(1) }, {}, now)).has("huntNone"));
+  assert.equal(pageChatHuntShelf({ items: [] }, {}, now).length, 0);
+});
+
+test("Similar talks about the seed and what its matches share with it", () => {
+  const { pageChatSimilarShelf } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const ann = { id: 1, name: "Ann" };
+  const seed = { id: 9, play_count: 7, performers: [ann], studio: { name: "North" } };
+  const scenes = [
+    { id: 1, title: "One", play_count: 0, performers: [ann], studio: { name: "North" } },
+    { id: 2, title: "Two", play_count: 0, performers: [ann], studio: { name: "North" } },
+    { id: 3, title: "Three", play_count: 0, performers: [], studio: { name: "South" } },
+  ];
+  const facts = new Map(scenes.map((scene) => [String(scene.id), scene]));
+  const items = scenes.map((scene, index) => ({ scene_id: scene.id, appeal: 0.2, similarity: index === 2 ? 0.9 : 0.6 }));
+  const shelf = pageChatSimilarShelf(seed, items, facts, {}, now, () => 0);
+  const byKey = new Map(shelf.map(([, spec]) => [spec.key, spec]));
+  assert.equal(byKey.get("seedLoved").values.n, 7);
+  assert.deepEqual(plain(byKey.get("sharedPerformer").values), { p: "Ann", n: 2 });
+  assert.deepEqual(plain(byKey.get("sameStudio").values), { s: "North", n: 2 });
+  assert.equal(byKey.get("closest").scene, 2);
+  // The shelf's own run of Ann would repeat the shared-performer line.
+  assert.ok(!byKey.has("performerRun"));
+  assert.ok(pageChatSimilarShelf({ ...seed, play_count: 0 }, items, facts, {}, now).some(([, spec]) => spec.key === "seedUnplayed"));
+});
+
+test("a Stash-box card note prefers what's rare: owned, in Whisparr, just out", () => {
+  const { pageChatExternalNote } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const ann = { id: "a", name: "Ann", curator_local: { id: 1 } };
+  const context = { affinities: { 1: { value: 0.2, basis: "watched" } } };
+  assert.equal(pageChatExternalNote(external(1, { performers: [ann], linked_locally: true }), context, now).key, "ownedNote");
+  assert.equal(pageChatExternalNote(external(1, { performers: [ann] }), context, now).values.p, "Ann");
+  assert.equal(pageChatExternalNote(external(1, { released: "2012-05-01" }), {}, now).values.y, 2012);
+  assert.equal(pageChatExternalNote(external(1), {}, now), null);
+});
+
+test("Curate answers I saw coming, or didn't, get a word back now and then", () => {
+  const { pageChatReaction } = load();
+  const tag = (value, inferred, blocked = false) => ({ kind: "tag", name: "Lace", value, inferred, blocked });
+  assert.equal(pageChatReaction(tag(-0.5, 0.4), 1).key, "answerSurprise");
+  assert.equal(pageChatReaction(tag(0.5, 0.4), 1, () => 0).key, "calledLike");
+  assert.equal(pageChatReaction(tag(-0.5, -0.4), 1, () => 0).key, "calledDislike");
+  assert.equal(pageChatReaction(tag(0.5, 0.4), 1, () => 0.9), null);
+  assert.equal(pageChatReaction(tag(0.5, 0.02), 1, () => 0), null);
+  assert.equal(pageChatReaction(tag(null, 0.4, true), 1).key, "answerBlocked");
+  assert.deepEqual(plain(pageChatReaction(tag(0.5, 0.02), 10).values), { n: 10 });
+  assert.equal(pageChatReaction({ kind: "reason", flipped: true, reasons: 1 }, 2).key, "reasonFlip");
+  assert.equal(pageChatReaction({ kind: "reason", flipped: false, reasons: 4 }, 2, () => 0).key, "reasonRich");
+});
+
+test("every line a view can say has a deck and a face", () => {
+  const { PAGE_CHAT_LINES, PAGE_CHAT_MOODS } = load();
+  for (const key of Object.keys(PAGE_CHAT_LINES)) {
+    assert.ok(PAGE_CHAT_LINES[key].length, key);
+    if (key !== "off" && !["first", "again", "day", "days", "weeks", "streak", "newScenes", "newScene", "morning", "afternoon", "evening", "night"].includes(key)) assert.ok(PAGE_CHAT_MOODS[key], `${key} has no mood`);
+  }
+  for (const section of ["questions", "reasons", "sentiment", "progress"]) assert.ok(PAGE_CHAT_LINES[`curate_${section}`], section);
 });

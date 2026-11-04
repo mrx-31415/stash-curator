@@ -86,6 +86,7 @@ function harness({ candidates, storage, impact = IMPACT }) {
     scheduleModelUpdate: () => { calls.scheduled = (calls.scheduled || 0) + 1; },
     useCuratorActivity: () => {},
     submitSceneReason: (entry) => calls.answers.push(entry),
+    announcePageChat: (event) => (calls.chat = calls.chat || []).push(event),
     applyFeedbackAndAwaitBuild: async () => { calls.applied = (calls.applied || 0) + 1; return true; },
     formatSigned: (value) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`,
     localStorage: {
@@ -184,6 +185,8 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
   button(tree, "Next").props.onClick();
   assert.equal(JSON.stringify(app.calls.answers[1]),
     JSON.stringify({ scene_id: "2", polarity: -1, flipped: true, reasons: [], flip_strength: "strong" }));
+  // Curator's page chat hears each answer: how many reasons, and the flip.
+  assert.equal(JSON.stringify(app.calls.chat), JSON.stringify([{ kind: "reason", flipped: false, reasons: 3 }, { kind: "reason", flipped: true, reasons: 0 }]));
   // The next card starts unflipped and mild again; no strength is sent without a flip.
   tree = app.render();
   assert.equal(button(tree, "Not for me"), undefined);

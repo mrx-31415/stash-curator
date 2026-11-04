@@ -2337,6 +2337,7 @@
     }
     function next(item) {
       submitTagPreference(item.tag_id, choice);
+      announcePageChat({ kind: "tag", name: item.name, value: choice.value, blocked: choice.blocked, inferred: item.inferred_value });
       setAnswered((count) => count + 1);
       const pending = unapplied + 1;
       setUnapplied(pending);
@@ -3008,6 +3009,7 @@
         scene_id: scene.id, polarity: tone === "hit" ? 1 : -1, flipped, reasons,
         ...(flipped ? { flip_strength: flipStrength } : {}),
       });
+      announcePageChat({ kind: "reason", flipped, reasons: reasons.length });
       handled.current.add(scene.id);
       setAnswered((count) => count + 1);
       const pending = unapplied + 1;
@@ -3989,6 +3991,7 @@
 
   function CuratePanel({ section, onSelectSection, sentimentQuery }) {
     const active = CURATE_SECTIONS.find((item) => item.value === section) || CURATE_SECTIONS[0];
+    const chatFeed = React.useMemo(() => pageChatCurateFeed(active.value), [active.value]);
     const bodies = {
       questions: () => React.createElement(TagQuestionsSection, { onShowAllTags: () => onSelectSection("sentiment") }),
       reasons: () => React.createElement(SceneReasons),
@@ -4022,6 +4025,7 @@
         "div",
         { className: "curator-curate-head" },
         React.createElement("h2", null, active.label),
+        React.createElement(PageChat, { view: `curate_${active.value}`, feed: chatFeed }),
         React.createElement("p", null, active.description)
       ),
       bodies[active.value]()
@@ -4335,7 +4339,7 @@
     }
     return React.createElement(
       "article",
-      { ref: setCardElement, className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}${hiddenKind ? " curator-external-hidden" : ""}` },
+      { ref: setCardElement, className: `curator-card curator-compact-card curator-external-card curator-external-${kind} grid-card ${kind}-card${payload.curator_local ? " curator-external-local" : ""}${hiddenKind ? " curator-external-hidden" : ""}`, onMouseEnter: kind === "scene" ? () => announcePageChatHover(item.id) : undefined, onMouseLeave: kind === "scene" ? () => announcePageChatHover(null) : undefined },
       item.sources?.includes("wildcard") && React.createElement("span", { className: "curator-wildcard-badge", title: "Popularity wildcard: selected outside preference-derived seeds." }, "Wildcard"),
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
@@ -6007,7 +6011,7 @@
       function rememberOrigin(event) {
         if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: item.entity_id, impression_id: result.impression_id, lane: "similar", impression_position: item.position, model_id: result.model_id }));
       }
-      return React.createElement("article", { key: item.entity_id, className: "curator-card curator-compact-card", onClickCapture: rememberOrigin }, React.createElement(SceneCard, { scene: entity, curatorAppeal: (item.appeal * 2) - 1 }), body);
+      return React.createElement("article", { key: item.entity_id, className: "curator-card curator-compact-card", onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.entity_id), onMouseLeave: () => announcePageChatHover(null) }, React.createElement(SceneCard, { scene: entity, curatorAppeal: (item.appeal * 2) - 1 }), body);
     }));
   }
 
@@ -6229,6 +6233,10 @@
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     const externalDismissals = useExternalDismissals(gender);
     const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
+    // Curator's comments by the heading talk about the seed and its matches.
+    const chatKey = loading || error || (selected && !result) ? null : `${source}:${entityType}:${selected?.id || ""}:${page}:${items.slice(0, 12).map((item) => item.id ?? item.entity_id).join(",")}`;
+    const chatFeed = React.useMemo(() => chatKey && pageChatSimilarFeed(chatKey, { source, entityType, seedId: selected?.id, items }), [chatKey]);
+    usePageChatFeed("similar", chatFeed);
     function renderSimilarPage(batch, onReady) {
       if (source === "library") return React.createElement(SimilarLibraryResults, { result: batch, entityType, findView: gridView, wall, endless, onRemove: removeSimilar, onReaction: showFollowUp, onReady });
       return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => React.createElement(ExternalCard, { key: item.id, item, kind: entityType, gender, thumbnails: gridView === "thumbnails", onShortlist: shortlistExternal, onDismiss: externalDismissals.dismiss, dismissal: externalDismissals.dismissals[item.id], followUp: externalDismissals.followUpFor(item.id), sweep: externalDismissals.sweep, onShowScenes: (item) => location.assign(`/plugins/stash-curator?view=hunt&performer=${item.id}&label=${encodeURIComponent(item.payload?.name || "")}`), onWhisparr: sendWhisparr, whisparrEnabled })));
@@ -6614,6 +6622,13 @@
         if (page > last) updateUrl((s) => ({ ...s, page: last }), { replace: true });
       }
     }, [data, entityType, huntItems.length, page, pageSize]);
+    // Curator's comments by the heading talk about what's showing here; a
+    // hunt counts the performer's whole catalogue, not one page of it.
+    const hunting = entityType === "hunt";
+    const chatItems = hunting ? data?.items || [] : visibleItems;
+    const chatKey = loading || error ? null : `${entityType}:${hunting ? huntPerformer?.id || "" : page}:${chatItems.slice(0, 12).map((item) => item.id).join(",")}`;
+    const chatFeed = React.useMemo(() => chatKey && pageChatExpandFeed(chatKey, entityType, hunting ? data : { items: chatItems }), [chatKey]);
+    usePageChatFeed(huntOnly ? "hunt" : "expand", chatFeed);
     function renderExpandPage(batch) {
       return React.createElement("div", { className: `curator-grid curator-external-grid${endless && gridView === "cards" ? " curator-endless-cards" : ""}` }, batch.items.map((item) => {
         const kind = entityType === "shortlist" ? item.entity_type : entityType === "hunt" ? "scene" : entityType;
@@ -9139,7 +9154,8 @@
           "div",
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
-          laneByValue.has(lane) && React.createElement(PageChat, { lane, slate, items: visibleItems }),
+          laneByValue.has(lane) && React.createElement(LanePageChat, { lane, slate, items: visibleItems }),
+          FIND_SECTION_VALUES.has(lane) && React.createElement(FindPageChat, { view: lane }),
           React.createElement("p", null, laneOption.description),
           laneByValue.has(lane) && React.createElement(
             "details",
@@ -10652,6 +10668,7 @@
   const PAGE_CHAT_KEY = "stash-curator:page-chat:v1";
   const PAGE_CHAT_VISIT_GAP = 30 * 60000;
   const PAGE_CHAT_HOVER_MS = 600;
+  const PAGE_CHAT_REACT_MS = 7000;
   const PAGE_CHAT_MIN_ROOM = 140;
   // Below this a gap only holds the shortest lines, so the chat takes its
   // own line under the heading instead (phones, narrow windows).
@@ -10875,6 +10892,186 @@
       "{p} is in one of the {n} new scenes.",
       "New arrivals include some {p}. Just saying.",
     ],
+    // Find: Stash-box releases, Similar and Performer Hunt.
+    expand: [
+      "Out on Stash-box, sorted by how well they fit you.",
+      "None of these are in your library yet. All picked for your taste.",
+      "Fresh hunting ground. Tell me what grabs you.",
+    ],
+    expand_performer: [
+      "Performers you don't have yet, ranked for your taste.",
+      "New faces, picked with your history in mind.",
+    ],
+    shortlist: [
+      "Your shortlist. Still calling to you?",
+      "Saved for later. Later could be now.",
+    ],
+    expandRegular: [
+      "{p} is in {n} of these. None in your library yet.",
+      "{n} with {p} you don't have. One of your regulars.",
+      "More {p} out there: {n} right here.",
+    ],
+    expandSpotlight: [
+      "{r} has {p}, and you don't have it yet.",
+      "There's {p} in {r}. One of your regulars.",
+    ],
+    expandFavourite: [
+      "{n} here with {p}, a favourite of yours.",
+      "Your favourite {p} turns up {n} times.",
+    ],
+    expandUnwatched: [
+      "You have {p} in your library but never played them. {r} might change that.",
+      "{p} is in your library, unwatched. {r} could be the start.",
+    ],
+    expandStudio: [
+      "{s} has {n} here you don't own yet.",
+      "{n} from {s}, a studio you watch a lot.",
+    ],
+    expandNewRelease: [
+      "{r} only came out {ago}.",
+      "Hot off the press: {r}, out {ago}.",
+    ],
+    expandRecent: [
+      "{n} of these came out in the last month.",
+      "{n} released in the last 30 days.",
+    ],
+    expandDeepCut: [
+      "Deep cut: {r} is from {y}.",
+      "{r} goes back to {y}. An oldie.",
+    ],
+    whisparrRun: [
+      "{n} of these are already in Whisparr.",
+      "Whisparr has {n} of these covered.",
+    ],
+    similarEmpty: [
+      "Pick a scene you love and I'll find its cousins.",
+      "Show me one you like, I'll find more like it.",
+    ],
+    similar: [
+      "Close relatives, sorted by how much you'd like them.",
+      "Same feel, different scenes. Tell me if I'm close.",
+    ],
+    seedLoved: [
+      "{n} plays on the original. Good one to start from.",
+      "You've played that one {n} times. I see why you want more.",
+    ],
+    seedUnplayed: [
+      "You haven't played the original yet, but I like where this is going.",
+      "Not played that one yet? Let's see its relatives anyway.",
+    ],
+    sharedPerformer: [
+      "{n} of these share {p} with the original.",
+      "{p} again in {n} of them.",
+    ],
+    sameStudio: [
+      "{n} from {s}, same as the original.",
+      "{s} again for {n} of these.",
+    ],
+    closest: [
+      "{r} is the closest match, even if it's not on top.",
+      "The nearest twin is {r}. Your taste pushed others up.",
+    ],
+    huntEmpty: [
+      "Pick a performer and I'll check what you're missing.",
+      "Who are we hunting today?",
+    ],
+    hunt: [
+      "Let's see what you're missing.",
+      "Everything on Stash-box, checked against your library.",
+    ],
+    huntOwned: [
+      "You have {own} of {p}'s {n} scenes.",
+      "{own} of {n} {p} scenes are already yours.",
+    ],
+    huntNone: [
+      "None of {p}'s {n} scenes are in your library yet.",
+      "A clean slate: {n} {p} scenes, none of them yours yet.",
+    ],
+    huntComplete: [
+      "Every {p} scene here is already yours. Completionist!",
+      "You've got all {n}. Impressive.",
+    ],
+    huntRecent: [
+      "{n} {p} scenes from the last year.",
+      "{p} has been busy: {n} this past year.",
+    ],
+    huntFirst: [
+      "{p}'s earliest here is from {y}.",
+      "This goes all the way back to {y}.",
+    ],
+    huntRegular: [
+      "{p} is one of your regulars. No wonder you're hunting.",
+      "Of course it's {p}. You rarely skip one.",
+    ],
+    favouriteNote: [
+      "{p} is one of your favourites.",
+      "Your favourite {p} is in this one.",
+    ],
+    whisparrNote: [
+      "Already sent to Whisparr.",
+      "Whisparr's on this one already.",
+    ],
+    ownedNote: [
+      "You already have this one.",
+      "This one's in your library already.",
+    ],
+    releasedNote: [
+      "Only released {ago}.",
+      "Out {ago}. Brand new.",
+    ],
+    oldNote: [
+      "From {y}. A classic.",
+      "This one goes back to {y}.",
+    ],
+    // Curate: section intros, then reactions to what you teach me.
+    curate_questions: [
+      "A few quick ones. Each answer sharpens my picture of you.",
+      "Quick questions, big difference to your picks.",
+      "Answer what you like, skip the rest.",
+    ],
+    curate_reasons: [
+      "Tell me what makes a scene work. I listen closely.",
+      "The why tells me more than the thumbs.",
+    ],
+    curate_sentiment: [
+      "Everything I believe about your tags. Correct me.",
+      "My read on every tag. Fix anything I got wrong.",
+    ],
+    curate_progress: [
+      "Here's how your answers moved things.",
+      "Your teaching, in numbers.",
+    ],
+    calledLike: [
+      "Called it, {t} is very you.",
+      "Thought so. {t} it is.",
+      "Just as I guessed with {t}.",
+    ],
+    calledDislike: [
+      "Thought so, {t} isn't your thing.",
+      "Called it. Less {t}, then.",
+    ],
+    answerSurprise: [
+      "Ooh, I had {t} the other way round. Noted.",
+      "Good to know! I'd read {t} wrong.",
+      "That's new to me about {t}. Thanks.",
+    ],
+    answerBlocked: [
+      "Noted, no more {t}.",
+      "{t} is gone from your picks.",
+    ],
+    taughtMilestone: [
+      "That's {n} answers. I'm learning fast.",
+      "{n} in! Keep going.",
+      "{n} answers this visit. Your picks will thank you.",
+    ],
+    reasonFlip: [
+      "Huh, I had that one the other way round. Thanks.",
+      "Good catch. I'd read that scene wrong.",
+    ],
+    reasonRich: [
+      "{n} reasons, I love the detail.",
+      "That's plenty to go on. Thanks!",
+    ],
   };
   const PAGE_CHAT_MOODS = {
     first: "👋", again: "😄", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
@@ -10883,6 +11080,13 @@
     resume: "⏯️", staleFavourite: "🤔", favourite: "😍", dependable: "😌", newFace: "👀", fresh: "✨", studio: "🙂", off: "🤐",
     topPick: "😊", performerRun: "😏", regulars: "😌", studioRun: "🙂", unplayed: "👀", replays: "🤔", quick: "⏱️", long: "🍿",
     newest: "✨", mostPlayed: "😍", freshDraw: "🎲", newWith: "👀", gem: "😉", spotlight: "😌", unplayedOne: "👀", quickOne: "⏱️", longOne: "🍿",
+    expand: "🧭", expand_performer: "👀", shortlist: "📌", expandRegular: "😏", expandSpotlight: "😌", expandFavourite: "😍", expandUnwatched: "🤔",
+    expandStudio: "🙂", expandNewRelease: "✨", expandRecent: "✨", expandDeepCut: "📼", whisparrRun: "📥",
+    similarEmpty: "🔎", similar: "🔎", seedLoved: "😍", seedUnplayed: "🤔", sharedPerformer: "😏", sameStudio: "🙂", closest: "🎯",
+    huntEmpty: "🎯", hunt: "🎯", huntOwned: "📚", huntNone: "👀", huntComplete: "🏆", huntRecent: "✨", huntFirst: "📼", huntRegular: "😌",
+    favouriteNote: "😍", whisparrNote: "📥", ownedNote: "📚", releasedNote: "✨", oldNote: "📼",
+    curate_questions: "🤔", curate_reasons: "👂", curate_sentiment: "🧐", curate_progress: "📈",
+    calledLike: "😄", calledDislike: "😌", answerSurprise: "😮", answerBlocked: "🤐", taughtMilestone: "🔥", reasonFlip: "😮", reasonRich: "🤩",
   };
   // A visit starts after half an hour away. Days visited feed the streak.
   function pageChatVisit(record, now = Date.now()) {
@@ -11004,13 +11208,14 @@
     // A card with no sayable name (low down, nothing unique) isn't pointed at.
     return options.filter(([, spec]) => !("r" in spec.values) || spec.values.r);
   }
-  // A lane's words for this showing: the first time in a visit its own
+  // A view's words for this showing: the first time in a visit its own
   // intro, after a new draw what came out on top, and usually a fact about
-  // the shelf, never the same kind as the last few lines.
-  function pageChatLaneTalk(lane, items, facts, context, recent = [], { first = false, redraw = false, random = Math.random } = {}) {
-    const shelf = pageChatShelf(lane, items, facts, context, Date.now(), random).filter(([, spec]) => !recent.includes(spec.key));
+  // the shelf (weighted options), never the same kind as the last few
+  // lines. `introduce` makes the intro, or is null for a view without one.
+  function pageChatTalk(options, introduce, recent = [], { first = false, redraw = false, random = Math.random } = {}) {
+    const shelf = options.filter(([, spec]) => !recent.includes(spec.key));
     const lines = [];
-    const intro = first && PAGE_CHAT_LINES[lane] && (!shelf.length || random() < 0.5) ? pageChatLaneIntro(lane, items, facts, Date.now(), random) : null;
+    const intro = first && introduce && (!shelf.length || random() < 0.5) ? introduce() : null;
     if (redraw) {
       const top = shelf.find(([, spec]) => spec.key === "topPick");
       if (top) lines.push({ key: "freshDraw", scene: 0, values: top[1].values });
@@ -11094,10 +11299,7 @@
     if (count >= 5) notes.push([1, { key: "favourite", values: { n: count } }]);
     const studio = scene.studio?.name;
     if (studio && studios?.big.has(studio)) notes.push([1, { key: "studio", values: { s: studio } }]);
-    if (!notes.length) return null;
-    const top = Math.max(...notes.map(([weight]) => weight));
-    const best = notes.filter(([weight]) => weight === top).map(([, note]) => note);
-    return best[Math.floor(Math.random() * best.length)];
+    return pageChatTopNote(notes);
   }
   // Studios holding at least a fifth of all plays (and five or more).
   function pageChatStudios(scenes) {
@@ -11109,6 +11311,184 @@
       if (scene.studio?.name) plays.set(scene.studio.name, (plays.get(scene.studio.name) || 0) + count);
     }
     return { big: new Set([...plays].filter(([, count]) => count >= 5 && count * 5 >= total).map(([name]) => name)) };
+  }
+  function pageChatTopNote(notes, random = Math.random) {
+    if (!notes.length) return null;
+    const top = Math.max(...notes.map(([weight]) => weight));
+    const best = notes.filter(([weight]) => weight === top).map(([, note]) => note);
+    return best[Math.floor(random() * best.length)];
+  }
+  // A Stash-box scene (Expand, Hunt, Similar on Stash-box) in the shape the
+  // shelf and pageChatRef read. `local` is the matching library performer.
+  function pageChatExternalScene(item) {
+    const payload = item?.payload;
+    if (!payload) return null;
+    return {
+      title: payload.title || "",
+      studio: payload.studio?.name ? { name: payload.studio.name } : null,
+      performers: (payload.performers || []).map((entry) => entry?.performer || entry).filter((performer) => performer?.name)
+        .map((performer) => ({ id: performer.id, name: performer.name, local: performer.curator_local || null })),
+      released: Date.parse(payload.release_date || payload.date || "") || 0,
+      whisparr: Boolean(item.in_whisparr),
+      owned: Boolean(item.linked_locally),
+    };
+  }
+  function pageChatLocalViewing(performer, context) {
+    const id = performer?.local?.id;
+    return id == null || !context?.affinities ? null : rankingViewing(context.affinities, id);
+  }
+  function pageChatRegular(performer, context) {
+    const viewing = pageChatLocalViewing(performer, context);
+    return Boolean(viewing && viewing.basis === "watched" && viewing.value >= PAGE_CHAT_DEPENDABLE);
+  }
+  // A library performer the model rates for you whom you've never played.
+  function pageChatUnwatched(performer, context) {
+    return Boolean(context?.plays && performer?.local && !context.plays.get(String(performer.local.id))
+      && pageChatLocalViewing(performer, context)?.basis === "guessed");
+  }
+  function pageChatYear(ms) {
+    return new Date(ms).getFullYear();
+  }
+  // Stash-box scenes you don't have: your regulars and favourites in them,
+  // a studio you watch, how new or old they are, what Whisparr already has.
+  function pageChatExpandShelf(items, context = {}, now = Date.now(), random = Math.random) {
+    const scenes = items.map(pageChatExternalScene);
+    const present = scenes.map((scene, index) => ({ scene, index })).filter((entry) => entry.scene);
+    if (!present.length) return [];
+    const options = [];
+    const ref = (index, avoid) => pageChatRef(index, scenes, random, avoid);
+    const any = (list) => list[Math.floor(random() * list.length)];
+    const named = ref(0, ["place"]);
+    if (named) options.push([1.2, { key: "topPick", scene: 0, values: { r: named } }]);
+    const performers = new Map();
+    const studios = new Map();
+    for (const { scene, index } of present) {
+      for (const performer of scene.performers) {
+        const entry = performers.get(String(performer.id)) || { performer, indexes: [] };
+        entry.indexes.push(index);
+        performers.set(String(performer.id), entry);
+      }
+      if (scene.studio) studios.set(scene.studio.name, (studios.get(scene.studio.name) || 0) + 1);
+    }
+    const tally = [...performers.values()].sort((a, b) => b.indexes.length - a.indexes.length);
+    const regular = tally.find((entry) => entry.indexes.length >= 2 && pageChatRegular(entry.performer, context));
+    if (regular) options.push([2.5, { key: "expandRegular", values: { p: regular.performer.name, n: regular.indexes.length } }]);
+    const favourite = tally.find((entry) => entry !== regular && entry.indexes.length >= 2 && entry.performer.local?.favorite);
+    if (favourite) options.push([2, { key: "expandFavourite", values: { p: favourite.performer.name, n: favourite.indexes.length } }]);
+    const lone = any(tally.filter((entry) => entry.indexes.length === 1 && pageChatRegular(entry.performer, context)));
+    if (lone) options.push([2, { key: "expandSpotlight", scene: lone.indexes[0], values: { r: ref(lone.indexes[0], ["performer"]), p: lone.performer.name } }]);
+    const unwatched = any(tally.filter((entry) => pageChatUnwatched(entry.performer, context)));
+    if (unwatched) options.push([1.5, { key: "expandUnwatched", scene: unwatched.indexes[0], values: { r: ref(unwatched.indexes[0], ["performer"]), p: unwatched.performer.name } }]);
+    const [studio, studioCount] = [...studios].filter(([name]) => context?.studios?.big.has(name)).sort((a, b) => b[1] - a[1])[0] || [];
+    if (studio && studioCount >= 2) options.push([1.5, { key: "expandStudio", values: { s: studio, n: studioCount } }]);
+    const dated = present.filter((entry) => entry.scene.released && entry.scene.released <= now).sort((a, b) => b.scene.released - a.scene.released);
+    const newest = dated[0];
+    if (newest && now - newest.scene.released < 14 * PAGE_CHAT_DAY) options.push([1.5, { key: "expandNewRelease", scene: newest.index, values: { r: ref(newest.index), ago: rankingAgo(newest.scene.released, now) } }]);
+    const recent = dated.filter((entry) => now - entry.scene.released < 30 * PAGE_CHAT_DAY).length;
+    if (recent >= 3 && recent < present.length) options.push([1, { key: "expandRecent", values: { n: recent } }]);
+    const oldest = dated[dated.length - 1];
+    if (oldest && dated.length >= 3 && pageChatYear(oldest.scene.released) <= pageChatYear(now) - 8) options.push([1, { key: "expandDeepCut", scene: oldest.index, values: { r: ref(oldest.index), y: pageChatYear(oldest.scene.released) } }]);
+    const whisparr = present.filter((entry) => entry.scene.whisparr).length;
+    if (whisparr >= 2) options.push([1, { key: "whisparrRun", values: { n: whisparr } }]);
+    return options.filter(([, spec]) => !("r" in spec.values) || spec.values.r);
+  }
+  // One performer's Stash-box catalogue against your library.
+  function pageChatHuntShelf(data, context = {}, now = Date.now(), random = Math.random) {
+    const items = data?.items || [];
+    const name = data?.performer_name;
+    if (!items.length || !name) return [];
+    const scenes = items.map(pageChatExternalScene);
+    const options = [];
+    const total = items.length;
+    const owned = scenes.filter((scene) => scene?.owned).length;
+    if (owned === total && total >= 2) options.push([2, { key: "huntComplete", values: { p: name, n: total } }]);
+    else if (owned === 0) options.push([1.5, { key: "huntNone", values: { p: name, n: total } }]);
+    else options.push([2, { key: "huntOwned", values: { p: name, n: total, own: owned } }]);
+    const self = scenes.flatMap((scene) => scene?.performers || []).find((performer) => String(performer.id) === String(data.performer_id));
+    if (pageChatRegular(self, context)) options.push([2.5, { key: "huntRegular", values: { p: name } }]);
+    const dated = scenes.map((scene, index) => ({ scene, index })).filter((entry) => entry.scene?.released && entry.scene.released <= now)
+      .sort((a, b) => b.scene.released - a.scene.released);
+    const recent = dated.filter((entry) => now - entry.scene.released < 365 * PAGE_CHAT_DAY).length;
+    if (recent >= 2) options.push([1, { key: "huntRecent", values: { p: name, n: recent } }]);
+    const oldest = dated[dated.length - 1];
+    if (oldest && pageChatYear(oldest.scene.released) <= pageChatYear(now) - 3) options.push([1, { key: "huntFirst", values: { p: name, y: pageChatYear(oldest.scene.released) } }]);
+    const newest = dated[0];
+    // The hunt's own filter and sort decide the order on screen, so a card
+    // isn't named by its place.
+    const named = newest && pageChatRef(newest.index, scenes, random, ["place"]);
+    if (named && now - newest.scene.released < 30 * PAGE_CHAT_DAY) options.push([1.5, { key: "expandNewRelease", scene: newest.index, values: { r: named, ago: rankingAgo(newest.scene.released, now) } }]);
+    const whisparr = scenes.filter((scene) => scene?.whisparr).length;
+    if (whisparr >= 2) options.push([1, { key: "whisparrRun", values: { n: whisparr } }]);
+    return options;
+  }
+  // Library matches for a seed scene: the lane shelf, plus what they share
+  // with the seed and the closest match when your taste ranked it lower.
+  // `items` are { scene_id, appeal, similarity }.
+  function pageChatSimilarShelf(seed, items, facts, context = {}, now = Date.now(), random = Math.random) {
+    const options = pageChatShelf("similar", items, facts, context, now, random);
+    const scenes = items.map((item) => facts?.get(String(item.scene_id)));
+    if (seed) {
+      const plays = Number(seed.play_count) || 0;
+      if (plays >= 3) options.push([2.5, { key: "seedLoved", values: { n: plays } }]);
+      else if (!plays) options.push([1.5, { key: "seedUnplayed", values: {} }]);
+      const shared = (seed.performers || []).filter((performer) => performer.name).map((performer) => ({
+        performer, n: scenes.filter((scene) => (scene?.performers || []).some((other) => String(other.id) === String(performer.id))).length,
+      })).sort((a, b) => b.n - a.n)[0];
+      if (shared?.n >= 2) {
+        // The shelf's own performer line would say the same thing.
+        options.splice(0, options.length, ...options.filter(([, spec]) => spec.values.p !== shared.performer.name));
+        options.push([2, { key: "sharedPerformer", values: { p: shared.performer.name, n: shared.n } }]);
+      }
+      const studio = seed.studio?.name;
+      const sameStudio = studio ? scenes.filter((scene) => scene?.studio?.name === studio).length : 0;
+      if (sameStudio >= 2) options.push([1.5, { key: "sameStudio", values: { s: studio, n: sameStudio } }]);
+    }
+    const lead = Number(items[0]?.similarity) || 0;
+    const closest = items.map((item, index) => ({ index, similarity: Number(item.similarity) || 0 }))
+      .filter((entry) => entry.index > 0 && scenes[entry.index] && entry.similarity > lead + 0.02)
+      .sort((a, b) => b.similarity - a.similarity)[0];
+    const named = closest && pageChatRef(closest.index, scenes, random);
+    if (named) options.push([1.5, { key: "closest", scene: closest.index, values: { r: named } }]);
+    return options;
+  }
+  // A note for a Stash-box card under the pointer.
+  function pageChatExternalNote(item, context = {}, now = Date.now(), random = Math.random) {
+    const scene = pageChatExternalScene(item);
+    if (!scene) return null;
+    const notes = [];
+    if (scene.owned) notes.push([3, { key: "ownedNote", values: {} }]);
+    if (scene.whisparr) notes.push([3, { key: "whisparrNote", values: {} }]);
+    if (scene.released && scene.released <= now && now - scene.released < 14 * PAGE_CHAT_DAY) notes.push([3, { key: "releasedNote", values: { ago: rankingAgo(scene.released, now) } }]);
+    const regular = scene.performers.filter((performer) => pageChatRegular(performer, context))
+      .sort((a, b) => pageChatLocalViewing(b, context).value - pageChatLocalViewing(a, context).value)[0];
+    if (regular) notes.push([2, { key: "dependable", values: { p: regular.name } }]);
+    const favourite = scene.performers.find((performer) => performer.local?.favorite && performer !== regular);
+    if (favourite) notes.push([2, { key: "favouriteNote", values: { p: favourite.name } }]);
+    const unwatched = scene.performers.find((performer) => pageChatUnwatched(performer, context));
+    if (unwatched) notes.push([2, { key: "newFace", values: { p: unwatched.name } }]);
+    if (scene.studio && context?.studios?.big.has(scene.studio.name)) notes.push([1, { key: "studio", values: { s: scene.studio.name } }]);
+    if (scene.released && pageChatYear(scene.released) <= pageChatYear(now) - 10) notes.push([1, { key: "oldNote", values: { y: pageChatYear(scene.released) } }]);
+    return pageChatTopNote(notes, random);
+  }
+  // A word back when you teach me something in Curate. `taught` counts this
+  // visit's answers, this one included; most answers get no comment.
+  function pageChatReaction(event, taught, random = Math.random) {
+    if (taught >= 5 && taught % 5 === 0) return { key: "taughtMilestone", values: { n: taught } };
+    if (event?.kind === "tag" && event.name) {
+      const values = { t: event.name };
+      if (event.blocked) return { key: "answerBlocked", values };
+      const inferred = Number(event.inferred) || 0;
+      const value = Number(event.value) || 0;
+      if (!value) return null;
+      if (Math.abs(inferred) >= 0.1 && Math.sign(inferred) !== Math.sign(value)) return { key: "answerSurprise", values };
+      if (Math.abs(inferred) >= 0.15 && random() < 0.5) return { key: value > 0 ? "calledLike" : "calledDislike", values };
+      return null;
+    }
+    if (event?.kind === "reason") {
+      if (event.flipped) return { key: "reasonFlip", values: {} };
+      if (event.reasons >= 3 && random() < 0.5) return { key: "reasonRich", values: { n: event.reasons } };
+    }
+    return null;
   }
   function pageChatFill(line, values = {}) {
     let text = line;
@@ -11185,8 +11565,118 @@
   function announcePageChatHover(sceneId) {
     for (const listener of pageChatHover) listener(sceneId == null ? null : String(sceneId));
   }
+  // What a view's components tell the chat, like an answer in Curate.
+  const pageChatEvents = new Set();
+  function announcePageChat(event) {
+    for (const listener of pageChatEvents) listener(event);
+  }
+  // What each view has to say. A feed is { key, look(context), note?(id,
+  // context), react?(event, session), redraws? }: `key` names what is
+  // showing (a new key is a new showing), look resolves to { shelf, intro },
+  // and a view that `redraws` greets a new key on the same view as a fresh
+  // draw. Find's panels publish theirs; the chat by the heading reads it.
+  const pageChatFeeds = new Map();
+  const pageChatFeedListeners = new Set();
+  function publishPageChatFeed(view, feed) {
+    if (feed) pageChatFeeds.set(view, feed);
+    else pageChatFeeds.delete(view);
+    for (const listener of pageChatFeedListeners) listener(view);
+  }
+  function usePageChatFeed(view, feed) {
+    React.useEffect(() => {
+      publishPageChatFeed(view, feed);
+      return () => { if (pageChatFeeds.get(view) === feed) publishPageChatFeed(view, null); };
+    }, [view, feed]);
+  }
+  function FindPageChat({ view }) {
+    const [feed, setFeed] = React.useState(() => pageChatFeeds.get(view) || null);
+    React.useEffect(() => {
+      setFeed(pageChatFeeds.get(view) || null);
+      const listener = (changed) => { if (changed === view) setFeed(pageChatFeeds.get(view) || null); };
+      pageChatFeedListeners.add(listener);
+      return () => pageChatFeedListeners.delete(listener);
+    }, [view]);
+    return React.createElement(PageChat, { view, feed });
+  }
+  function pageChatSceneFacts(ids) {
+    const wanted = ids.map(Number).filter(Number.isFinite);
+    return (wanted.length ? stashQuery(PAGE_CHAT_SCENES_QUERY, { ids: wanted }) : Promise.resolve({ findScenes: { scenes: [] } }))
+      .then((data) => new Map(data.findScenes.scenes.map((scene) => [String(scene.id), scene])))
+      .catch(() => new Map());
+  }
+  // A lane's shelf is the current draw; the facts load once per draw.
+  function LanePageChat({ lane, slate, items }) {
+    const key = slate && slate.lane === lane ? slate.impression_id : null;
+    const feed = React.useMemo(() => {
+      if (!key) return null;
+      const shown = items.slice(0, 12);
+      let facts = null;
+      const scenes = () => facts || (facts = pageChatSceneFacts(items.map((item) => item.scene_id)));
+      return {
+        key,
+        redraws: true,
+        look: async (context) => {
+          const known = await scenes();
+          return { shelf: pageChatShelf(lane, shown, known, context), intro: () => pageChatLaneIntro(lane, shown, known) };
+        },
+        note: async (id, context) => pageChatSceneNote((await scenes()).get(id), context),
+      };
+    }, [lane, key]);
+    return React.createElement(PageChat, { view: lane, feed });
+  }
+  const PAGE_CHAT_FIND_INTROS = { scene: "expand", performer: "expand_performer", shortlist: "shortlist" };
+  // Expand and Performer Hunt: Stash-box scenes against your library.
+  function pageChatExpandFeed(key, entityType, data) {
+    const all = data?.items || [];
+    const byId = new Map(all.map((item) => [String(item.id), item]));
+    const hunt = entityType === "hunt";
+    const intro = hunt ? (data?.performer_name ? "hunt" : "huntEmpty") : PAGE_CHAT_FIND_INTROS[entityType];
+    return {
+      key,
+      look: async (context) => ({
+        shelf: hunt ? pageChatHuntShelf(data, context) : entityType === "scene" ? pageChatExpandShelf(all.slice(0, 12), context) : [],
+        intro: intro && (() => ({ key: intro })),
+      }),
+      note: hunt || entityType === "scene" ? async (id, context) => pageChatExternalNote(byId.get(id), context) : undefined,
+    };
+  }
+  // Similar: library matches for a seed scene, or Stash-box ones.
+  function pageChatSimilarFeed(key, { source, entityType, seedId, items }) {
+    const intro = () => ({ key: seedId ? "similar" : "similarEmpty" });
+    if (entityType !== "scene" || !seedId) return { key, look: async () => ({ shelf: [], intro }) };
+    if (source !== "library") {
+      const byId = new Map(items.map((item) => [String(item.id), item]));
+      return {
+        key,
+        look: async (context) => ({ shelf: pageChatExpandShelf(items.slice(0, 12), context), intro }),
+        note: async (id, context) => pageChatExternalNote(byId.get(id), context),
+      };
+    }
+    const matches = items.map((item) => ({ scene_id: item.entity_id, appeal: item.appeal * 2 - 1, similarity: item.similarity }));
+    let facts = null;
+    const scenes = () => facts || (facts = pageChatSceneFacts([seedId, ...matches.map((item) => item.scene_id)]));
+    return {
+      key,
+      look: async (context) => {
+        const known = await scenes();
+        return { shelf: pageChatSimilarShelf(known.get(String(seedId)), matches.slice(0, 12), known, context), intro };
+      },
+      note: async (id, context) => pageChatSceneNote((await scenes()).get(id), context),
+    };
+  }
+  // Curate's sections: an intro, then a word back on some answers.
+  function pageChatCurateFeed(section) {
+    return {
+      key: section,
+      look: async () => ({ shelf: [], intro: () => ({ key: `curate_${section}` }) }),
+      react: (event, session) => {
+        session.taught = (session.taught || 0) + 1;
+        return pageChatReaction(event, session.taught);
+      },
+    };
+  }
 
-  function PageChat({ lane, slate, items }) {
+  function PageChat({ view, feed }) {
     const root = React.useRef(null);
     const probe = React.useRef(null);
     const [shown, setShown] = React.useState(null);
@@ -11194,9 +11684,10 @@
     const [hidden, setHidden] = React.useState(null);
     const [place, setPlace] = React.useState(null);
     const resting = React.useRef(null);
-    const facts = React.useRef({ key: null, scenes: new Map() });
     const ticket = React.useRef(0);
-    const session = React.useMemo(pageChatCurrent, [lane]);
+    const feedRef = React.useRef(feed);
+    feedRef.current = feed;
+    const session = React.useMemo(pageChatCurrent, [view]);
     React.useEffect(() => {
       let active = true;
       getPluginSettings().then((settings) => active && setHidden(settings.hidePageComments === true), () => active && setHidden(false));
@@ -11221,7 +11712,7 @@
       const lastTab = tabs?.lastElementChild?.getBoundingClientRect();
       const controls = tabs?.closest(".curator-navigation")?.nextElementSibling;
       const header = spot(lastTab, controls ? [controls.getBoundingClientRect()] : []);
-      const heading = copy.querySelector("h1");
+      const heading = copy.querySelector("h1, h2");
       let line = null;
       if (heading) {
         const range = document.createRange();
@@ -11253,7 +11744,7 @@
       const together = lines.length > 1 && fits(spot)(lines.map((line) => line.text).join("  ")) && probe.current.offsetWidth + 40 * lines.length <= pageChatBudget(spot);
       setPlace(spot);
       const message = { id: own, kind, lines: together ? lines : lines.slice(0, 1), queue: together ? [] : lines.slice(1) };
-      if (kind !== "hover") resting.current = message;
+      if (kind !== "hover" && kind !== "react") resting.current = message;
       setShown(message);
     }
     function advance(message) {
@@ -11261,7 +11752,7 @@
       setTimeout(() => {
         if (ticket.current !== message.id) return;
         const next = { ...message, id: ++ticket.current, lines: message.queue.slice(0, 1), queue: message.queue.slice(1) };
-        if (message.kind !== "hover") resting.current = next;
+        if (message.kind !== "hover" && message.kind !== "react") resting.current = next;
         setShown(next);
       }, 1200 + message.lines[0].text.length * 35);
     }
@@ -11274,28 +11765,22 @@
       update();
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
-    }, [lane]);
+    }, [view]);
     const reserve = hidden !== true && !session.quiet && (slotted || place?.inline);
-    // A new visit greets once. Every lane switch or new draw after that gets
-    // a line or two about the lane and what's on its shelf.
-    const shownLane = React.useRef(null);
+    // A new visit greets once. Every view switch or new showing after that
+    // gets a line or two about the view and what's on its shelf.
+    const shownView = React.useRef(null);
     React.useEffect(() => {
-      if (silent || !slate || slate.lane !== lane) return undefined;
+      if (silent || !feed) return undefined;
       let active = true;
-      const ids = items.map((item) => Number(item.scene_id)).filter(Number.isFinite);
-      const key = slate.impression_id;
-      const sceneFacts = facts.current.key === key ? Promise.resolve(facts.current.scenes)
-        : (ids.length ? stashQuery(PAGE_CHAT_SCENES_QUERY, { ids }) : Promise.resolve({ findScenes: { scenes: [] } }))
-          .then((data) => new Map(data.findScenes.scenes.map((scene) => [String(scene.id), scene])))
-          .catch(() => new Map())
-          .then((scenes) => { facts.current = { key, scenes }; return scenes; });
-      const redraw = shownLane.current === lane;
-      shownLane.current = lane;
+      const redraw = Boolean(feed.redraws) && shownView.current === view;
+      shownView.current = view;
       (async () => {
         const context = await pageChatContext(session);
+        const look = () => feed.look(context).catch(() => ({ shelf: [], intro: null }));
         if (!session.welcomed) {
           pageChatWelcomed(session);
-          pageChatIntroduced(session, lane);
+          pageChatIntroduced(session, view);
           const since = session.visit.previous;
           const news = since
             ? await stashQuery(PAGE_CHAT_NEW_QUERY, { since: new Date(since).toISOString() }).then((data) => data.findScenes, () => ({ count: 0, scenes: [] }))
@@ -11306,20 +11791,20 @@
           });
           const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name });
           // Now and then a word on the shelf too.
-          const shelf = pageChatWeighted(pageChatShelf(lane, items.slice(0, 12), await sceneFacts, context));
+          const shelf = pageChatWeighted((await look()).shelf);
           if (shelf && Math.random() < 0.5) specs.push(shelf);
           if (active) say(specs, "welcome");
           return;
         }
-        const first = !session.lanes.has(lane);
-        pageChatIntroduced(session, lane);
-        // Each lane works through its kinds of line before repeating one.
-        const said = session.said[lane] || (session.said[lane] = new Set());
-        const shelfFacts = await sceneFacts;
-        let lines = pageChatLaneTalk(lane, items.slice(0, 12), shelfFacts, context, [...session.recent, ...said], { first, redraw });
+        const first = !session.lanes.has(view);
+        pageChatIntroduced(session, view);
+        // Each view works through its kinds of line before repeating one.
+        const said = session.said[view] || (session.said[view] = new Set());
+        const { shelf, intro } = await look();
+        let lines = pageChatTalk(shelf, intro, [...session.recent, ...said], { first, redraw });
         if (!lines.length) {
           said.clear();
-          lines = pageChatLaneTalk(lane, items.slice(0, 12), shelfFacts, context, session.recent, { first, redraw });
+          lines = pageChatTalk(shelf, intro, session.recent, { first, redraw });
         }
         lines.forEach((line) => said.add(line.key));
         pageChatRemember(session);
@@ -11329,7 +11814,7 @@
         else { resting.current = null; setShown(null); }
       })();
       return () => { active = false; };
-    }, [lane, slate?.impression_id, silent]);
+    }, [view, feed?.key, silent]);
     // A card the pointer rests on gets its note; leaving it brings back
     // whatever was said before.
     React.useEffect(() => {
@@ -11350,8 +11835,7 @@
           const spot = measure();
           if (!spot?.visible || spot.inline) return;
           const context = await pageChatContext(session);
-          const scene = facts.current.scenes.get(sceneId);
-          const note = pageChatSceneNote(scene, context);
+          const note = await feedRef.current?.note?.(sceneId, context);
           if (!note) return;
           session.noted.add(sceneId);
           hovered = sceneId;
@@ -11360,6 +11844,27 @@
       }
       pageChatHover.add(onHover);
       return () => { clearTimeout(timer); pageChatHover.delete(onHover); };
+    }, [silent]);
+    // Some answers get a word back, which gives way again to what was said
+    // before once it has been read: an old "5 in!" would go stale.
+    React.useEffect(() => {
+      if (silent) return undefined;
+      let timer = null;
+      function onEvent(event) {
+        const spec = feedRef.current?.react?.(event, session);
+        if (!spec) return;
+        say([spec], "react");
+        const own = ticket.current;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (ticket.current !== own) return;
+          const back = resting.current;
+          ticket.current++;
+          setShown(back ? { ...back, instant: true, id: ticket.current } : null);
+        }, PAGE_CHAT_REACT_MS);
+      }
+      pageChatEvents.add(onEvent);
+      return () => { clearTimeout(timer); pageChatEvents.delete(onEvent); };
     }, [silent]);
     React.useEffect(() => {
       if (!shown) return undefined;
