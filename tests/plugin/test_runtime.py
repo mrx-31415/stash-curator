@@ -2019,3 +2019,21 @@ def test_classify_lanes_reports_zero_without_writing_the_shadowed_core_table(
     assert connection.execute("SELECT count(*) FROM main.model_scene_lane").fetchone()[0] == 0
     assert module._classify_lanes(connection, model.model_id) == 0
     connection.close()
+
+
+def test_plugin_css_rules_do_not_nest() -> None:
+    # A missing "}" once turned the Curate section head's rules into nested
+    # selectors that matched nothing. Rules may only open inside @-blocks.
+    css = (Path(__file__).parents[2] / "plugin" / "stash-curator.css").read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    blocks: list[bool] = []
+    start = 0
+    for match in re.finditer(r"[{}]", css):
+        if match.group() == "{":
+            prelude = css[start : match.start()].strip()
+            assert not blocks or blocks[-1], f"rule nested in a style rule: {prelude!r}"
+            blocks.append(prelude.startswith("@"))
+        else:
+            blocks.pop()
+        start = match.end()
+    assert not blocks

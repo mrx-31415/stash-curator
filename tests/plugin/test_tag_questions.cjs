@@ -55,7 +55,7 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 function harness({ result, failure, storage, built = true, media = { description: "", markers: [] } }) {
   const runtime = createRuntime();
-  const calls = { operations: [], preferences: [], applied: 0 };
+  const calls = { operations: [], preferences: [], applied: 0, chat: [] };
   const store = storage || new Map();
   const context = {
     React: runtime.React,
@@ -85,6 +85,7 @@ function harness({ result, failure, storage, built = true, media = { description
       return { ...result, items: (result.items || []).filter((entry) => !excluded.has(entry.tag_id)) };
     },
     submitTagPreference: (tagId, choice) => calls.preferences.push([tagId, choice]),
+    announcePageChat: (event) => calls.chat.push(event),
     applyFeedbackAndAwaitBuild: async () => { calls.applied += 1; return built; },
     useCuratorActivity: () => {},
     formatSigned: (value) => `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`,
@@ -241,6 +242,10 @@ function createRuntimeFor(app) {
   button(tree, "Next").props.onClick();
   tree = app.render();
   assert.equal(JSON.stringify(app.calls.preferences), JSON.stringify([["wide", { value: 1, blocked: false }]]));
+  // Curator's page chat hears the answer, with the tag and its prior guess.
+  assert.deepEqual(Object.keys(app.calls.chat[0]), ["kind", "name", "value", "blocked", "inferred"]);
+  assert.equal(app.calls.chat[0].kind, "tag");
+  assert.equal(app.calls.chat[0].value, 1);
   assert.match(text(tree), /Question 2 · 1 answered/);
   assert.equal(nodes(tree).find((node) => node.type === "sentiment-control").props.value, null);
   // A skip older than 30 days no longer hides its tag.
