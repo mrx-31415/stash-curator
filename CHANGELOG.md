@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.53.0](https://github.com/mrx-31415/stash-curator/compare/v0.52.0...v0.53.0) (2026-11-04)
+
+
+### Features
+
+* badge Find scenes that were sent to Whisparr ([#451](https://github.com/mrx-31415/stash-curator/issues/451)) ([48b3260](https://github.com/mrx-31415/stash-curator/commit/48b32604439b7daad8660fa656b74cdb3995460c))
+* comment on Insights and Stash's scene and performer pages ([#458](https://github.com/mrx-31415/stash-curator/issues/458)) ([acf1dab](https://github.com/mrx-31415/stash-curator/commit/acf1dab3a15c986e366163ac2f26426476efd564))
+* comment on picks in ranking plugins like Ascension and Cherry Pick ([#454](https://github.com/mrx-31415/stash-curator/issues/454)) ([0f3ff52](https://github.com/mrx-31415/stash-curator/commit/0f3ff523e42df72827c897a7017fb64e55bd0d15))
+* comment on visits, lanes and cards on Curator's page ([f11a460](https://github.com/mrx-31415/stash-curator/commit/f11a460d642c6f35d169b3a5f60ce450d8e6d9cd))
+* extend page chat to Find and Curate views ([f7fb1ba](https://github.com/mrx-31415/stash-curator/commit/f7fb1ba118235eec82f06f22fae8a618fc0336ac))
+* flag taste-profile tags that describe performers ([91905fc](https://github.com/mrx-31415/stash-curator/commit/91905fc2957549c45e9e1e8b912060deb49c13a8))
+* make Curator's page chat sound more like a person recommending ([#459](https://github.com/mrx-31415/stash-curator/issues/459)) ([0283b85](https://github.com/mrx-31415/stash-curator/commit/0283b851bedbe8dcd7a04b600dce08e63d67808c))
+* **model:** read Stash scene ratings against viewing behavior ([#453](https://github.com/mrx-31415/stash-curator/issues/453)) ([c39570c](https://github.com/mrx-31415/stash-curator/commit/c39570ce85b8e12dd3bc43222081453a0f01e06c))
+
+
+### Bug Fixes
+
+* report Whisparr rejections instead of recording a failed send ([#449](https://github.com/mrx-31415/stash-curator/issues/449)) ([a7b1378](https://github.com/mrx-31415/stash-curator/commit/a7b137822a87163605925f44d7d12decb72f97a0))
+
 ## [0.52.0](https://github.com/mrx-31415/stash-curator/compare/v0.51.0...v0.52.0) (2026-10-31)
 
 
