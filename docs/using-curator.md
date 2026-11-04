@@ -555,6 +555,48 @@ configured tag. Applying or removing the tag changes Stash metadata only; it doe
 delete a file or rewrite your feedback. Curator never deletes media, and the tag can be
 removed from the same view or in Stash.
 
+## Ranking plugins
+
+Ranking plugins such as Ascension and Cherry Pick have you pick between two
+performers. When one of them sends the ranking events described below, Curator
+comments on each performer pick in a small chat strip in the plugin's own
+window. It compares your pick with what it learned from your viewing alone,
+leaving your ratings and favourites out so it never repeats the ranking back to
+you: whether it saw the pick coming, found it close, or was surprised. Now and
+then it adds what your history shows (plays, a recent watch, unwatched scenes,
+a studio you keep coming back to), a physical trait your viewing favours, or a
+note on the session: a streak of agreement, a rematch, a run of winners who
+share a trait, an upset. Undo in the plugin takes the pick back out of Curator's
+count. When the plugin shows a result, such as a bracket's champion, Curator
+sums up the session and offers the winner's best scenes for you, with **Play
+picks**.
+
+Curator says nothing before you pick, so it never steers your choice. Your
+ratings reach its model at the next update as usual; the comments change
+nothing on their own. The **×** on the strip hides them until you reopen the
+ranking plugin, and **Hide comments in ranking plugins** in **Manage →
+Settings → Page settings** (or Stash's plugin settings) turns them off.
+
+### For ranking plugin authors
+
+Curator listens for three `CustomEvent`s on `document`:
+
+- `stash-ranking:match` after each pick: `winner` and `loser` (`{ id, name }`,
+  and optionally `rating` and `change`), and `draw` when it is one.
+- `stash-ranking:undo` when a pick is taken back, with the same `winner` and
+  `loser`.
+- `stash-ranking:result` on a result screen: `kind` (`"champion"` or
+  `"placement"`) and `item` (`{ id, name }`).
+
+Each carries `source` (the plugin's name), `itemType` (`"performer"`,
+`"scene"` or `"image"`; Curator comments on performers), `slot` (an empty element
+in your window that Curator may fill, kept for the whole session) and
+`close()` (closes your window before Curator plays a scene). A `sessionId`, when
+you send one, ties the events of a session together even when your window
+draws a new slot; without it, a new match slot starts a new session. Send a
+pick before you record it if recording it can open your result screen, so the
+result always follows its match.
+
 ## Routine maintenance
 
 - Curator's background worker can apply pending model updates and recent-play syncs;

@@ -7680,6 +7680,7 @@
       fields: [
         { key: "detailPageControls", type: "SELECT", default: "large", options: [{ value: "large", label: "Large" }, { value: "small", label: "Small" }, { value: "off", label: "Off" }], label: "Detail page controls", description: "Curator's expandable bar on scene and performer pages: Large (default), Small for compact icons and score, or Off to hide it." },
         { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
+        { key: "hideRankingComments", type: "BOOLEAN", label: "Hide comments in ranking plugins", description: "Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
       ],
@@ -9442,8 +9443,1002 @@
     if (!children.some((child) => child?.type === CuratorNavItem)) {
       children.push(React.createElement(CuratorNavItem, { key: "stash-curator" }));
     }
+    if (!children.some((child) => child?.type === RankingBridge)) {
+      children.push(React.createElement(RankingBridge, { key: "stash-curator-ranking" }));
+    }
     return React.cloneElement(result, {}, children);
   });
+  // Ranking plugins (Ascension, Cherry Pick brackets and others): a plugin
+  // dispatches `stash-ranking:match` after each match and
+  // `stash-ranking:result` on a result screen, and `stash-ranking:undo` to
+  // take a pick back, each with an empty `slot` element and a `close()` for
+  // its modal (docs/using-curator.md has the contract). After a performer match the slot
+  // shows how the pick compares with what Curator learned from viewing alone
+  // (ratings and favourites excluded, so it does not echo the ranking back),
+  // plus a session tally; a result shows the session summary and that
+  // performer's picks. Nothing here runs without such a plugin.
+  const RANKING_RESULT_PICKS = 6;
+  // Viewing scores (learned plus similarity estimate) have a median near 0 and
+  // a 95th percentile near 0.12 on a large library; differences are read on
+  // that scale. Learned confidence 0.15 is a few watched scenes.
+  const RANKING_CLEAR = 0.08;
+  // A twist needs a large gap against a performer you really watch.
+  const RANKING_TWIST = 0.15;
+  const RANKING_EDGE = 0.02;
+  const RANKING_WATCHED = 0.15;
+  const RANKING_GUESSED = 0.2;
+  // Curator speaks as someone who knows your taste; it has none of its own.
+  // Surprise stays curious, never incredulous.
+  const RANKING_LINES = {
+    dependable: [
+      "Ah yes, {w}. Always a dependable choice for you.",
+      "{w}? Of course. That's so you.",
+      "No surprise there. {w} is a regular in your history.",
+      "Knew it. {w} it is.",
+      "Called it. {w} was always taking this one.",
+      "Easy one. You keep coming back to {w}.",
+      "{w}, obviously. Your history made this one easy to call.",
+      "Classic you. {w} all the way.",
+      "Yep. Your watch history has {w} written all over it.",
+      "That's the {w} you love.",
+      "Textbook. {w} wins, as foretold.",
+      "Absolutely. {w} is basically your comfort pick.",
+      "{w}! Was there ever any doubt?",
+      "Predictable, in the best way.",
+      "Right on cue. {w} never lets you down.",
+      "{w} again proves to be one of your go-tos.",
+      "You and {w}. A tale as old as your watch history.",
+    ],
+    agree: [
+      "Makes sense. {w} edges {l} in your viewing too.",
+      "That matches your history, by a nose.",
+      "Sensible pick. Your history leans {w} as well.",
+      "Thought so. {w}, but only just.",
+      "Your viewing had {w} slightly ahead too.",
+      "{w} by a hair. That fits.",
+      "Mm, yes. That lines up with what you watch.",
+      "Just what I expected, if only just.",
+      "Close-ish, but that's the way your history leans.",
+      "Slight edge to {w}. Exactly my read on you.",
+      "Yep, {w}. Small margin, same answer.",
+      "Fits the pattern. Gently.",
+      "That tracks, though {l} put up a fight.",
+      "Seems right. You watch a little more {w}.",
+      "Nodding along. {w} it is.",
+    ],
+    close: [
+      "Tough one. Your history has them neck and neck.",
+      "A coin flip as far as I could tell. Now I know.",
+      "Too close for me to call. Thanks for breaking the tie.",
+      "Your viewing couldn't separate them either. {w} it is.",
+      "Phew. I couldn't split those two.",
+      "Honestly? Your history says it's a coin flip.",
+      "Ooh, that one was close. Good to know where you land.",
+      "No clear signal on these two. Now there is.",
+      "{w} and {l} look the same in your history. Not anymore.",
+      "A real nail-biter by my numbers. You made it look easy.",
+      "I genuinely had no idea. {w}, noted.",
+      "50/50 by my reckoning. Now it's not.",
+      "Splitting hairs, but okay, {w}. Noted.",
+      "You watch both about equally. Helpful tiebreak!",
+      "Too close to read from your viewing. Thanks for clearing that up.",
+    ],
+    surprise: [
+      "Oh, interesting. Your viewing leans {l}. Taking notes…",
+      "Hm. I'd have guessed {l}. Noted.",
+      "Interesting. Not quite what your history suggested.",
+      "{w} over {l}? Writing that down.",
+      "Huh. I had {l} slightly ahead.",
+      "Ooh, didn't quite see that coming. Noted.",
+      "Is that so? I'll remember that.",
+      "Learning something new here. {w}, then.",
+      "Fair enough. You do watch a bit more {l}, though.",
+      "{w}? Not quite what I expected, but I like learning.",
+      "Okay! Adjusting my notes a little.",
+      "A small curveball. I'd have said {l}.",
+      "Wasn't expecting {w} there, but I'm listening.",
+      "Your history whispers {l}. You said {w}. Noted.",
+      "Good to know. That nudges my picture of you.",
+      "Filing that under 'things I didn't know'.",
+    ],
+    twist: [
+      "Oh! I had you down as a {l} fan. Good to know.",
+      "Now that's a surprise. I was fairly sure about {l}.",
+      "Interesting! Your history leans {l} quite a bit.",
+      "That reshuffles a few of my assumptions. Noted.",
+      "You're full of surprises. Updating my notes on {l}…",
+      "Well, that's not what your viewing suggested. I love learning this.",
+      "Ooh, a real surprise. {w} it is.",
+      "My notes say {l}, but you know best.",
+      "A big swing from what I expected. Very useful.",
+      "I'd have bet on {l}. Glad I didn't.",
+      "You watch {l} a lot, and yet {w}. Fascinating.",
+      "Okay, that one teaches me something.",
+    ],
+    unknown: [
+      "I barely know these two. Your pick is all I have.",
+      "New faces for me. Filing that away.",
+      "Fresh territory. I'll take your word for it.",
+      "Haven't really seen you watch either. Noted!",
+      "Two strangers to me. {w} goes in the notebook.",
+      "No read on these yet. You're teaching me from scratch.",
+      "Blank page on both. Thanks for the first clue.",
+      "Strangers both. {w} gets the first gold star.",
+      "Nothing on these two yet. That's changing.",
+      "Pleased to meet you, {w}.",
+      "Uncharted territory. Your call is my map.",
+      "New names for me. Writing {w} down first.",
+    ],
+    hunchHit: [
+      "I had a hunch about {w} from similar performers. Nice to be right.",
+      "Just a guess on my part, but {w} seemed like your type.",
+      "{w} resembles people you love, so I figured. Confirmed!",
+      "My gut said {w}. My gut is pleased.",
+      "Nailed it, and I was mostly guessing.",
+      "Figured {w} was your type. Glad I was right.",
+      "Educated guess: {w}. Turns out I'm educated.",
+      "{w} reminds me of your favourites. So yes, makes sense.",
+      "Guessed right! I'm getting the hang of your taste.",
+    ],
+    hunchMiss: [
+      "I only guessed {l} from similar performers. Hunch overruled.",
+      "My hunch about {l} was just that. A hunch. Noted.",
+      "Looks like {l} isn't quite your type after all. Good to know.",
+      "So much for my guess about {l}.",
+      "{l} looked like your type on paper. Apparently not.",
+      "I'd pegged {l} as a likely favourite. Learning!",
+      "Back to the drawing board on {l}.",
+      "Good thing it was only a guess about {l}.",
+      "My gut said {l}. My gut has been corrected.",
+    ],
+    underdog: [
+      "{w}? You've barely watched {w}. Intriguing.",
+      "An underdog win! {w} hardly shows up in your history.",
+      "{w} over {l}, whom you actually watch? Interesting!",
+      "Maybe I should show you more {w}. Noting that.",
+      "A dark horse! {w} barely shows up in your history.",
+      "Look at {w} go. Didn't see that coming.",
+      "{w}, huh? Your viewing tells a different story, but I'm all ears.",
+    ],
+    traitWin: [
+      "Of course. You do love {t}.",
+      "{w}, and you've got a thing for {t}. Makes sense.",
+      "Ah, {t}. Your weakness.",
+      "Your history is full of {t}. {w} fits right in.",
+      "No shock there. {t} win with you again and again.",
+      "When it comes to {t}, you know what you like.",
+      "Right on brand. {t} it is.",
+      "Classic you: {t} for the win.",
+    ],
+    traitClose: [
+      "Close one. My bet is you just like {t}.",
+      "Neck and neck, but you do like {t}.",
+      "Tough call. I suspect {t} tipped it.",
+      "Hard to split, but {t} usually win you over.",
+    ],
+    traitBranch: [
+      "Interesting. You don't usually go for {t}.",
+      "{t} aren't usually your thing. Noted!",
+      "Branching out? {t} are rare in your history.",
+      "Ooh, {t}! Not your usual type. Love the variety.",
+    ],
+    traitPass: [
+      "Usually {t} win you over. Not this time.",
+      "Passing up {l}? You usually go for {t}.",
+      "{l} is one of your {t}, and still lost. Interesting!",
+      "You normally lean towards {t}. Noted!",
+    ],
+    draw: [
+      "A draw! Fair enough.",
+      "Can't split them? Noted for both.",
+      "A tie. I'll remember you like them equally.",
+      "Equal footing, then. Noted.",
+    ],
+    undo: [
+      "Ah, ok, scratch that.",
+      "Scratch that. Erasing it from my notebook.",
+      "Changed your mind? No problem.",
+      "Let's pretend that never happened.",
+      "Un-noted. Back to the drawing board.",
+      "Fair enough, rewinding.",
+      "Second thoughts? I like that. Scratched.",
+      "Rewound. Take your time.",
+    ],
+    undoSurprise: [
+      "Ah, scratch that. That one did surprise me.",
+      "Phew. I was scratching my head over that one.",
+      "Back to my original read on {w}, then.",
+      "Scratched. That one had me confused anyway.",
+    ],
+    undoAgreed: [
+      "Aw, I had that one right. Scratching it out anyway.",
+      "Scratch that? It looked so you. Your call!",
+      "Rewinding. {w} seemed like your kind of pick, though.",
+      "Ok, scratched. Curious what you'll pick instead.",
+    ],
+  };
+  // Result screens: the winner, how well I read the run, and its surprises.
+  const RANKING_WRAP = {
+    championKnown: [
+      "{c} takes the crown. Honestly, I saw that coming.",
+      "And the winner is {c}! Your history agrees.",
+      "{c} wins it all. Exactly who I'd have guessed for you.",
+      "Crowned: {c}. A worthy champion, going by what you watch.",
+      "{c} on top. Of course. That's so you.",
+    ],
+    championDark: [
+      "{c} wins it all! A real dark horse in your history.",
+      "Champion {c}! You barely watch {c}. Noted in bold.",
+      "{c} takes it! Didn't see that coming, and I love it.",
+      "Surprise champion: {c}. Maybe I should show you more.",
+    ],
+    championNew: [
+      "{c} wins! I hardly know {c} yet. Great first clue.",
+      "Champion {c}, someone I barely know. Writing that down.",
+    ],
+    placement: [
+      "That's where {c} lands. Noted!",
+      "{c}'s run is over. Nicely placed.",
+      "Run done for {c}. Thanks for the ranking.",
+    ],
+    syncHigh: [
+      "I read {a} of your {j} picks right. We're very much in sync.",
+      "{a} of {j} called correctly. I know you pretty well!",
+    ],
+    syncMid: [
+      "I read {a} of your {j} picks right. Getting there.",
+      "{a} of {j} right, with a few good surprises in there.",
+    ],
+    syncLow: [
+      "Only {a} of {j} right this time. You taught me a lot.",
+      "{a} of {j}. Plenty of new notes, which is great.",
+    ],
+    syncNone: [
+      "Mostly new faces for me this run. Thanks for all the clues.",
+      "I barely knew these performers. Now I know a bit more.",
+    ],
+    surprises: [
+      "You surprised me with {s}. I'll weigh those at my next model update.",
+      "Biggest surprises: {s}. Taking those into my next update.",
+      "{s} caught me off guard. Noted for my next update.",
+    ],
+    theme: [
+      "Tonight's theme: {t} ({n} of {m} winners).",
+      "{t} ruled this run: {n} of {m} winners.",
+      "Pattern spotted: {n} of {m} winners were {t}.",
+    ],
+    mostWins: [
+      "Most wins: {w}, with {n}.",
+      "{w} had the busiest run: {n} wins.",
+      "Workhorse of the night: {w}, {n} wins.",
+    ],
+  };
+  // Lines built from what you watched (Stash's play counts, O-counts and
+  // last plays of each performer's scenes), so the numbers make them new.
+  const RANKING_FACTS = {
+    factPlays: [
+      "You've played {w}'s scenes {wp} times. Easy call.",
+      "{wp} plays of {w} in your history. That settles it.",
+      "You keep coming back to {w}: {wp} plays across {ws} scenes.",
+      "{w}, {wp} plays and counting. Of course.",
+      "{ws} of {w}'s scenes are in your history. No contest.",
+    ],
+    factOs: [
+      "{w}'s scenes have {wo} O's in your history. Enough said.",
+      "{wo} O's with {w}. I think we know where this was going.",
+      "With {wo} O's on the books, {w} was always winning this.",
+    ],
+    factRecent: [
+      "You watched {w} just {wago}. Still on your mind, I see.",
+      "Fresh in your memory: {w}, watched {wago}.",
+      "{w} again, after your last watch {wago}. Consistent!",
+    ],
+    factContrast: [
+      "{l} has {lp} plays in your history, {w} {wpp}. Interesting!",
+      "Picking {w} over {l}, whom you've played {lp} times? Noted.",
+      "{lp} plays of {l}, and {w} still wins. Learning!",
+      "Your history says {l} ({lp} plays). You say {w}. Noted.",
+    ],
+    factStale: [
+      "You haven't watched {l} since {lwhen}. Maybe that explains it.",
+      "{l}'s last play was {lwhen}. Tastes change!",
+      "No {l} since {lwhen}, so this tracks, actually.",
+    ],
+    factClose: [
+      "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+      "Neck and neck in your history too: {wp} plays against {lp}.",
+      "{w} {wp}, {l} {lp} in plays. A fair fight.",
+    ],
+    factUnwatched: [
+      "{w} it is. {wu} of their scenes are still unplayed, by the way.",
+      "Good news: {wu} unwatched {w} scenes are waiting in your library.",
+      "And there are {wu} {w} scenes you haven't watched yet. Just saying.",
+      "Plenty more where that came from: {wu} {w} scenes you haven't seen.",
+      "{w} has {wu} scenes in your library you've never played. Homework?",
+      "Fancy more {w}? {wu} unplayed scenes, ready when you are.",
+    ],
+    factStudio: [
+      "Most of your {w} plays are {studio} scenes. That's your combo.",
+      "{w} plus {studio}: {sn} of your plays. A classic pairing.",
+      "{w} at {studio} seems to be a sweet spot for you.",
+    ],
+    factTogether: [
+      "Fun fact: you've watched {w} and {l} together in {tn} {tscenes}.",
+      "These two share {tn} {tscenes} in your history. Awkward!",
+      "{w} and {l} have {tn} {tscenes} together in your history. Still, a choice had to be made.",
+    ],
+    factFirst: [
+      "You've never played a {w} scene, and {w} still wins. Curious!",
+      "{wsc} {w} scenes in your library, none played yet. Maybe start there?",
+    ],
+  };
+  const RANKING_TALLY = { dependable: "agreed", agree: "agreed", close: "close", surprise: "surprised", twist: "surprised", unknown: "fresh" };
+  const RANKING_MOODS = { dependable: "😌", agree: "🙂", close: "🤔", surprise: "🧐", twist: "😲", unknown: "👀", undo: "✏️" };
+  // A kicker is an extra beat after the verdict: a milestone, an agreement
+  // streak (or its end), or a performer who keeps winning this session.
+  const RANKING_KICKERS = {
+    opener: [
+      "Ooh, ranking time. I'll be watching.",
+      "Let's see how well I know you.",
+      "Alright, show me what you've got.",
+      "I love this part. Go on.",
+      "Notebook out. Ready when you are.",
+      "Oh good, I've been waiting for this.",
+    ],
+    night: [
+      "Late-night ranking? My favourite kind.",
+      "Burning the midnight oil, are we? I'm in.",
+      "Can't sleep? Let's rank.",
+    ],
+    morning: [
+      "Morning ranking session. Coffee for you, notes for me.",
+      "Early start! Let's do this.",
+    ],
+    milestone: [
+      "{n} matches in. I'm learning a lot about you.",
+      "{n} matches! My notebook is filling up.",
+      "{n} down. Keep them coming.",
+      "{n} already? This is fun.",
+      "That's {n}. You're on fire.",
+      "{n} matches. I'll need a bigger notebook.",
+      "{n}! You're really committed to this. I respect it.",
+    ],
+    streak: [
+      "{n} in a row. I'm reading you well.",
+      "{n} straight. I'm getting good at this.",
+      "Mind-reading streak: {n}.",
+      "{n} for {n}. I know you too well.",
+      "Another one! That's {n} straight.",
+      "On a roll: {n} in a row.",
+      "{n} in a row. Starting to feel smug.",
+    ],
+    broken: [
+      "Streak over at {n}. Back to school for me.",
+      "There goes my {n}-pick streak.",
+      "{n} in a row, and then this. Fair.",
+      "And my {n}-streak is gone. Still learning!",
+      "Well, {n} was nice while it lasted.",
+      "And just like that, {n} in a row resets.",
+    ],
+    puzzled: [
+      "That's {n} surprises in a row. Keeping me on my toes!",
+      "{n} curveballs straight. I'm taking a LOT of notes.",
+      "{n} in a row. Clearly I have things to learn.",
+      "{n} surprises running. This is great data.",
+    ],
+    reunion: [
+      "Back on the same page!",
+      "Phew. Back in sync with you.",
+      "There we go! Reading you right again.",
+      "Ah, harmony restored.",
+    ],
+    rematch: [
+      "Same result as last time. Consistent!",
+      "{w} again over {l}. You're sure about this one.",
+      "Rematch, same verdict. Noted twice.",
+    ],
+    flip: [
+      "Oh, you picked {l} last time!",
+      "Changed your mind since last round? {w} now.",
+      "A reversal! {l} won this pairing earlier.",
+      "Ooh, {w} gets revenge.",
+    ],
+    roll: [
+      "{w} is on a roll: {n} wins.",
+      "{w} again! That's {n}.",
+      "{n} wins for {w} already. Who can stop them?",
+      "Someone stop {w}! {n} wins.",
+      "{w} keeps winning. {n} and counting.",
+      "Is anyone beating {w} today? {n} wins.",
+      "{w}, {n} wins deep. A force of nature.",
+    ],
+    cheer: [
+      "I love this.",
+      "This is so useful. Keep going!",
+      "Every pick sharpens my picture of you.",
+      "Ooh, I'm learning so much right now.",
+      "You're doing great. Your recommendations will thank you.",
+      "More please! This is my favourite kind of data.",
+      "Love it. Keep them coming.",
+    ],
+    theme: [
+      "That's {n} {t} in a row. I see a theme.",
+      "{t} again! {n} straight.",
+      "{n} {t} in a row. You know what you like.",
+    ],
+    upset: [
+      "Upset! {w} was {d} points behind {l}.",
+      "{w} beats a {d}-point favourite. Bold.",
+      "A {d}-point underdog takes it. Nice.",
+    ],
+  };
+  const RANKING_MILESTONES = new Set([10, 25, 50, 100, 200]);
+  function rankingViewing(affinities, id) {
+    const details = affinities?.[String(id)]?.affinity_details;
+    if (!details) return { value: 0, basis: "none" };
+    const learned = Number(details.learned_confidence) || 0;
+    const guessed = Number(details.similarity_confidence) || 0;
+    return {
+      value: (Number(details.learned) || 0) + (Number(details.similarity) || 0),
+      basis: learned >= RANKING_WATCHED ? "watched" : guessed >= RANKING_GUESSED ? "guessed" : "none",
+    };
+  }
+  // Physical traits your viewing supports: a trait counts as liked (or
+  // avoided) when performers you watch carry it clearly more (or less)
+  // often than performers of the same gender in your library whose field is
+  // filled in. Hair colour, for example, says nothing in most libraries.
+  // Breast enhancement is left out: it mostly follows cup size, which the
+  // size traits already cover.
+  // Several phrasings per trait keep repeated trait lines fresh.
+  const RANKING_TRAIT_NAMES = {
+    busty: ["busty women", "big-chested women", "well-endowed women", "busty beauties", "women with big chests", "the busty ones", "generously built women"],
+    small_chest: ["smaller chests", "small-chested women", "petite busts", "women with modest chests"],
+    mature: ["mature ladies", "MILFs", "experienced women", "older women", "cougars", "seasoned women"],
+    young: ["younger performers", "younger women", "the young crowd", "fresh-faced performers"],
+    tall: ["tall women", "statuesque women", "long-legged women", "tall drinks of water"],
+    petite: ["petite women", "pocket-sized women", "petite types", "small and slender women"],
+    curvy: ["curvy women", "curvaceous women", "women with curves", "hourglass figures"],
+    blonde: ["blondes", "fair-haired women", "golden-haired women"],
+    brunette: ["brunettes", "brown-haired women"],
+    redhead: ["redheads", "gingers", "fiery redheads"],
+    black_hair: ["dark-haired women", "raven-haired women", "jet-black hair"],
+    latina: ["Latinas", "Latina women"],
+    asian: ["Asian performers", "Asian women"],
+  };
+  const RANKING_TRAITS_QUERY = `query CuratorRankingTraits {
+    findPerformers(filter: { per_page: -1 }) {
+      performers { id gender scene_count hair_color ethnicity measurements height_cm birthdate career_length }
+    }
+  }`;
+  const RANKING_CUPS = ["AA", "A", "B", "C", "D", "DD", "DDD", "E", "F", "G", "H"];
+  function rankingTraits(performer) {
+    const traits = new Map();
+    const set = (field, values) => { for (const [trait, has] of values) traits.set(trait, field ? has : null); };
+    const hair = performer.hair_color;
+    set(hair, [["blonde", hair === "Blonde"], ["brunette", hair === "Brunette"], ["black_hair", hair === "Black"], ["redhead", hair === "Red" || hair === "Auburn"]]);
+    const ethnicity = performer.ethnicity;
+    set(ethnicity, [["latina", ethnicity === "Latin"], ["asian", ethnicity === "Asian"]]);
+    const measured = /^\s*(\d{2})\s*([A-Za-z]+)?\s*-\s*(\d{2})\s*-\s*(\d{2})/.exec(performer.measurements || "");
+    const cup = RANKING_CUPS.indexOf((measured?.[2] || "").toUpperCase());
+    set(cup >= 0, [["busty", cup >= RANKING_CUPS.indexOf("DD")], ["small_chest", cup >= 0 && cup <= RANKING_CUPS.indexOf("B")]]);
+    set(measured, [["curvy", measured && Number(measured[4]) - Number(measured[3]) >= 12 && Number(measured[4]) >= 36]]);
+    const height = performer.height_cm;
+    set(height, [["petite", height <= 157], ["tall", height >= 175]]);
+    // Age across the career's midpoint, from birth year and career years.
+    const career = /^\s*(\d{4})\s*-?\s*(\d{4})?/.exec(performer.career_length || "");
+    const born = Number(String(performer.birthdate || "").slice(0, 4));
+    const age = career && born ? (Number(career[1]) + Number(career[2] || new Date().getFullYear())) / 2 - born : null;
+    set(age, [["mature", age >= 35], ["young", age !== null && age <= 23]]);
+    return traits;
+  }
+  function rankingTaste(performers, affinities) {
+    const byId = new Map();
+    const groups = new Map();
+    for (const performer of performers) {
+      const traits = rankingTraits(performer);
+      byId.set(String(performer.id), { gender: performer.gender, traits, scenes: Number(performer.scene_count) || 0 });
+      const group = groups.get(performer.gender) || new Map();
+      groups.set(performer.gender, group);
+      const watched = rankingViewing(affinities, performer.id).basis === "watched";
+      for (const [trait, has] of traits) {
+        if (has === null) continue;
+        const count = group.get(trait) || { known: 0, has: 0, watched: 0, watchedHas: 0 };
+        count.known++; count.has += has ? 1 : 0;
+        if (watched) { count.watched++; count.watchedHas += has ? 1 : 0; }
+        group.set(trait, count);
+      }
+    }
+    const lean = new Map();
+    for (const [gender, group] of groups) {
+      const liked = new Set(); const avoided = new Set();
+      for (const [trait, count] of group) {
+        const share = count.has / count.known;
+        if (!count.watched || share <= 0 || share >= 1) continue;
+        const z = (count.watchedHas - count.watched * share) / Math.sqrt(count.watched * share * (1 - share));
+        const lift = count.watchedHas / count.watched / share;
+        if (count.watchedHas >= 10 && lift >= 1.2 && z >= 2.5) liked.add(trait);
+        if (lift <= 0.8 && z <= -2.5) avoided.add(trait);
+      }
+      lean.set(gender, { liked, avoided });
+    }
+    return { byId, lean };
+  }
+  // A trait voice replaces the plain verdict about half the time it applies.
+  function rankingTraitVoice(taste, tier, winner, loser) {
+    const won = taste?.byId.get(String(winner.id));
+    const lost = taste?.byId.get(String(loser.id));
+    const lean = won && taste.lean.get(won.gender);
+    if (!lost || !lean || Math.random() < 0.5) return null;
+    const only = (a, b, traits) => [...traits].filter((trait) => a.traits.get(trait) === true && b.traits.get(trait) === false);
+    const choose = (voice, traits) => traits.length ? { voice, trait: traits[Math.floor(Math.random() * traits.length)] } : null;
+    if (tier === "dependable" || tier === "agree") return choose("traitWin", only(won, lost, lean.liked));
+    if (tier === "close") return choose("traitClose", only(won, lost, lean.liked));
+    if (tier === "surprise" || tier === "twist") return choose("traitBranch", only(won, lost, lean.avoided)) || choose("traitPass", only(lost, won, lean.liked));
+    return null;
+  }
+  // Each performer's history from the scenes you played: plays, scenes, O's
+  // and the last play. Optional flavour, as the traits are.
+  const RANKING_PLAYS_QUERY = `query CuratorRankingPlays {
+    findScenes(scene_filter: { play_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: -1 }) {
+      scenes { play_count o_counter last_played_at studio { name } performers { id } }
+    }
+  }`;
+  function rankingPlays(scenes) {
+    const byId = new Map();
+    for (const [index, scene] of scenes.entries()) {
+      const last = Date.parse(scene.last_played_at || "") || 0;
+      const plays = Number(scene.play_count) || 0;
+      for (const performer of scene.performers || []) {
+        const entry = byId.get(String(performer.id)) || { plays: 0, scenes: 0, os: 0, last: 0, studios: new Map(), played: new Set() };
+        entry.plays += plays;
+        entry.scenes += 1;
+        entry.os += Number(scene.o_counter) || 0;
+        entry.last = Math.max(entry.last, last);
+        entry.played.add(index);
+        if (scene.studio?.name) entry.studios.set(scene.studio.name, (entry.studios.get(scene.studio.name) || 0) + plays);
+        byId.set(String(performer.id), entry);
+      }
+    }
+    return byId;
+  }
+  function rankingAgo(ms, now = Date.now()) {
+    const days = Math.floor((now - ms) / 86400000);
+    if (days < 1) return "today";
+    if (days < 2) return "yesterday";
+    if (days < 14) return `${days} days ago`;
+    return `${Math.round(days / 7)} weeks ago`;
+  }
+  function rankingWhen(ms, now = Date.now()) {
+    const date = new Date(ms);
+    const month = date.toLocaleString("en", { month: "long" });
+    return date.getFullYear() === new Date(now).getFullYear() ? month : `${month} ${date.getFullYear()}`;
+  }
+  // A fact voice replaces the plain verdict now and then, when the history
+  // says something true and on point: plays, O's or a recent watch for a
+  // pick I saw coming, the loser's plays or long absence for a surprise.
+  const RANKING_FACT_SHARE = 0.4;
+  const RANKING_FACT_PLAYS = 5;
+  function rankingFactVoice(plays, tier, winner, loser, now = Date.now(), taste = null) {
+    if (!plays || Math.random() >= RANKING_FACT_SHARE) return null;
+    const none = { plays: 0, scenes: 0, os: 0, last: 0, studios: new Map(), played: new Set() };
+    const w = plays.get(String(winner.id)) || none;
+    const l = plays.get(String(loser.id)) || none;
+    const library = taste?.byId.get(String(winner.id))?.scenes ?? null;
+    const unwatched = library === null ? 0 : Math.max(0, library - w.scenes);
+    const [studio, studioPlays] = [...w.studios].sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    const together = [...w.played].filter((index) => l.played.has(index)).length;
+    const values = {
+      wp: String(w.plays), ws: String(w.scenes), wo: String(w.os), lp: String(l.plays),
+      wpp: w.plays === 0 ? "none" : `only ${w.plays}`,
+      wago: w.last ? rankingAgo(w.last, now) : "", lwhen: l.last ? rankingWhen(l.last, now) : "",
+      wu: String(unwatched), wsc: String(library ?? 0), studio: studio || "", sn: String(studioPlays),
+      tn: String(together), tscenes: together === 1 ? "scene" : "scenes",
+    };
+    const options = [];
+    if (tier === "dependable" || tier === "agree") {
+      if (w.plays >= RANKING_FACT_PLAYS) options.push("factPlays");
+      if (w.os >= 2) options.push("factOs");
+      if (w.last && now - w.last < 14 * 86400000) options.push("factRecent");
+      if (unwatched >= 5) options.push("factUnwatched");
+      // A studio holds at least half of the performer's plays, over 3 or more
+      if (studio && w.plays >= RANKING_FACT_PLAYS && studioPlays * 2 >= w.plays && studioPlays >= 3) options.push("factStudio");
+    } else if (tier === "surprise" || tier === "twist") {
+      if (l.plays >= RANKING_FACT_PLAYS && l.plays >= 3 * Math.max(1, w.plays)) options.push("factContrast");
+      if (l.plays >= RANKING_FACT_PLAYS && l.last && now - l.last > 180 * 86400000) options.push("factStale");
+      if (w.plays === 0 && library > 0 && l.plays >= RANKING_FACT_PLAYS) options.push("factFirst");
+    } else if (tier === "close" && w.plays >= 3 && l.plays >= 3) {
+      options.push("factClose");
+    }
+    if (together >= 1) options.push("factTogether");
+    if (!options.length) return null;
+    // Most performers have unwatched scenes, so that fact weighs less and
+    // leaves room for the rarer ones
+    const weight = (voice) => (voice === "factUnwatched" ? 0.4 : 1);
+    let roll = Math.random() * options.reduce((sum, voice) => sum + weight(voice), 0);
+    const voice = options.find((option) => (roll -= weight(option)) < 0) || options[options.length - 1];
+    if (voice === "factUnwatched" && options.length === 1 && Math.random() >= 0.4) return null;
+    return { voice, values, trait: null };
+  }
+  function rankingVerdict(affinities, winner, loser, taste = null, plays = null) {
+    const won = rankingViewing(affinities, winner.id);
+    const lost = rankingViewing(affinities, loser.id);
+    const diff = won.value - lost.value;
+    const tier = won.basis === "none" && lost.basis === "none" ? "unknown"
+      : diff >= RANKING_CLEAR ? "dependable"
+        : diff >= RANKING_EDGE ? "agree"
+          : diff > -RANKING_EDGE ? "close"
+            : diff > -RANKING_TWIST || lost.basis !== "watched" ? "surprise" : "twist";
+    // The voice picks the lines: a hunch is a similarity guess, an underdog
+    // a winner I have no evidence on against one you watch.
+    const agreed = tier === "dependable" || tier === "agree";
+    const surprised = tier === "surprise" || tier === "twist";
+    const traitVoice = rankingTraitVoice(taste, tier, winner, loser);
+    if (traitVoice) return { tier, ...traitVoice, won, lost };
+    const factVoice = rankingFactVoice(plays, tier, winner, loser, Date.now(), taste);
+    if (factVoice) return { tier, ...factVoice, won, lost };
+    const voice = agreed && won.basis === "guessed" ? "hunchHit"
+      : surprised && won.basis === "none" && lost.basis === "watched" ? "underdog"
+        : surprised && lost.basis === "guessed" ? "hunchMiss" : tier;
+    return { tier, voice, won, lost };
+  }
+  // Lines come from a shuffled deck per kind, kept in this browser across
+  // sessions: every line of a kind plays before any repeats, and a new deck
+  // never starts with the line the last one ended on.
+  const RANKING_DECKS_KEY = "stash-curator:ranking-decks:v1";
+  let rankingDecks = null;
+  function rankingDeckName(table, key) {
+    const names = new Map([[RANKING_LINES, "line"], [RANKING_KICKERS, "kick"], [RANKING_WRAP, "wrap"], [RANKING_TRAIT_NAMES, "trait"], [RANKING_FACTS, "fact"]]);
+    return `${names.get(table) || "other"}:${key}`;
+  }
+  function rankingPick(table, key) {
+    const options = table[key];
+    if (!rankingDecks) {
+      try { rankingDecks = JSON.parse(localStorage.getItem(RANKING_DECKS_KEY)) || {}; } catch { rankingDecks = {}; }
+    }
+    const name = rankingDeckName(table, key);
+    let deck = rankingDecks[name];
+    if (!deck || deck.size !== options.length || !Array.isArray(deck.left) || !deck.left.length) {
+      const left = [...options.keys()].filter((index) => options.length < 2 || index !== deck?.last);
+      for (let i = left.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [left[i], left[j]] = [left[j], left[i]];
+      }
+      deck = { size: options.length, left, last: deck?.last };
+    }
+    const index = deck.left.pop();
+    rankingDecks[name] = { ...deck, last: index };
+    try { localStorage.setItem(RANKING_DECKS_KEY, JSON.stringify(rankingDecks)); } catch { /* the deck lasts this page */ }
+    return options[index] ?? options[0];
+  }
+  function rankingLine(tier, winner, loser, table = RANKING_LINES, trait = null, values = {}) {
+    let line = rankingPick(table, tier).replaceAll("{w}", winner.name || "this one").replaceAll("{l}", loser.name || "the other one")
+      .replaceAll("{t}", trait ? rankingPick(RANKING_TRAIT_NAMES, trait) : "");
+    for (const [key, value] of Object.entries(values)) line = line.replaceAll(`{${key}}`, value);
+    return line.replace(/(^|[.!?…]\s+)([a-z])/g, (_, start, letter) => start + letter.toUpperCase());
+  }
+  // A liked trait the winner has, for a run of winners sharing one
+  function rankingLikedTraits(taste, performer) {
+    const entry = taste?.byId.get(String(performer.id));
+    const liked = entry && taste.lean.get(entry.gender)?.liked;
+    return liked ? [...liked].filter((trait) => entry.traits.get(trait) === true) : [];
+  }
+  const RANKING_UPSET = 15;
+  function rankingKicker(current, tier, winner, loser, taste = null) {
+    const agreed = RANKING_TALLY[tier] === "agreed";
+    const surprised = RANKING_TALLY[tier] === "surprised";
+    const brokenAt = surprised && current.streak >= 4 ? current.streak : 0;
+    const reunion = agreed && current.puzzled >= 3;
+    current.streak = agreed ? current.streak + 1 : surprised ? 0 : current.streak;
+    current.puzzled = surprised ? current.puzzled + 1 : agreed ? 0 : current.puzzled;
+    current.total += 1;
+    const wins = (current.wins[winner.id] || 0) + 1;
+    current.wins[winner.id] = wins;
+    const pair = [winner.id, loser.id].sort().join(":");
+    const before = current.pairs[pair];
+    current.pairs[pair] = winner.id;
+    if (winner.name) current.names = { ...current.names, [winner.id]: winner.name };
+    const liked = rankingLikedTraits(taste, winner);
+    for (const trait of liked) current.themes = { ...current.themes, [trait]: (current.themes[trait] || 0) + 1 };
+    const run = current.run && liked.includes(current.run.trait)
+      ? { trait: current.run.trait, n: current.run.n + 1 }
+      : liked.length ? { trait: liked[Math.floor(Math.random() * liked.length)], n: 1 } : null;
+    current.run = run;
+    // Ratings before the match, when the plugin sends them (Ascension does)
+    const gap = Number.isFinite(winner.rating) && Number.isFinite(loser.rating)
+      ? (loser.rating - (loser.change || 0)) - (winner.rating - (winner.change || 0)) : 0;
+    const pick = (kind, n) => ({ kind, text: rankingLine(kind, winner, loser, RANKING_KICKERS).replaceAll("{n}", String(n)) });
+    if (current.total === 1) {
+      const hour = new Date().getHours();
+      return pick(hour >= 23 || hour < 5 ? "night" : hour >= 5 && hour < 9 ? "morning" : "opener", 1);
+    }
+    if (RANKING_MILESTONES.has(current.total)) return pick("milestone", current.total);
+    if (before) return pick(before === winner.id ? "rematch" : "flip", 2);
+    if (brokenAt) return pick("broken", brokenAt);
+    if (reunion) return pick("reunion", 0);
+    if (surprised && (current.puzzled === 3 || current.puzzled === 5)) return pick("puzzled", current.puzzled);
+    if (gap >= RANKING_UPSET) return { kind: "upset", text: pick("upset", 0).text.replaceAll("{d}", String(Math.round(gap))) };
+    if (run && (run.n === 3 || run.n === 5)) {
+      const kicker = pick("theme", run.n);
+      return { ...kicker, text: kicker.text.replaceAll("{t}", rankingPick(RANKING_TRAIT_NAMES, run.trait)).replace(/^[a-z]/, (letter) => letter.toUpperCase()) };
+    }
+    if (agreed && current.streak >= 3 && (current.streak === 3 || current.streak % 5 === 0)) return pick("streak", current.streak);
+    if (winner.name && wins >= 3 && (wins === 3 || wins % 5 === 0)) return pick("roll", wins);
+    if (current.total >= 4 && Math.random() < 0.12) return pick("cheer", 0);
+    return null;
+  }
+  function rankingWrap(current, kind, item, affinities) {
+    const name = item.name || "your pick";
+    const fill = (voice, values) => {
+      let text = rankingPick(RANKING_WRAP, voice);
+      for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, value);
+      return text;
+    };
+    const viewing = rankingViewing(affinities, item.id);
+    const champion = kind !== "champion" ? "placement"
+      : viewing.basis === "none" ? "championNew"
+        : viewing.value >= RANKING_EDGE ? "championKnown" : "championDark";
+    const messages = [{ kind: "line", text: fill(champion, { c: name }) }];
+    const { agreed, surprised } = current.tally;
+    const leaned = agreed + surprised;
+    const sync = leaned ? agreed / leaned : null;
+    const voice = sync === null ? "syncNone" : sync >= 0.7 ? "syncHigh" : sync >= 0.45 ? "syncMid" : "syncLow";
+    messages.push({ kind: "milestone", text: fill(voice, { a: String(agreed), j: String(leaned) }) });
+    if (current.surprises.length) {
+      const named = current.surprises.slice(0, 3).join(", ") + (current.surprises.length > 3 ? ` and ${current.surprises.length - 3} more` : "");
+      messages.push({ kind: "broken", text: fill("surprises", { s: named }) });
+    }
+    const [theme, themed] = Object.entries(current.themes || {}).sort((a, b) => b[1] - a[1])[0] || [];
+    if (theme && current.total >= 6 && themed * 2 >= current.total) {
+      const text = fill("theme", { t: rankingPick(RANKING_TRAIT_NAMES, theme), n: String(themed), m: String(current.total) });
+      messages.push({ kind: "roll", text: text.replace(/^[a-z]/, (letter) => letter.toUpperCase()) });
+    } else {
+      const [busiest, wins] = Object.entries(current.wins || {}).sort((a, b) => b[1] - a[1])[0] || [];
+      if (busiest && wins >= 3 && current.names?.[busiest] && String(busiest) !== String(item.id)) {
+        messages.push({ kind: "roll", text: fill("mostWins", { w: current.names[busiest], n: String(wins) }) });
+      }
+    }
+    return messages;
+  }
+  function RankingBridge() {
+    const [shown, setShown] = React.useState(null);
+    const latest = React.useRef(0);
+    // One ranking session's tally and viewing scores (loaded once, they only
+    // change at a model update) reset when the plugin reopens.
+    const session = React.useRef(null);
+    React.useEffect(() => {
+      // A session is the plugin's sessionId when it sends one (a Cherry Pick
+      // bracket survives its dialogs being redrawn), else its match slot,
+      // which a plugin keeps for the whole session and replaces on reopening.
+      function currentSession(slot, sessionId) {
+        const key = sessionId != null ? `id:${sessionId}` : slot;
+        if (key && (!session.current || session.current.key !== key)) {
+          session.current = { key, settings: getPluginSettings().catch(() => ({})), hidden: false, affinities: loadPerformerAffinities().then((result) => result.affinities), tally: { agreed: 0, close: 0, surprised: 0, fresh: 0 }, surprises: [], names: {}, themes: {}, run: null, streak: 0, puzzled: 0, total: 0, wins: {}, pairs: {}, history: [] };
+          session.current.affinities.catch(() => {});
+          // Traits are optional flavour: without them the plain verdicts still work.
+          session.current.plays = stashQuery(RANKING_PLAYS_QUERY, {})
+            .then((data) => rankingPlays(data.findScenes.scenes))
+            .catch(() => null);
+          session.current.taste = Promise.all([stashQuery(RANKING_TRAITS_QUERY, {}), session.current.affinities])
+            .then(([data, affinities]) => rankingTaste(data.findPerformers.performers, affinities))
+            .catch(() => null);
+        }
+        return session.current;
+      }
+      async function onMatch(event) {
+        const { itemType, winner, loser, slot, sessionId } = event.detail || {};
+        if (itemType !== "performer" || !winner?.id || !loser?.id) return;
+        // Every pick counts; only the newest is shown. A pick without a slot
+        // (the plugin is between screens) counts for a known session and
+        // leaves the display alone.
+        const shows = slot instanceof Element;
+        if (!shows && (sessionId == null || session.current?.key !== `id:${sessionId}`)) return;
+        const ticket = shows ? ++latest.current : null;
+        const current = currentSession(shows ? slot : null, sessionId);
+        if (current.hidden || (await current.settings).hideRankingComments === true) {
+          if (ticket === latest.current) setShown(null);
+          return;
+        }
+        try {
+          const judged = rankingVerdict(await current.affinities, winner, loser, await current.taste, await current.plays);
+          // A draw has no winner to judge: it counts as close.
+          const verdict = event.detail.draw ? { ...judged, tier: "close", voice: "draw", trait: null } : judged;
+          // What an undo of this match puts back.
+          current.history.push({
+            winner: String(winner.id), loser: String(loser.id), tier: verdict.tier,
+            before: { tally: current.tally, surprises: current.surprises, streak: current.streak, puzzled: current.puzzled, total: current.total, wins: { ...current.wins }, pairs: { ...current.pairs }, themes: current.themes, run: current.run },
+          });
+          const tallyKey = RANKING_TALLY[verdict.tier];
+          current.tally = { ...current.tally, [tallyKey]: current.tally[tallyKey] + 1 };
+          if (tallyKey === "surprised" && winner.name && !current.surprises.includes(winner.name)) current.surprises = [...current.surprises, winner.name];
+          const line = rankingLine(verdict.voice, winner, loser, verdict.voice.startsWith("fact") ? RANKING_FACTS : RANKING_LINES, verdict.trait, verdict.values);
+          const kicker = rankingKicker(current, verdict.tier, winner, loser, await current.taste);
+          if (ticket === latest.current) setShown({ slot, kind: "match", winner, loser, verdict, line, kicker, tally: current.tally, count: ticket });
+        } catch (error) {
+          if (ticket === latest.current) setShown({ slot, kind: "match", error: error.message });
+        }
+      }
+      // An undone match comes out of the tally, streaks and rematch memory,
+      // as if it had never been played.
+      function onUndo(event) {
+        const { itemType, winner, loser, slot, sessionId } = event.detail || {};
+        const ticket = ++latest.current;
+        // Without a slot (the plugin is between screens) the undo still
+        // counts, if its session is known; it just isn't shown.
+        if (itemType !== "performer" || !winner?.id || !loser?.id) { setShown(null); return; }
+        if (!(slot instanceof Element) && (sessionId == null || session.current?.key !== `id:${sessionId}`)) { setShown(null); return; }
+        const current = currentSession(slot, sessionId);
+        const top = current.history[current.history.length - 1];
+        const ids = [String(winner.id), String(loser.id)].sort().join(":");
+        const undone = top && [top.winner, top.loser].sort().join(":") === ids ? current.history.pop() : null;
+        if (undone) Object.assign(current, undone.before);
+        if (current.hidden) { setShown(null); return; }
+        const voice = undone && RANKING_TALLY[undone.tier] === "surprised" ? "undoSurprise" : undone && RANKING_TALLY[undone.tier] === "agreed" ? "undoAgreed" : "undo";
+        const undoneWinner = undone && String(winner.id) === undone.winner ? winner : undone ? loser : winner;
+        const line = rankingLine(voice, undoneWinner, undoneWinner === winner ? loser : winner);
+        setShown(slot instanceof Element ? { slot, kind: "match", winner, loser, verdict: { tier: "undo", voice }, line, kicker: null, tally: current.tally, count: ticket } : null);
+      }
+      async function onResult(event) {
+        const { itemType, kind, item, slot, close, sessionId } = event.detail || {};
+        const ticket = ++latest.current;
+        setShown(null);
+        if (itemType !== "performer" || !item?.id || !(slot instanceof Element)) return;
+        // The run that led here: the open session (a result follows its
+        // matches), else a fresh one for a result opened on its own.
+        const current = session.current && (sessionId == null || session.current.key === `id:${sessionId}`) ? session.current : currentSession(null, sessionId ?? `result:${item.id}`);
+        if (current.hidden || (await current.settings).hideRankingComments === true) return;
+        const affinities = await current.affinities.catch(() => ({}));
+        // Read once the picks are in, so a pick still being counted is included.
+        const wrapUp = () => ({ tally: current.tally, surprises: current.surprises, messages: rankingWrap(current, kind, item, affinities) });
+        const filters = { performers: [{ id: item.id }] };
+        try {
+          const slate = await operation({ ...laneSlateRequest({ lane: "for_you" }, filters), operation: "get_slate", count: RANKING_RESULT_PICKS, context: { route: location.pathname, surface: event.detail.source ? `ranking:${event.detail.source}` : "ranking" } });
+          const ids = slate.items.map((pick) => Number(pick.scene_id));
+          const data = ids.length ? await stashQuery(SCENE_REASON_SCENES_QUERY, { ids }) : { findScenes: { scenes: [] } };
+          const scenes = new Map(data.findScenes.scenes.map((scene) => [String(scene.id), scene]));
+          if (ticket === latest.current) setShown({ slot, kind, performer: item, filters, slate, scenes, ...wrapUp(), close, count: ticket });
+        } catch (error) {
+          if (ticket === latest.current) setShown({ slot, kind, performer: item, ...wrapUp(), close, count: ticket, error: error.message });
+        }
+      }
+      document.addEventListener("stash-ranking:match", onMatch);
+      document.addEventListener("stash-ranking:result", onResult);
+      document.addEventListener("stash-ranking:undo", onUndo);
+      return () => {
+        document.removeEventListener("stash-ranking:match", onMatch);
+        document.removeEventListener("stash-ranking:result", onResult);
+        document.removeEventListener("stash-ranking:undo", onUndo);
+      };
+    }, []);
+    if (!shown?.slot?.isConnected) return null;
+    const dismiss = () => {
+      if (session.current) session.current.hidden = true;
+      latest.current++;
+      setShown(null);
+    };
+    return ReactDOM.createPortal(React.createElement(shown.kind === "match" ? RankingVerdict : RankingPicks, { ...shown, dismiss, key: shown.count ?? shown.kind }), shown.slot);
+  }
+  function RankingClose({ dismiss }) {
+    return React.createElement("button", {
+      type: "button", className: "curator-ranking-dismiss", onClick: dismiss,
+      "aria-label": "Hide Curator's comments",
+      title: "Hide Curator's comments until you reopen this. To turn them off for good: Settings › Plugins › Stash Curator.",
+    }, "×");
+  }
+  // Messages one after another, each typed out after the last.
+  function RankingChat({ messages }) {
+    const [shownCount, setShownCount] = React.useState(1);
+    return React.createElement(React.Fragment, null,
+      React.createElement("span", { className: "curator-ranking-sr", role: "status" }, messages.map((message) => message.text).join(" ")),
+      messages.slice(0, shownCount).map((message, index) => React.createElement(RankingBubble, {
+        key: index, text: message.text, delay: index ? 250 : 0,
+        className: message.kind === "line" ? "" : `curator-ranking-kicker curator-ranking-kicker-${message.kind}`,
+        onDone: () => setShownCount((count) => Math.max(count, index + 2)),
+      })));
+  }
+  function rankingViewingLabel(performer, viewing) {
+    const basis = viewing.basis === "watched" ? "from what you watched" : viewing.basis === "guessed" ? "guessed from similar performers" : "no viewing evidence";
+    return `${performer.name || "Performer"} ${formatAppealValue(viewing.value)} (${basis})`;
+  }
+  function RankingTally({ tally }) {
+    const parts = [
+      tally.agreed && `${tally.agreed} agreed`,
+      tally.close && `${tally.close} close`,
+      tally.surprised && `${tally.surprised} ${tally.surprised === 1 ? "surprise" : "surprises"}`,
+      tally.fresh && `${tally.fresh} new to me`,
+    ].filter(Boolean).join(" · ");
+    // In sync: agreements among the picks where I leaned one way.
+    const leaned = tally.agreed + tally.surprised;
+    const sync = leaned ? Math.round((tally.agreed / leaned) * 100) : null;
+    return React.createElement("span", { className: "curator-ranking-tally", title: parts },
+      sync !== null && React.createElement("span", { className: "curator-ranking-meter", "aria-hidden": "true" },
+        React.createElement("span", { className: "curator-ranking-meter-fill", style: { width: `${sync}%` } })),
+      sync !== null ? `${sync}% in sync` : parts
+    );
+  }
+  const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  // One chat message: a typing indicator, then the text typed out.
+  function RankingBubble({ text, delay, onDone, className = "" }) {
+    const instant = reducedMotion();
+    const [typed, setTyped] = React.useState(instant ? text.length : -1);
+    React.useEffect(() => {
+      if (instant) { onDone?.(); return undefined; }
+      let timer = setTimeout(function tick() {
+        setTyped((count) => {
+          const next = count + 1;
+          if (next < text.length) timer = setTimeout(tick, 18 + Math.random() * 30);
+          else onDone?.();
+          return next;
+        });
+      }, delay + Math.min(600, 150 + text.length * 8));
+      return () => clearTimeout(timer);
+    }, []);
+    if (typed < 0) return React.createElement("span", { className: "curator-ranking-bubble curator-ranking-typing", "aria-hidden": "true" },
+      React.createElement("i"), React.createElement("i"), React.createElement("i"));
+    return React.createElement("span", { className: `curator-ranking-bubble ${className}` },
+      text.slice(0, typed + 1),
+      typed + 1 < text.length && React.createElement("span", { className: "curator-ranking-ghost", "aria-hidden": "true" }, text.slice(typed + 1)));
+  }
+  function RankingVerdict({ verdict, line, kicker, winner, loser, tally, count, error, dismiss }) {
+    const [lineDone, setLineDone] = React.useState(false);
+    if (error) return React.createElement("div", { className: "curator-ranking curator-ranking-match curator-ranking-muted" }, `I can't compare picks yet: ${error}`);
+    const detail = verdict.tier === "undo" ? "That match is out of my notes and the tally."
+      : `My view from your viewing alone, ratings and favourites excluded: ${rankingViewingLabel(winner, verdict.won)}; ${rankingViewingLabel(loser, verdict.lost)}. I pick up your ratings at my next model update.`;
+    return React.createElement(
+      "div",
+      { className: `curator-ranking curator-ranking-match curator-ranking-${verdict.tier}`, title: detail },
+      React.createElement(RankingClose, { dismiss }),
+      React.createElement("span", { className: "curator-ranking-mood", "aria-hidden": "true" }, RANKING_MOODS[verdict.tier]),
+      React.createElement("span", { className: "curator-ranking-speech" },
+        React.createElement("span", { className: "curator-ranking-name" }, "Curator"),
+        React.createElement("span", { className: "curator-ranking-sr", role: "status" }, kicker ? `${line} ${kicker.text}` : line),
+        React.createElement(RankingBubble, { text: line, delay: 0, onDone: () => setLineDone(true) }),
+        kicker && lineDone && React.createElement(RankingBubble, { text: kicker.text, delay: 250, className: `curator-ranking-kicker curator-ranking-kicker-${kicker.kind}` })),
+      React.createElement(RankingTally, { tally })
+    );
+  }
+  function RankingPicks({ kind, performer, filters, slate, scenes, messages, close, error, dismiss }) {
+    const history = useHistory();
+    const name = performer.name || "this performer";
+    const heading = kind === "champion" ? `Watch your champion: ${name}` : `Curator picks with ${name}`;
+    const summary = React.createElement("div", { className: "curator-ranking-wrap" },
+      React.createElement("span", { className: "curator-ranking-mood", "aria-hidden": "true" }, kind === "champion" ? "🏆" : "📋"),
+      React.createElement("span", { className: "curator-ranking-speech" },
+        React.createElement("span", { className: "curator-ranking-name" }, "Curator"),
+        React.createElement(RankingChat, { messages })));
+    const muted = (text) => React.createElement("div", { className: "curator-ranking curator-ranking-result" }, React.createElement(RankingClose, { dismiss }), summary, React.createElement("p", { className: "curator-ranking-muted" }, text));
+    if (error) return muted(`Curator picks unavailable: ${error}`);
+    const items = slate.items.filter((item) => scenes.has(String(item.scene_id)));
+    if (!items.length) return muted(`No Curator picks with ${name} right now.`);
+    const play = (index) => {
+      close?.();
+      startLanePlaylist(slate, [...items.slice(index), ...items.slice(0, index)], filters, history);
+    };
+    return React.createElement(
+      "div",
+      { className: "curator-ranking curator-ranking-result" },
+      React.createElement(RankingClose, { dismiss }),
+      summary,
+      React.createElement("div", { className: "curator-ranking-head" },
+        React.createElement(FontAwesomeIcon, { icon: faCompass }),
+        React.createElement("span", { className: "curator-ranking-title" }, heading),
+        React.createElement("button", { type: "button", className: "btn btn-primary btn-sm", onClick: () => play(0) }, "Play picks")
+      ),
+      React.createElement("div", { className: "curator-ranking-picks" },
+        items.map((item, index) => {
+          const scene = scenes.get(String(item.scene_id));
+          const title = scene.title || scene.files?.[0]?.basename || `Scene ${scene.id}`;
+          const reason = cardReason(item, scene).teaser || laneByValue.get(item.source_lane)?.label || "";
+          return React.createElement("button", { key: item.scene_id, type: "button", className: "curator-ranking-pick scene-card", title: `${title}${reason ? ` — ${reason}` : ""}`, onClick: () => play(index) },
+            React.createElement("span", { className: "curator-ranking-thumb scene-card-image" },
+              scene.paths?.screenshot && React.createElement("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" })),
+            React.createElement("span", { className: "curator-ranking-text card-section" },
+              React.createElement("span", { className: "curator-ranking-pick-title card-section-title" }, title),
+              reason && React.createElement("span", { className: "curator-ranking-reason" }, reason))
+          );
+        })
+      )
+    );
+  }
   // Circular gauge around the affinity value (replaces the flat bar). The ring
   // fill tracks |affinity| and the value is tinted by sign.
   function CuratorAffinityGauge({ value, detail, confidenceLabel, label = "affinity" }) {

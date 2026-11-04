@@ -12,7 +12,9 @@ scenes you hid from Find and why, StashDB performers you marked as not for you,
 model versions, and explanation evidence. A missing tag you name in Why these? is stored
 only in Curator's database; Curator never adds it to the scene in Stash. The
 browser keeps retry queues for playback events, tag/term answers, and scene reasons. Scene feedback
-is submitted directly; check its confirmation or error before moving on.
+is submitted directly; check its confirmation or error before moving on. Comments in ranking
+plugins read your played scenes and performer details from Stash and Curator's own scores; the
+browser keeps only which comment lines it has shown, so they don't repeat.
 
 ## Stash and StashDB boundaries
 
