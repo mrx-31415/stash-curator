@@ -5636,7 +5636,7 @@
     const hasLaneRank = item.source_lane !== "score_review";
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, "data-endless-item": String(item.scene_id), ref: card },
+      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.scene_id), onMouseLeave: () => announcePageChatHover(null), "data-endless-item": String(item.scene_id), ref: card },
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
@@ -7680,6 +7680,7 @@
       fields: [
         { key: "detailPageControls", type: "SELECT", default: "large", options: [{ value: "large", label: "Large" }, { value: "small", label: "Small" }, { value: "off", label: "Off" }], label: "Detail page controls", description: "Curator's expandable bar on scene and performer pages: Large (default), Small for compact icons and score, or Off to hide it." },
         { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
+        { key: "hidePageComments", type: "BOOLEAN", label: "Hide Curator's comments", description: "Hide the chat bubbles at the top of the Recommendations page: welcome-backs, lane comments and notes on the card under the pointer. Off by default." },
         { key: "hideRankingComments", type: "BOOLEAN", label: "Hide comments in ranking plugins", description: "Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
@@ -9138,6 +9139,7 @@
           "div",
           { className: "curator-view-copy" },
           React.createElement("h1", null, laneByValue.has(lane) ? "Recommendations" : laneOption.label),
+          laneByValue.has(lane) && React.createElement(PageChat, { lane, slate, items: visibleItems }),
           React.createElement("p", null, laneOption.description),
           laneByValue.has(lane) && React.createElement(
             "details",
@@ -10090,12 +10092,11 @@
     const names = new Map([[RANKING_LINES, "line"], [RANKING_KICKERS, "kick"], [RANKING_WRAP, "wrap"], [RANKING_TRAIT_NAMES, "trait"], [RANKING_FACTS, "fact"]]);
     return `${names.get(table) || "other"}:${key}`;
   }
-  function rankingPick(table, key) {
+  function rankingPick(table, key, name = rankingDeckName(table, key)) {
     const options = table[key];
     if (!rankingDecks) {
       try { rankingDecks = JSON.parse(localStorage.getItem(RANKING_DECKS_KEY)) || {}; } catch { rankingDecks = {}; }
     }
-    const name = rankingDeckName(table, key);
     let deck = rankingDecks[name];
     if (!deck || deck.size !== options.length || !Array.isArray(deck.left) || !deck.left.length) {
       const left = [...options.keys()].filter((index) => options.length < 2 || index !== deck?.last);
@@ -10357,8 +10358,8 @@
   }
   const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   // One chat message: a typing indicator, then the text typed out.
-  function RankingBubble({ text, delay, onDone, className = "" }) {
-    const instant = reducedMotion();
+  function RankingBubble({ text, delay, onDone, className = "", instant: shown = false }) {
+    const instant = shown || reducedMotion();
     const [typed, setTyped] = React.useState(instant ? text.length : -1);
     React.useEffect(() => {
       if (instant) { onDone?.(); return undefined; }
@@ -10642,6 +10643,799 @@
     );
   }
   let performerAffinitiesPending = null;
+  // Curator's comments on its own page: a welcome on a new visit, a line or
+  // two when a lane opens or redraws, a note about the card under the
+  // pointer. Every line comes from something true right now and goes in
+  // empty space (the header gap or the heading's line, else a slot held
+  // under the heading); a line that won't fit gives way to another from the
+  // same table, and otherwise Curator says nothing.
+  const PAGE_CHAT_KEY = "stash-curator:page-chat:v1";
+  const PAGE_CHAT_VISIT_GAP = 30 * 60000;
+  const PAGE_CHAT_HOVER_MS = 600;
+  const PAGE_CHAT_MIN_ROOM = 140;
+  // Below this a gap only holds the shortest lines, so the chat takes its
+  // own line under the heading instead (phones, narrow windows).
+  const PAGE_CHAT_INLINE_BELOW = 260;
+  const PAGE_CHAT_DEPENDABLE = 0.08;
+  const PAGE_CHAT_DAY = 86400000;
+  const PAGE_CHAT_LINES = {
+    first: [
+      "Hi, I'm Curator. I'll leave the odd note here.",
+      "Hello! I'll chip in here now and then.",
+    ],
+    again: [
+      "Back already? Good, I kept a few warm.",
+      "Round two! Same picks, fresh eyes.",
+      "Oh, hi again.",
+      "Couldn't stay away? Fair.",
+    ],
+    day: [
+      "Welcome back! I've got some good picks in store.",
+      "Hey, welcome back.",
+      "Good to see you again.",
+      "Back on schedule, I see.",
+    ],
+    days: [
+      "{d} days! I've been saving some good ones.",
+      "There you are. {d} days, plenty to catch up on.",
+      "Welcome back! It's been {d} days.",
+      "Hey, it's been a few days.",
+    ],
+    weeks: [
+      "{d} days! I missed you.",
+      "Long time no see! Let's ease back in.",
+      "Welcome back, it's been a while.",
+    ],
+    streak: [
+      "{n} days in a row. I'm getting the hang of you.",
+      "Day {n} running. Your picks get sharper every visit.",
+      "{n} days straight! I like it.",
+    ],
+    newScenes: [
+      "{n} new since your last visit. They're in New Arrivals.",
+      "{n} fresh scenes landed while you were away.",
+      "Heads up: {n} new scenes since last time.",
+    ],
+    newScene: [
+      "One new scene since your last visit.",
+      "Something new landed while you were away.",
+    ],
+    night: [
+      "Late one tonight? I'll keep it dependable.",
+      "Can't sleep? I've got just the thing.",
+      "Burning the midnight oil, I see.",
+    ],
+    morning: [
+      "Bit early, isn't it? No judgement.",
+      "Morning! Straight in, then.",
+      "Early start today.",
+    ],
+    afternoon: [
+      "An afternoon visit, nice.",
+      "Afternoon break? Good timing.",
+    ],
+    evening: [
+      "Evening, your usual slot.",
+      "Settling in for the evening?",
+      "Evening! Let's find you something good.",
+    ],
+    for_you: [
+      "Today's best guesses, with a little discovery mixed in.",
+      "If you only watch one, I'd start at the top.",
+      "A bit of everything you like.",
+    ],
+    best_bets: [
+      "Safe hands. I'd be surprised if these miss.",
+      "My most confident picks, none watched yet.",
+      "Dependable choices only.",
+    ],
+    new_arrivals: [
+      "Fresh in. I haven't seen you react to most of these.",
+      "New in your library, sorted by how sure I am.",
+      "Brand new. Be the judge, I'm taking notes.",
+    ],
+    revisit: [
+      "You really liked these before. Maybe a revisit today?",
+      "Old favourites, rested long enough.",
+      "Comfort viewing, anyone?",
+    ],
+    revisitFact: [
+      "{r} last got a play {ago}. Time for another?",
+      "{r} hasn't had a play since {when}.",
+      "Remember {r}? Not played since {when}.",
+    ],
+    stretch: [
+      "Mostly your taste, with one twist. Humour me?",
+      "A bit outside your usual. Tell me if I'm onto something.",
+      "Slightly off your beaten track.",
+    ],
+    blind_spots: [
+      "Corners of your library you've barely touched.",
+      "Blind spots. Any reaction here teaches me a lot.",
+      "Places you rarely go. Curious?",
+    ],
+    dormant: [
+      "Things you used to watch a lot, parked for a while.",
+      "Old habits, resting. Ready to pick one back up?",
+      "Remember these? You used to be into them.",
+    ],
+    resume: [
+      "You stopped at {t} last time. Pick it up?",
+      "Unfinished business: you left off at {t}.",
+    ],
+    staleFavourite: [
+      "Watched {n} times, but not since {when}.",
+      "An old favourite. Last played {ago}.",
+    ],
+    favourite: [
+      "{n} plays so far. A proper favourite.",
+      "You keep coming back to this one.",
+    ],
+    dependable: [
+      "{p} is a dependable choice for you.",
+      "{p} again? Never a bad call.",
+      "You rarely skip a {p} scene.",
+    ],
+    newFace: [
+      "You've never watched {p}, but similar faces are your thing.",
+      "{p} is new to you. Curious what you'll think.",
+      "New face, but very much your type.",
+    ],
+    fresh: [
+      "Added {ago}. You're the first to see it.",
+      "Brand new in your library.",
+    ],
+    studio: [
+      "{s} is a big part of what you watch.",
+      "Classic {s}. That's so you.",
+    ],
+    off: [
+      "Okay, I'll keep quiet. Manage › Settings brings me back.",
+    ],
+    topPick: [
+      "{r} is my top pick here.",
+      "If you watch one, make it {r}.",
+      "I'd open with {r}.",
+      "My money's on {r}.",
+      "Starting strong with {r}.",
+    ],
+    gem: [
+      "Don't sleep on {r}, I rate it higher than its spot.",
+      "Psst, {r} is better than its spot suggests.",
+      "Keep an eye on {r}. Sneaky good.",
+      "{r} is hiding a bit low. I like it more than that.",
+    ],
+    spotlight: [
+      "{p} is in {r}. One of your regulars.",
+      "There's {p} in {r}, if you're in the mood.",
+      "{r} has {p}. You know how that goes.",
+    ],
+    unplayedOne: [
+      "{r} is one you've never played.",
+      "Never played {r}. Maybe today?",
+      "{r} is still new to you.",
+    ],
+    quickOne: [
+      "{r} is a quick one, {m} minutes.",
+      "Short on time? {r} runs {m} minutes.",
+    ],
+    longOne: [
+      "{r} is a long one, {m} minutes. Settle in.",
+      "Got time? {r} runs {m} minutes.",
+    ],
+    performerRun: [
+      "{p} turns up {n} times in here.",
+      "Bit of a {p} theme today: {n} scenes.",
+      "{n} with {p} in this lot.",
+    ],
+    regulars: [
+      "{p} is in {n} of these. Can't go wrong.",
+      "Plenty of {p} here, one of your regulars.",
+      "{n} with {p}. You know how that goes.",
+    ],
+    studioRun: [
+      "Lots of {s} in here today.",
+      "{s} makes up {n} of these.",
+      "Heavy on {s} this time.",
+    ],
+    unplayed: [
+      "{n} of these you've never played.",
+      "{n} unwatched ones in this lot.",
+      "{n} here are new to you.",
+    ],
+    replays: [
+      "You've played {n} of these before.",
+      "{n} old acquaintances in here.",
+    ],
+    quick: [
+      "Mostly quick ones here, around {m} minutes.",
+      "Short and sweet: about {m} minutes each.",
+    ],
+    long: [
+      "Long ones today, around {m} minutes each.",
+      "Settle in, these run about {m} minutes.",
+    ],
+    newest: [
+      "{r} is the newest, added {ago}.",
+      "Freshest here: {r}, added {ago}.",
+      "{r} only landed {ago}.",
+    ],
+    mostPlayed: [
+      "{r}: {n} plays and counting.",
+      "You've played {r} {n} times.",
+      "{r} again? {n} plays say yes.",
+    ],
+    freshDraw: [
+      "Fresh draw! {r} made the cut.",
+      "New shuffle, and {r} is on top now.",
+      "Reshuffled. Let's see if {r} tempts you.",
+    ],
+    newWith: [
+      "{n} new since last time, one with {p}.",
+      "{p} is in one of the {n} new scenes.",
+      "New arrivals include some {p}. Just saying.",
+    ],
+  };
+  const PAGE_CHAT_MOODS = {
+    first: "👋", again: "😄", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
+    night: "🌙", morning: "☀️", afternoon: "🙂", evening: "🙂",
+    for_you: "😊", best_bets: "😌", new_arrivals: "👀", revisit: "🤔", revisitFact: "🤔", stretch: "🧐", blind_spots: "🧐", dormant: "💤",
+    resume: "⏯️", staleFavourite: "🤔", favourite: "😍", dependable: "😌", newFace: "👀", fresh: "✨", studio: "🙂", off: "🤐",
+    topPick: "😊", performerRun: "😏", regulars: "😌", studioRun: "🙂", unplayed: "👀", replays: "🤔", quick: "⏱️", long: "🍿",
+    newest: "✨", mostPlayed: "😍", freshDraw: "🎲", newWith: "👀", gem: "😉", spotlight: "😌", unplayedOne: "👀", quickOne: "⏱️", longOne: "🍿",
+  };
+  // A visit starts after half an hour away. Days visited feed the streak.
+  function pageChatVisit(record, now = Date.now()) {
+    const today = new Date(now).toDateString();
+    const days = Array.isArray(record?.days) ? record.days.filter((day) => typeof day === "string") : [];
+    const last = Number(record?.last) || 0;
+    const fresh = !last || now - last > PAGE_CHAT_VISIT_GAP;
+    if (!days.includes(today)) days.push(today);
+    let streak = 0;
+    for (let at = now; days.includes(new Date(at).toDateString()); at -= PAGE_CHAT_DAY) streak++;
+    // A reload inside a visit keeps its start, the visit before it and
+    // whether it was greeted.
+    const start = fresh ? now : Number(record?.start) || now;
+    const previous = fresh ? last || null : Number(record?.prev) || null;
+    const welcomed = !fresh && Number(record?.welcomed) === start;
+    const lanes = !fresh && Array.isArray(record?.lanes) ? record.lanes.filter((lane) => typeof lane === "string") : [];
+    const said = !fresh && record?.said && typeof record.said === "object" ? record.said : {};
+    return {
+      record: { last: now, days: days.slice(-14), start, prev: previous, welcomed: welcomed ? start : null, lanes, said },
+      visit: { fresh, previous, streak, start, welcomed, lanes, said },
+    };
+  }
+  function pageChatHour(now = Date.now()) {
+    const hour = new Date(now).getHours();
+    return hour < 5 ? "night" : hour < 11 ? "morning" : hour < 17 ? "afternoon" : hour < 23 ? "evening" : "night";
+  }
+  // The greeting, then one follow-up drawn by weight from what's true: new
+  // scenes (naming a regular when one is in them), a streak, the hour.
+  function pageChatWelcome(visit, news = {}, now = Date.now(), random = Math.random) {
+    const gap = visit.previous ? now - visit.previous : null;
+    const days = gap === null ? 0 : Math.floor(gap / PAGE_CHAT_DAY);
+    const key = gap === null ? "first" : gap < 6 * 3600000 ? "again" : days < 2 ? "day" : days < 7 ? "days" : "weeks";
+    const greeting = { key, values: { d: days } };
+    const count = news.count || 0;
+    const options = [];
+    if (count > 1 && news.regular) options.push([4, { key: "newWith", values: { n: count, p: news.regular }, fallback: { key: "newScenes", values: { n: count } } }]);
+    else if (count > 1) options.push([3, { key: "newScenes", values: { n: count } }]);
+    else if (count === 1) options.push([3, { key: "newScene" }]);
+    if (visit.streak >= 3 && key !== "first") options.push([2, { key: "streak", values: { n: visit.streak } }]);
+    if (key !== "again") options.push([1, { key: pageChatHour(now) }]);
+    const follow = pageChatWeighted(options, random);
+    return follow ? [greeting, follow] : [greeting];
+  }
+  function pageChatWeighted(options, random = Math.random) {
+    const total = options.reduce((sum, [weight]) => sum + weight, 0);
+    let roll = random() * total;
+    for (const [weight, option] of options) {
+      roll -= weight;
+      if (roll < 0) return option;
+    }
+    return options[options.length - 1]?.[1] || null;
+  }
+  function pageChatMedian(values) {
+    const sorted = values.filter((value) => value > 0).sort((a, b) => a - b);
+    return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  }
+  // What a lane's shelf holds right now: what keeps turning up (a
+  // performer, a regular, a studio), how much is unplayed, the running time,
+  // and single cards worth pointing at, any of them, not just the top one:
+  // a sleeper ranked low for its appeal, a regular, one never played, the
+  // quickest or longest, the newest, the most replayed.
+  function pageChatShelf(lane, items, facts, context = {}, now = Date.now(), random = Math.random) {
+    const scenes = items.map((item) => facts?.get(String(item.scene_id)));
+    const present = scenes.map((scene, index) => ({ scene, index, item: items[index] })).filter((entry) => entry.scene);
+    if (!present.length) return [];
+    const options = [];
+    const ref = (index, avoid) => pageChatRef(index, scenes, random, avoid);
+    const any = (list) => list[Math.floor(random() * list.length)];
+    const named = scenes[0] && ref(0, ["place"]);
+    if (named) options.push([1.2, { key: "topPick", scene: 0, values: { r: named } }]);
+    const topAppeal = Number(items[0]?.appeal);
+    const gem = present.filter((entry) => entry.index >= 2 && Number(entry.item?.appeal) > topAppeal + 0.03)
+      .sort((a, b) => b.item.appeal - a.item.appeal)[0];
+    if (gem) options.push([2, { key: "gem", scene: gem.index, values: { r: ref(gem.index) } }]);
+    const performers = new Map();
+    const studios = new Map();
+    for (const { scene } of present) {
+      for (const performer of scene.performers || []) {
+        const entry = performers.get(String(performer.id)) || { performer, n: 0 };
+        entry.n++;
+        performers.set(String(performer.id), entry);
+      }
+      if (scene.studio?.name) studios.set(scene.studio.name, (studios.get(scene.studio.name) || 0) + 1);
+    }
+    const watched = (performer) => {
+      if (!context?.affinities) return false;
+      const viewing = rankingViewing(context.affinities, performer.id);
+      return viewing.basis === "watched" && viewing.value >= PAGE_CHAT_DEPENDABLE;
+    };
+    const runs = [...performers.values()].filter((entry) => entry.performer.name && entry.n >= Math.max(2, present.length * 0.25)).sort((a, b) => b.n - a.n);
+    const regular = runs.find((entry) => watched(entry.performer));
+    if (regular) options.push([2, { key: "regulars", values: { p: regular.performer.name, n: regular.n } }]);
+    else if (runs[0]) options.push([1.5, { key: "performerRun", values: { p: runs[0].performer.name, n: runs[0].n } }]);
+    const spot = any(present.filter((entry) => entry.index > 0).flatMap((entry) => (entry.scene.performers || [])
+      .filter((performer) => performer.name && watched(performer)).map((performer) => ({ ...entry, performer }))));
+    if (spot) options.push([2, { key: "spotlight", scene: spot.index, values: { r: ref(spot.index, ["performer"]), p: spot.performer.name } }]);
+    const [studio, studioCount] = [...studios].sort((a, b) => b[1] - a[1])[0] || [];
+    if (studio && studioCount >= 3 && studioCount >= present.length * 0.3 && studioCount < present.length) options.push([1, { key: "studioRun", values: { s: studio, n: studioCount } }]);
+    const unplayedEntries = present.filter((entry) => !(Number(entry.scene.play_count) > 0));
+    const unplayed = unplayedEntries.length;
+    if (unplayed >= 3 && unplayed < present.length) options.push([1, { key: "unplayed", values: { n: unplayed } }]);
+    if (present.length - unplayed >= 3 && lane !== "revisit") options.push([1, { key: "replays", values: { n: present.length - unplayed } }]);
+    const fresh = any(unplayedEntries.filter((entry) => entry.index > 0));
+    if (fresh && unplayed < present.length) options.push([1, { key: "unplayedOne", scene: fresh.index, values: { r: ref(fresh.index) } }]);
+    const timed = present.map((entry) => ({ ...entry, seconds: Number(entry.scene.files?.[0]?.duration) || 0 })).filter((entry) => entry.seconds > 0);
+    const median = pageChatMedian(timed.map((entry) => entry.seconds));
+    const minutes = Math.round(median / 60);
+    if (minutes && minutes < 15) options.push([1, { key: "quick", values: { m: minutes } }]);
+    if (minutes > 40) options.push([1, { key: "long", values: { m: minutes } }]);
+    const byLength = [...timed].sort((a, b) => a.seconds - b.seconds);
+    const shortest = byLength[0];
+    const longest = byLength[byLength.length - 1];
+    if (shortest && timed.length >= 3 && shortest.seconds < 0.6 * median && shortest.seconds < 900) options.push([1, { key: "quickOne", scene: shortest.index, values: { r: ref(shortest.index), m: Math.max(1, Math.round(shortest.seconds / 60)) } }]);
+    if (longest && timed.length >= 3 && longest.seconds > 1.5 * median && longest.seconds > 1800) options.push([1, { key: "longOne", scene: longest.index, values: { r: ref(longest.index), m: Math.round(longest.seconds / 60) } }]);
+    const newest = present.map((entry) => ({ ...entry, at: Date.parse(entry.scene.created_at || "") || 0 })).sort((a, b) => b.at - a.at)[0];
+    if (newest?.at && now - newest.at < 7 * PAGE_CHAT_DAY) options.push([lane === "new_arrivals" ? 2 : 1, { key: "newest", scene: newest.index, values: { r: ref(newest.index), ago: rankingAgo(newest.at, now) } }]);
+    const replayed = present.filter((entry) => Number(entry.scene.play_count) >= 3).sort((a, b) => b.scene.play_count - a.scene.play_count)[0];
+    if (replayed) options.push([1.5, { key: "mostPlayed", scene: replayed.index, values: { r: ref(replayed.index), n: replayed.scene.play_count } }]);
+    // A card with no sayable name (low down, nothing unique) isn't pointed at.
+    return options.filter(([, spec]) => !("r" in spec.values) || spec.values.r);
+  }
+  // A lane's words for this showing: the first time in a visit its own
+  // intro, after a new draw what came out on top, and usually a fact about
+  // the shelf, never the same kind as the last few lines.
+  function pageChatLaneTalk(lane, items, facts, context, recent = [], { first = false, redraw = false, random = Math.random } = {}) {
+    const shelf = pageChatShelf(lane, items, facts, context, Date.now(), random).filter(([, spec]) => !recent.includes(spec.key));
+    const lines = [];
+    const intro = first && PAGE_CHAT_LINES[lane] && (!shelf.length || random() < 0.5) ? pageChatLaneIntro(lane, items, facts, Date.now(), random) : null;
+    if (redraw) {
+      const top = shelf.find(([, spec]) => spec.key === "topPick");
+      if (top) lines.push({ key: "freshDraw", scene: 0, values: top[1].values });
+    } else if (intro) lines.push(intro);
+    // The second line points at a different card, if any.
+    const pointed = new Set(lines.map((line) => line.scene).filter((scene) => scene !== undefined));
+    const rest = shelf.filter(([, spec]) => !(redraw && spec.key === "topPick") && !pointed.has(spec.scene));
+    const pick = pageChatWeighted(rest, random);
+    if (pick && (!lines.length || random() < 0.6)) lines.push(pick);
+    return lines;
+  }
+  function pageChatTitle(scene) {
+    return scene?.title || scene?.files?.[0]?.basename || "";
+  }
+  function pageChatLaneIntro(lane, items, facts, now = Date.now(), random = Math.random) {
+    if (!PAGE_CHAT_LINES[lane]) return null;
+    if (lane === "revisit") {
+      const scenes = items.map((item) => facts?.get(String(item.scene_id)));
+      const played = scenes.map((scene, index) => ({ scene, index })).filter(({ scene }) => scene && Date.parse(scene.last_played_at || ""));
+      const chosen = played[Math.floor(random() * played.length)];
+      const named = chosen && pageChatRef(chosen.index, scenes, random);
+      if (named && random() < 0.5) {
+        const last = Date.parse(chosen.scene.last_played_at);
+        return { key: "revisitFact", scene: chosen.index, values: { r: named, ago: rankingAgo(last, now), when: rankingWhen(last, now) }, fallback: { key: lane } };
+      }
+    }
+    return { key: lane };
+  }
+  const PAGE_CHAT_ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth"];
+  // The tail of a title ("Series: Part" gives "Part") when it's short enough
+  // to say aloud.
+  function pageChatShortTitle(title) {
+    const parts = String(title || "").split(/\s*(?::|\|)\s*|\s+[-–]\s+/).filter(Boolean);
+    const tail = parts[parts.length - 1] || "";
+    return tail && tail.split(/\s+/).length <= 4 && tail.length <= 28 ? tail : null;
+  }
+  // A way to point at the card at `index` the way a person would: by its
+  // place, a performer or studio only it has, or a short title.
+  function pageChatRef(index, scenes, random = Math.random, avoid = []) {
+    const scene = scenes[index];
+    const ways = [];
+    // "The first one" reads stiffly for the top card.
+    if (index === 0 && !avoid.includes("place")) ways.push("the top one");
+    else if (index < PAGE_CHAT_ORDINALS.length && !avoid.includes("place")) ways.push(`the ${PAGE_CHAT_ORDINALS[index]} one`);
+    const only = (test) => scenes.filter((other) => other && test(other)).length === 1;
+    const performer = !avoid.includes("performer") && (scene?.performers || []).find((candidate) => candidate.name && only((other) => (other.performers || []).some((each) => String(each.id) === String(candidate.id))));
+    if (performer) ways.push(`the ${performer.name.split(/\s+/)[0]} one`);
+    const studio = scene?.studio?.name;
+    if (studio && only((other) => other.studio?.name === studio)) ways.push(`that ${studio} one`);
+    const short = pageChatShortTitle(pageChatTitle(scene));
+    if (short) ways.push(short);
+    return ways[Math.floor(random() * ways.length)] || null;
+  }
+  function pageChatClock(seconds) {
+    const total = Math.round(seconds);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const rest = String(total % 60).padStart(2, "0");
+    return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
+  }
+  // One note per card, from what is true about it, the rarer kinds first.
+  // `plays` is rankingPlays over every played scene; `affinities` the
+  // viewing-only performer affinities the ranking comments use.
+  function pageChatSceneNote(scene, { plays = null, affinities = null, studios = null, now = Date.now() } = {}) {
+    if (!scene) return null;
+    const notes = [];
+    const count = Number(scene.play_count) || 0;
+    const last = Date.parse(scene.last_played_at || "") || 0;
+    const added = Date.parse(scene.created_at || "") || 0;
+    if (Number(scene.resume_time) >= 60) notes.push([3, { key: "resume", values: { t: pageChatClock(scene.resume_time) } }]);
+    if (count >= 3 && last && now - last > 120 * PAGE_CHAT_DAY) notes.push([3, { key: "staleFavourite", values: { n: count, when: rankingWhen(last, now), ago: rankingAgo(last, now) } }]);
+    if (!count && added && now - added < 7 * PAGE_CHAT_DAY) notes.push([3, { key: "fresh", values: { ago: rankingAgo(added, now) } }]);
+    if (affinities) {
+      const viewed = (scene.performers || []).map((performer) => ({ performer, viewing: rankingViewing(affinities, performer.id) }));
+      const dependable = viewed.filter((entry) => entry.viewing.basis === "watched" && entry.viewing.value >= PAGE_CHAT_DEPENDABLE)
+        .sort((a, b) => b.viewing.value - a.viewing.value)[0];
+      if (dependable?.performer.name) notes.push([2, { key: "dependable", values: { p: dependable.performer.name } }]);
+      const fresh = plays && viewed.find((entry) => entry.viewing.basis === "guessed" && !plays.get(String(entry.performer.id)));
+      if (fresh?.performer.name) notes.push([2, { key: "newFace", values: { p: fresh.performer.name } }]);
+    }
+    if (count >= 5) notes.push([1, { key: "favourite", values: { n: count } }]);
+    const studio = scene.studio?.name;
+    if (studio && studios?.big.has(studio)) notes.push([1, { key: "studio", values: { s: studio } }]);
+    if (!notes.length) return null;
+    const top = Math.max(...notes.map(([weight]) => weight));
+    const best = notes.filter(([weight]) => weight === top).map(([, note]) => note);
+    return best[Math.floor(Math.random() * best.length)];
+  }
+  // Studios holding at least a fifth of all plays (and five or more).
+  function pageChatStudios(scenes) {
+    const plays = new Map();
+    let total = 0;
+    for (const scene of scenes) {
+      const count = Number(scene.play_count) || 0;
+      total += count;
+      if (scene.studio?.name) plays.set(scene.studio.name, (plays.get(scene.studio.name) || 0) + count);
+    }
+    return { big: new Set([...plays].filter(([, count]) => count >= 5 && count * 5 >= total).map(([name]) => name)) };
+  }
+  function pageChatFill(line, values = {}) {
+    let text = line;
+    for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, value);
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+  // The deck's next line that fits. Walking the deck (not taking the
+  // shortest) keeps a tight space from repeating one line.
+  function pageChatLine(spec, fits) {
+    for (const candidate of [spec, spec.fallback].filter(Boolean)) {
+      const lines = PAGE_CHAT_LINES[candidate.key] || [];
+      for (let tries = 0; tries < lines.length; tries++) {
+        const text = pageChatFill(rankingPick(PAGE_CHAT_LINES, candidate.key, `page:${candidate.key}`), candidate.values);
+        if (!text.includes("{") && fits(text)) return { text, mood: PAGE_CHAT_MOODS[candidate.key] || "🙂", key: candidate.key };
+      }
+    }
+    return null;
+  }
+  const PAGE_CHAT_SCENES_QUERY =
+    "query CuratorPageChatScenes($ids: [Int!]) { findScenes(scene_ids: $ids, filter: { per_page: -1 }) { scenes { " +
+    "id title play_count resume_time last_played_at created_at studio { name } performers { id name } files { basename duration } } } }";
+  const PAGE_CHAT_NEW_QUERY =
+    "query CuratorPageChatNew($since: String!) { findScenes(scene_filter: { created_at: { value: $since, modifier: GREATER_THAN } }, filter: { per_page: 40 }) { count scenes { performers { id name } } } }";
+  const PAGE_CHAT_STUDIOS_QUERY = `query CuratorPageChatStudios {
+    findScenes(scene_filter: { play_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: -1 }) {
+      scenes { play_count studio { name } }
+    }
+  }`;
+  // One visit's memory, shared by every lane opened during it.
+  let pageChatSession = null;
+  function pageChatCurrent() {
+    let record = null;
+    try { record = JSON.parse(localStorage.getItem(PAGE_CHAT_KEY)); } catch { /* a fresh record */ }
+    const { record: next, visit } = pageChatVisit(record);
+    try { localStorage.setItem(PAGE_CHAT_KEY, JSON.stringify(next)); } catch { /* the visit lasts this page */ }
+    if (!pageChatSession || visit.fresh) {
+      pageChatSession = { visit, welcomed: visit.welcomed, lanes: new Set(visit.lanes), noted: new Set(), recent: [], said: Object.fromEntries(Object.entries(visit.said).filter(([, kinds]) => Array.isArray(kinds)).map(([lane, kinds]) => [lane, new Set(kinds)])), asked: false, quiet: false, context: null };
+    }
+    return pageChatSession;
+  }
+  // Which lanes were introduced and which kinds each has said last the
+  // visit, across reloads.
+  function pageChatRemember(session) {
+    try {
+      const record = JSON.parse(localStorage.getItem(PAGE_CHAT_KEY)) || {};
+      const said = Object.fromEntries(Object.entries(session.said).map(([lane, kinds]) => [lane, [...kinds]]));
+      localStorage.setItem(PAGE_CHAT_KEY, JSON.stringify({ ...record, lanes: [...session.lanes], said }));
+    } catch { /* remembered for this page only */ }
+  }
+  function pageChatIntroduced(session, lane) {
+    session.lanes.add(lane);
+    pageChatRemember(session);
+  }
+  function pageChatWelcomed(session) {
+    session.welcomed = true;
+    try {
+      const record = JSON.parse(localStorage.getItem(PAGE_CHAT_KEY)) || {};
+      localStorage.setItem(PAGE_CHAT_KEY, JSON.stringify({ ...record, welcomed: session.visit.start }));
+    } catch { /* greeted for this page only */ }
+  }
+  // Viewing evidence for card notes, loaded on the first hover of a visit.
+  function pageChatContext(session) {
+    if (!session.context) {
+      session.context = Promise.all([
+        loadPerformerAffinities().then((result) => result.affinities).catch(() => null),
+        stashQuery(RANKING_PLAYS_QUERY, {}).then((data) => rankingPlays(data.findScenes.scenes)).catch(() => null),
+        stashQuery(PAGE_CHAT_STUDIOS_QUERY, {}).then((data) => pageChatStudios(data.findScenes.scenes)).catch(() => null),
+      ]).then(([affinities, plays, studios]) => ({ affinities, plays, studios }));
+    }
+    return session.context;
+  }
+  // Cards announce the pointer; the page chat listens.
+  const pageChatHover = new Set();
+  function announcePageChatHover(sceneId) {
+    for (const listener of pageChatHover) listener(sceneId == null ? null : String(sceneId));
+  }
+
+  function PageChat({ lane, slate, items }) {
+    const root = React.useRef(null);
+    const probe = React.useRef(null);
+    const [shown, setShown] = React.useState(null);
+    const [asking, setAsking] = React.useState(false);
+    const [hidden, setHidden] = React.useState(null);
+    const [place, setPlace] = React.useState(null);
+    const resting = React.useRef(null);
+    const facts = React.useRef({ key: null, scenes: new Map() });
+    const ticket = React.useRef(0);
+    const session = React.useMemo(pageChatCurrent, [lane]);
+    React.useEffect(() => {
+      let active = true;
+      getPluginSettings().then((settings) => active && setHidden(settings.hidePageComments === true), () => active && setHidden(false));
+      return () => { active = false; };
+    }, []);
+    // Free space on one line: after the header's tabs up to Curator's
+    // controls, or after the heading's text up to the lane buttons. The
+    // roomier one speaks.
+    const measure = React.useCallback(() => {
+      const copy = root.current?.parentElement;
+      const page = copy?.closest(".curator-page");
+      if (!copy || !page) return null;
+      const box = copy.getBoundingClientRect();
+      const edge = Math.min(document.documentElement.clientWidth, page.getBoundingClientRect().right) - 16;
+      const spot = (text, blockers) => {
+        if (!text?.width) return null;
+        const right = blockers.filter((rect) => rect.width && rect.top < text.bottom && rect.bottom > text.top && rect.left > text.right)
+          .reduce((left, rect) => Math.min(left, rect.left - 12), edge);
+        return { left: text.right - box.left + 12, top: text.top - box.top + text.height / 2, room: right - text.right - 12, visible: text.top >= 0 && text.bottom <= window.innerHeight };
+      };
+      const tabs = page.querySelector(".curator-header .curator-tabs");
+      const lastTab = tabs?.lastElementChild?.getBoundingClientRect();
+      const controls = tabs?.closest(".curator-navigation")?.nextElementSibling;
+      const header = spot(lastTab, controls ? [controls.getBoundingClientRect()] : []);
+      const heading = copy.querySelector("h1");
+      let line = null;
+      if (heading) {
+        const range = document.createRange();
+        range.selectNodeContents(heading);
+        const actions = copy.parentElement?.querySelector(".curator-view-actions");
+        line = spot(range.getBoundingClientRect(), actions ? [...actions.children].map((child) => child.getBoundingClientRect()) : []);
+      }
+      const best = [header, line].filter(Boolean).sort((a, b) => b.room - a.room)[0];
+      if (best && best.room >= PAGE_CHAT_INLINE_BELOW) return best;
+      const own = heading?.getBoundingClientRect();
+      return { inline: true, room: box.width - 8, visible: Boolean(own) && own.top >= 0 && own.bottom <= window.innerHeight };
+    }, []);
+    const fits = (spot) => (text) => {
+      if (!probe.current) return false;
+      probe.current.textContent = text;
+      // The avatar and the × take their share of the room; a line of its
+      // own may wrap once.
+      return probe.current.offsetWidth + 40 <= pageChatBudget(spot);
+    };
+    const pageChatBudget = (spot) => (spot.inline ? spot.room * 1.8 : spot.room);
+    function say(specs, kind) {
+      const spot = measure();
+      const own = ++ticket.current;
+      if (!spot || spot.room < PAGE_CHAT_MIN_ROOM) { setShown(null); return; }
+      const lines = specs.map((spec) => pageChatLine(spec, fits(spot))).filter(Boolean);
+      if (!lines.length) { setShown(null); return; }
+      // A follow-up sits beside the first line when both fit, else it
+      // replaces the first once that has been read.
+      const together = lines.length > 1 && fits(spot)(lines.map((line) => line.text).join("  ")) && probe.current.offsetWidth + 40 * lines.length <= pageChatBudget(spot);
+      setPlace(spot);
+      const message = { id: own, kind, lines: together ? lines : lines.slice(0, 1), queue: together ? [] : lines.slice(1) };
+      if (kind !== "hover") resting.current = message;
+      setShown(message);
+    }
+    function advance(message) {
+      if (!message.queue.length || ticket.current !== message.id) return;
+      setTimeout(() => {
+        if (ticket.current !== message.id) return;
+        const next = { ...message, id: ++ticket.current, lines: message.queue.slice(0, 1), queue: message.queue.slice(1) };
+        if (message.kind !== "hover") resting.current = next;
+        setShown(next);
+      }, 1200 + message.lines[0].text.length * 35);
+    }
+    const silent = hidden !== false || session.quiet;
+    // Where there's no gap to float in, a fixed two-line slot under the
+    // heading is held for the visit, so a bubble never pushes the page.
+    const [slotted, setSlotted] = React.useState(false);
+    React.useEffect(() => {
+      const update = () => setSlotted(Boolean(measure()?.inline));
+      update();
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }, [lane]);
+    const reserve = hidden !== true && !session.quiet && (slotted || place?.inline);
+    // A new visit greets once. Every lane switch or new draw after that gets
+    // a line or two about the lane and what's on its shelf.
+    const shownLane = React.useRef(null);
+    React.useEffect(() => {
+      if (silent || !slate || slate.lane !== lane) return undefined;
+      let active = true;
+      const ids = items.map((item) => Number(item.scene_id)).filter(Number.isFinite);
+      const key = slate.impression_id;
+      const sceneFacts = facts.current.key === key ? Promise.resolve(facts.current.scenes)
+        : (ids.length ? stashQuery(PAGE_CHAT_SCENES_QUERY, { ids }) : Promise.resolve({ findScenes: { scenes: [] } }))
+          .then((data) => new Map(data.findScenes.scenes.map((scene) => [String(scene.id), scene])))
+          .catch(() => new Map())
+          .then((scenes) => { facts.current = { key, scenes }; return scenes; });
+      const redraw = shownLane.current === lane;
+      shownLane.current = lane;
+      (async () => {
+        const context = await pageChatContext(session);
+        if (!session.welcomed) {
+          pageChatWelcomed(session);
+          pageChatIntroduced(session, lane);
+          const since = session.visit.previous;
+          const news = since
+            ? await stashQuery(PAGE_CHAT_NEW_QUERY, { since: new Date(since).toISOString() }).then((data) => data.findScenes, () => ({ count: 0, scenes: [] }))
+            : { count: 0, scenes: [] };
+          const regular = context.affinities && news.scenes.flatMap((scene) => scene.performers || []).find((performer) => {
+            const viewing = rankingViewing(context.affinities, performer.id);
+            return performer.name && viewing.basis === "watched" && viewing.value >= PAGE_CHAT_DEPENDABLE;
+          });
+          const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name });
+          // Now and then a word on the shelf too.
+          const shelf = pageChatWeighted(pageChatShelf(lane, items.slice(0, 12), await sceneFacts, context));
+          if (shelf && Math.random() < 0.5) specs.push(shelf);
+          if (active) say(specs, "welcome");
+          return;
+        }
+        const first = !session.lanes.has(lane);
+        pageChatIntroduced(session, lane);
+        // Each lane works through its kinds of line before repeating one.
+        const said = session.said[lane] || (session.said[lane] = new Set());
+        const shelfFacts = await sceneFacts;
+        let lines = pageChatLaneTalk(lane, items.slice(0, 12), shelfFacts, context, [...session.recent, ...said], { first, redraw });
+        if (!lines.length) {
+          said.clear();
+          lines = pageChatLaneTalk(lane, items.slice(0, 12), shelfFacts, context, session.recent, { first, redraw });
+        }
+        lines.forEach((line) => said.add(line.key));
+        pageChatRemember(session);
+        session.recent = [...session.recent, ...lines.map((line) => line.key)].slice(-4);
+        if (!active) return;
+        if (lines.length) say(lines, "lane");
+        else { resting.current = null; setShown(null); }
+      })();
+      return () => { active = false; };
+    }, [lane, slate?.impression_id, silent]);
+    // A card the pointer rests on gets its note; leaving it brings back
+    // whatever was said before.
+    React.useEffect(() => {
+      if (silent) return undefined;
+      let timer = null;
+      let hovered = null;
+      function onHover(sceneId) {
+        clearTimeout(timer);
+        if (hovered && hovered !== sceneId) {
+          hovered = null;
+          const back = resting.current;
+          ticket.current++;
+          setShown(back ? { ...back, instant: true, id: ticket.current } : null);
+        }
+        if (!sceneId || session.noted.has(sceneId) || !window.matchMedia?.("(hover: hover)").matches) return;
+        timer = setTimeout(async () => {
+          // Scrolled past the heading, a note would go unseen: keep it.
+          const spot = measure();
+          if (!spot?.visible || spot.inline) return;
+          const context = await pageChatContext(session);
+          const scene = facts.current.scenes.get(sceneId);
+          const note = pageChatSceneNote(scene, context);
+          if (!note) return;
+          session.noted.add(sceneId);
+          hovered = sceneId;
+          say([note], "hover");
+        }, PAGE_CHAT_HOVER_MS);
+      }
+      pageChatHover.add(onHover);
+      return () => { clearTimeout(timer); pageChatHover.delete(onHover); };
+    }, [silent]);
+    React.useEffect(() => {
+      if (!shown) return undefined;
+      const update = () => { const spot = measure(); if (!spot || spot.room < PAGE_CHAT_MIN_ROOM) setShown(null); else setPlace(spot); };
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }, [shown]);
+    function dismiss() {
+      ticket.current++;
+      resting.current = null;
+      setShown(null);
+      if (!session.asked) { session.asked = true; setAsking(true); }
+    }
+    function quietVisit() {
+      session.quiet = true;
+      setAsking(false);
+    }
+    async function turnOff() {
+      setAsking(false);
+      try {
+        const raw = await getPluginSettings();
+        await configurePlugin({ ...raw, hidePageComments: true });
+      } catch { /* the visit stays quiet either way */ }
+      session.quiet = true;
+      const spot = measure();
+      const line = spot && pageChatLine({ key: "off" }, fits(spot));
+      if (line) {
+        setPlace(spot);
+        const own = ++ticket.current;
+        setShown({ id: own, kind: "off", lines: [line], queue: [] });
+        setTimeout(() => { if (ticket.current === own) setShown(null); }, 6000);
+      }
+      setHidden(true);
+    }
+    const style = place ? (place.inline ? {} : { left: `${place.left}px`, top: `${place.top}px` }) : null;
+    const inline = place?.inline ? " curator-page-chat-inline" : "";
+    const chat = shown && style && React.createElement(
+      "span",
+      { key: shown.id, className: `curator-page-chat curator-page-chat-${shown.kind}${inline}`, style },
+      React.createElement("span", { className: "curator-page-chat-mood", "aria-hidden": "true" }, shown.lines[0].mood),
+      React.createElement("span", { className: "curator-ranking-sr", role: "status" }, shown.lines.map((line) => line.text).join(" ")),
+      React.createElement(PageChatLines, { lines: shown.lines, instant: shown.instant, onDone: () => advance(shown) }),
+      shown.kind !== "hover" && shown.kind !== "off" && React.createElement("button", {
+        type: "button", className: "curator-page-chat-dismiss", onClick: dismiss,
+        "aria-label": "Dismiss Curator's comment", title: "Dismiss",
+      }, "×")
+    );
+    const ask = asking && style && React.createElement(
+      "span",
+      { className: `curator-page-chat-ask${inline}`, role: "dialog", "aria-label": "Quiet Curator's comments", style: place.inline ? {} : { left: `${place.left}px`, top: `${place.top + 20}px` } },
+      React.createElement("span", { className: "curator-page-chat-ask-text" }, "Got it. Want me to stay quiet?"),
+      React.createElement("button", { type: "button", onClick: quietVisit, autoFocus: true }, "Quiet for this visit"),
+      React.createElement("button", { type: "button", className: "curator-page-chat-off", onClick: turnOff }, "Turn comments off"),
+      React.createElement("button", { type: "button", onClick: () => setAsking(false) }, "No, keep chatting"),
+      React.createElement("small", null, "You can switch them back on in Manage › Settings.")
+    );
+    return React.createElement(
+      "span",
+      { className: "curator-page-chat-anchor", ref: root },
+      React.createElement("span", { className: "curator-ranking-bubble curator-page-chat-probe", ref: probe, "aria-hidden": "true" }),
+      reserve
+        ? React.createElement("span", { className: "curator-page-chat-slot" }, place?.inline && chat, place?.inline && ask)
+        : place?.inline && chat,
+      !place?.inline && chat,
+      !place?.inline && ask
+    );
+  }
+  function PageChatLines({ lines, instant, onDone }) {
+    const [count, setCount] = React.useState(1);
+    return lines.slice(0, count).map((line, index) => React.createElement(RankingBubble, {
+      key: index, text: line.text, delay: index ? 250 : 0, instant,
+      className: index ? "curator-ranking-kicker curator-page-chat-bubble" : "curator-page-chat-bubble",
+      onDone: () => { if (index + 1 < lines.length) setCount((value) => Math.max(value, index + 2)); else onDone?.(); },
+    }));
+  }
+
   function loadPerformerAffinities() {
     if (!performerAffinitiesPending) {
       performerAffinitiesPending = operation({ operation: "get_performer_affinities" })

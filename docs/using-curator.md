@@ -73,6 +73,29 @@ Returning to the page keeps the current draw; a new local day or a new model
 refreshes it. Refreshing the same lane twice in one tab also draws again; a
 single refresh keeps the current cards in place.
 
+### Curator's comments
+
+Now and then Curator leaves a short chat bubble at the top of the
+Recommendations page. On a new visit it says hello, using how long you were away, a run of
+days in a row, scenes added since your last visit (and a regular of yours among
+them), or the time of day; reloading the page doesn't greet you again. Switching
+lanes or choosing **New picks** gets a line about what's on the shelf: the top
+pick, a performer or studio that keeps turning up, how many you've never played,
+the typical running time, the newest arrival or the scene you replay most. The
+first time you open a lane during a visit, Curator may introduce it. When you rest
+the pointer on a card, it can add a note about that scene: where you stopped
+last time, how often you've played it, a performer you watch a lot, or one
+you've never watched. Every comment is based on your own history, and when
+nothing true fits, Curator says nothing. Bubbles use only empty space, beside
+the header tabs or the heading, so no buttons or cards are ever covered; on a
+phone or a narrow window, where that space is too small, the bubble gets its own
+line under the heading. Hover notes appear only beside the heading area.
+
+Use the **×** on a bubble to dismiss it. The first time you do this during a
+visit, Curator asks whether to stay quiet for the rest of the visit or turn
+comments off. **Hide Curator's comments** in **Manage → Settings → Page
+settings** (or Stash's plugin settings) turns them on and off.
+
 ### Lanes on the Stash home page
 
 Curator adds lane rows to Stash's home page. **For You** is on by default;
