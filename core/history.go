@@ -337,6 +337,7 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
 	type profileItem struct {
 		tagID      string
 		name       string
+		rawName    string
 		role       string
 		sceneCount int64
 		affinity   float64
@@ -349,7 +350,7 @@ func getTasteProfileBody(pluginDir string, payload, settings jVal) (jVal, error)
   SELECT tag_id, count(DISTINCT scene_id) AS scene_count
   FROM scene_tag WHERE provenance='scene' GROUP BY tag_id
 )
-SELECT t.tag_id, COALESCE(NULLIF(t.name, ''), t.tag_id) AS name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
+SELECT t.tag_id, COALESCE(NULLIF(t.name, ''), t.tag_id) AS name, COALESCE(t.name, '') AS raw_name, r.role, coalesce(sc.scene_count, 0) AS scene_count,
        a.affinity, a.confidence, a.effective_support, a.metadata_json
 FROM source_tag t
 JOIN tag_role r ON r.tag_id=t.tag_id AND r.config_version=?
@@ -363,11 +364,11 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 		return jvNull(), err
 	}
 	for itemRows.Next() {
-		var tagID, name, role string
+		var tagID, name, rawName, role string
 		var sceneCount int64
 		var affinity, confidence, effectiveSupport sql.NullFloat64
 		var metadataJSON sql.NullString
-		if err := itemRows.Scan(&tagID, &name, &role, &sceneCount, &affinity, &confidence, &effectiveSupport, &metadataJSON); err != nil {
+		if err := itemRows.Scan(&tagID, &name, &rawName, &role, &sceneCount, &affinity, &confidence, &effectiveSupport, &metadataJSON); err != nil {
 			return jvNull(), err
 		}
 		// The answer a parent passed down (_inherit_tag_preferences), so a
@@ -383,7 +384,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			}
 		}
 		items = append(items, profileItem{
-			tagID: tagID, name: name, role: role, sceneCount: sceneCount,
+			tagID: tagID, name: name, rawName: rawName, role: role, sceneCount: sceneCount,
 			affinity:   affinity.Float64,
 			confidence: confidence.Float64,
 			support:    effectiveSupport.Float64,
@@ -392,6 +393,19 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 	}
 	itemRows.Close()
 	if err := itemRows.Err(); err != nil {
+		return jvNull(), err
+	}
+	// Display-only: tags about who is in the scene (nationality, body, age
+	// group), so a client doesn't read them as a choice of scene. Roles and
+	// the model are untouched.
+	candidates := map[string]string{}
+	for _, item := range items {
+		if item.role != "performer_attribute" {
+			candidates[item.tagID] = item.rawName
+		}
+	}
+	aboutPerformer, err := performerDescribingTagIDs(db, candidates)
+	if err != nil {
 		return jvNull(), err
 	}
 	type outputItem struct {
@@ -406,6 +420,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 		prompt        jVal
 		role          string
 		inherited     jVal
+		describes     bool
 	}
 	output := make([]outputItem, 0, len(items))
 	for _, item := range items {
@@ -435,6 +450,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			prompt:        prompt,
 			role:          item.role,
 			inherited:     item.inherited,
+			describes:     item.role == "performer_attribute" || aboutPerformer[item.tagID],
 		})
 	}
 	// Python sort key: (prompt is None, prompt == "uncertain",
@@ -479,6 +495,7 @@ ORDER BY t.name, t.tag_id`, configVersion, featureVersion, modelID)
 			jvKey("prompt", item.prompt),
 			jvKey("role", jvStr(item.role)),
 			jvKey("inherited_value", item.inherited),
+			jvKey("describes_performer", jvBool(item.describes)),
 		))
 	}
 	return jvObj(

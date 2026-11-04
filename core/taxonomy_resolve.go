@@ -8,10 +8,40 @@ package main
 
 import (
 	"database/sql"
+	_ "embed"
 	"net/url"
 	"sort"
 	"strings"
 )
+
+//go:embed stashdb_performer_tags.json
+var performerTagsJSON []byte
+
+// performerTags is the parsed stashdb_performer_tags.json resource
+// (taxonomy.store's PEOPLE_CATEGORY_GROUP, PEOPLE_EXCLUDED_CATEGORY_IDS and
+// NATIONALITY_TAG_IDS). It only labels tags for display and never feeds tag
+// roles, features or categoryRoleFingerprint.
+var performerTags = struct {
+	peopleGroup        string
+	excludedCategories map[string]bool
+	nationalityTags    map[string]bool
+}{}
+
+func init() {
+	parsed, err := parseJSON(performerTagsJSON)
+	if err != nil {
+		panic("core: invalid embedded stashdb_performer_tags.json: " + err.Error())
+	}
+	performerTags.peopleGroup = parsed.get("people_group").asString()
+	performerTags.excludedCategories = map[string]bool{}
+	for _, item := range parsed.get("excluded_categories").arr {
+		performerTags.excludedCategories[item.get("id").asString()] = true
+	}
+	performerTags.nationalityTags = map[string]bool{}
+	for _, item := range parsed.get("nationality_tags").arr {
+		performerTags.nationalityTags[item.get("id").asString()] = true
+	}
+}
 
 // taxonomyMatch mirrors TaxonomyMatch.
 type taxonomyMatch struct {
@@ -131,7 +161,15 @@ func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch,
 	if err := rows.Err(); err != nil {
 		return taxonomyMatch{}, err
 	}
+	return t.resolveExternal(externalIDs, name), nil
+}
 
+// resolveExternal is resolve with the tag's StashDB stash_ids already loaded,
+// for callers that resolve many tags at once.
+func (t *taxonomyIndex) resolveExternal(externalIDs map[string]bool, name string) taxonomyMatch {
+	if t.snapshotID == "" {
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "unmapped"}
+	}
 	known := make([]string, 0)
 	for id := range externalIDs {
 		if _, ok := t.tags[id]; ok {
@@ -140,10 +178,10 @@ func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch,
 	}
 	sort.Strings(known)
 	if len(known) == 1 {
-		return taxonomyMatchFor(t, known[0], "stable_id", 1.0), nil
+		return taxonomyMatchFor(t, known[0], "stable_id", 1.0)
 	}
 	if len(known) > 1 {
-		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_stable_id", ambiguityCount: len(known)}, nil
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_stable_id", ambiguityCount: len(known)}
 	}
 	candidates := make([]string, 0)
 	for id := range t.names[normalizeTagName(name)] {
@@ -151,12 +189,12 @@ func (t *taxonomyIndex) resolve(db dbx, localTagID, name string) (taxonomyMatch,
 	}
 	sort.Strings(candidates)
 	if len(candidates) == 1 {
-		return taxonomyMatchFor(t, candidates[0], "unique_name_or_alias", 0.9), nil
+		return taxonomyMatchFor(t, candidates[0], "unique_name_or_alias", 0.9)
 	}
 	if len(candidates) > 1 {
-		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_name", ambiguityCount: len(candidates)}, nil
+		return taxonomyMatch{snapshotID: t.snapshotID, method: "ambiguous_name", ambiguityCount: len(candidates)}
 	}
-	return taxonomyMatch{snapshotID: t.snapshotID, method: "unmapped"}, nil
+	return taxonomyMatch{snapshotID: t.snapshotID, method: "unmapped"}
 }
 
 // taxonomyMatchFor mirrors TaxonomyIndex._match.
@@ -174,4 +212,67 @@ func taxonomyMatchFor(index *taxonomyIndex, tagID, method string, confidence flo
 		confidence:         confidence,
 		method:             method,
 	}
+}
+
+// performerDescribingTagIDs mirrors taxonomy.store.performer_describing_tag_ids:
+// the local tags (id -> name) whose StashDB tag sits in a PEOPLE-group
+// category other than the excluded ones, or is a listed nationality tag.
+func performerDescribingTagIDs(db dbx, tags map[string]string) (map[string]bool, error) {
+	result := map[string]bool{}
+	index, err := newTaxonomyIndex(db)
+	if err != nil || index.snapshotID == "" || len(tags) == 0 {
+		return result, err
+	}
+	people := map[string]bool{}
+	rows, err := db.Query(`SELECT category_id FROM taxonomy_category WHERE snapshot_id=? AND group_name=?`,
+		index.snapshotID, performerTags.peopleGroup)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var categoryID string
+		if err := rows.Scan(&categoryID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !performerTags.excludedCategories[categoryID] {
+			people[categoryID] = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	externalIDs := map[string]map[string]bool{}
+	idRows, err := db.Query(`SELECT tag_id, endpoint, stash_id FROM source_tag_stash_id`)
+	if err != nil {
+		return nil, err
+	}
+	for idRows.Next() {
+		var tagID, endpoint, stashID string
+		if err := idRows.Scan(&tagID, &endpoint, &stashID); err != nil {
+			idRows.Close()
+			return nil, err
+		}
+		if isStashdbEndpoint(endpoint) {
+			if externalIDs[tagID] == nil {
+				externalIDs[tagID] = map[string]bool{}
+			}
+			externalIDs[tagID][stashID] = true
+		}
+	}
+	idRows.Close()
+	if err := idRows.Err(); err != nil {
+		return nil, err
+	}
+	for tagID, name := range tags {
+		match := index.resolveExternal(externalIDs[tagID], name)
+		if match.externalTagID == "" {
+			continue
+		}
+		if performerTags.nationalityTags[match.externalTagID] || people[match.externalCategoryID] {
+			result[tagID] = true
+		}
+	}
+	return result, nil
 }

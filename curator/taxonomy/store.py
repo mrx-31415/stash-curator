@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -38,6 +39,37 @@ def _load_category_roles() -> tuple[str, dict[str, str]]:
 
 DEFAULT_CATEGORY_ROLE, STASHDB_CATEGORY_ROLES = _load_category_roles()
 ACTIVE_STASHBOX_ENDPOINT = "https://stashdb.org/graphql"
+
+# Which StashDB tags describe the people in a scene rather than the scene. It is
+# a separate resource from the category roles on purpose: it only labels tags for
+# display and never feeds tag roles, features or CATEGORY_ROLE_FINGERPRINT.
+_PERFORMER_TAG_PATH = Path(__file__).with_name("stashdb_performer_tags.json")
+
+
+def _load_performer_tags() -> tuple[str, frozenset[str], frozenset[str]]:
+    payload = json.loads(_PERFORMER_TAG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise RuntimeError("unsupported StashDB performer-tag resource")
+    group = payload.get("people_group")
+    excluded = payload.get("excluded_categories")
+    nationalities = payload.get("nationality_tags")
+    if not isinstance(group, str) or not isinstance(excluded, list):
+        raise RuntimeError("invalid StashDB performer-tag resource")
+    if not isinstance(nationalities, list):
+        raise RuntimeError("invalid StashDB performer-tag resource")
+    ids: list[frozenset[str]] = []
+    for entries in (excluded, nationalities):
+        if not all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in entries):
+            raise RuntimeError("invalid StashDB performer-tag entry")
+        ids.append(frozenset(str(item["id"]) for item in entries))
+    return group, ids[0], ids[1]
+
+
+(
+    PEOPLE_CATEGORY_GROUP,
+    PEOPLE_EXCLUDED_CATEGORY_IDS,
+    NATIONALITY_TAG_IDS,
+) = _load_performer_tags()
 PERFORMER_ATTRIBUTE_CATEGORY_IDS = frozenset(
     category_id
     for category_id, role in STASHDB_CATEGORY_ROLES.items()
@@ -198,6 +230,35 @@ class TaxonomyIndex:
         category_id, _ = self.tags[tag_id]
         role = STASHDB_CATEGORY_ROLES.get(category_id or "", DEFAULT_CATEGORY_ROLE)
         return TaxonomyMatch(self.snapshot_id, role, tag_id, category_id, method, confidence)
+
+
+def performer_describing_tag_ids(
+    connection: sqlite3.Connection, tags: Iterable[tuple[str, str | None]]
+) -> set[str]:
+    """Return the local tags whose StashDB tag describes who is in the scene.
+
+    That is a tag in a PEOPLE-group category other than Clothing, or one of the
+    nationality tags StashDB files under Misc. Without a taxonomy snapshot
+    nothing matches; callers add tags whose own role is performer_attribute.
+    """
+    index = TaxonomyIndex(connection)
+    if index.snapshot_id is None:
+        return set()
+    people = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT category_id FROM taxonomy_category WHERE snapshot_id=? AND group_name=?",
+            (index.snapshot_id, PEOPLE_CATEGORY_GROUP),
+        )
+    } - PEOPLE_EXCLUDED_CATEGORY_IDS
+    result: set[str] = set()
+    for tag_id, name in tags:
+        match = index.resolve(tag_id, name)
+        if match is None or match.external_tag_id is None:
+            continue
+        if match.external_tag_id in NATIONALITY_TAG_IDS or match.external_category_id in people:
+            result.add(tag_id)
+    return result
 
 
 def _normalize(value: str) -> str:
