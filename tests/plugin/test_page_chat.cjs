@@ -24,7 +24,7 @@ function load(pick = cycling()) {
     RANKING_TRAIT_NAMES: { redhead: ["redheads", "gingers"] },
     operation: async () => globalThis.profile,
   });
-  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, pageChatSceneQuery, pageChatSceneShelf, pageChatPerformerShelf, pageChatUsualTag, pageChatInsightsShelf, pageChatInsightsNote, pageChatDay, pageChatContentTags, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
+  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, pageChatSceneQuery, pageChatSceneShelf, pageChatPerformerShelf, pageChatUsualTag, pageChatInsightsShelf, pageChatInsightsNote, pageChatDay, pageChatContentTags, pageChatPitchLog, pageChatFollowUp, pageChatFollowed, pageChatShare, pageChatOf, pageChatLength, PAGE_CHAT_JOINED, PAGE_CHAT_CLAUSES, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
   return context.chat;
 }
 
@@ -56,18 +56,28 @@ test("a reload inside a visit keeps its greeting and the visit before it", () =>
   assert.equal(pageChatVisit({ ...greeted, lanes: ["best_bets"] }, now + DAY).visit.lanes.length, 0);
 });
 
-test("the welcome follows up with what's true, new scenes weighted highest", () => {
+test("the welcome greets only with something concrete to follow", () => {
   const { pageChatWelcome } = load();
   const now = new Date(2026, 10, 4, 20).getTime();
   const visit = { previous: now - 4 * DAY, streak: 5 };
   const first = () => 0;
-  assert.equal(pageChatWelcome(visit, { count: 12 }, now, first)[0].key, "days");
-  assert.equal(pageChatWelcome(visit, { count: 12 }, now, first)[1].key, "newScenes");
-  assert.equal(pageChatWelcome(visit, { count: 12, regular: "Ann" }, now, first)[1].values.p, "Ann");
-  assert.equal(pageChatWelcome(visit, { count: 0 }, now, first)[1].key, "streak");
-  assert.equal(pageChatWelcome(visit, { count: 0 }, now, () => 0.99)[1].key, "evening");
-  assert.equal(pageChatWelcome({ previous: null, streak: 1 }, {}, now, first)[0].key, "first");
-  assert.equal(pageChatWelcome({ previous: now - 3600000, streak: 1 }, {}, now, first).length, 1);
+  const long = [3, { key: "longOne", scene: 2, values: { r: "Third", m: 40 } }];
+  const word = [1, { key: "unplayed", values: { n: 3 } }];
+  assert.equal(pageChatWelcome(visit, { count: 12 }, [], now, first)[0].key, "days");
+  assert.equal(pageChatWelcome(visit, { count: 12 }, [], now, first)[1].key, "newScenes");
+  assert.equal(pageChatWelcome(visit, { count: 12, regular: "Ann" }, [], now, first)[1].values.p, "Ann");
+  assert.equal(pageChatWelcome(visit, { count: 0 }, [], now, first)[1].key, "streak");
+  // An evening visit can point at a long one; a morning one wants a short one.
+  const evening = pageChatWelcome(visit, { count: 0 }, [long, word], now, () => 0.6)[1];
+  assert.equal(evening.key, "longHour");
+  assert.equal(evening.values.r, "Third");
+  assert.equal(pageChatWelcome(visit, { count: 0 }, [long, word], now - 10 * 3600000, () => 0.99)[1].key, "unplayed");
+  // Nothing concrete: no greeting at all.
+  assert.equal(pageChatWelcome({ previous: now - 4 * DAY, streak: 1 }, { count: 0 }, [], now, first).length, 0);
+  assert.equal(pageChatWelcome({ previous: null, streak: 1 }, {}, [], now, first)[0].key, "first");
+  // Back within hours: no greeting, only news.
+  assert.equal(pageChatWelcome({ previous: now - 3600000, streak: 5 }, {}, [word], now, first).length, 0);
+  assert.deepEqual(pageChatWelcome({ previous: now - 3600000, streak: 5 }, { count: 2 }, [word], now, first).map((line) => line.key).join(), "newScenes");
 });
 
 test("a lane talks about what its shelf holds", () => {
@@ -83,18 +93,46 @@ test("a lane talks about what its shelf holds", () => {
     { id: 4, title: "Fourth", play_count: 0, performers: [], studio: { name: "South" }, files: [{ duration: 700 }] },
   ];
   const facts = new Map(scenes.map((scene) => [String(scene.id), scene]));
-  const items = scenes.map((scene) => ({ scene_id: scene.id }));
+  // Each card's score: Ann and the content carry it about equally.
+  const components = {
+    performer_identity: { value: 0.25, performers: [{ performer_id: "1", value: 0.5 }] },
+    content: { value: 0.25, top: [{ value: 0.2, metadata: { tag_name: "Lace", tag_id: "10" } }, { value: 0.1, metadata: { tag_name: "Rain", tag_id: "11" } }] },
+  };
+  const items = scenes.map((scene) => ({ scene_id: scene.id, components }));
   const keys = (options) => Array.from(options, ([, spec]) => spec.key).sort();
-  assert.deepEqual(keys(pageChatShelf("for_you", items, facts, {}, now)), ["mostPlayed", "performerRun", "quick", "studioRun", "topPick", "unplayed", "unplayedOne"]);
+  const shelf = pageChatShelf("for_you", items, facts, {}, now);
+  assert.deepEqual(keys(shelf), ["laneTag", "mostPlayed", "performerRun", "quick", "studioRun", "topPick", "unplayed", "unplayedOne"]);
+  // A card a line suggests links to its page and says why it's there.
+  const top = shelf.find(([, spec]) => spec.key === "topPick")[1];
+  assert.equal(top.links.r, "/scenes/1");
+  assert.deepEqual(plain(top.because.values), { p: "Ann", t: "Lace" });
+  assert.deepEqual(plain(top.because.links), { p: "/performers/1", t: "/tags/10" });
+  // The fourth card has no Ann: its content carries it.
+  const bare = new Map(facts);
+  bare.set("1", { ...facts.get("1"), performers: [] });
+  assert.equal(pageChatShelf("for_you", items, bare, {}, now).find(([, spec]) => spec.key === "topPick")[1].because.key, "whyTags");
+  // Without a reason, a card isn't suggested at all.
+  const reasonless = scenes.map((scene) => ({ scene_id: scene.id }));
+  assert.ok(!keys(pageChatShelf("for_you", reasonless, facts, {}, now)).includes("topPick"));
+  // A stretch pick says it's one on purpose.
+  const stretched = items.map((item, index) => (index === 2 ? { ...item, source_lane: "stretch" } : item));
+  assert.equal(pageChatShelf("for_you", stretched, facts, {}, now, () => 0).find(([, spec]) => spec.key === "stretchOne")[1].values.r, "the third one");
   // A card ranked low for its appeal is worth pointing at.
   const ranked = items.map((item, index) => ({ ...item, appeal: index === 3 ? 0.6 : 0.4 }));
   const gem = pageChatShelf("for_you", ranked, facts, {}, now, () => 0).find(([, spec]) => spec.key === "gem");
   assert.equal(gem[1].values.r, "the fourth one");
+  // Only For You mixes lanes; elsewhere the order is the ranking.
+  assert.ok(!pageChatShelf("best_bets", ranked, facts, {}, now, () => 0).some(([, spec]) => spec.key === "gem"));
   const regulars = pageChatShelf("for_you", items, facts, { affinities: { 1: { value: 0.2, basis: "watched" } } }, now);
   assert.equal(regulars.find(([, spec]) => spec.key === "regulars")[1].values.n, 3);
-  const first = pageChatLaneTalk("revisit", items, facts, {}, [], { first: true, random: () => 0 });
-  assert.ok(["revisit", "revisitFact"].includes(first[0].key));
+  // A lane only introduces itself with a named card, else the shelf speaks.
+  assert.equal(pageChatLaneTalk("revisit", items, facts, {}, [], { first: true, random: () => 0 })[0].key, "topPick");
+  const played = new Map(facts);
+  played.set("2", { ...facts.get("2"), last_played_at: new Date(now - 30 * DAY).toISOString() });
+  const first = pageChatLaneTalk("revisit", items, played, {}, [], { first: true, random: () => 0 });
+  assert.equal(first[0].key, "revisitFact");
   assert.equal(first.length, 2);
+  assert.equal(pageChatLaneIntro("best_bets", items, played), null);
   const redraw = pageChatLaneTalk("for_you", items, facts, {}, [], { redraw: true, random: () => 0 });
   assert.equal(redraw[0].key, "freshDraw");
   assert.notEqual(redraw[1].key, "topPick");
@@ -106,9 +144,11 @@ test("a card note says only what is true, the rarer kinds first", () => {
   const { pageChatSceneNote } = load();
   const now = Date.UTC(2026, 10, 4);
   const affinities = { 1: { value: 0.2, basis: "watched" }, 2: { value: 0.03, basis: "guessed" } };
-  const plays = new Map([["1", { plays: 9 }]]);
+  const plays = new Map([["1", { plays: 9, scenes: 3 }], ["3", { plays: 20, scenes: 5 }]]);
   const scene = { play_count: 0, performers: [{ id: 1, name: "Ann" }] };
-  assert.equal(pageChatSceneNote(scene, { affinities, plays, now }).key, "dependable");
+  const dependable = pageChatSceneNote(scene, { affinities, plays, now });
+  assert.equal(dependable.key, "dependable");
+  assert.deepEqual(plain(dependable.values), { p: "Ann", n: 3, m: 9, top: "second most-played" });
   assert.equal(pageChatSceneNote({ ...scene, resume_time: 754 }, { affinities, plays, now }).values.t, "12:34");
   assert.equal(pageChatSceneNote({ play_count: 0, performers: [{ id: 2, name: "Bea" }] }, { affinities, plays, now }).key, "newFace");
   assert.equal(pageChatSceneNote({ play_count: 6, last_played_at: new Date(now - 10 * DAY).toISOString(), performers: [] }, { now }).key, "favourite");
@@ -130,19 +170,31 @@ test("cards are named the way a person would point at them", () => {
   assert.deepEqual([...ways(2)].sort(), ["Third", "that South one", "the third one"]);
   assert.ok(!pageChatRef(1, scenes, () => 0.99, ["performer"]).includes("Bea"));
   assert.equal(pageChatShortTitle("One Two Three Four Five"), null);
+  // Episode and part markers aren't names; the title before them is.
+  assert.equal(pageChatShortTitle("Long Way Home - S21:E9"), "Long Way Home");
+  assert.equal(pageChatShortTitle("Rainy Day Plans: Part Three"), "Rainy Day Plans");
+  assert.equal(pageChatShortTitle("Studio - Night Shift - Vol. 2"), "Night Shift");
+  assert.equal(pageChatShortTitle("Harbour Lights: E04"), "Harbour Lights");
+  assert.equal(pageChatShortTitle("Studio - Episode Twelve Returns"), "Episode Twelve Returns");
+  // Not the scene's own performer, nor a dangling subtitle.
+  assert.equal(pageChatShortTitle("Quiet Sunday - Ann Lee", { performers: [{ name: "Ann Lee" }] }), "Quiet Sunday");
+  assert.equal(pageChatShortTitle("Night Shift: a Comedy - Scene 5"), "Night Shift");
 });
 
 test("a line that won't fit gives way to another from the deck, or to silence", () => {
   const { pageChatLine, PAGE_CHAT_LINES } = load();
-  const longest = Math.max(...PAGE_CHAT_LINES.revisit.map((line) => line.length));
-  const shortest = Math.min(...PAGE_CHAT_LINES.revisit.map((line) => line.length));
-  const short = pageChatLine({ key: "revisit" }, (text) => text.length < longest);
+  const longest = Math.max(...PAGE_CHAT_LINES.day.map((line) => line.length));
+  const shortest = Math.min(...PAGE_CHAT_LINES.day.map((line) => line.length));
+  const short = pageChatLine({ key: "day" }, (text) => text.length < longest);
   assert.ok(short.text.length < longest);
-  assert.equal(pageChatLine({ key: "revisit" }, (text) => text.length < shortest), null);
-  const fact = pageChatLine({ key: "revisitFact", values: { t: "A very long title that will not fit", ago: "x", when: "y" }, fallback: { key: "revisit" } }, (text) => text.length <= shortest);
-  assert.equal(fact.key, "revisit");
+  assert.equal(pageChatLine({ key: "day" }, (text) => text.length < shortest), null);
+  const fact = pageChatLine({ key: "revisitFact", values: { r: "A very long title that will not fit", ago: "x", when: "y" }, fallback: { key: "day" } }, (text) => text.length <= shortest);
+  assert.equal(fact.key, "day");
+  // A line missing a value it needs gives way to one that has them all.
+  const counted = pageChatLine({ key: "dependable", values: { p: "Ann", n: 3, m: 9 } }, () => true);
+  assert.ok(!counted.text.includes("most-played"));
   // In a tight space the fitting lines take turns.
-  const seen = new Set(Array.from({ length: 6 }, () => pageChatLine({ key: "again" }, (text) => text.length < 40).text));
+  const seen = new Set(Array.from({ length: 6 }, () => pageChatLine({ key: "day" }, (text) => text.length < 40).text));
   assert.ok(seen.size > 1);
 });
 
@@ -152,13 +204,14 @@ test("big studios hold at least a fifth of all plays", () => {
     { play_count: 6, studio: { name: "North" } }, { play_count: 20, studio: { name: "South" } }, { play_count: 3, studio: { name: "East" } },
   ]);
   assert.deepEqual([...studios.big].sort(), ["North", "South"]);
+  assert.equal(studios.share.get("South"), 20 / 29);
 });
 
 // A Stash-box scene as get_expand and get_performer_hunt serve it.
 // Objects made inside the VM have another realm's prototype.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-function external(id, { title = `Scene ${id}`, performers = [], studio = null, released = null, ...rest } = {}) {
+function external(id, { title = `Night Out ${id}`, performers = [], studio = null, released = null, ...rest } = {}) {
   return { id: String(id), payload: { title, studio: studio && { name: studio }, release_date: released, performers: performers.map((performer) => ({ performer })) }, ...rest };
 }
 
@@ -210,7 +263,7 @@ test("a hunt counts what you own of the performer's catalogue", () => {
   assert.equal(shelf.get("huntRecent").values.n, 2);
   assert.equal(shelf.get("huntFirst").values.y, 2021);
   // On screen the hunt sorts and filters itself: no "the first one".
-  assert.equal(shelf.get("expandNewRelease").values.r, "Scene 1");
+  assert.equal(shelf.get("expandNewRelease").values.r, "Night Out 1");
   assert.ok(keys(pageChatHuntShelf({ ...data, items: items.map((item) => ({ ...item, linked_locally: true })) }, {}, now)).has("huntComplete"));
   assert.ok(keys(pageChatHuntShelf({ ...data, items: items.slice(1) }, {}, now)).has("huntNone"));
   assert.equal(pageChatHuntShelf({ items: [] }, {}, now).length, 0);
@@ -268,9 +321,9 @@ test("every line a view can say has a deck and a face", () => {
   const { PAGE_CHAT_LINES, PAGE_CHAT_MOODS } = load();
   for (const key of Object.keys(PAGE_CHAT_LINES)) {
     assert.ok(PAGE_CHAT_LINES[key].length, key);
-    if (key !== "off" && !["first", "again", "day", "days", "weeks", "streak", "newScenes", "newScene", "morning", "afternoon", "evening", "night"].includes(key)) assert.ok(PAGE_CHAT_MOODS[key], `${key} has no mood`);
+    if (key !== "off") assert.ok(PAGE_CHAT_MOODS[key], `${key} has no mood`);
   }
-  for (const section of ["questions", "reasons", "sentiment", "progress"]) assert.ok(PAGE_CHAT_LINES[`curate_${section}`], section);
+  for (const key of Object.keys(PAGE_CHAT_MOODS)) assert.ok(PAGE_CHAT_LINES[key], `${key} has a face but no deck`);
 });
 
 // A synthetic scene page: Ann (a regular) and Bea (never played) in a
@@ -417,12 +470,12 @@ test("Insights talks about the taste summary and a row's peak", () => {
   };
   const scenes = new Map([["5", { title: "Series: Return" }]]);
   const shelf = new Map(pageChatInsightsShelf(summary, scenes, NOW).map(([, spec]) => [spec.key, spec]));
-  assert.deepEqual(plain(shelf.get("insightTop").values), { t: "Lace", pct: "30%", n: "200" });
+  assert.deepEqual(plain(shelf.get("insightTop").values), { t: "Lace", pct: "just under a third", n: "200" });
   assert.deepEqual(plain(shelf.get("insightRising").values), { t: "Rain", a: "12%", b: "31%" });
   assert.deepEqual(plain(shelf.get("insightAgrees").values), { t: "Rain", pct: "15%" });
   assert.equal(shelf.get("insightDormant").values.p, "Ann");
   assert.deepEqual(plain(shelf.get("insightRediscovered").values), { r: "Return", m: 14 });
-  assert.equal(shelf.get("insightCoverage").values.pct, "25%");
+  assert.equal(shelf.get("insightCoverage").values.pct, "about a quarter");
   assert.equal(pageChatInsightsNote(summary, "like:10").key, "insightPeak");
   assert.equal(pageChatInsightsNote(summary, "like:10").values.pct, "40%");
   assert.equal(pageChatInsightsNote(summary, "like:11").key, "insightPeakNow");
@@ -432,7 +485,7 @@ test("Insights talks about the taste summary and a row's peak", () => {
 
 test("every scene, performer and Insights line fills completely", () => {
   const { PAGE_CHAT_LINES, pageChatLine } = load();
-  const values = { newest: "the newest", one: "one", p: "Ann", pf: "Ann", q: "Cy", qf: "Cy", kn: "3 of the 4", o: "only 1 of the other 6", more: "2 more are", waiting: "2 Ann scenes are", t: "Lace", s: "North", r: "Closing", x: "Lace", n: 3, m: 7, k: 2, u: 2, d: 4, all: 9, a: "4%", b: "18%", pct: "30%", when: "on Sunday", since: "March", ago: "3 days ago", trait: "redheads" };
+  const values = { newest: "the newest", one: "one", p: "Ann", pf: "Ann", q: "Cy", qf: "Cy", kn: "3 of the 4", o: "only 1 of the other 6", more: "2 more are", waiting: "2 Ann scenes are", t: "Lace", s: "North", r: "Closing", x: "Lace", t2: "Rain", t3: "Silk", n: 3, m: 7, k: 2, u: 2, d: 4, all: 9, a: "4%", b: "18%", pct: "30%", when: "on Sunday", since: "March", ago: "3 days ago", trait: "redheads" };
   const keys = Object.keys(PAGE_CHAT_LINES).filter((key) => /^(scene[A-Z]|performer[A-Z]|insight)/.test(key));
   assert.ok(keys.length > 30);
   for (const key of keys) {
@@ -477,7 +530,7 @@ test("a performer page finds what you pick them in: a co-star, a studio, a go-to
   const dee = { id: "4", name: "Dee Lane" };
   const north = { id: "7", name: "North" };
   const south = { id: "8", name: "South" };
-  const scene = (id, plays, partner, studio, title = `Series: Part ${id}`) => ({
+  const scene = (id, plays, partner, studio, title = `Series: Take ${id}`) => ({
     id, title, play_count: plays, last_played_at: plays ? ago(20 + Number(id)) : null, created_at: ago(300),
     tags: [], performers: [ann, partner], studio,
   });
@@ -491,9 +544,9 @@ test("a performer page finds what you pick them in: a co-star, a studio, a go-to
   assert.equal(shelf.get("performerCoStar").spec.values.b, "none");
   assert.equal(shelf.get("performerCoStar").spec.links.q, "/performers/3");
   assert.equal(shelf.get("performerStudio").spec.values.s, "North");
-  assert.deepEqual(plain(shelf.get("performerGoTo").spec.values).r, "Part 1");
+  assert.deepEqual(plain(shelf.get("performerGoTo").spec.values).r, "Take 1");
   assert.equal(shelf.get("performerGoTo").spec.links.r, "/scenes/1");
-  assert.equal(shelf.get("performerLast").spec.values.r, "Part 1");
+  assert.equal(shelf.get("performerLast").spec.values.r, "Take 1");
   assert.equal(shelf.get("performerBacklog").spec.values.u, 12);
   // The plain count is the fallback, outweighed by anything specific.
   assert.ok(shelf.get("performerRegular").weight < Math.min(...[...shelf.values()].filter((entry) => entry.spec.key !== "performerRegular").map((entry) => entry.weight)));
@@ -523,4 +576,187 @@ test("counts of times read naturally", () => {
   const { pageChatLine } = load();
   assert.match(pageChatLine({ key: "sceneNeighbor", values: { r: "Closing", n: 2 } }, (text) => text.includes("times") || text.includes("twice")).text, /twice/);
   assert.doesNotMatch(pageChatLine({ key: "sceneNeighbor", values: { r: "Closing", n: 2 } }, () => true).text, /\b2 times\b/);
+});
+
+test("the scene page reads its reasons off the parts of the model's score", () => {
+  const { pageChatSceneShelf } = load();
+  const data = { total: { count: 20 }, mine: { scenes: [] }, recent: { scenes: [] } };
+  const keys = (scene, details) => new Map(pageChatSceneShelf(scene, details, data, NOW).map(([, spec]) => [spec.key, spec]));
+  const feature = (tag, value, declared, learned) => ({ value, metadata: { tag_name: tag.name, tag_id: tag.id }, affinity_metadata: { declared_preference: declared, learned_affinity: learned } });
+  // Ann carries it: without her 0.3 the scene would score 0.1. A tag you
+  // refused in Curate is in it, so that's said instead.
+  const carried = pageDetails({ score: { appeal: 0.4 } });
+  Object.assign(carried.score.components, {
+    performer_identity: { value: 0.3, performers: [{ performer_id: "1", value: 0.5, learned: 0.4, prior: 0 }] },
+    content: { value: 0.05, top: [feature(lace, 0.1, 0.5, 0.05), feature(rain, -0.2, -1, -0.6)] },
+  });
+  const despite = keys(pageScene(), carried);
+  assert.deepEqual(plain(despite.get("sceneDespite").values), { x: "Rain", p: "Ann" });
+  assert.deepEqual(plain(despite.get("sceneDespite").links), { x: "/tags/11", p: "/performers/1" });
+  assert.ok(!despite.has("sceneCarriedPerformer"));
+  // Lace was a yes in Curate, but the plays hardly show it.
+  assert.deepEqual(plain(despite.get("sceneSaidRarely").values), { t: "Lace" });
+  carried.score.components.content.top = [feature(lace, 0.1, 0, 0.3)];
+  assert.equal(keys(pageScene(), carried).get("sceneCarriedPerformer").values.pf, "Ann");
+  // No cast pull: the content sells it, and a played twin shares its tags.
+  const content = pageDetails({ score: { appeal: 0.6 } });
+  Object.assign(content.score.components, {
+    performer_identity: { value: 0, performers: [] },
+    content: { value: 0.25, top: [feature(lace, 0.2, 1, 0.6), feature(rain, 0.1, 0, 0.2)] },
+    content_neighbor: { value: 0.1 },
+    structure: { top: [{ name: "multiple_performers", value: -0.05, metadata: { performer_count: 3 } }] },
+  });
+  content.explanation = { reasons: [{ code: "appeal.content_neighbor", detail: { neighbors: [
+    { scene_id: "60", title: "Series: Closing", outcome: 0.8, similarity: 0.9, shared_tags: ["Lace", "Rain"] },
+    { scene_id: "61", title: "Disliked", outcome: -0.2, similarity: 0.95, shared_tags: ["Lace", "Rain"] },
+  ] } }] };
+  const sold = keys(pageScene(), content);
+  assert.deepEqual(plain(sold.get("sceneCarriedContent").values), { t: "Lace", t2: "Rain" });
+  assert.deepEqual(plain(sold.get("sceneTwin").values), { r: "Closing", t: "Lace", t2: "Rain" });
+  assert.equal(sold.get("sceneTwin").links.r, "/scenes/60");
+  assert.deepEqual(plain(sold.get("sceneSaidMeant").values), { t: "Lace" });
+  assert.deepEqual(plain(sold.get("sceneCrowd").values), { k: 3 });
+  // A favourite your plays don't back up.
+  const favourite = pageDetails();
+  favourite.score.components.performer_identity = { value: 0.1, performers: [{ performer_id: "1", value: 0.2, learned: 0.01, prior: 0.2 }] };
+  const scene = pageScene({ performers: [{ ...ann, favorite: true }, bea] });
+  assert.equal(keys(scene, favourite).get("sceneFavouriteLukewarm").values.p, "Ann");
+});
+
+test("a card's reason follows as its own sentence, capitalised and linked once", () => {
+  const { pageChatLine } = load();
+  const spec = {
+    key: "longOne", values: { r: "that North one", m: "40 minutes" }, links: { r: "/scenes/5" },
+    because: { key: "whyPerformer", values: { p: "Ann" }, links: { p: "/performers/1" } },
+  };
+  const line = pageChatLine(spec, () => true);
+  assert.match(line.text, /^That North one .*\. (It's Ann, mostly|That's Ann's doing|Ann is why)\.$/);
+  assert.deepEqual(plain(line.links).map((range) => [line.text.slice(range.start, range.end), range.to]), [["That North one", "/scenes/5"], ["Ann", "/performers/1"]]);
+  // Too long with its reason: the line without it, if the kind allows.
+  const short = pageChatLine({ ...spec, fallback: { key: "longOne", values: spec.values, links: spec.links } }, (text) => text.length < 60);
+  assert.ok(!short.text.includes("Ann"));
+});
+
+test("a lane talks about how it was put together, not only about single cards", () => {
+  const { pageChatShelf } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const lace = { value: 0.2, metadata: { tag_name: "Lace", tag_id: "10" }, affinity_metadata: { declared_preference: 0.5 } };
+  const rain = { value: 0.1, metadata: { tag_name: "Rain", tag_id: "11" }, affinity_metadata: { declared_preference: 0 } };
+  const silk = { value: 0.1, metadata: { tag_name: "Silk", tag_id: "12" }, affinity_metadata: { declared_preference: 0 } };
+  const scenes = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, title: `Night ${index + 1}`, play_count: 0, performers: [] }));
+  const facts = new Map(scenes.map((scene) => [String(scene.id), scene]));
+  const sources = ["best_bets", "best_bets", "best_bets", "revisit", "stretch", "new_arrivals"];
+  const items = scenes.map((scene, index) => ({
+    scene_id: scene.id, source_lane: sources[index],
+    components: { performer_identity: { value: 0 }, content: { value: 0.3, top: index < 4 ? [lace, rain] : [silk, rain] } },
+  }));
+  const said = new Map(pageChatShelf("for_you", items, facts, {}, now).map(([, spec]) => [spec.key, spec]));
+  assert.equal(said.get("laneMix").values.mix, "3 safe bets, a revisit, a new arrival and a stretch");
+  // Lace is a Curate yes behind four cards; Rain is behind all six.
+  assert.deepEqual(plain(said.get("laneCurate").values), { t: "Lace", n: 4 });
+  assert.deepEqual(plain(said.get("laneCurate").links), { t: "/tags/10" });
+  assert.deepEqual(plain(said.get("laneTag").values), { t: "Rain", n: "all" });
+  assert.equal(said.get("laneContentOnly").values.n, "all");
+  // Only For You is a mix.
+  assert.ok(!pageChatShelf("best_bets", items, facts, {}, now).some(([, spec]) => spec.key === "laneMix"));
+});
+
+test("a suggested scene gets a word on a later visit about how it went", () => {
+  const { pageChatPitchLog, pageChatFollowUp, pageChatFollowed, pageChatLine } = load();
+  const now = new Date(2026, 10, 4, 20).getTime();
+  const sunday = new Date(2026, 10, 1, 21).getTime();
+  const scene = (id, extra) => ({ id, title: `Night Out ${id}`, play_count: 1, resume_time: 0, files: [{ duration: 1800 }], performers: [], ...extra });
+  let log = {};
+  for (const id of [1, 2, 3]) log = pageChatPitchLog(log, { id, plays: 1, resume: 0 }, sunday, sunday);
+  // The same visit doesn't count twice; three visits do.
+  log = pageChatPitchLog(log, { id: 3, plays: 1, resume: 0 }, sunday, sunday + 60000);
+  log = pageChatPitchLog(log, { id: 3, plays: 1, resume: 0 }, sunday + DAY, sunday + DAY);
+  log = pageChatPitchLog(log, { id: 3, plays: 1, resume: 0 }, sunday + 2 * DAY, sunday + 2 * DAY);
+  assert.equal(log[3].times, 3);
+  const facts = (...scenes) => new Map(scenes.map((each) => [String(each.id), each]));
+  // Played twice since: that wins over the rest.
+  const replayed = pageChatFollowUp(log, facts(scene(1, { play_count: 3 }), scene(2, { resume_time: 900 }), scene(3)), now, now);
+  assert.equal(replayed.key, "followReplayed");
+  assert.deepEqual(plain(replayed.values), { r: "Night Out 1", n: 2, when: "on Sunday" });
+  assert.equal(replayed.links.r, "/scenes/1");
+  const partial = pageChatFollowUp(log, facts(scene(1), scene(2, { resume_time: 900 }), scene(3)), now, now);
+  assert.equal(partial.values.at, "about halfway in");
+  const passed = pageChatFollowUp(log, facts(scene(1), scene(2), scene(3)), now, now);
+  assert.deepEqual([passed.key, passed.values.n, passed.passed], ["followPassed", 3, true]);
+  // Nothing new: no line. Not within the visit that made the suggestion.
+  assert.equal(pageChatFollowUp({ 1: log[1] }, facts(scene(1)), now, now), null);
+  assert.equal(pageChatFollowUp({ 1: log[1] }, facts(scene(1, { play_count: 2 })), sunday, now), null);
+  // Said once, then done with; passed stays remembered.
+  const line = pageChatLine(passed, () => true);
+  assert.equal(line.follow, "3");
+  const after = pageChatFollowed(pageChatFollowed(log, pageChatLine(replayed, () => true)), line);
+  assert.equal(after[1].followed, true);
+  assert.equal(after[3].passed, true);
+  assert.equal(pageChatFollowUp(after, facts(scene(1, { play_count: 5 }), scene(3)), now, now), null);
+  // A fresh suggestion after a follow-up starts over; old ones expire.
+  assert.equal(pageChatPitchLog(after, { id: 1, plays: 3 }, now, now)[1].plays, 3);
+  assert.equal(Object.keys(pageChatPitchLog(log, null, null, sunday + 60 * DAY)).length, 0);
+  assert.ok(pageChatPitchLog(after, null, null, sunday + 60 * DAY)[3]);
+});
+
+test("only lines that suggest a scene log it, and a passed scene isn't suggested again", () => {
+  const { pageChatShelf, pageChatLine } = load();
+  const now = Date.UTC(2026, 10, 4);
+  const scenes = Array.from({ length: 4 }, (_, index) => ({ id: index + 1, title: `Night Out ${index + 1}`, play_count: 0, performers: [{ id: "7", name: "Ann Lee" }] }));
+  const facts = new Map(scenes.map((scene) => [String(scene.id), scene]));
+  const items = scenes.map((scene) => ({
+    scene_id: scene.id, appeal: 0.6, source_lane: "best_bets",
+    components: { performer_identity: { value: 0.3, performers: [{ performer_id: "7", value: 0.3 }] }, content: { value: 0 } },
+  }));
+  const top = pageChatShelf("best_bets", items, facts, {}, now).find(([, spec]) => spec.key === "topPick")[1];
+  assert.deepEqual(plain(pageChatLine(top, () => true).pitch), { id: 1, plays: 0 });
+  assert.equal(pageChatLine({ key: "mostPlayed", values: { r: "x", n: 4 }, pitch: { id: 1 } }, () => true).pitch, undefined);
+  const passed = pageChatShelf("best_bets", items, facts, { passed: new Set(["1"]) }, now);
+  assert.ok(!passed.some(([, spec]) => spec.key === "topPick"));
+});
+
+test("a reason can join its suggestion as one sentence", () => {
+  const { pageChatLine, PAGE_CHAT_JOINED, PAGE_CHAT_CLAUSES, PAGE_CHAT_LINES } = load();
+  const spec = {
+    key: "topPick", values: { r: "That North one" }, links: { r: "/scenes/5" },
+    because: { key: "whyPerformer", values: { p: "Ann" }, links: { p: "/performers/1" } },
+  };
+  const texts = Array.from({ length: 10 }, () => pageChatLine(spec, () => true));
+  // Both shapes turn up; a clause mid-sentence stays lower case.
+  assert.ok(texts.some((line) => /^I'd open with That North one, because (Ann is in it|it has Ann|it's got Ann)\.$/.test(line.text)));
+  assert.ok(texts.some((line) => /\. (It's Ann, mostly|That's Ann's doing|Ann is why)\.$/.test(line.text)));
+  const joined = texts.find((line) => line.text.startsWith("I'd open with"));
+  assert.deepEqual(plain(joined.links).map((range) => joined.text.slice(range.start, range.end)), ["That North one", "Ann"]);
+  // A title that ends in "!" takes no full stop after it.
+  const shouted = Array.from({ length: 5 }, () => pageChatLine({ key: "topPick", values: { r: "Lights, Action!" } }, () => true).text);
+  assert.ok(shouted.includes("I'd open with Lights, Action!"));
+  assert.ok(!shouted.some((text) => text.includes("!.")));
+  // Every joined deck has a reason slot, and every clause fills one.
+  for (const [key, lines] of Object.entries(PAGE_CHAT_JOINED)) {
+    assert.ok(PAGE_CHAT_LINES[key], `${key} joins but has no deck`);
+    for (const line of lines) assert.match(line, /\{c\}/);
+  }
+  for (const lines of Object.values(PAGE_CHAT_CLAUSES)) for (const line of lines) assert.doesNotMatch(line, /^[A-Z]|\.$/);
+});
+
+test("a line doesn't open the way the last two did when another fits", () => {
+  const { pageChatLine } = load();
+  const opener = (line) => (line.text.startsWith("Mostly") ? "mostly" : line.text.startsWith("Short") ? "short" : "other");
+  const said = Array.from({ length: 6 }, () => opener(pageChatLine({ key: "quick", values: { m: 9 } }, () => true)));
+  assert.deepEqual(said, ["mostly", "short", "mostly", "short", "mostly", "short"]);
+  // A deck with one opening still talks.
+  assert.ok(pageChatLine({ key: "off" }, () => true));
+});
+
+test("numbers come out the way a person says them", () => {
+  const { pageChatShare, pageChatOf, pageChatLength, pageChatLine } = load();
+  assert.deepEqual([0.5, 0.33, 0.36, 0.64, 0.75, 0.97, 1, 0.45, 0.04, 0.15, 0.2].map(pageChatShare),
+    ["half", "about a third", "just over a third", "just under two thirds", "about three quarters", "nearly all", "all", "45%", "4%", "15%", "about a fifth"]);
+  assert.deepEqual([[12, 12], [6, 12], [11, 12], [5, 12], [2, 3]].map(([n, all]) => pageChatOf(n, all)), ["all", "half", "all but one", 5, 2]);
+  assert.deepEqual([1, 12, 37, 60, 92, 118, 150, 165].map((m) => pageChatLength(m)),
+    ["a minute", "12 minutes", "37 minutes", "an hour", "an hour and a half", "two hours", "two and a half hours", "nearly three hours"]);
+  assert.deepEqual([37, 87].map((m) => pageChatLength(m, true)), ["35 minutes", "an hour and a half"]);
+  // Big play counts round down; round ones stay.
+  assert.match(pageChatLine({ key: "mostPlayed", values: { r: "Closing", n: 137 } }, () => true).text, /over 130 (plays|times)/);
+  assert.match(pageChatLine({ key: "mostPlayed", values: { r: "Closing", n: 120 } }, () => true).text, /\b120 (plays|times)/);
 });

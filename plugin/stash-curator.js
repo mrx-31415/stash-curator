@@ -10724,32 +10724,23 @@
       "Hi, I'm Curator. I'll leave the odd note here.",
       "Hello! I'll chip in here now and then.",
     ],
-    again: [
-      "Back already? Good, I kept a few warm.",
-      "Round two! Same picks, fresh eyes.",
-      "Oh, hi again.",
-      "Couldn't stay away? Fair.",
-    ],
     day: [
-      "Welcome back! I've got some good picks in store.",
       "Hey, welcome back.",
       "Good to see you again.",
-      "Back on schedule, I see.",
+      "Back again, I see.",
     ],
     days: [
-      "{d} days! I've been saving some good ones.",
-      "There you are. {d} days, plenty to catch up on.",
+      "There you are. {d} days!",
       "Welcome back! It's been {d} days.",
-      "Hey, it's been a few days.",
+      "{d} days. Hello again!",
     ],
     weeks: [
       "{d} days! I missed you.",
-      "Long time no see! Let's ease back in.",
-      "Welcome back, it's been a while.",
+      "There you are, {d} days later.",
     ],
     streak: [
       "{n} days in a row. I'm getting the hang of you.",
-      "Day {n} running. Your picks get sharper every visit.",
+      "Day {n} running.",
       "{n} days straight! I like it.",
     ],
     newScenes: [
@@ -10761,64 +10752,19 @@
       "One new scene since your last visit.",
       "Something new landed while you were away.",
     ],
-    night: [
-      "Late one tonight? I'll keep it dependable.",
-      "Can't sleep? I've got just the thing.",
-      "Burning the midnight oil, I see.",
+    shortHour: [
+      "Late one? {r} only runs {m}.",
+      "Bit early for it, but {r} is just {m}.",
+      "Quick break? {r} runs {m}.",
     ],
-    morning: [
-      "Bit early, isn't it? No judgement.",
-      "Morning! Straight in, then.",
-      "Early start today.",
-    ],
-    afternoon: [
-      "An afternoon visit, nice.",
-      "Afternoon break? Good timing.",
-    ],
-    evening: [
-      "Evening, your usual slot.",
-      "Settling in for the evening?",
-      "Evening! Let's find you something good.",
-    ],
-    for_you: [
-      "Today's best guesses, with a little discovery mixed in.",
-      "If you only watch one, I'd start at the top.",
-      "A bit of everything you like.",
-    ],
-    best_bets: [
-      "Safe hands. I'd be surprised if these miss.",
-      "My most confident picks, none watched yet.",
-      "Dependable choices only.",
-    ],
-    new_arrivals: [
-      "Fresh in. I haven't seen you react to most of these.",
-      "New in your library, sorted by how sure I am.",
-      "Brand new. Be the judge, I'm taking notes.",
-    ],
-    revisit: [
-      "You really liked these before. Maybe a revisit today?",
-      "Old favourites, rested long enough.",
-      "Comfort viewing, anyone?",
+    longHour: [
+      "Got the evening? {r} runs {m}.",
+      "If you've got time tonight, {r} runs {m}.",
     ],
     revisitFact: [
       "{r} last got a play {ago}. Time for another?",
       "{r} hasn't had a play since {when}.",
       "Remember {r}? Not played since {when}.",
-    ],
-    stretch: [
-      "Mostly your taste, with one twist. Humour me?",
-      "A bit outside your usual. Tell me if I'm onto something.",
-      "Slightly off your beaten track.",
-    ],
-    blind_spots: [
-      "Corners of your library you've barely touched.",
-      "Blind spots. Any reaction here teaches me a lot.",
-      "Places you rarely go. Curious?",
-    ],
-    dormant: [
-      "Things you used to watch a lot, parked for a while.",
-      "Old habits, resting. Ready to pick one back up?",
-      "Remember these? You used to be into them.",
     ],
     resume: [
       "You stopped at {t} last time. Pick it up?",
@@ -10826,29 +10772,28 @@
     ],
     staleFavourite: [
       "Watched {n} times, but not since {when}.",
-      "An old favourite. Last played {ago}.",
+      "An old favourite, {n} plays, the last {ago}.",
     ],
     favourite: [
-      "{n} plays so far. A proper favourite.",
-      "You keep coming back to this one.",
+      "{n} plays so far, the last {when}. A proper favourite.",
+      "This one's had {n} plays from you. The last was {when}.",
     ],
     dependable: [
-      "{p} is a dependable choice for you.",
-      "{p} again? Never a bad call.",
-      "You rarely skip a {p} scene.",
+      "{p} is in this one, your {top} performer.",
+      "There's {p}: {m} plays across {n} of their scenes.",
+      "{p} again. You've given them {m} plays.",
     ],
     newFace: [
-      "You've never watched {p}, but similar faces are your thing.",
       "{p} is new to you. Curious what you'll think.",
-      "New face, but very much your type.",
+      "You've never played a {p} scene. This could be the first.",
     ],
     fresh: [
       "Added {ago}. You're the first to see it.",
-      "Brand new in your library.",
+      "Only landed {ago}, not played yet.",
     ],
     studio: [
-      "{s} is a big part of what you watch.",
-      "Classic {s}. That's so you.",
+      "{s} again. That studio gets {pct} of your plays.",
+      "Another {s}. That's {pct} of what you play.",
     ],
     off: [
       "Okay, I'll keep quiet. Manage › Settings brings me back.",
@@ -10861,15 +10806,19 @@
       "Starting strong with {r}.",
     ],
     gem: [
-      "Don't sleep on {r}, I rate it higher than its spot.",
-      "Psst, {r} is better than its spot suggests.",
-      "Keep an eye on {r}. Sneaky good.",
-      "{r} is hiding a bit low. I like it more than that.",
+      "This lane mixes in other picks, so don't skip {r} further down. It's one of my surest bets.",
+      "The order here is a mix, and {r} got pushed down. I'm surer of it than of the top one.",
+      "{r} sits low because I shuffle a few kinds of pick together. It's one of my strongest.",
+    ],
+    stretchOne: [
+      "I slipped {r} in as a stretch, a bit off your usual.",
+      "{r} is my wildcard here, outside what you normally pick.",
+      "{r} is a deliberate stretch. Tell me if I'm onto something.",
     ],
     spotlight: [
-      "{p} is in {r}. One of your regulars.",
-      "There's {p} in {r}, if you're in the mood.",
-      "{r} has {p}. You know how that goes.",
+      "{p} is in {r}: {m} plays across {n} of their scenes so far.",
+      "There's {p} in {r}, your {top} performer.",
+      "{r} has {p}, who you've given {m} plays.",
     ],
     unplayedOne: [
       "{r} is one you've never played.",
@@ -10877,12 +10826,12 @@
       "{r} is still new to you.",
     ],
     quickOne: [
-      "{r} is a quick one, {m} minutes.",
-      "Short on time? {r} runs {m} minutes.",
+      "{r} is a quick one, {m}.",
+      "Short on time? {r} runs {m}.",
     ],
     longOne: [
-      "{r} is a long one, {m} minutes. Settle in.",
-      "Got time? {r} runs {m} minutes.",
+      "{r} is a long one, {m}. Settle in.",
+      "Got time? {r} runs {m}.",
     ],
     performerRun: [
       "{p} turns up {n} times in here.",
@@ -10890,9 +10839,9 @@
       "{n} with {p} in this lot.",
     ],
     regulars: [
-      "{p} is in {n} of these. Can't go wrong.",
-      "Plenty of {p} here, one of your regulars.",
-      "{n} with {p}. You know how that goes.",
+      "{p} is in {n} of these, your {top} performer.",
+      "Plenty of {p} here: {n} of these, after {m} plays from you.",
+      "{n} with {p}, who you've played {m} times.",
     ],
     studioRun: [
       "Lots of {s} in here today.",
@@ -10901,20 +10850,20 @@
     ],
     unplayed: [
       "{n} of these you've never played.",
-      "{n} unwatched ones in this lot.",
-      "{n} here are new to you.",
+      "You've never played {n} of these.",
+      "{n} of these are new to you.",
     ],
     replays: [
       "You've played {n} of these before.",
-      "{n} old acquaintances in here.",
+      "{n} of these are old acquaintances.",
     ],
     quick: [
-      "Mostly quick ones here, around {m} minutes.",
-      "Short and sweet: about {m} minutes each.",
+      "Mostly quick ones here, around {m}.",
+      "Short and sweet: about {m} each.",
     ],
     long: [
-      "Long ones today, around {m} minutes each.",
-      "Settle in, these run about {m} minutes.",
+      "Long ones today, around {m} each.",
+      "Settle in, these run about {m}.",
     ],
     newest: [
       "{r} is the newest, added {ago}.",
@@ -10931,25 +10880,95 @@
       "New shuffle, and {r} is on top now.",
       "Reshuffled. Let's see if {r} tempts you.",
     ],
+    // How a lane was put together, read off its cards' scores.
+    laneMix: [
+      "Today's mix: {mix}.",
+      "What I've put together here: {mix}.",
+      "This lot is {mix}.",
+    ],
+    laneTag: [
+      "{t} is doing a lot of work today. It's a big reason for {n} of these.",
+      "{n} of these are here partly for {t}.",
+      "Lots of {t} today: it helped {n} of these in.",
+    ],
+    laneCurate: [
+      "{n} of these got in partly because you said yes to {t}.",
+      "Your yes to {t} in Curate shows: it helped {n} of these in.",
+      "You told me you like {t}, and {n} of these are here partly for that.",
+    ],
+    laneContentOnly: [
+      "{n} of these have nobody you really watch in them. They're here on content alone.",
+      "For {n} of these, the cast is new to me as far as you go. I picked them on what's in them.",
+    ],
+    laneCast: [
+      "This lot is mostly about who's in it: {n} of these are here for a performer you watch.",
+      "Performers carry {n} of these.",
+    ],
+    // Why a card a line points at is there: a second sentence read off its
+    // score, the part that carries it.
+    whyPerformer: [
+      "It's {p}, mostly.",
+      "That's {p}'s doing.",
+      "{p} is why.",
+    ],
+    whyTags: [
+      "It's the content: {t} and {t2}.",
+      "{t} and {t2}, mostly.",
+      "Mostly for {t}, with {t2} on top.",
+    ],
+    whyBoth: [
+      "{p}, and it's got {t}.",
+      "It's {p} and {t} together.",
+      "{p} in a {t} scene.",
+    ],
+    whyStudio: [
+      "{s} rarely misses for you.",
+      "Mostly because it's {s}.",
+    ],
+    // A stretch's reason is the hook, not a sure thing.
+    hookPerformer: [
+      "{p} is the hook.",
+      "The hook is {p}.",
+    ],
+    hookTags: [
+      "The hook is {t}, plus {t2}.",
+      "{t} and {t2} are the hook.",
+    ],
+    hookBoth: [
+      "The hook: {p}, and {t}.",
+    ],
+    hookStudio: [
+      "The hook is {s}.",
+    ],
+    whyReplay: [
+      "You've played it {n} times.",
+      "{n} plays so far, and you keep coming back.",
+    ],
     newWith: [
       "{n} new since last time, one with {p}.",
       "{p} is in one of the {n} new scenes.",
       "New arrivals include some {p}. Just saying.",
     ],
+    // How a scene Curator suggested on an earlier visit went.
+    followWatched: [
+      "You gave {r} a go after I brought it up {when}. Good.",
+      "I pointed you at {r} {when}, and you went for it.",
+      "{r} got its play after I mentioned it {when}. I'll take some credit.",
+    ],
+    followReplayed: [
+      "{r}: {n} plays since I brought it up {when}. I think that one landed.",
+      "You've played {r} {n} times since I mentioned it {when}.",
+    ],
+    followPartial: [
+      "You stopped {r} {at}. Not quite it, or just interrupted?",
+      "{r} lost you {at}, I see. The rest is still there.",
+      "I mentioned {r} {when}. You stopped {at}.",
+    ],
+    followPassed: [
+      "I've suggested {r} {n} times now and you've passed each time. I'll leave it be.",
+      "{r} isn't for you, it seems: {n} mentions, no play. I'll stop bringing it up.",
+    ],
     // Find: Stash-box releases, Similar and Performer Hunt.
-    expand: [
-      "Out on Stash-box, sorted by how well they fit you.",
-      "None of these are in your library yet. All picked for your taste.",
-      "Fresh hunting ground. Tell me what grabs you.",
-    ],
-    expand_performer: [
-      "Performers you don't have yet, ranked for your taste.",
-      "New faces, picked with your history in mind.",
-    ],
-    shortlist: [
-      "Your shortlist. Still calling to you?",
-      "Saved for later. Later could be now.",
-    ],
     expandRegular: [
       "{p} is in {n} of these. None in your library yet.",
       "{n} with {p} you don't have. One of your regulars.",
@@ -10991,10 +11010,6 @@
       "Pick a scene you love and I'll find its cousins.",
       "Show me one you like, I'll find more like it.",
     ],
-    similar: [
-      "Close relatives, sorted by how much you'd like them.",
-      "Same feel, different scenes. Tell me if I'm close.",
-    ],
     seedLoved: [
       "{n} plays on the original. Good one to start from.",
       "You've played that one {n} times. I see why you want more.",
@@ -11019,10 +11034,6 @@
       "Pick a performer and I'll check what you're missing.",
       "Who are we hunting today?",
     ],
-    hunt: [
-      "Let's see what you're missing.",
-      "Everything on Stash-box, checked against your library.",
-    ],
     huntOwned: [
       "You have {own} of {p}'s {n} scenes.",
       "{own} of {n} {p} scenes are already yours.",
@@ -11044,8 +11055,8 @@
       "This goes all the way back to {y}.",
     ],
     huntRegular: [
-      "{p} is one of your regulars. No wonder you're hunting.",
-      "Of course it's {p}. You rarely skip one.",
+      "{p} is one of your regulars, {m} plays so far. No wonder you're hunting.",
+      "Of course it's {p}: {m} plays across {n} of their scenes.",
     ],
     favouriteNote: [
       "{p} is one of your favourites.",
@@ -11067,24 +11078,7 @@
       "From {y}. A classic.",
       "This one goes back to {y}.",
     ],
-    // Curate: section intros, then reactions to what you teach me.
-    curate_questions: [
-      "A few quick ones. Each answer sharpens my picture of you.",
-      "Quick questions, big difference to your picks.",
-      "Answer what you like, skip the rest.",
-    ],
-    curate_reasons: [
-      "Tell me what makes a scene work. I listen closely.",
-      "The why tells me more than the thumbs.",
-    ],
-    curate_sentiment: [
-      "Everything I believe about your tags. Correct me.",
-      "My read on every tag. Fix anything I got wrong.",
-    ],
-    curate_progress: [
-      "Here's how your answers moved things.",
-      "Your teaching, in numbers.",
-    ],
+    // Curate: reactions to what you teach me.
     calledLike: [
       "Called it, {t} is very you.",
       "Thought so. {t} it is.",
@@ -11208,6 +11202,55 @@
       "Play number {n}. The last one was {when}, so it's been a while.",
       "{n} plays and counting, the last {when}. A proper favourite.",
     ],
+    // What the model's score is made of: the part that carries it, a twin
+    // you played, what you told me against what you watch.
+    sceneCarriedPerformer: [
+      "Honestly, {p} is doing all the work here. Without them this would barely make my list.",
+      "This is a {pf} pick, plain and simple. Take them out and I wouldn't suggest it.",
+      "It's {p}. That's the whole pitch. The rest of it is nothing special for you.",
+    ],
+    sceneDespite: [
+      "You told me no to {x}, and it's in here. {p} is the only reason I'm mentioning it.",
+      "There's {x}, which you've said you don't want. I'm only flagging it for {p}.",
+    ],
+    sceneCarriedContent: [
+      "Not the cast, honestly. It's {t} and {t2} that put this on my list.",
+      "Nobody in this is a draw for you yet. What sells it is {t}, plus {t2}.",
+      "I'm going on the content here: {t} and {t2}. The cast is new territory.",
+    ],
+    sceneTwin: [
+      "It's basically {r} again: {t}, {t2}, {t3}.",
+      "Same recipe as {r}. {t} and {t2}, and that one worked for you.",
+      "If {r} hit the spot, this is its twin. Same {t}, same {t2}.",
+    ],
+    sceneSplit: [
+      "Two things pull this up, about equally: {p}, and the content, {t} and {t2} most of all.",
+      "Half of this is {p}. The other half is what's in it: {t}, {t2}.",
+    ],
+    sceneSaidRarely: [
+      "You told me you like {t}, but you hardly ever pick it. Consider this a test.",
+      "{t} is in this. You said yes to it, though your plays don't really show it yet.",
+    ],
+    sceneSaidMeant: [
+      "You said yes to {t}, and your plays back that up. It's in this one.",
+      "{t}: you told me, and you meant it. It's in here.",
+    ],
+    sceneHeldBack: [
+      "One thing holds this back: {x}. Everything else lines up for you.",
+      "I'd have this higher if not for {x}.",
+    ],
+    sceneCrowd: [
+      "{k} people in one scene is usually a few too many for you, so I've held it back a little.",
+      "It's a {k}-performer scene, and those rarely land with you. Keep that in mind.",
+    ],
+    sceneFavouriteLukewarm: [
+      "You favourited {p}, but you rarely actually play them. The favourite is doing most of the lifting.",
+      "{p} is a favourite on paper. Your plays are a lot cooler on them, so I'm not betting much on this.",
+    ],
+    sceneFavouriteBacked: [
+      "You favourited {p}, and your plays agree.",
+      "{p}: favourited, and you actually watch them.",
+    ],
     // The same reasons for a scene that only scores middling for you.
     scenePairingMild: [
       "This has {p} and {t}, a pairing you've played {n} times. Worth a look.",
@@ -11317,10 +11360,6 @@
       "I don't know {p} yet. None of their {all} scenes has a play from you. Your first one will teach me.",
     ],
     // Insights: what the taste summary shows, said aloud.
-    insights: [
-      "This is what I've learned from what you watch. Correct me anywhere.",
-      "Your taste, as I see it. Anything surprise you?",
-    ],
     insightTop: [
       "{t} is your constant: it's on {pct} of the {n} scenes you've watched.",
       "No contest at the top. {t} is on {pct} of everything you've watched.",
@@ -11371,28 +11410,30 @@
     ],
   };
   const PAGE_CHAT_MOODS = {
-    first: "👋", again: "😄", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
-    night: "🌙", morning: "☀️", afternoon: "🙂", evening: "🙂",
-    for_you: "😊", best_bets: "😌", new_arrivals: "👀", revisit: "🤔", revisitFact: "🤔", stretch: "🧐", blind_spots: "🧐", dormant: "💤",
+    first: "👋", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
+    shortHour: "⏱️", longHour: "🍿", revisitFact: "🤔",
     resume: "⏯️", staleFavourite: "🤔", favourite: "😍", dependable: "😌", newFace: "👀", fresh: "✨", studio: "🙂", off: "🤐",
     topPick: "😊", performerRun: "😏", regulars: "😌", studioRun: "🙂", unplayed: "👀", replays: "🤔", quick: "⏱️", long: "🍿",
-    newest: "✨", mostPlayed: "😍", freshDraw: "🎲", newWith: "👀", gem: "😉", spotlight: "😌", unplayedOne: "👀", quickOne: "⏱️", longOne: "🍿",
-    expand: "🧭", expand_performer: "👀", shortlist: "📌", expandRegular: "😏", expandSpotlight: "😌", expandFavourite: "😍", expandUnwatched: "🤔",
+    newest: "✨", mostPlayed: "😍", freshDraw: "🎲", newWith: "👀", followWatched: "😄", followReplayed: "😍", followPartial: "🤔", followPassed: "😌", gem: "😉", stretchOne: "🧐",
+    laneMix: "🙂", laneTag: "😏", laneCurate: "👂", laneContentOnly: "🧐", laneCast: "😌",
+    whyPerformer: "😏", whyTags: "🙂", whyBoth: "😌", whyStudio: "🙂", whyReplay: "😍", hookPerformer: "🧐", hookTags: "🧐", hookBoth: "🧐", hookStudio: "🧐", spotlight: "😌", unplayedOne: "👀", quickOne: "⏱️", longOne: "🍿",
+    expandRegular: "😏", expandSpotlight: "😌", expandFavourite: "😍", expandUnwatched: "🤔",
     expandStudio: "🙂", expandNewRelease: "✨", expandRecent: "✨", expandDeepCut: "📼", whisparrRun: "📥",
-    similarEmpty: "🔎", similar: "🔎", seedLoved: "😍", seedUnplayed: "🤔", sharedPerformer: "😏", sameStudio: "🙂", closest: "🎯",
-    huntEmpty: "🎯", hunt: "🎯", huntOwned: "📚", huntNone: "👀", huntComplete: "🏆", huntRecent: "✨", huntFirst: "📼", huntRegular: "😌",
+    similarEmpty: "🔎", seedLoved: "😍", seedUnplayed: "🤔", sharedPerformer: "😏", sameStudio: "🙂", closest: "🎯",
+    huntEmpty: "🎯", huntOwned: "📚", huntNone: "👀", huntComplete: "🏆", huntRecent: "✨", huntFirst: "📼", huntRegular: "😌",
     favouriteNote: "😍", whisparrNote: "📥", ownedNote: "📚", releasedNote: "✨", oldNote: "📼",
-    curate_questions: "🤔", curate_reasons: "👂", curate_sentiment: "🧐", curate_progress: "📈",
     calledLike: "😄", calledDislike: "😌", answerSurprise: "😮", answerBlocked: "🤐", taughtMilestone: "🔥", reasonFlip: "😮", reasonRich: "🤩",
     scenePairing: "😏", scenePerformerStudio: "😌", sceneTagNeighbor: "🎯", sceneTagRun: "🔥", scenePerformerRun: "🔥", sceneRecentNeighbor: "🎯",
     sceneSatiated: "😌", sceneCooldown: "💤", sceneNotNow: "🤐", sceneNotNowPlain: "🤐", sceneHistoryBeats: "😮", sceneHistoryLags: "🤔",
     sceneNewFace: "👀", sceneRadar: "🧐", sceneRadarPlain: "🧐", sceneRadarOne: "🧐", sceneRadarOnePlain: "🧐", scenePerformer: "😌", sceneTag: "🙂", sceneStudio: "🙂", sceneNeighbor: "🎯",
     sceneResume: "⏯️", sceneReplay: "😍", sceneFresh: "✨",
+    sceneCarriedPerformer: "😏", sceneDespite: "🤔", sceneCarriedContent: "🧐", sceneTwin: "🎯", sceneSplit: "😌", sceneSaidRarely: "🤔",
+    sceneSaidMeant: "😄", sceneHeldBack: "🤔", sceneCrowd: "🤔", sceneFavouriteLukewarm: "🤔", sceneFavouriteBacked: "😍",
     scenePairingMild: "🙂", scenePerformerStudioMild: "🙂", sceneTagNeighborMild: "🙂", scenePerformerMild: "🙂", sceneTagMild: "🙂", sceneStudioMild: "🙂", sceneNeighborMild: "🙂",
     sceneMixedPerformer: "🤔", sceneMixedTag: "🤔", sceneDoubtPerformer: "🤔", sceneDoubt: "🤔", sceneDoubtPlain: "🤔",
     performerUsual: "😏", performerStreak: "🔥", performerRegular: "😌", performerGoTo: "😍", performerCoStar: "😏", performerStudio: "🙂", performerLast: "🙂", performerBacklog: "👀", performerWaiting: "👀", performerIdleFavourite: "🤔",
     performerUnplayedFavourite: "🤔", performerDormant: "💤", performerSimilar: "👀", performerTrait: "😏", performerBlank: "🧐",
-    insights: "🧐", insightTop: "😌", insightRising: "📈", insightFading: "📉", insightApart: "😏", insightPassed: "🤔", insightAgrees: "😄",
+    insightTop: "😌", insightRising: "📈", insightFading: "📉", insightApart: "😏", insightPassed: "🤔", insightAgrees: "😄",
     insightDormant: "💤", insightRediscovered: "🤗", insightWords: "👂", insightCoverage: "📚", insightPeak: "📈", insightPeakNow: "🔥",
   };
   // A visit starts after half an hour away. Days visited feed the streak.
@@ -11420,22 +11461,89 @@
     const hour = new Date(now).getHours();
     return hour < 5 ? "night" : hour < 11 ? "morning" : hour < 17 ? "afternoon" : hour < 23 ? "evening" : "night";
   }
-  // The greeting, then one follow-up drawn by weight from what's true: new
-  // scenes (naming a regular when one is in them), a streak, the hour.
-  function pageChatWelcome(visit, news = {}, now = Date.now(), random = Math.random) {
+  // A greeting only comes with something concrete after it, drawn by
+  // weight from what's true: new scenes (naming a regular when one is in
+  // them), a streak, a card that suits the hour, or a word on the shelf.
+  // Back within a few hours there's no greeting, only the news.
+  function pageChatWelcome(visit, news = {}, shelf = [], now = Date.now(), random = Math.random) {
     const gap = visit.previous ? now - visit.previous : null;
     const days = gap === null ? 0 : Math.floor(gap / PAGE_CHAT_DAY);
-    const key = gap === null ? "first" : gap < 6 * 3600000 ? "again" : days < 2 ? "day" : days < 7 ? "days" : "weeks";
-    const greeting = { key, values: { d: days } };
+    const key = gap === null ? "first" : gap < 6 * 3600000 ? null : days < 2 ? "day" : days < 7 ? "days" : "weeks";
     const count = news.count || 0;
     const options = [];
     if (count > 1 && news.regular) options.push([4, { key: "newWith", values: { n: count, p: news.regular }, fallback: { key: "newScenes", values: { n: count } } }]);
     else if (count > 1) options.push([3, { key: "newScenes", values: { n: count } }]);
     else if (count === 1) options.push([3, { key: "newScene" }]);
-    if (visit.streak >= 3 && key !== "first") options.push([2, { key: "streak", values: { n: visit.streak } }]);
-    if (key !== "again") options.push([1, { key: pageChatHour(now) }]);
+    if (news.follow) options.push([5, news.follow]);
+    if (key && visit.streak >= 3 && key !== "first") options.push([2, { key: "streak", values: { n: visit.streak } }]);
+    if (key) {
+      const hour = pageChatHour(now);
+      const suits = hour === "evening" ? "longOne" : "quickOne";
+      const card = shelf.find(([, spec]) => spec.key === suits)?.[1];
+      if (card) options.push([2, { ...card, key: suits === "longOne" ? "longHour" : "shortHour", fallback: { ...card, pitch: undefined } }]);
+      const word = pageChatWeighted(shelf.filter(([, spec]) => spec.key !== suits), random);
+      if (word) options.push([1, word]);
+    }
     const follow = pageChatWeighted(options, random);
-    return follow ? [greeting, follow] : [greeting];
+    if (key === "first") return follow ? [{ key }, follow] : [{ key }];
+    if (!follow) return [];
+    return key ? [{ key, values: { d: days } }, follow] : [follow];
+  }
+  // Scenes Curator suggested, kept a few weeks so a later visit can say how
+  // it went: played since, stopped partway, or passed over visit after
+  // visit (then it stops suggesting it). A pitch notes the scene's plays
+  // and resume point at the time, so "since" is measured, not guessed.
+  const PAGE_CHAT_PITCH_KEY = "stash-curator:page-chat:pitches:v1";
+  const PAGE_CHAT_PITCH_DAYS = 45;
+  const PAGE_CHAT_PASSED_DAYS = 180;
+  const PAGE_CHAT_PASSED = 3;
+  // Lines that suggest the scene they name.
+  const PAGE_CHAT_PITCHED = new Set(["topPick", "gem", "stretchOne", "unplayedOne", "freshDraw", "revisitFact", "shortHour", "longHour"]);
+  function pageChatPitchLog(log, pitch = null, visit = null, now = Date.now()) {
+    const kept = Object.entries(log && typeof log === "object" ? log : {})
+      .filter(([, entry]) => entry && now - Number(entry.last) < (entry.passed ? PAGE_CHAT_PASSED_DAYS : PAGE_CHAT_PITCH_DAYS) * PAGE_CHAT_DAY)
+      .sort((a, b) => b[1].last - a[1].last).slice(0, 60);
+    const next = Object.fromEntries(kept);
+    if (!pitch) return next;
+    const id = String(pitch.id);
+    const entry = next[id];
+    next[id] = entry && !entry.followed
+      ? { ...entry, last: now, times: entry.visit === visit ? entry.times : entry.times + 1, visit }
+      : { first: now, last: now, times: 1, visit, plays: Number(pitch.plays) || 0, resume: Number(pitch.resume) || 0 };
+    return next;
+  }
+  // `scenes` maps the logged ids to their facts now. At most one line, the
+  // happiest news first.
+  function pageChatFollowUp(log, scenes, visit, now = Date.now()) {
+    const options = [];
+    for (const [id, entry] of Object.entries(log || {})) {
+      const scene = scenes?.get(id);
+      if (!scene || entry.followed || entry.passed || entry.visit === visit) continue;
+      const lead = (scene.performers || []).find((performer) => performer.name);
+      const r = pageChatShortTitle(pageChatTitle(scene), scene) || (lead && `that ${lead.name} scene`) || (scene.studio?.name && `that ${scene.studio.name} scene`);
+      if (!r) continue;
+      const base = { follow: id, links: { r: pageChatTo("scenes", id) } };
+      const since = (Number(scene.play_count) || 0) - (Number(entry.plays) || 0);
+      const resume = Number(scene.resume_time) || 0;
+      const length = Number(scene.files?.[0]?.duration) || 0;
+      if (since > 0) {
+        const when = pageChatDay(entry.first, now);
+        options.push([3, since >= 2 ? { ...base, key: "followReplayed", values: { r, n: since, when } } : { ...base, key: "followWatched", values: { r, when } }]);
+      } else if (resume >= 60 && Math.abs(resume - (Number(entry.resume) || 0)) >= 30 && length > resume) {
+        options.push([2, { ...base, key: "followPartial", values: { r, at: pageChatPortion(resume / length), when: pageChatDay(entry.first, now) } }]);
+      } else if (entry.times >= PAGE_CHAT_PASSED) {
+        options.push([1, { ...base, passed: true, key: "followPassed", values: { r, n: entry.times } }]);
+      }
+    }
+    return options.sort((a, b) => b[0] - a[0])[0]?.[1] || null;
+  }
+  function pageChatPortion(share) {
+    return share < 0.15 ? "a few minutes in" : share < 0.4 ? "about a third of the way in" : share < 0.65 ? "about halfway in" : "most of the way in";
+  }
+  // The log after a follow-up was said: the scene is done with, or passed.
+  function pageChatFollowed(log, line) {
+    const entry = log[line.follow];
+    return entry ? { ...log, [line.follow]: { ...entry, followed: !line.passed, passed: Boolean(line.passed) } } : log;
   }
   function pageChatWeighted(options, random = Math.random) {
     const total = options.reduce((sum, [weight]) => sum + weight, 0);
@@ -11464,10 +11572,13 @@
     const any = (list) => list[Math.floor(random() * list.length)];
     const named = scenes[0] && ref(0, ["place"]);
     if (named) options.push([1.2, { key: "topPick", scene: 0, values: { r: named } }]);
+    // For You mixes picks from other lanes, so a strong card can sit low.
     const topAppeal = Number(items[0]?.appeal);
-    const gem = present.filter((entry) => entry.index >= 2 && Number(entry.item?.appeal) > topAppeal + 0.03)
+    const gem = lane === "for_you" && present.filter((entry) => entry.index >= 2 && entry.item?.source_lane !== "stretch" && Number(entry.item?.appeal) > topAppeal + 0.03)
       .sort((a, b) => b.item.appeal - a.item.appeal)[0];
-    if (gem) options.push([2, { key: "gem", scene: gem.index, values: { r: ref(gem.index) } }]);
+    if (gem) options.push([1.5, { key: "gem", scene: gem.index, values: { r: ref(gem.index) } }]);
+    const stretch = lane === "for_you" && any(present.filter((entry) => entry.item?.source_lane === "stretch"));
+    if (stretch) options.push([1, { key: "stretchOne", scene: stretch.index, values: { r: ref(stretch.index) } }]);
     const performers = new Map();
     const studios = new Map();
     for (const { scene } of present) {
@@ -11485,35 +11596,137 @@
     };
     const runs = [...performers.values()].filter((entry) => entry.performer.name && entry.n >= Math.max(2, present.length * 0.25)).sort((a, b) => b.n - a.n);
     const regular = runs.find((entry) => watched(entry.performer));
-    if (regular) options.push([2, { key: "regulars", values: { p: regular.performer.name, n: regular.n } }]);
+    if (regular) options.push([2, { key: "regulars", values: { ...pageChatPlayed(regular.performer, context?.plays), n: regular.n }, links: { p: pageChatTo("performers", regular.performer.id) } }]);
     else if (runs[0]) options.push([1.5, { key: "performerRun", values: { p: runs[0].performer.name, n: runs[0].n } }]);
     const spot = any(present.filter((entry) => entry.index > 0).flatMap((entry) => (entry.scene.performers || [])
       .filter((performer) => performer.name && watched(performer)).map((performer) => ({ ...entry, performer }))));
-    if (spot) options.push([2, { key: "spotlight", scene: spot.index, values: { r: ref(spot.index, ["performer"]), p: spot.performer.name } }]);
+    if (spot) options.push([1.5, { key: "spotlight", scene: spot.index, values: { ...pageChatPlayed(spot.performer, context?.plays), r: ref(spot.index, ["performer"]) }, links: { p: pageChatTo("performers", spot.performer.id) } }]);
     const [studio, studioCount] = [...studios].sort((a, b) => b[1] - a[1])[0] || [];
-    if (studio && studioCount >= 3 && studioCount >= present.length * 0.3 && studioCount < present.length) options.push([1, { key: "studioRun", values: { s: studio, n: studioCount } }]);
+    if (studio && studioCount >= 3 && studioCount >= present.length * 0.3 && studioCount < present.length) options.push([1, { key: "studioRun", values: { s: studio, n: pageChatOf(studioCount, present.length) } }]);
     const unplayedEntries = present.filter((entry) => !(Number(entry.scene.play_count) > 0));
     const unplayed = unplayedEntries.length;
-    if (unplayed >= 3 && unplayed < present.length) options.push([1, { key: "unplayed", values: { n: unplayed } }]);
-    if (present.length - unplayed >= 3 && lane !== "revisit") options.push([1, { key: "replays", values: { n: present.length - unplayed } }]);
+    if (unplayed >= 3 && unplayed < present.length) options.push([1, { key: "unplayed", values: { n: pageChatOf(unplayed, present.length) } }]);
+    if (present.length - unplayed >= 3 && lane !== "revisit") options.push([1, { key: "replays", values: { n: pageChatOf(present.length - unplayed, present.length) } }]);
     const fresh = any(unplayedEntries.filter((entry) => entry.index > 0));
     if (fresh && unplayed < present.length) options.push([1, { key: "unplayedOne", scene: fresh.index, values: { r: ref(fresh.index) } }]);
     const timed = present.map((entry) => ({ ...entry, seconds: Number(entry.scene.files?.[0]?.duration) || 0 })).filter((entry) => entry.seconds > 0);
     const median = pageChatMedian(timed.map((entry) => entry.seconds));
     const minutes = Math.round(median / 60);
-    if (minutes && minutes < 15) options.push([1, { key: "quick", values: { m: minutes } }]);
-    if (minutes > 40) options.push([1, { key: "long", values: { m: minutes } }]);
+    if (minutes && minutes < 15) options.push([1, { key: "quick", values: { m: pageChatLength(minutes, true) } }]);
+    if (minutes > 40) options.push([1, { key: "long", values: { m: pageChatLength(minutes, true) } }]);
     const byLength = [...timed].sort((a, b) => a.seconds - b.seconds);
     const shortest = byLength[0];
     const longest = byLength[byLength.length - 1];
-    if (shortest && timed.length >= 3 && shortest.seconds < 0.6 * median && shortest.seconds < 900) options.push([1, { key: "quickOne", scene: shortest.index, values: { r: ref(shortest.index), m: Math.max(1, Math.round(shortest.seconds / 60)) } }]);
-    if (longest && timed.length >= 3 && longest.seconds > 1.5 * median && longest.seconds > 1800) options.push([1, { key: "longOne", scene: longest.index, values: { r: ref(longest.index), m: Math.round(longest.seconds / 60) } }]);
+    if (shortest && timed.length >= 3 && shortest.seconds < 0.6 * median && shortest.seconds < 900) options.push([1, { key: "quickOne", scene: shortest.index, values: { r: ref(shortest.index), m: pageChatLength(Math.max(1, Math.round(shortest.seconds / 60))) } }]);
+    if (longest && timed.length >= 3 && longest.seconds > 1.5 * median && longest.seconds > 1800) options.push([1, { key: "longOne", scene: longest.index, values: { r: ref(longest.index), m: pageChatLength(Math.round(longest.seconds / 60)) } }]);
     const newest = present.map((entry) => ({ ...entry, at: Date.parse(entry.scene.created_at || "") || 0 })).sort((a, b) => b.at - a.at)[0];
     if (newest?.at && now - newest.at < 7 * PAGE_CHAT_DAY) options.push([lane === "new_arrivals" ? 2 : 1, { key: "newest", scene: newest.index, values: { r: ref(newest.index), ago: rankingAgo(newest.at, now) } }]);
     const replayed = present.filter((entry) => Number(entry.scene.play_count) >= 3).sort((a, b) => b.scene.play_count - a.scene.play_count)[0];
-    if (replayed) options.push([1.5, { key: "mostPlayed", scene: replayed.index, values: { r: ref(replayed.index), n: replayed.scene.play_count } }]);
-    // A card with no sayable name (low down, nothing unique) isn't pointed at.
-    return options.filter(([, spec]) => !("r" in spec.values) || spec.values.r);
+    if (replayed) options.push([1, { key: "mostPlayed", scene: replayed.index, values: { r: ref(replayed.index), n: replayed.scene.play_count } }]);
+    options.push(...pageChatLaneMakeup(lane, present));
+    // A card with no sayable name (low down, nothing unique) isn't pointed
+    // at. A named card links to its page, and a line suggesting it says why.
+    return options.filter(([, spec]) => !("r" in spec.values) || spec.values.r).flatMap(([weight, spec]) => {
+      if (spec.scene === undefined) return [[weight, spec]];
+      const entry = present.find((each) => each.index === spec.scene);
+      const links = { ...spec.links, r: pageChatTo("scenes", entry.scene.id) };
+      const pitch = { id: entry.scene.id, plays: entry.scene.play_count, resume: entry.scene.resume_time };
+      // A scene passed over every time it came up isn't suggested again.
+      if (PAGE_CHAT_PITCHES.has(spec.key) && context.passed?.has(String(entry.scene.id))) return [];
+      const why = PAGE_CHAT_STATED.has(spec.key) ? null : pageChatCardWhy(entry.item, entry.scene);
+      const hook = why && spec.key === "stretchOne" && PAGE_CHAT_LINES[why.key.replace(/^why/, "hook")];
+      const because = hook ? { ...why, key: why.key.replace(/^why/, "hook") } : why;
+      if (PAGE_CHAT_PITCHES.has(spec.key) && !because) return [];
+      // "The Ann one" with Ann as the reason says her twice: point another way.
+      const reason = because?.values?.p;
+      const values = reason && typeof spec.values.r === "string" && spec.values.r.includes(pageChatFirst(reason))
+        ? { ...spec.values, r: ref(spec.scene, ["performer", ...(spec.key === "topPick" ? ["place"] : [])]) || spec.values.r } : spec.values;
+      return [[weight, { ...spec, values, links, pitch, because, fallback: because && !PAGE_CHAT_PITCHES.has(spec.key) ? { ...spec, links } : undefined }]];
+    });
+  }
+  // How the shelf was made, from its cards' scores: For You's mix of
+  // lanes, the tag behind the most cards, a Curate answer at work, and
+  // whether the cast or the content carries them.
+  const PAGE_CHAT_MIX = [
+    ["best_bets", "safe bet", "safe bets"], ["revisit", "revisit", "revisits"], ["new_arrivals", "new arrival", "new arrivals"],
+    ["stretch", "stretch", "stretches"], ["blind_spots", "blind spot", "blind spots"], ["dormant", "old habit", "old habits"],
+  ];
+  function pageChatCount(n, one, many) {
+    return n === 1 ? `${/^[aeiou]/.test(one) ? "an" : "a"} ${one}` : `${n} ${many}`;
+  }
+  function pageChatList(words) {
+    return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0] || "";
+  }
+  function pageChatLaneMakeup(lane, present) {
+    const scored = present.filter((entry) => entry.item?.components);
+    if (scored.length < 4) return [];
+    const options = [];
+    if (lane === "for_you") {
+      const counts = PAGE_CHAT_MIX.map(([source, one, many]) => [scored.filter((entry) => entry.item.source_lane === source).length, one, many]).filter(([n]) => n);
+      // Past four kinds the smallest fold into "a few others".
+      const kept = counts.length > 4 ? [...counts].sort((a, b) => b[0] - a[0]).slice(0, 3) : counts;
+      const words = counts.filter((count) => kept.includes(count)).map(([n, one, many]) => pageChatCount(n, one, many));
+      if (kept.length < counts.length) words.push("a few others");
+      if (words.length >= 2) options.push([2, { key: "laneMix", values: { mix: pageChatList(words) } }]);
+    }
+    const tags = new Map();
+    const declared = new Map();
+    for (const { item } of scored) {
+      const liked = (item.components.content?.top || []).filter((feature) => Number(feature.value) > 0 && feature.metadata?.tag_name).slice(0, 4);
+      for (const feature of liked) {
+        const entry = tags.get(feature.metadata.tag_name) || { feature, n: 0 };
+        entry.n++;
+        tags.set(feature.metadata.tag_name, entry);
+        if (Number(feature.affinity_metadata?.declared_preference) > 0) declared.set(feature.metadata.tag_name, entry);
+      }
+    }
+    const top = (map) => [...map.values()].filter((entry) => entry.n >= 3 && entry.n >= scored.length * 0.25).sort((a, b) => b.n - a.n)[0];
+    const leading = top(tags);
+    const curate = top(declared);
+    const link = (entry) => ({ t: pageChatTo("tags", entry.feature.metadata.tag_id) });
+    // The same tag twice would be one point made twice; the Curate answer is
+    // the more telling one.
+    if (leading && leading !== curate) options.push([2, { key: "laneTag", values: { t: leading.feature.metadata.tag_name, n: pageChatOf(leading.n, scored.length) }, links: link(leading) }]);
+    if (curate) options.push([2, { key: "laneCurate", values: { t: curate.feature.metadata.tag_name, n: pageChatOf(curate.n, scored.length) }, links: link(curate) }]);
+    const performerPart = (entry) => Number(entry.item.components.performer_identity?.value) || 0;
+    const contentPart = (entry) => (Number(entry.item.components.content?.value) || 0) + (Number(entry.item.components.content_neighbor?.value) || 0);
+    const contentOnly = scored.filter((entry) => performerPart(entry) < 0.05 && contentPart(entry) > 0.1).length;
+    const cast = scored.filter((entry) => performerPart(entry) >= 0.15 && performerPart(entry) > contentPart(entry)).length;
+    if (contentOnly >= 2) options.push([1.5, { key: "laneContentOnly", values: { n: pageChatOf(contentOnly, scored.length) } }]);
+    if (cast >= scored.length * 0.6) options.push([1.5, { key: "laneCast", values: { n: pageChatOf(cast, scored.length) } }]);
+    return options;
+  }
+  // Lines that suggest a card need its reason; these already state one.
+  const PAGE_CHAT_PITCHES = new Set(["topPick", "gem", "stretchOne", "unplayedOne", "freshDraw"]);
+  const PAGE_CHAT_STATED = new Set(["spotlight", "mostPlayed"]);
+  // The part of a card's score that carries it (the parts add up to its
+  // appeal), as a reason to say after pointing at it.
+  function pageChatCardWhy(item, scene) {
+    const components = item?.components;
+    if (!components || !scene) return null;
+    const part = (name) => Number(components[name]?.value) || 0;
+    const performerPart = part("performer_identity");
+    const contentPart = part("content") + part("content_neighbor");
+    const names = new Map((scene.performers || []).map((performer) => [String(performer.id), performer]));
+    const lead = (components.performer_identity?.performers || []).filter((entry) => Number(entry.value) > 0 && names.get(String(entry.performer_id))?.name)
+      .sort((a, b) => b.value - a.value)[0];
+    const performer = lead && names.get(String(lead.performer_id));
+    const liked = (components.content?.top || []).filter((feature) => Number(feature.value) > 0 && feature.metadata?.tag_name)
+      .sort((a, b) => b.value - a.value);
+    const person = performer && { p: pageChatTo("performers", performer.id) };
+    const tag = (feature) => pageChatTo("tags", feature.metadata.tag_id);
+    const count = Number(scene.play_count) || 0;
+    if (item.source_lane === "revisit" && count >= 2) return { key: "whyReplay", values: { n: count } };
+    if (performer && performerPart >= PAGE_CHAT_CARRIES && contentPart >= PAGE_CHAT_CARRIES && liked.length) {
+      return { key: "whyBoth", values: { p: performer.name, t: liked[0].metadata.tag_name }, links: { ...person, t: tag(liked[0]) } };
+    }
+    if (performer && performerPart >= 0.15 && performerPart >= contentPart) return { key: "whyPerformer", values: { p: performer.name }, links: person };
+    if (contentPart >= PAGE_CHAT_CARRIES && liked.length >= 2) {
+      return { key: "whyTags", values: { t: liked[0].metadata.tag_name, t2: liked[1].metadata.tag_name }, links: { t: tag(liked[0]), t2: tag(liked[1]) } };
+    }
+    if (performer && performerPart >= 0.15) return { key: "whyPerformer", values: { p: performer.name }, links: person };
+    if (part("studio") >= 0.08 && scene.studio?.name) return { key: "whyStudio", values: { s: scene.studio.name } };
+    return null;
   }
   // A view's words for this showing: the first time in a visit its own
   // intro, after a new draw what came out on top, and usually a fact about
@@ -11525,7 +11738,7 @@
     const intro = first && introduce && (!shelf.length || random() < 0.5) ? introduce() : null;
     if (redraw) {
       const top = shelf.find(([, spec]) => spec.key === "topPick");
-      if (top) lines.push({ key: "freshDraw", scene: 0, values: top[1].values });
+      if (top) lines.push({ ...top[1], key: "freshDraw" });
     } else if (intro) lines.push(intro);
     // The second line points at a different card, if any.
     const pointed = new Set(lines.map((line) => line.scene).filter((scene) => scene !== undefined));
@@ -11537,27 +11750,35 @@
   function pageChatTitle(scene) {
     return scene?.title || scene?.files?.[0]?.basename || "";
   }
+  // Lanes introduce themselves only with a named card; otherwise the shelf
+  // speaks.
   function pageChatLaneIntro(lane, items, facts, now = Date.now(), random = Math.random) {
-    if (!PAGE_CHAT_LINES[lane]) return null;
-    if (lane === "revisit") {
-      const scenes = items.map((item) => facts?.get(String(item.scene_id)));
-      const played = scenes.map((scene, index) => ({ scene, index })).filter(({ scene }) => scene && Date.parse(scene.last_played_at || ""));
-      const chosen = played[Math.floor(random() * played.length)];
-      const named = chosen && pageChatRef(chosen.index, scenes, random);
-      if (named && random() < 0.5) {
-        const last = Date.parse(chosen.scene.last_played_at);
-        return { key: "revisitFact", scene: chosen.index, values: { r: named, ago: rankingAgo(last, now), when: rankingWhen(last, now) }, fallback: { key: lane } };
-      }
-    }
-    return { key: lane };
+    if (lane !== "revisit") return null;
+    const scenes = items.map((item) => facts?.get(String(item.scene_id)));
+    const played = scenes.map((scene, index) => ({ scene, index })).filter(({ scene }) => scene && Date.parse(scene.last_played_at || ""));
+    const chosen = played[Math.floor(random() * played.length)];
+    const named = chosen && pageChatRef(chosen.index, scenes, random);
+    if (!named) return null;
+    const last = Date.parse(chosen.scene.last_played_at);
+    return {
+      key: "revisitFact", scene: chosen.index, values: { r: named, ago: rankingAgo(last, now), when: rankingWhen(last, now) },
+      links: { r: pageChatTo("scenes", chosen.scene.id) }, because: pageChatCardWhy(items[chosen.index], chosen.scene),
+      pitch: { id: chosen.scene.id, plays: chosen.scene.play_count, resume: chosen.scene.resume_time },
+    };
   }
   const PAGE_CHAT_ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth"];
-  // The tail of a title ("Series: Part" gives "Part") when it's short enough
-  // to say aloud.
-  function pageChatShortTitle(title) {
-    const parts = String(title || "").split(/\s*(?::|\|)\s*|\s+[-–]\s+/).filter(Boolean);
-    const tail = parts[parts.length - 1] || "";
-    return tail && tail.split(/\s+/).length <= 4 && tail.length <= 28 ? tail : null;
+  // The last named piece of a title ("Series: Morning" gives "Morning")
+  // when it's short enough to say aloud. Episode and part markers ("S21:E9",
+  // "Part Three", "Vol. 2"), the scene's own performers or studio ("Title -
+  // Ann Lee") and a dangling subtitle ("a Comedy") aren't what a person
+  // would call it, so the piece before them is used.
+  const PAGE_CHAT_TITLE_CODE = /^(?:s\d+\s*[:.]?\s*)?e\d+$|^s\d+$|^\d+$|^[ivxlc]+$|^(?:#|no\.?|ep\.?|episode|part|pt\.?|vol\.?|volume|chapter|ch\.?|scene|disc|season)\s*(?:\d+|[ivxlc]+|one|two|three|four|five|six|seven|eight|nine|ten)$/i;
+  function pageChatShortTitle(title, scene = null) {
+    const parts = String(title || "").split(/\s*(?::|\|)\s*|\s+[-–]\s+/).map((part) => part.trim()).filter(Boolean);
+    const names = new Set([...(scene?.performers || []).map((performer) => performer.name), scene?.studio?.name].filter(Boolean).map((name) => name.toLowerCase()));
+    const name = [...parts].reverse().find((part) => !PAGE_CHAT_TITLE_CODE.test(part) && !names.has(part.toLowerCase())
+      && (parts.length === 1 || !/^(?:a|an|the)\s/.test(part))) || "";
+    return name && name.split(/\s+/).length <= 4 && name.length <= 28 ? name : null;
   }
   // A way to point at the card at `index` the way a person would: by its
   // place, a performer or studio only it has, or a short title.
@@ -11571,8 +11792,8 @@
     const performer = !avoid.includes("performer") && (scene?.performers || []).find((candidate) => candidate.name && only((other) => (other.performers || []).some((each) => String(each.id) === String(candidate.id))));
     if (performer) ways.push(`the ${performer.name.split(/\s+/)[0]} one`);
     const studio = scene?.studio?.name;
-    if (studio && only((other) => other.studio?.name === studio)) ways.push(`that ${studio} one`);
-    const short = pageChatShortTitle(pageChatTitle(scene));
+    if (studio && only((other) => other.studio?.name === studio)) ways.push(/^the\s/i.test(studio) ? `the ${studio.slice(4)} one` : `that ${studio} one`);
+    const short = pageChatShortTitle(pageChatTitle(scene), scene);
     if (short) ways.push(short);
     return ways[Math.floor(random() * ways.length)] || null;
   }
@@ -11599,16 +11820,30 @@
       const viewed = (scene.performers || []).map((performer) => ({ performer, viewing: rankingViewing(affinities, performer.id) }));
       const dependable = viewed.filter((entry) => entry.viewing.basis === "watched" && entry.viewing.value >= PAGE_CHAT_DEPENDABLE)
         .sort((a, b) => b.viewing.value - a.viewing.value)[0];
-      if (dependable?.performer.name) notes.push([2, { key: "dependable", values: { p: dependable.performer.name } }]);
+      if (dependable?.performer.name) notes.push([2, { key: "dependable", values: pageChatPlayed(dependable.performer, plays) }]);
       const fresh = plays && viewed.find((entry) => entry.viewing.basis === "guessed" && !plays.get(String(entry.performer.id)));
       if (fresh?.performer.name) notes.push([2, { key: "newFace", values: { p: fresh.performer.name } }]);
     }
-    if (count >= 5) notes.push([1, { key: "favourite", values: { n: count } }]);
+    if (count >= 5 && last) notes.push([1, { key: "favourite", values: { n: count, when: rankingWhen(last, now) } }]);
     const studio = scene.studio?.name;
-    if (studio && studios?.big.has(studio)) notes.push([1, { key: "studio", values: { s: studio } }]);
+    if (studio && studios?.big.has(studio)) notes.push([1, { key: "studio", values: { s: studio, pct: pageChatShare(studios.share.get(studio) || 0) } }]);
     return pageChatTopNote(notes);
   }
-  // Studios holding at least a fifth of all plays (and five or more).
+  const PAGE_CHAT_PLACES = ["", "second ", "third ", "fourth ", "fifth ", "sixth ", "seventh ", "eighth ", "ninth ", "tenth "];
+  // What a performer's plays add up to: scenes played, plays, and their
+  // place among everyone you play when it's in the top ten.
+  function pageChatPlayed(performer, plays) {
+    const values = { p: performer.name };
+    const entry = plays?.get(String(performer.id));
+    if (!entry?.plays) return values;
+    values.n = entry.scenes;
+    values.m = entry.plays;
+    const above = [...plays.values()].filter((other) => other.plays > entry.plays).length;
+    if (above < PAGE_CHAT_PLACES.length) values.top = `${PAGE_CHAT_PLACES[above]}most-played`;
+    return values;
+  }
+  // Studios holding at least a fifth of all plays (and five or more), and
+  // each studio's share.
   function pageChatStudios(scenes) {
     const plays = new Map();
     let total = 0;
@@ -11617,7 +11852,10 @@
       total += count;
       if (scene.studio?.name) plays.set(scene.studio.name, (plays.get(scene.studio.name) || 0) + count);
     }
-    return { big: new Set([...plays].filter(([, count]) => count >= 5 && count * 5 >= total).map(([name]) => name)) };
+    return {
+      big: new Set([...plays].filter(([, count]) => count >= 5 && count * 5 >= total).map(([name]) => name)),
+      share: new Map([...plays].map(([name, count]) => [name, total ? count / total : 0])),
+    };
   }
   function pageChatTopNote(notes, random = Math.random) {
     if (!notes.length) return null;
@@ -11712,7 +11950,7 @@
     else if (owned === 0) options.push([1.5, { key: "huntNone", values: { p: name, n: total } }]);
     else options.push([2, { key: "huntOwned", values: { p: name, n: total, own: owned } }]);
     const self = scenes.flatMap((scene) => scene?.performers || []).find((performer) => String(performer.id) === String(data.performer_id));
-    if (pageChatRegular(self, context)) options.push([2.5, { key: "huntRegular", values: { p: name } }]);
+    if (pageChatRegular(self, context)) options.push([2.5, { key: "huntRegular", values: { ...pageChatPlayed({ id: self.local.id, name }, context.plays) } }]);
     const dated = scenes.map((scene, index) => ({ scene, index })).filter((entry) => entry.scene?.released && entry.scene.released <= now)
       .sort((a, b) => b.scene.released - a.scene.released);
     const recent = dated.filter((entry) => now - entry.scene.released < 365 * PAGE_CHAT_DAY).length;
@@ -11755,7 +11993,7 @@
       .filter((entry) => entry.index > 0 && scenes[entry.index] && entry.similarity > lead + 0.02)
       .sort((a, b) => b.similarity - a.similarity)[0];
     const named = closest && pageChatRef(closest.index, scenes, random);
-    if (named) options.push([1.5, { key: "closest", scene: closest.index, values: { r: named } }]);
+    if (named) options.push([1.5, { key: "closest", scene: closest.index, values: { r: named }, links: { r: pageChatTo("scenes", scenes[closest.index].id) } }]);
     return options;
   }
   // A note for a Stash-box card under the pointer.
@@ -11768,12 +12006,12 @@
     if (scene.released && scene.released <= now && now - scene.released < 14 * PAGE_CHAT_DAY) notes.push([3, { key: "releasedNote", values: { ago: rankingAgo(scene.released, now) } }]);
     const regular = scene.performers.filter((performer) => pageChatRegular(performer, context))
       .sort((a, b) => pageChatLocalViewing(b, context).value - pageChatLocalViewing(a, context).value)[0];
-    if (regular) notes.push([2, { key: "dependable", values: { p: regular.name } }]);
+    if (regular) notes.push([2, { key: "dependable", values: pageChatPlayed({ id: regular.local.id, name: regular.name }, context?.plays) }]);
     const favourite = scene.performers.find((performer) => performer.local?.favorite && performer !== regular);
     if (favourite) notes.push([2, { key: "favouriteNote", values: { p: favourite.name } }]);
     const unwatched = scene.performers.find((performer) => pageChatUnwatched(performer, context));
     if (unwatched) notes.push([2, { key: "newFace", values: { p: unwatched.name } }]);
-    if (scene.studio && context?.studios?.big.has(scene.studio.name)) notes.push([1, { key: "studio", values: { s: scene.studio.name } }]);
+    if (scene.studio && context?.studios?.big.has(scene.studio.name)) notes.push([1, { key: "studio", values: { s: scene.studio.name, pct: pageChatShare(context.studios.share.get(scene.studio.name) || 0) } }]);
     if (scene.released && pageChatYear(scene.released) <= pageChatYear(now) - 10) notes.push([1, { key: "oldNote", values: { y: pageChatYear(scene.released) } }]);
     return pageChatTopNote(notes, random);
   }
@@ -11807,6 +12045,45 @@
   }
   function pageChatPercent(share) {
     return `${Math.round(share * 100)}%`;
+  }
+  // A share the way a person says it: "about a third", "just over half",
+  // a percentage when no fraction is close. Comparisons keep percentages.
+  const PAGE_CHAT_FRACTIONS = [
+    [0.1, "a tenth"], [0.2, "a fifth"], [0.25, "a quarter"], [1 / 3, "a third"], [0.5, "half"], [2 / 3, "two thirds"], [0.75, "three quarters"],
+  ];
+  function pageChatShare(share) {
+    if (share >= 0.995) return "all";
+    if (share >= 0.95) return "nearly all";
+    if (share >= 0.08) {
+      const [at, name] = PAGE_CHAT_FRACTIONS.reduce((best, each) => (Math.abs(each[0] - share) < Math.abs(best[0] - share) ? each : best));
+      const off = share - at;
+      if (Math.abs(off) <= 0.012) return at === 0.5 ? "half" : `about ${name}`;
+      // "Just under a sixth" is harder to picture than "15%".
+      if (Math.abs(off) <= 0.035 && at >= 0.25) return `${off > 0 ? "just over" : "just under"} ${name}`;
+    }
+    return pageChatPercent(share);
+  }
+  // "{n} of these": all, half, all but one, else the count.
+  function pageChatOf(n, all) {
+    if (n === all) return "all";
+    if (n * 2 === all) return "half";
+    if (n === all - 1 && all >= 6) return "all but one";
+    return n;
+  }
+  // Minutes as said aloud: "12 minutes", "an hour and a half". `rough`
+  // rounds a typical length (to 5 minutes, or the half hour).
+  const PAGE_CHAT_HOURS = ["", "an hour", "two hours", "three hours", "four hours"];
+  function pageChatLength(minutes, rough = false) {
+    if (minutes < 55) {
+      const m = rough && minutes >= 15 ? Math.round(minutes / 5) * 5 : minutes;
+      return m === 1 ? "a minute" : `${m} minutes`;
+    }
+    const quarters = rough ? Math.round(minutes / 30) * 2 : Math.round(minutes / 15);
+    const hours = Math.min(4, Math.floor(quarters / 4));
+    const rest = quarters - hours * 4;
+    if (hours === 1) return ["an hour", "an hour and a quarter", "an hour and a half", "an hour and three quarters"][rest];
+    const word = PAGE_CHAT_HOURS[hours].replace(" hours", "");
+    return [PAGE_CHAT_HOURS[hours], `just over ${PAGE_CHAT_HOURS[hours]}`, `${word} and a half hours`, `nearly ${PAGE_CHAT_HOURS[Math.min(4, hours + 1)]}`][rest];
   }
   // A past day the way a person says it: today, yesterday, on Sunday,
   // 3 weeks ago, in March.
@@ -11927,7 +12204,7 @@
     const nearScenes = new Map((data?.near?.scenes || []).map((entry) => [String(entry.id), entry]));
     const nearby = (score.neighbors || []).filter((neighbor) => Number(neighbor.outcome) > 0 && String(neighbor.scene_id) !== self)
       .map((neighbor) => ({ similarity: Number(neighbor.similarity) || 0, scene: nearScenes.get(String(neighbor.scene_id)) }))
-      .map((entry) => ({ ...entry, r: entry.scene && pageChatShortTitle(pageChatTitle(entry.scene)) }))
+      .map((entry) => ({ ...entry, r: entry.scene && pageChatShortTitle(pageChatTitle(entry.scene), entry.scene) }))
       .filter((entry) => entry.r)
       .sort((a, b) => b.similarity - a.similarity);
     const neighbor = nearby.find((entry) => Number(entry.scene.play_count) >= 2);
@@ -11967,6 +12244,8 @@
     if (lastNeighbor) hunch(4.5, "sceneRecentNeighbor", { r: lastNeighbor.r, when: pageChatDay(Date.parse(lastNeighbor.scene.last_played_at), now) }, { r: sceneTo(lastNeighbor) });
     if (regular && studio) hunch(4, "scenePerformerStudio", { p: regular.p, pf: pageChatFirst(regular.p), n: regular.n, s: studio.s, m: studio.m }, { p: person(regular), s: studioTo });
     if (tag && neighbor) hunch(4, "sceneTagNeighbor", { t: tag.t, r: neighbor.r, n: neighbor.scene.play_count }, { t: tagTo(tag), r: sceneTo(neighbor) });
+    // Asides (what holds it back) don't stand in for a reason.
+    const asides = pageChatModelReasons(scene, details, cast, { add, hunch, tone, person, tagTo });
     const general = Number(score.general_appeal) || 0;
     const direct = Number(score.direct_appeal) || 0;
     if (Number(score.direct_confidence) > 0.2 && count >= 2 && direct - general >= 0.25 && general < 0.05) add(4, "sceneHistoryBeats", { n: count });
@@ -12005,9 +12284,9 @@
       else add(3, "sceneDoubtPlain", {});
     }
     // One reason, when nothing pairs up.
-    if (options.length === combos) {
+    if (options.length - asides === combos) {
       if (regular) hunch(2, "scenePerformer", { p: regular.p, n: regular.n, m: regular.m }, { p: person(regular) });
-      if (tag) hunch(2, "sceneTag", { t: tag.t, pct: pageChatPercent(tag.share) }, { t: tagTo(tag) });
+      if (tag) hunch(2, "sceneTag", { t: tag.t, pct: pageChatShare(tag.share) }, { t: tagTo(tag) });
       if (studio) hunch(1.5, "sceneStudio", studio, { s: studioTo });
       if (neighbor) hunch(2, "sceneNeighbor", { r: neighbor.r, n: neighbor.scene.play_count }, { r: sceneTo(neighbor) });
     }
@@ -12015,6 +12294,66 @@
     if (!count && added && now - added < 7 * PAGE_CHAT_DAY) add(3, "sceneFresh", { ago: rankingAgo(added, now) });
     if (count >= 3 && lastPlayed && now - lastPlayed > 60 * PAGE_CHAT_DAY) add(2, "sceneReplay", { n: count, when: pageChatDay(lastPlayed, now) });
     return options;
+  }
+  // Lines read straight off the model's score, whose parts add up to the
+  // appeal: which part carries it (and what's left without it), a played
+  // twin and the tags they share, Curate answers against your plays, and
+  // what holds it back. Returns how many asides it added: lines that aren't
+  // a reason to watch.
+  const PAGE_CHAT_CARRIES = 0.2;
+  function pageChatModelReasons(scene, details, cast, { add, hunch, tone, person, tagTo }) {
+    const components = details?.score?.components || {};
+    const part = (name) => Number(components[name]?.value) || 0;
+    const appeal = Number(details?.score?.appeal) || 0;
+    const performerPart = part("performer_identity");
+    const contentPart = part("content") + part("content_neighbor");
+    const features = (components.content?.top || []).map((feature) => ({
+      t: feature.metadata?.tag_name, id: feature.metadata?.tag_id, value: Number(feature.value) || 0,
+      declared: Number(feature.affinity_metadata?.declared_preference) || 0,
+      learned: Number(feature.affinity_metadata?.learned_affinity) || 0,
+    })).filter((feature) => feature.t);
+    const liked = features.filter((feature) => feature.value > 0).sort((a, b) => b.value - a.value);
+    const against = features.filter((feature) => feature.value < 0).sort((a, b) => a.value - b.value);
+    const tagLink = (feature) => tagTo({ tag: { id: feature.id } });
+    const lead = cast.filter((entry) => entry.value > 0).sort((a, b) => b.value - a.value)[0];
+    // Without the performer part, where would it land?
+    if (lead && performerPart >= PAGE_CHAT_CARRIES && appeal - performerPart < PAGE_CHAT_DOUBT) {
+      const refused = against.find((feature) => feature.declared < 0);
+      if (refused) add(6, "sceneDespite", { x: refused.t, p: lead.p }, { x: tagLink(refused), p: person(lead) });
+      else add(5.5, "sceneCarriedPerformer", { p: lead.p, pf: pageChatFirst(lead.p) }, { p: person(lead) });
+    }
+    if (performerPart < 0.05 && contentPart >= 0.3 && liked.length >= 2) {
+      hunch(5.5, "sceneCarriedContent", { t: liked[0].t, t2: liked[1].t }, { t: tagLink(liked[0]), t2: tagLink(liked[1]) });
+    }
+    if (lead && performerPart >= PAGE_CHAT_CARRIES && contentPart >= PAGE_CHAT_CARRIES && liked.length >= 2
+      && Math.max(performerPart, contentPart) <= 1.5 * Math.min(performerPart, contentPart)) {
+      hunch(5, "sceneSplit", { p: lead.p, t: liked[0].t, t2: liked[1].t }, { p: person(lead), t: tagLink(liked[0]), t2: tagLink(liked[1]) });
+    }
+    const neighbors = (details?.explanation?.reasons || []).filter((reason) => reason.code === "appeal.content_neighbor")
+      .flatMap((reason) => reason.detail?.neighbors || []);
+    const twin = neighbors.filter((entry) => Number(entry.outcome) >= 0.5 && String(entry.scene_id) !== String(scene.id) && (entry.shared_tags || []).length >= 2)
+      .map((entry) => ({ ...entry, r: pageChatShortTitle(entry.title) })).filter((entry) => entry.r)
+      .sort((a, b) => Number(b.similarity) - Number(a.similarity))[0];
+    if (twin) {
+      const [t, t2, t3] = twin.shared_tags;
+      hunch(5, "sceneTwin", { r: twin.r, t, t2, t3 }, { r: pageChatTo("scenes", twin.scene_id) });
+    }
+    const said = liked.filter((feature) => feature.declared > 0);
+    const rarely = said.find((feature) => feature.learned < 0.1);
+    let asides = 0;
+    if (rarely) { add(4.5, "sceneSaidRarely", { t: rarely.t }, { t: tagLink(rarely) }); asides++; }
+    const meant = said.find((feature) => feature.learned >= 0.4);
+    if (meant) hunch(4, "sceneSaidMeant", { t: meant.t }, { t: tagLink(meant) });
+    if (tone === "sure" && against.length && against[0].value <= -0.05) { add(4, "sceneHeldBack", { x: against[0].t }, { x: tagLink(against[0]) }); asides++; }
+    const crowd = (components.structure?.top || []).find((feature) => feature.name === "multiple_performers" && Number(feature.value) <= -0.03);
+    const k = Number(crowd?.metadata?.performer_count) || 0;
+    if (crowd && k >= 3) { add(3.5, "sceneCrowd", { k }); asides++; }
+    const identity = new Map((components.performer_identity?.performers || []).map((entry) => [String(entry.performer_id), entry]));
+    const favourite = cast.filter((entry) => entry === lead && entry.performer.favorite && Number(identity.get(String(entry.performer.id))?.prior) > 0)
+      .map((entry) => ({ entry, learned: Number(identity.get(String(entry.performer.id)).learned) || 0 }))[0];
+    if (favourite && favourite.learned < 0.05) add(4.5, "sceneFavouriteLukewarm", { p: favourite.entry.p }, { p: person(favourite.entry) });
+    else if (favourite && favourite.learned >= 0.25) hunch(2, "sceneFavouriteBacked", { p: favourite.entry.p }, { p: person(favourite.entry) });
+    return asides;
   }
   // The tag that sets the performer's scenes you play apart from the ones
   // you skip: on at least half your plays of them (and three), clearly
@@ -12096,7 +12435,7 @@
     if (coStar) add(4.5, "performerCoStar", { q: coStar.item.name, ...shares(coStar) }, { q: pageChatTo("performers", coStar.item.id) });
     const studio = n >= 3 && pageChatPicked(played, all, (scene) => (scene.studio?.name ? [scene.studio] : []));
     if (studio) add(4, "performerStudio", { s: studio.item.name, ...shares(studio) }, { s: pageChatTo("studios", studio.item.id) });
-    const named = (scene) => pageChatShortTitle(pageChatTitle(scene));
+    const named = (scene) => pageChatShortTitle(pageChatTitle(scene), scene);
     const goTo = played.filter((scene) => Number(scene.play_count) >= 3 && named(scene)).sort((a, b) => b.play_count - a.play_count)[0];
     if (goTo && n >= 2) add(3.5, "performerGoTo", { r: named(goTo), k: goTo.play_count }, { r: pageChatTo("scenes", goTo.id) });
     const lastScene = played.find((scene) => (Date.parse(scene.last_played_at || "") || 0) === last);
@@ -12119,7 +12458,7 @@
     const add = (weight, key, values, links = {}) => options.push([weight, { key, values, links }]);
     const tagTo = (item) => ({ t: pageChatTo("tags", item.tag_id) });
     const top = data.likes?.[0];
-    if (top && top.watched_scenes / watched >= 0.1) add(2, "insightTop", { t: top.name, pct: pageChatPercent(top.watched_scenes / watched), n: watched.toLocaleString() }, tagTo(top));
+    if (top && top.watched_scenes / watched >= 0.1) add(2, "insightTop", { t: top.name, pct: pageChatShare(top.watched_scenes / watched), n: watched.toLocaleString() }, tagTo(top));
     const rising = data.shift?.rising?.[0];
     if (rising) add(3, "insightRising", { t: rising.name, a: pageChatPercent(rising.before), b: pageChatPercent(rising.recent) }, tagTo(rising));
     const fading = data.shift?.fading?.[0];
@@ -12129,14 +12468,14 @@
     const passed = data.apart?.passed?.[0];
     if (passed) add(2, "insightPassed", { t: passed.name, a: pageChatPercent(passed.library_share), b: pageChatPercent(passed.watched_share) }, tagTo(passed));
     const agreed = (data.likes || []).find((item) => item.answer > 0 && item.watched_scenes / watched >= 0.1 && item !== top);
-    if (agreed) add(2, "insightAgrees", { t: agreed.name, pct: pageChatPercent(agreed.watched_scenes / watched) }, tagTo(agreed));
+    if (agreed) add(2, "insightAgrees", { t: agreed.name, pct: pageChatShare(agreed.watched_scenes / watched) }, tagTo(agreed));
     const dormant = (data.dormant || []).find((item) => item.entity_type === "performer" || item.entity_type === "studio");
     if (dormant) add(2.5, "insightDormant", { p: dormant.name, n: dormant.play_count, when: pageChatDay(dormant.last_played_at_ms, now), since: rankingWhen(dormant.last_played_at_ms, now) }, { p: pageChatTo(`${dormant.entity_type}s`, dormant.entity_id) });
     const again = (data.rediscovered || []).map((item) => ({ item, r: pageChatShortTitle(pageChatTitle(scenes.get(String(item.scene_id)))) })).find((entry) => entry.r);
     if (again) add(2, "insightRediscovered", { r: again.r, m: pageChatMonths(now - again.item.longest_gap_ms, now) }, { r: pageChatTo("scenes", again.item.scene_id) });
     const word = data.reasons?.hits?.[0];
     if (word && word.answers >= 3) add(1.5, "insightWords", { x: word.name, n: word.answers }, { x: pageChatTo(`${word.subject_type === "missing_tag" ? "tag" : word.subject_type}s`, word.subject_id) });
-    if (totals.library_scenes > watched) add(1, "insightCoverage", { n: watched.toLocaleString(), all: totals.library_scenes.toLocaleString(), pct: pageChatPercent(watched / totals.library_scenes) });
+    if (totals.library_scenes > watched) add(1, "insightCoverage", { n: watched.toLocaleString(), all: totals.library_scenes.toLocaleString(), pct: pageChatShare(watched / totals.library_scenes) });
     return options;
   }
   // A row under the pointer on Insights: a tag's peak, or how it sets you
@@ -12150,7 +12489,7 @@
       trend.forEach((value, index) => { if (value !== null && (peak < 0 || value > trend[peak])) peak = index; });
       const window = data.windows?.[peak];
       if (peak < 0 || !window || !(trend[peak] > 0)) return null;
-      const values = { t: item.name, pct: pageChatPercent(trend[peak]) };
+      const values = { t: item.name, pct: pageChatShare(trend[peak]) };
       const links = { t: pageChatTo("tags", item.tag_id) };
       return peak === trend.length - 1 ? { key: "insightPeakNow", values, links } : { key: "insightPeak", values: { ...values, when: rankingWhen(window.end_ms) }, links };
     }
@@ -12159,31 +12498,45 @@
   }
   // A line split where its values go, each value keeping the page it
   // links to (spec.links, by value name), if any.
-  function pageChatParts(line, values = {}, links = {}) {
+  function pageChatParts(line, values = {}, links = {}, capital = true) {
     const parts = [];
     let at = 0;
     for (const match of line.matchAll(/\{(\w+)\}/g)) {
       if (match.index > at) parts.push({ text: line.slice(at, match.index) });
-      parts.push(match[1] in values ? { text: String(values[match[1]]), to: links[match[1]] || null } : { text: match[0] });
+      parts.push(match[1] in values ? { text: String(values[match[1]]), to: links[match[1]] || null, value: true } : { text: match[0] });
       at = match.index + match[0].length;
     }
     if (at < line.length) parts.push({ text: line.slice(at) });
-    // "2 times" reads as "twice", "1 times" as "once".
+    // "2 times" reads as "twice", "1 times" as "once"; 137 plays as "over
+    // 130 plays".
     parts.forEach((part, index) => {
       const next = parts[index + 1];
+      if (part.value && /^\d+$/.test(part.text) && Number(part.text) >= 100 && / (plays|times)\b/.test(next?.text.slice(0, 7) || "")) {
+        const round = Math.floor(Number(part.text) / 10) * 10;
+        if (round !== Number(part.text)) part.text = `over ${round}`;
+      }
       const word = { 1: "once", 2: "twice" }[part.text];
       if (word && !part.to && next?.text.startsWith(" times")) {
         part.text = word;
         parts[index + 1] = { ...next, text: next.text.slice(" times".length) };
       }
     });
-    if (parts[0]) parts[0] = { ...parts[0], text: parts[0].text.charAt(0).toUpperCase() + parts[0].text.slice(1) };
+    if (parts[0] && capital) parts[0] = { ...parts[0], text: parts[0].text.charAt(0).toUpperCase() + parts[0].text.slice(1) };
     return parts;
   }
   function pageChatFill(line, values = {}) {
     return pageChatParts(line, values).map((part) => part.text).join("");
   }
   // Where a filled line's links sit, as character ranges.
+  // A sentence starts with a capital, even when it opens on a value ("that
+  // North one").
+  function pageChatSentenceCase(parts) {
+    let start = true;
+    for (const part of parts) {
+      if (start && part.text) part.text = part.text.replace(/^[a-z]/, (letter) => letter.toUpperCase());
+      if (part.text) start = /[.?!]\s*$/.test(part.text) || (start && !part.text.trim());
+    }
+  }
   function pageChatLinkRanges(parts) {
     const ranges = [];
     let at = 0;
@@ -12193,18 +12546,112 @@
     }
     return ranges;
   }
+  // A suggestion and its reason as one sentence, some of the time: {c} is
+  // the reason's clause from PAGE_CHAT_CLAUSES.
+  const PAGE_CHAT_JOINED = {
+    topPick: [
+      "I'd open with {r}, because {c}.",
+      "My money's on {r}: {c}.",
+      "{r} is my top pick here: {c}.",
+      "If you watch one, make it {r}. Why? {c}.",
+    ],
+    gem: [
+      "{r} sits low in a mixed order, but I'm surer of it than the top one: {c}.",
+      "Don't let the order fool you: {r} is one of my surest bets, and {c}.",
+    ],
+    stretchOne: [
+      "{c}, so I slipped {r} in as a stretch.",
+      "{r} is a bit off your usual, but {c}.",
+    ],
+    unplayedOne: [
+      "You've never played {r}, and {c}.",
+      "{r} is still unplayed, and {c}. Maybe today?",
+    ],
+    freshDraw: [
+      "Fresh draw, and {r} came out on top: {c}.",
+      "New shuffle. {r} is on top now, and {c}.",
+    ],
+    revisitFact: [
+      "{r} last got a play {ago}, and {c}.",
+      "Remember {r}? {c}, and it's not had a play since {when}.",
+    ],
+  };
+  const PAGE_CHAT_CLAUSES = {
+    whyPerformer: ["{p} is in it", "it has {p}", "it's got {p}"],
+    whyTags: ["it's got {t} and {t2}", "{t} and {t2} are both in it"],
+    whyBoth: ["it's {p} in a {t} scene", "it has {p} and {t}"],
+    whyStudio: ["it's {s}", "{s} rarely misses for you"],
+    whyReplay: ["you've played it {n} times", "you've come back to it {n} times"],
+    hookPerformer: ["{p} is the hook"],
+    hookTags: ["{t} and {t2} are the hook"],
+    hookBoth: ["{p} and {t} are the hook"],
+    hookStudio: ["{s} is the hook"],
+  };
+  const PAGE_CHAT_SHAPES = { join: ["joined", "apart", "joined", "apart", "joined"] };
+  // How the last few lines opened, across pages: a line doesn't start the
+  // way one of the last two did when its deck has another that fits.
+  const PAGE_CHAT_OPENERS_KEY = "stash-curator:page-chat:openers:v1";
+  let pageChatOpeners = null;
+  function pageChatOpener(parts) {
+    const first = parts.find((part) => part.text.trim());
+    if (!first) return "";
+    return first.value ? "name" : first.text.trim().split(/[\s,.:;!?']/)[0].toLowerCase();
+  }
+  function pageChatOpened(opener) {
+    pageChatOpeners = [...pageChatOpeners, opener].slice(-4);
+    try { localStorage.setItem(PAGE_CHAT_OPENERS_KEY, JSON.stringify(pageChatOpeners)); } catch { /* remembered for this page */ }
+  }
   // The deck's next line that fits. Walking the deck (not taking the
   // shortest) keeps a tight space from repeating one line.
+  // A spec's `because` (a card's reason) follows as a second sentence or
+  // joins the line as a clause; `fallback` stands in when neither fits.
   function pageChatLine(spec, fits) {
+    if (!pageChatOpeners) {
+      try { pageChatOpeners = JSON.parse(localStorage.getItem(PAGE_CHAT_OPENERS_KEY)) || []; } catch { pageChatOpeners = []; }
+      if (!Array.isArray(pageChatOpeners)) pageChatOpeners = [];
+    }
+    const recent = pageChatOpeners.slice(-2);
+    let spare = null;
     for (const candidate of [spec, spec.fallback].filter(Boolean)) {
-      const lines = PAGE_CHAT_LINES[candidate.key] || [];
-      for (let tries = 0; tries < lines.length; tries++) {
-        const parts = pageChatParts(rankingPick(PAGE_CHAT_LINES, candidate.key, `page:${candidate.key}`), candidate.values, candidate.links);
-        const text = parts.map((part) => part.text).join("");
-        if (!text.includes("{") && fits(text)) return { text, mood: PAGE_CHAT_MOODS[candidate.key] || "🙂", key: candidate.key, links: pageChatLinkRanges(parts) };
+      const because = candidate.because;
+      const ways = [];
+      if (because && PAGE_CHAT_JOINED[candidate.key] && PAGE_CHAT_CLAUSES[because.key] && rankingPick(PAGE_CHAT_SHAPES, "join", "page:join") === "joined") {
+        ways.push({ table: PAGE_CHAT_JOINED, name: "join", reasons: PAGE_CHAT_CLAUSES, reasonName: "clause" });
+      }
+      ways.push({ table: PAGE_CHAT_LINES, name: "page", reasons: PAGE_CHAT_LINES, reasonName: "page" });
+      for (const way of ways) {
+        const lines = way.table[candidate.key] || [];
+        for (let tries = 0; tries < lines.length; tries++) {
+          let parts = pageChatParts(rankingPick(way.table, candidate.key, `${way.name}:${candidate.key}`), candidate.values, candidate.links);
+          if (because) {
+            const clause = way.reasons === PAGE_CHAT_CLAUSES;
+            const reason = pageChatParts(rankingPick(way.reasons, because.key, `${way.reasonName}:${because.key}`), because.values, because.links, !clause);
+            // A name the line already linked isn't linked twice.
+            const linked = new Set(parts.filter((part) => part.to).map((part) => part.to));
+            const said = reason.map((part) => (linked.has(part.to) ? { ...part, to: null } : part));
+            const slot = parts.findIndex((part) => part.text === "{c}");
+            if (clause && slot >= 0) parts.splice(slot, 1, ...said);
+            else parts = [...parts, { text: " " }, ...said];
+          }
+          // A title that ends a sentence itself ("Action!") takes no full stop.
+          parts.forEach((part, index) => {
+            const next = parts[index + 1];
+            if (next && /[.!?]$/.test(part.text) && next.text.startsWith(".")) parts[index + 1] = { ...next, text: next.text.slice(1) };
+          });
+          pageChatSentenceCase(parts);
+          const text = parts.map((part) => part.text).join("");
+          if (text.includes("{") || !fits(text)) continue;
+          const pitch = PAGE_CHAT_PITCHED.has(candidate.key) ? candidate.pitch : undefined;
+          const line = { text, mood: PAGE_CHAT_MOODS[candidate.key] || "🙂", key: candidate.key, links: pageChatLinkRanges(parts), pitch, follow: candidate.follow, passed: candidate.passed };
+          const opener = pageChatOpener(parts);
+          if (!recent.includes(opener)) { pageChatOpened(opener); return line; }
+          // Else the one whose opening is longest ago.
+          if (!spare || recent.lastIndexOf(opener) < recent.lastIndexOf(spare.opener)) spare = { line, opener };
+        }
       }
     }
-    return null;
+    if (spare) pageChatOpened(spare.opener);
+    return spare?.line || null;
   }
   const PAGE_CHAT_SCENES_QUERY =
     "query CuratorPageChatScenes($ids: [Int!]) { findScenes(scene_ids: $ids, filter: { per_page: -1 }) { scenes { " +
@@ -12224,9 +12671,31 @@
     const { record: next, visit } = pageChatVisit(record);
     try { localStorage.setItem(PAGE_CHAT_KEY, JSON.stringify(next)); } catch { /* the visit lasts this page */ }
     if (!pageChatSession || visit.fresh) {
-      pageChatSession = { visit, welcomed: visit.welcomed, lanes: new Set(visit.lanes), noted: new Set(), recent: [], said: Object.fromEntries(Object.entries(visit.said).filter(([, kinds]) => Array.isArray(kinds)).map(([lane, kinds]) => [lane, new Set(kinds)])), asked: false, quiet: false, context: null };
+      const passed = Object.entries(pageChatPitches()).filter(([, entry]) => entry.passed).map(([id]) => id);
+      pageChatSession = { visit, welcomed: visit.welcomed, lanes: new Set(visit.lanes), noted: new Set(), recent: [], said: Object.fromEntries(Object.entries(visit.said).filter(([, kinds]) => Array.isArray(kinds)).map(([lane, kinds]) => [lane, new Set(kinds)])), asked: false, quiet: false, context: null, passed: new Set(passed) };
     }
     return pageChatSession;
+  }
+  function pageChatPitches() {
+    try { return pageChatPitchLog(JSON.parse(localStorage.getItem(PAGE_CHAT_PITCH_KEY))); } catch { return {}; }
+  }
+  // Lines on screen that suggested a scene or followed one up.
+  function pageChatShown(session, lines) {
+    if (!lines.some((line) => line.pitch || line.follow)) return;
+    let log = pageChatPitches();
+    for (const line of lines) {
+      if (line.follow) {
+        log = pageChatFollowed(log, line);
+        if (line.passed) session.passed.add(line.follow);
+      } else if (line.pitch) log = pageChatPitchLog(log, line.pitch, session.visit.start);
+    }
+    try { localStorage.setItem(PAGE_CHAT_PITCH_KEY, JSON.stringify(log)); } catch { /* remembered for this page only */ }
+  }
+  // The best news about an earlier suggestion, if any.
+  async function pageChatFollowUpNow(session) {
+    const log = pageChatPitches();
+    const ids = Object.entries(log).filter(([, entry]) => !entry.followed && !entry.passed && entry.visit !== session.visit.start).map(([id]) => id);
+    return ids.length ? pageChatFollowUp(log, await pageChatSceneFacts(ids), session.visit.start) : null;
   }
   // Which lanes were introduced and which kinds each has said last the
   // visit, across reloads.
@@ -12323,13 +12792,13 @@
     }, [lane, key]);
     return React.createElement(PageChat, { view: lane, feed });
   }
-  const PAGE_CHAT_FIND_INTROS = { scene: "expand", performer: "expand_performer", shortlist: "shortlist" };
   // Expand and Performer Hunt: Stash-box scenes against your library.
   function pageChatExpandFeed(key, entityType, data) {
     const all = data?.items || [];
     const byId = new Map(all.map((item) => [String(item.id), item]));
     const hunt = entityType === "hunt";
-    const intro = hunt ? (data?.performer_name ? "hunt" : "huntEmpty") : PAGE_CHAT_FIND_INTROS[entityType];
+    // Only an empty Hunt explains itself; otherwise the shelf speaks.
+    const intro = hunt && !data?.performer_name ? "huntEmpty" : null;
     return {
       key,
       look: async (context) => ({
@@ -12341,7 +12810,7 @@
   }
   // Similar: library matches for a seed scene, or Stash-box ones.
   function pageChatSimilarFeed(key, { source, entityType, seedId, items }) {
-    const intro = () => ({ key: seedId ? "similar" : "similarEmpty" });
+    const intro = seedId ? null : () => ({ key: "similarEmpty" });
     if (entityType !== "scene" || !seedId) return { key, look: async () => ({ shelf: [], intro }) };
     if (source !== "library") {
       const byId = new Map(items.map((item) => [String(item.id), item]));
@@ -12363,11 +12832,11 @@
       note: async (id, context) => pageChatSceneNote((await scenes()).get(id), context),
     };
   }
-  // Curate's sections: an intro, then a word back on some answers.
+  // Curate's sections: a word back on some answers.
   function pageChatCurateFeed(section) {
     return {
       key: section,
-      look: async () => ({ shelf: [], intro: () => ({ key: `curate_${section}` }) }),
+      look: async () => ({ shelf: [], intro: null }),
       react: (event, session) => {
         session.taught = (session.taught || 0) + 1;
         return pageChatReaction(event, session.taught);
@@ -12382,7 +12851,7 @@
       key: `insights:${data?.model_id || ""}`,
       look: async () => {
         const scenes = await (facts || (facts = pageChatSceneFacts(again)));
-        return { shelf: pageChatInsightsShelf(data, scenes), intro: () => ({ key: "insights" }) };
+        return { shelf: pageChatInsightsShelf(data, scenes), intro: null };
       },
       note: async (id) => pageChatInsightsNote(data, id),
     };
@@ -12557,6 +13026,7 @@
       const message = { id: own, kind, lines: together ? lines : lines.slice(0, 1), queue: together ? [] : lines.slice(1) };
       if (kind !== "hover" && kind !== "react") resting.current = message;
       setShown(message);
+      pageChatShown(session, message.lines);
     }
     function advance(message) {
       if (!message.queue.length || ticket.current !== message.id) return;
@@ -12565,6 +13035,7 @@
         const next = { ...message, id: ++ticket.current, lines: message.queue.slice(0, 1), queue: message.queue.slice(1) };
         if (message.kind !== "hover" && message.kind !== "react") resting.current = next;
         setShown(next);
+        pageChatShown(session, next.lines);
       }, 1200 + message.lines[0].text.length * 35);
     }
     const silent = hidden !== false || session.quiet;
@@ -12590,7 +13061,7 @@
       shownView.current = view;
       (async () => {
         const context = await pageChatContext(session);
-        const look = () => feed.look(context).catch(() => ({ shelf: [], intro: null }));
+        const look = () => feed.look({ ...context, passed: session.passed }).catch(() => ({ shelf: [], intro: null }));
         if (!session.welcomed && feed.greets !== false) {
           pageChatWelcomed(session);
           pageChatIntroduced(session, view);
@@ -12602,12 +13073,10 @@
             const viewing = rankingViewing(context.affinities, performer.id);
             return performer.name && viewing.basis === "watched" && viewing.value >= PAGE_CHAT_DEPENDABLE;
           });
-          const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name });
-          // Now and then a word on the shelf too.
-          const shelf = pageChatWeighted((await look()).shelf);
-          if (shelf && Math.random() < 0.5) specs.push(shelf);
-          if (active) say(specs, "welcome");
-          return;
+          const follow = await pageChatFollowUpNow(session).catch(() => null);
+          const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name, follow }, (await look()).shelf);
+          if (active && specs.length) say(specs, "welcome");
+          if (specs.length) return;
         }
         const first = !session.lanes.has(view);
         pageChatIntroduced(session, view);
