@@ -20,8 +20,11 @@ function load(pick = cycling()) {
     rankingAgo: (ms, now) => `${Math.floor((now - ms) / DAY)} days ago`,
     rankingWhen: () => "March",
     rankingViewing: (affinities, id) => affinities[id] || { value: 0, basis: "none" },
+    rankingLikedTraits: (taste, performer) => taste.liked[performer.id] || [],
+    RANKING_TRAIT_NAMES: { redhead: ["redheads", "gingers"] },
+    operation: async () => globalThis.profile,
   });
-  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
+  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, pageChatSceneQuery, pageChatSceneShelf, pageChatPerformerShelf, pageChatUsualTag, pageChatInsightsShelf, pageChatInsightsNote, pageChatDay, pageChatContentTags, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
   return context.chat;
 }
 
@@ -268,4 +271,256 @@ test("every line a view can say has a deck and a face", () => {
     if (key !== "off" && !["first", "again", "day", "days", "weeks", "streak", "newScenes", "newScene", "morning", "afternoon", "evening", "night"].includes(key)) assert.ok(PAGE_CHAT_MOODS[key], `${key} has no mood`);
   }
   for (const section of ["questions", "reasons", "sentiment", "progress"]) assert.ok(PAGE_CHAT_LINES[`curate_${section}`], section);
+});
+
+// A synthetic scene page: Ann (a regular) and Bea (never played) in a
+// scene tagged Lace and Rain from North, as the inspector and Stash see it.
+const NOW = Date.UTC(2026, 10, 4, 12);
+const ago = (days) => new Date(NOW - days * DAY).toISOString();
+const ann = { id: "1", name: "Ann" };
+const bea = { id: "2", name: "Bea" };
+const lace = { id: "10", name: "Lace" };
+const rain = { id: "11", name: "Rain" };
+function pageScene(overrides = {}) {
+  return { id: "50", title: "Series: Opening", play_count: 0, resume_time: 0, last_played_at: null, created_at: ago(40), performers: [ann, bea], tags: [lace, rain], studio: { id: "7", name: "North" }, ...overrides };
+}
+function pageDetails({ fit = {}, score = {}, similar = [] } = {}) {
+  return {
+    model_id: "m1",
+    score: {
+      appeal: 0.6, general_appeal: 0.4, direct_appeal: 0, direct_confidence: 0, confidence: 0.6,
+      neighbors: [{ scene_id: "60", similarity: 0.8, outcome: 0.5 }],
+      components: {
+        content: { top: [{ value: 0.2, metadata: { tag_name: "Lace" } }, { value: -0.1, metadata: { tag_name: "Rain" } }] },
+        performer_identity: { performers: [{ performer_id: "1", value: 0.3 }, { performer_id: "2", value: 0 }] },
+        performer_similarity: { performers: similar },
+        studio: { studios: [{ studio_id: "7", value: 0.1 }] },
+        fit: { cooldown: 0, satiation: 0, not_now: 0, ...fit },
+      },
+      ...score,
+    },
+  };
+}
+const played = (id, people, tags, plays = 1, last = 90) => ({ id, play_count: plays, last_played_at: ago(last), performers: people.map((each) => ({ id: each.id })), tags: tags.map((each) => ({ id: each.id })) });
+
+test("the scene page pairs two reasons: a regular in a tag you watch", () => {
+  const { pageChatSceneShelf, pageChatSceneQuery } = load();
+  const scene = pageScene();
+  const details = pageDetails();
+  const { query, variables } = pageChatSceneQuery(scene, details, NOW);
+  // Only the liked tag is counted; disliked Rain isn't asked about.
+  assert.match(query, /tag0: findScenes/);
+  assert.doesNotMatch(query, /tag1/);
+  assert.deepEqual(plain(variables.people), ["1", "2"]);
+  assert.deepEqual(plain(variables.near), [60]);
+  const data = {
+    total: { count: 20 },
+    // This very scene's own play must not count as evidence for itself.
+    mine: { scenes: [played("50", [ann], [lace], 9), played("51", [ann], [lace], 2), played("52", [ann], [lace]), played("53", [ann], [])] },
+    tag0: { count: 6 },
+    studio: { scenes: [{ id: "51", play_count: 4 }, { id: "52", play_count: 3 }] },
+    near: { scenes: [{ id: "60", title: "Series: Closing", play_count: 4, last_played_at: ago(30) }] },
+    recent: { scenes: [] },
+  };
+  const shelf = new Map(pageChatSceneShelf(scene, details, data, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(shelf.get("scenePairing").values), { p: "Ann", t: "Lace", n: 2 });
+  assert.deepEqual(plain(shelf.get("scenePairing").links), { p: "/performers/1", t: "/tags/10" });
+  assert.deepEqual(plain(shelf.get("sceneTagNeighbor").links), { t: "/tags/10", r: "/scenes/60" });
+  assert.deepEqual(plain(shelf.get("scenePerformerStudio").values), { p: "Ann", pf: "Ann", n: 3, s: "North", m: 7 });
+  assert.deepEqual(plain(shelf.get("sceneTagNeighbor").values), { t: "Lace", r: "Closing", n: 4 });
+  // A single reason only speaks when nothing pairs up.
+  assert.ok(!shelf.has("scenePerformer") && !shelf.has("sceneTag"));
+  const untagged = { scenes: data.mine.scenes.map((each) => ({ ...each, tags: [] })) };
+  const alone = new Map(pageChatSceneShelf(scene, details, { ...data, mine: untagged, tag0: { count: 1 }, studio: { scenes: [] }, near: { scenes: [] } }, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(alone.get("scenePerformer").values), { p: "Ann", n: 3, m: 4 });
+});
+
+test("the scene page says when recent viewing is behind a rest or a run", () => {
+  const { pageChatSceneShelf } = load();
+  const scene = pageScene();
+  const week = [played("51", [ann], [lace], 1, 1), played("52", [ann], [lace], 1, 3), played("54", [], [lace], 1, 10)];
+  const data = { total: { count: 20 }, mine: { scenes: week }, recent: { scenes: week }, tag0: { count: 6 } };
+  const tired = new Map(pageChatSceneShelf(scene, pageDetails({ fit: { satiation: -0.04 } }), data, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(tired.get("sceneSatiated").values), { p: "Ann", n: 2 });
+  // The rest explains the dip; a cheerful "streak" line would contradict it.
+  assert.ok(!tired.has("scenePerformerRun"));
+  const fresh = new Map(pageChatSceneShelf(scene, pageDetails(), data, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(fresh.get("sceneTagRun").values), { t: "Lace", n: 3, p: "Ann" });
+  assert.deepEqual(plain(fresh.get("scenePerformerRun").values), { p: "Ann", n: 2 });
+});
+
+test("the scene page names a new face's lookalike, or admits it has nothing", () => {
+  const { pageChatSceneShelf } = load();
+  const similar = [{ performer_id: "2", matches: [{ performer_id: "3", similarity: 0.9, affinity: 0.4 }] }];
+  const cy = { id: "3" };
+  const data = {
+    total: { count: 20 },
+    mine: { scenes: [played("61", [cy], []), played("62", [cy], []), played("63", [cy], [])] },
+    matches: { performers: [{ id: "3", name: "Cy" }] },
+  };
+  const scene = pageScene({ performers: [bea] });
+  const face = new Map(pageChatSceneShelf(scene, pageDetails({ similar }), data, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(face.get("sceneNewFace").values), { p: "Bea", q: "Cy", n: 3, qf: "Cy" });
+  const blank = new Map(pageChatSceneShelf(pageScene({ performers: [ann, bea] }), pageDetails({ score: { confidence: 0.1 } }), { total: { count: 20 } }, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(blank.get("sceneRadar").values), { k: 2, s: "North" });
+  const resting = pageChatSceneShelf(pageScene({ play_count: 2, resume_time: 754, last_played_at: ago(2) }), pageDetails({ fit: { cooldown: -0.2 } }), {}, NOW);
+  const keys = new Map(resting.map(([, spec]) => [spec.key, spec]));
+  assert.equal(keys.get("sceneResume").values.t, "12:34");
+  assert.equal(keys.get("sceneCooldown").values.when, `on ${new Date(NOW - 2 * DAY).toLocaleString("en", { weekday: "long" })}`);
+});
+
+test("a performer's usual tag is what sets your picks apart, not what they always are", () => {
+  const { pageChatPerformerShelf, pageChatUsualTag } = load();
+  const scene = (id, plays, tags, last = 100) => ({ id, play_count: plays, last_played_at: plays ? ago(last) : null, created_at: ago(200), tags });
+  // Rain is on every scene they make: it describes them, not your choice.
+  const all = [scene("1", 2, [lace, rain]), scene("2", 1, [lace, rain]), scene("3", 3, [lace, rain]), scene("4", 0, [rain]), scene("5", 0, [rain])];
+  const content = new Set(["10", "11", "12"]);
+  const usual = pageChatUsualTag(all.filter((each) => each.play_count), all, content);
+  assert.equal(usual.tag.name, "Lace");
+  assert.equal(usual.others, 0);
+  const everywhere = all.map((each) => ({ ...each, tags: [lace, rain] }));
+  assert.equal(pageChatUsualTag(everywhere.filter((each) => each.play_count), everywhere, content), null);
+  // A tag Curator files as a performer attribute never counts, even when
+  // tagged unevenly enough to look like a choice; without roles, nothing does.
+  assert.equal(pageChatUsualTag(all.filter((each) => each.play_count), all, new Set(["11"])), null);
+  assert.equal(pageChatUsualTag(all.filter((each) => each.play_count), all, null), null);
+  // Without at least two unplayed scenes there's nothing to contrast with.
+  const seen = all.slice(0, 4);
+  assert.equal(pageChatUsualTag(seen.filter((each) => each.play_count), seen, content), null);
+  const shelf = new Map(pageChatPerformerShelf({ id: "1", name: "Ann", favorite: true }, {}, { theirs: { scenes: all } }, { content, now: NOW }).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(shelf.get("performerUsual").values), { p: "Ann", pf: "Ann", all: 5, n: 3, m: 6, u: 2, waiting: "2 Ann scenes are", t: "Lace", a: "all", b: "none" });
+  assert.equal(shelf.get("performerIdleFavourite").values.waiting, "2 Ann scenes are");
+  const busy = [scene("1", 1, [], 1), scene("2", 1, [], 2)];
+  const streak = new Map(pageChatPerformerShelf({ id: "1", name: "Ann" }, {}, { theirs: { scenes: busy } }, { now: NOW }).map(([, spec]) => [spec.key, spec]));
+  assert.equal(streak.get("performerStreak").values.n, 2);
+  const taste = { liked: { 1: ["redhead"] }, byId: new Map([["1", { gender: "FEMALE" }]]), lean: new Map([["FEMALE", { lifts: new Map([["redhead", 2.04]]) }]]) };
+  const trait = pageChatPerformerShelf({ id: "1", name: "Ann" }, {}, { theirs: { scenes: busy } }, { taste, now: NOW }).find(([, spec]) => spec.key === "performerTrait")[1];
+  assert.deepEqual(plain(trait.values), { p: "Ann", pf: "Ann", all: 2, n: 2, m: 2, u: 0, waiting: "0 Ann scenes are", trait: "redheads", x: "2.0" });
+  const fresh = { theirs: { scenes: [scene("1", 0, [])] }, similar: { count: 4 } };
+  const evidence = { evidence: { performers: [{ performer_id: "9", name: "Cy", affinity: 0.3 }] } };
+  const similar = new Map(pageChatPerformerShelf({ id: "2", name: "Bea" }, evidence, fresh, { now: NOW }).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(similar.get("performerSimilar").values), { p: "Bea", pf: "Bea", all: 1, n: 4, m: 0, u: 1, waiting: "1 Bea scene is", q: "Cy", qf: "Cy" });
+  assert.ok(!similar.has("performerBlank"));
+});
+
+test("Insights talks about the taste summary and a row's peak", () => {
+  const { pageChatInsightsShelf, pageChatInsightsNote } = load();
+  const summary = {
+    totals: { plays: 300, scenes_played: 200, library_scenes: 800 },
+    windows: [{ end_ms: Date.UTC(2026, 2, 31) }, { end_ms: Date.UTC(2026, 5, 30) }, { end_ms: Date.UTC(2026, 8, 30) }],
+    likes: [{ tag_id: "10", name: "Lace", watched_scenes: 60, answer: null, trend: [0.2, 0.4, 0.3] }, { tag_id: "11", name: "Rain", watched_scenes: 30, answer: 1, trend: [null, 0.1, 0.2] }],
+    shift: { rising: [{ name: "Rain", before: 0.12, recent: 0.31 }], fading: [] },
+    apart: { more: [{ tag_id: "11", name: "Rain", library_share: 0.04, watched_share: 0.18 }], passed: [] },
+    dormant: [{ entity_type: "tag", name: "Fog" }, { entity_type: "performer", name: "Ann", play_count: 23, last_played_at_ms: Date.UTC(2026, 2, 10) }],
+    rediscovered: [{ scene_id: "5", longest_gap_ms: 425 * DAY }],
+    reasons: { hits: [{ name: "Lace", answers: 6 }] },
+  };
+  const scenes = new Map([["5", { title: "Series: Return" }]]);
+  const shelf = new Map(pageChatInsightsShelf(summary, scenes, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.deepEqual(plain(shelf.get("insightTop").values), { t: "Lace", pct: "30%", n: "200" });
+  assert.deepEqual(plain(shelf.get("insightRising").values), { t: "Rain", a: "12%", b: "31%" });
+  assert.deepEqual(plain(shelf.get("insightAgrees").values), { t: "Rain", pct: "15%" });
+  assert.equal(shelf.get("insightDormant").values.p, "Ann");
+  assert.deepEqual(plain(shelf.get("insightRediscovered").values), { r: "Return", m: 14 });
+  assert.equal(shelf.get("insightCoverage").values.pct, "25%");
+  assert.equal(pageChatInsightsNote(summary, "like:10").key, "insightPeak");
+  assert.equal(pageChatInsightsNote(summary, "like:10").values.pct, "40%");
+  assert.equal(pageChatInsightsNote(summary, "like:11").key, "insightPeakNow");
+  assert.equal(pageChatInsightsNote(summary, "more:11").values.b, "18%");
+  assert.equal(pageChatInsightsShelf({ totals: { scenes_played: 0 } }).length, 0);
+});
+
+test("every scene, performer and Insights line fills completely", () => {
+  const { PAGE_CHAT_LINES, pageChatLine } = load();
+  const values = { newest: "the newest", one: "one", p: "Ann", pf: "Ann", q: "Cy", qf: "Cy", kn: "3 of the 4", o: "only 1 of the other 6", more: "2 more are", waiting: "2 Ann scenes are", t: "Lace", s: "North", r: "Closing", x: "Lace", n: 3, m: 7, k: 2, u: 2, d: 4, all: 9, a: "4%", b: "18%", pct: "30%", when: "on Sunday", since: "March", ago: "3 days ago", trait: "redheads" };
+  const keys = Object.keys(PAGE_CHAT_LINES).filter((key) => /^(scene[A-Z]|performer[A-Z]|insight)/.test(key));
+  assert.ok(keys.length > 30);
+  for (const key of keys) {
+    for (let i = 0; i < PAGE_CHAT_LINES[key].length; i++) {
+      const line = pageChatLine({ key, values }, () => true);
+      assert.ok(line && !line.text.includes("{"), `${key}: ${line?.text}`);
+      // The scene page never claims a taste of its own.
+      assert.doesNotMatch(line.text, /\bI'd (pick|choose|go for)\b/, key);
+      assert.doesNotMatch(line.text, /since (on|in) /, key);
+    }
+  }
+});
+
+test("names in a line link to their Stash page", () => {
+  const { pageChatLine, pageChatPerformerShelf } = load();
+  const line = pageChatLine({ key: "scenePairing", values: { p: "Ann", t: "Lace", n: 2 }, links: { p: "/performers/1", t: "/tags/10" } }, () => true);
+  const ranges = plain(line.links);
+  assert.deepEqual(ranges.map((range) => line.text.slice(range.start, range.end)), ["Ann", "Lace"]);
+  assert.deepEqual(ranges.map((range) => range.to), ["/performers/1", "/tags/10"]);
+  // A line without links has no ranges, and unlinked values stay plain.
+  assert.deepEqual(plain(pageChatLine({ key: "sceneResume", values: { t: "1:00" } }, () => true).links), []);
+  const scene = (id, plays, created) => ({ id, play_count: plays, last_played_at: plays ? ago(1) : null, created_at: ago(created), tags: [] });
+  const waiting = pageChatPerformerShelf({ id: "1", name: "Ann" }, {}, { theirs: { scenes: [scene("1", 1, 90), scene("2", 1, 90), scene("3", 0, 20), scene("4", 0, 5)] } }, { now: NOW })
+    .find(([, spec]) => spec.key === "performerWaiting")[1];
+  assert.equal(waiting.links.newest, "/scenes/4");
+  assert.equal(waiting.links.p, undefined, "a performer's own page doesn't link to itself");
+});
+
+test("the usual-tag line only counts tags about the scene, not its cast", async () => {
+  const chat = load();
+  globalThis.profile = { items: [
+    { tag_id: "10", role: "content", describes_performer: false },
+    { tag_id: "11", role: "content", describes_performer: true },
+    { tag_id: "12", role: "performer_attribute", describes_performer: true },
+  ] };
+  assert.deepEqual([...await chat.pageChatContentTags()], ["10"]);
+});
+
+test("a performer page finds what you pick them in: a co-star, a studio, a go-to scene", () => {
+  const { pageChatPerformerShelf } = load();
+  const cy = { id: "3", name: "Cy Moss" };
+  const dee = { id: "4", name: "Dee Lane" };
+  const north = { id: "7", name: "North" };
+  const south = { id: "8", name: "South" };
+  const scene = (id, plays, partner, studio, title = `Series: Part ${id}`) => ({
+    id, title, play_count: plays, last_played_at: plays ? ago(20 + Number(id)) : null, created_at: ago(300),
+    tags: [], performers: [ann, partner], studio,
+  });
+  const all = [
+    scene("1", 5, cy, north), scene("2", 1, cy, north), scene("3", 1, cy, north), scene("4", 1, dee, south),
+    ...Array.from({ length: 12 }, (_, index) => scene(String(10 + index), 0, dee, south)),
+  ];
+  const shelf = new Map(pageChatPerformerShelf(ann, {}, { theirs: { scenes: all } }, { now: NOW }).map(([weight, spec]) => [spec.key, { weight, spec }]));
+  assert.deepEqual(plain(shelf.get("performerCoStar").spec.values).q, "Cy Moss");
+  assert.equal(shelf.get("performerCoStar").spec.values.a, "75%");
+  assert.equal(shelf.get("performerCoStar").spec.values.b, "none");
+  assert.equal(shelf.get("performerCoStar").spec.links.q, "/performers/3");
+  assert.equal(shelf.get("performerStudio").spec.values.s, "North");
+  assert.deepEqual(plain(shelf.get("performerGoTo").spec.values).r, "Part 1");
+  assert.equal(shelf.get("performerGoTo").spec.links.r, "/scenes/1");
+  assert.equal(shelf.get("performerLast").spec.values.r, "Part 1");
+  assert.equal(shelf.get("performerBacklog").spec.values.u, 12);
+  // The plain count is the fallback, outweighed by anything specific.
+  assert.ok(shelf.get("performerRegular").weight < Math.min(...[...shelf.values()].filter((entry) => entry.spec.key !== "performerRegular").map((entry) => entry.weight)));
+});
+
+test("a scene that scores low gets hesitation, not a confident hunch", () => {
+  const { pageChatSceneShelf } = load();
+  const scene = pageScene();
+  const data = {
+    total: { count: 20 },
+    mine: { scenes: [played("51", [ann], [lace], 4), played("52", [ann], [lace], 2), played("53", [ann], [])] },
+    tag0: { count: 6 },
+  };
+  const keys = (appeal) => new Map(pageChatSceneShelf(scene, pageDetails({ score: { appeal } }), data, NOW).map(([, spec]) => [spec.key, spec]));
+  assert.ok(keys(0.6).has("scenePairing"));
+  // Middling: the same reasons, measured.
+  const mild = keys(0.3);
+  assert.ok(mild.has("scenePairingMild") && !mild.has("scenePairing"));
+  // Low: Ann is a plus, but Rain (a tag the model holds against it) drags.
+  const low = keys(0.05);
+  assert.ok(![...low.keys()].some((key) => /^scene(Pairing|Performer|Tag|Studio|Neighbor)/.test(key)), [...low.keys()].join());
+  assert.deepEqual(plain(low.get("sceneMixedPerformer").values), { p: "Ann", m: 7, t: "Rain" });
+  assert.equal(low.get("sceneMixedPerformer").links.t, "/tags/11");
+});
+
+test("counts of times read naturally", () => {
+  const { pageChatLine } = load();
+  assert.match(pageChatLine({ key: "sceneNeighbor", values: { r: "Closing", n: 2 } }, (text) => text.includes("times") || text.includes("twice")).text, /twice/);
+  assert.doesNotMatch(pageChatLine({ key: "sceneNeighbor", values: { r: "Closing", n: 2 } }, () => true).text, /\b2 times\b/);
 });

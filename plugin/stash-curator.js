@@ -3809,7 +3809,7 @@
       { className: `curator-insight-apart curator-insight-${tone}` },
       items.map((item) => React.createElement(
         "li",
-        { key: item.tag_id, title: `${item.name}: ${insightShare(item.watched_share)} of what you watch, ${insightShare(item.library_share)} of your library` },
+        { key: item.tag_id, title: `${item.name}: ${insightShare(item.watched_share)} of what you watch, ${insightShare(item.library_share)} of your library`, onMouseEnter: () => announcePageChatHover(`${tone === "more" ? "more" : "passed"}:${item.tag_id}`), onMouseLeave: () => announcePageChatHover(null) },
         React.createElement("span", { className: "curator-insight-apart-name" }, item.name),
         React.createElement(
           "span",
@@ -3866,6 +3866,7 @@
     const [data, setData] = React.useState(null);
     const [error, setError] = React.useState("");
     useCuratorActivity("insights", !data && !error, "Reading your taste…");
+    const chatFeed = React.useMemo(() => (data?.totals?.plays ? pageChatInsightsFeed(data) : null), [data]);
     React.useEffect(() => {
       let active = true;
       operation({ operation: "get_taste_summary" }).then(
@@ -3901,6 +3902,7 @@
         "section",
         { className: "curator-insight-section curator-insight-hero" },
         React.createElement("h2", null, "Your taste"),
+        React.createElement(PageChat, { view: "insights", feed: chatFeed }),
         React.createElement("p", null, `From ${totals.scenes_played.toLocaleString()} scenes you've watched since ${insightMonth(totals.first_played_at_ms)}. Last play ${new Date(totals.as_of_ms).toLocaleDateString()}.`),
         React.createElement(
           "dl",
@@ -3914,7 +3916,7 @@
         data.likes.length
           ? React.createElement("ol", { className: "curator-insight-list" }, data.likes.map((item) => React.createElement(
             "li",
-            { key: item.tag_id },
+            { key: item.tag_id, onMouseEnter: () => announcePageChatHover(`like:${item.tag_id}`), onMouseLeave: () => announcePageChatHover(null) },
             React.createElement("span", { className: "curator-insight-name" }, item.name, item.answer !== null && item.answer > 0 && React.createElement("span", { className: "curator-insight-said", title: "You told Curator you like this tag", "aria-label": "You said you like this" }, React.createElement(FontAwesomeIcon, { icon: faCheckCircle }))),
             React.createElement("span", { className: "curator-insight-value", title: `${item.watched_scenes} watched scenes` }, insightPercent(item.watched_scenes / totals.scenes_played)),
             React.createElement(TasteSparkline, { values: item.trend, windows, max: sparkMax, label: `${item.name}: share of watched scenes per quarter, ${item.trend.map((value) => value === null ? "no data" : insightPercent(value)).join(", ")}` })
@@ -7695,7 +7697,7 @@
       fields: [
         { key: "detailPageControls", type: "SELECT", default: "large", options: [{ value: "large", label: "Large" }, { value: "small", label: "Small" }, { value: "off", label: "Off" }], label: "Detail page controls", description: "Curator's expandable bar on scene and performer pages: Large (default), Small for compact icons and score, or Off to hide it." },
         { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
-        { key: "hidePageComments", type: "BOOLEAN", label: "Hide Curator's comments", description: "Hide the chat bubbles at the top of the Recommendations page: welcome-backs, lane comments and notes on the card under the pointer. Off by default." },
+        { key: "hidePageComments", type: "BOOLEAN", label: "Hide Curator's comments", description: "Hide Curator's chat bubbles on its own pages (welcome-backs, lane comments, card notes, Insights) and on Stash's scene and performer pages. Off by default." },
         { key: "hideRankingComments", type: "BOOLEAN", label: "Hide comments in ranking plugins", description: "Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
@@ -9968,16 +9970,17 @@
     }
     const lean = new Map();
     for (const [gender, group] of groups) {
-      const liked = new Set(); const avoided = new Set();
+      const liked = new Set(); const avoided = new Set(); const lifts = new Map();
       for (const [trait, count] of group) {
         const share = count.has / count.known;
         if (!count.watched || share <= 0 || share >= 1) continue;
         const z = (count.watchedHas - count.watched * share) / Math.sqrt(count.watched * share * (1 - share));
         const lift = count.watchedHas / count.watched / share;
+        lifts.set(trait, lift);
         if (count.watchedHas >= 10 && lift >= 1.2 && z >= 2.5) liked.add(trait);
         if (lift <= 0.8 && z <= -2.5) avoided.add(trait);
       }
-      lean.set(gender, { liked, avoided });
+      lean.set(gender, { liked, avoided, lifts });
     }
     return { byId, lean };
   }
@@ -10374,7 +10377,8 @@
   }
   const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   // One chat message: a typing indicator, then the text typed out.
-  function RankingBubble({ text, delay, onDone, className = "", instant: shown = false }) {
+  // `links` are { start, end, to } ranges of `text` that open a Stash page.
+  function RankingBubble({ text, links = null, delay, onDone, className = "", instant: shown = false }) {
     const instant = shown || reducedMotion();
     const [typed, setTyped] = React.useState(instant ? text.length : -1);
     React.useEffect(() => {
@@ -10391,8 +10395,18 @@
     }, []);
     if (typed < 0) return React.createElement("span", { className: "curator-ranking-bubble curator-ranking-typing", "aria-hidden": "true" },
       React.createElement("i"), React.createElement("i"), React.createElement("i"));
+    const visible = typed + 1;
+    const typedText = [];
+    let at = 0;
+    for (const link of links || []) {
+      if (link.start >= visible) break;
+      if (link.start > at) typedText.push(text.slice(at, link.start));
+      at = Math.min(link.end, visible);
+      typedText.push(React.createElement(NavLink, { key: link.start, to: link.to, className: "curator-page-chat-link" }, text.slice(link.start, at)));
+    }
+    if (at < visible) typedText.push(text.slice(at, visible));
     return React.createElement("span", { className: `curator-ranking-bubble ${className}` },
-      text.slice(0, typed + 1),
+      ...typedText,
       typed + 1 < text.length && React.createElement("span", { className: "curator-ranking-ghost", "aria-hidden": "true" }, text.slice(typed + 1)));
   }
   function RankingVerdict({ verdict, line, kicker, winner, loser, tally, count, error, dismiss }) {
@@ -10496,7 +10510,7 @@
         type !== "performer" && React.createElement(CuratorAffinityGauge, { value, detail: affinityDetail })
     );
   }
-  function CuratorContextLink({ type, id, label, scene }) {
+  function CuratorContextLink({ type, id, label, scene, performer }) {
     const [details, setDetails] = React.useState(null);
     const [error, setError] = React.useState(false);
     React.useEffect(() => {
@@ -10508,7 +10522,37 @@
         .catch(() => { if (active) setError(true); });
       return () => { active = false; };
     }, [type, id]);
-    return React.createElement(CuratorEntityPanel, { type, id, label, details, error, scene });
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(CuratorEntityPanel, { type, id, label, details, error, scene }),
+      !error && React.createElement(CuratorEntityChat, { type, entity: type === "scene" ? scene : performer, details })
+    );
+  }
+  // Curator's comment on Stash's own scene and performer pages, in a host
+  // of its own: beside the performer's name, or in a slot held under
+  // Curator's row on the scene page and on phones, so nothing native moves.
+  function CuratorEntityChat({ type, entity, details }) {
+    const [host, setHost] = React.useState(null);
+    React.useEffect(() => {
+      const anchor = document.querySelector(type === "scene" ? ".scene-tabs .scene-toolbar" : "#performer-page .performer-head > h2");
+      if (!anchor) return undefined;
+      const container = document.createElement("div");
+      container.className = `curator-page-chat-host curator-page-chat-host-${type}`;
+      // After Curator's own panel when it sits under the toolbar.
+      const panel = anchor.nextElementSibling;
+      (panel?.classList.contains("curator-entity-panel-host") ? panel : anchor).after(container);
+      setHost(container);
+      return () => container.remove();
+    }, [type, entity?.id]);
+    const feed = React.useMemo(() => {
+      if (!entity?.id || !details) return null;
+      return type === "scene" ? pageChatScenePageFeed(entity, details) : pageChatPerformerPageFeed(entity, details);
+    }, [type, entity, details]);
+    if (!host || !entity?.id) return null;
+    return ReactDOM.createPortal(React.createElement(PageChat, {
+      view: `${type}:${entity.id}`, feed, lines: 3, frame: type === "scene" ? pageChatSceneFrame : pageChatPerformerFrame,
+    }), host);
   }
   function CuratorEntityPanel({ type, id, label, details, error, scene }) {
     const [host, setHost] = React.useState(null);
@@ -11072,6 +11116,259 @@
       "{n} reasons, I love the detail.",
       "That's plenty to go on. Thanks!",
     ],
+    // Stash's scene page: a hunch about this scene and the reasons behind
+    // it, two at a time where the evidence allows.
+    scenePairing: [
+      "Good feeling about this one: {p} and {t}. You've played {n} scenes with exactly that pairing.",
+      "This has {p} and {t}, a pairing you've gone for {n} times. Easy call.",
+      "{p} plus {t}? You've played {n} like that already. I think this lands.",
+    ],
+    scenePerformerStudio: [
+      "{p} with {s}, two things that rarely miss for you: {n} of {pf}'s scenes played, {m} plays for the studio.",
+      "{p} and {s} together. You've played {n} {pf} scenes and given the studio {m} plays. I like its chances.",
+    ],
+    sceneTagNeighbor: [
+      "More {t}, and it's the closest thing to {r}, which you've played {n} times.",
+      "If {r} worked for you, and {n} plays say it did, this is cut from the same cloth. {t} too.",
+    ],
+    sceneTagRun: [
+      "You've been on a {t} run lately, {n} in the last two weeks, and this one has {p} on top.",
+      "{n} {t} scenes in the last two weeks, and now one with {p}. I see where this is going.",
+    ],
+    scenePerformerRun: [
+      "{p} again? That's {n} in the last two weeks. You're on a streak, and this keeps it going.",
+      "Your {p} streak continues: {n} in the last two weeks. This one fits right in.",
+    ],
+    sceneRecentNeighbor: [
+      "You watched {r} {when}. This is the nearest thing to it in your library.",
+      "Liked {r} {when}? This one is its closest match.",
+    ],
+    sceneSatiated: [
+      "This would normally be high on my list for you, but you've watched {p} {n} times this week. I'm letting it breathe.",
+      "{p} is usually a sure thing for you, but {n} this week is plenty. I've eased this one down for now.",
+    ],
+    sceneCooldown: [
+      "You watched this {when}, so I'm letting it rest before I suggest it again.",
+      "Fresh in your memory: you played it {when}. It's resting in your picks for a bit.",
+    ],
+    sceneNotNow: [
+      "You told me 'not now' on this {when}. I'm keeping it out of your picks until it fades.",
+      "Not now, you said {when}. It's sitting out your picks for a while.",
+    ],
+    sceneNotNowPlain: [
+      "You told me 'not now' on this one, so I'm keeping it out of your picks for a while.",
+    ],
+    sceneHistoryBeats: [
+      "On paper this one shouldn't work for you, but {n} plays say it clearly does.",
+      "Its tags and cast wouldn't put it near the top for you. Your {n} plays did.",
+    ],
+    sceneHistoryLags: [
+      "{x} says this should be right up your street, but your history with it says otherwise. What's missing?",
+      "I expected this to land with you because of {x}. Your history with it disagrees. Curious.",
+    ],
+    sceneNewFace: [
+      "{p} is new to you, but a lot like {q}, and you've played {n} of {qf}'s scenes. I've got a hunch.",
+      "Never watched {p}? They're close to {q}, and you've played {n} of {qf}'s scenes. Worth a look.",
+    ],
+    sceneRadar: [
+      "Honestly, this wasn't on my radar. None of its {k} performers has a play from you, and nothing from {s} either.",
+      "This one's new ground: no plays from you for any of its {k} performers or for {s}. Tell me how it goes.",
+    ],
+    sceneRadarPlain: [
+      "Honestly, this wasn't on my radar. None of its {k} performers has a play from you yet.",
+    ],
+    sceneRadarOne: [
+      "Honestly, this wasn't on my radar. You've never played a {p} scene, and nothing from {s} either.",
+      "New ground: no {p} scenes and nothing from {s} in your plays yet. Tell me how it goes.",
+    ],
+    sceneRadarOnePlain: [
+      "Honestly, this wasn't on my radar. You've never played a {p} scene before.",
+    ],
+    scenePerformer: [
+      "I have a feeling about this one. {p} is in {n} scenes you've already played.",
+      "This one's an easy call: you keep coming back to {p}, {m} plays so far.",
+    ],
+    sceneTag: [
+      "There's {t} in this, and that's on {pct} of what you watch. I'd be surprised if it missed.",
+      "{t} again. It's on {pct} of the scenes you watch, so I like this one's chances.",
+    ],
+    sceneStudio: [
+      "{s} has a good track record with you, {m} plays. I'm expecting this to hold up.",
+      "Another {s}. You've given them {m} plays, so this should be safe.",
+    ],
+    sceneNeighbor: [
+      "If you liked {r}, and {n} plays says you did, this one is cut from the same cloth.",
+      "This is close to {r}, which you've played {n} times.",
+    ],
+    sceneResume: [
+      "Back for more? You stopped at {t} last time.",
+      "Picking up where you left off, at {t}?",
+    ],
+    sceneReplay: [
+      "Play number {n}. The last one was {when}, so it's been a while.",
+      "{n} plays and counting, the last {when}. A proper favourite.",
+    ],
+    // The same reasons for a scene that only scores middling for you.
+    scenePairingMild: [
+      "This has {p} and {t}, a pairing you've played {n} times. Worth a look.",
+      "{p} with {t}: you've gone for that {n} times before. Could be one for you.",
+    ],
+    scenePerformerStudioMild: [
+      "{p} with {s}: you've played {n} of {pf}'s scenes and given the studio {m} plays. Might be worth a go.",
+    ],
+    sceneTagNeighborMild: [
+      "It's closest to {r}, which you've played {n} times, and there's {t} too. Maybe one for you.",
+    ],
+    scenePerformerMild: [
+      "{p} is in {n} scenes you've played, so this might be worth a look.",
+      "You've played {p} {m} times. Not a sure thing, but promising.",
+    ],
+    sceneTagMild: [
+      "There's {t} in this, and that's on {pct} of what you watch. Could be one for you.",
+    ],
+    sceneStudioMild: [
+      "{s} has {m} plays from you. This one might be worth a go.",
+    ],
+    sceneNeighborMild: [
+      "It's close to {r}, which you've played {n} times. Might be your thing.",
+    ],
+    // A scene that scores low for you despite something you like in it.
+    sceneMixedPerformer: [
+      "You keep coming back to {p}, {m} plays so far, but there's {t} in this, and that rarely works for you. I'm on the fence.",
+      "{p} is a plus, {m} plays so far, but {t} usually isn't your thing. Could go either way.",
+    ],
+    sceneMixedTag: [
+      "There's {t}, which you like, but also {x}, which you usually skip. I'm on the fence.",
+      "{t} says yes, {x} says no. Hard to call this one for you.",
+    ],
+    sceneDoubtPerformer: [
+      "You keep coming back to {p}, {m} plays so far, but the rest of this one doesn't look much like what you watch. I'm not sold.",
+      "{p} is a plus, {m} plays so far. Beyond that, this one isn't really your usual. I'm not sure.",
+    ],
+    sceneDoubt: [
+      "Not sure about this one for you: {x} usually isn't your thing.",
+      "I'd hesitate here. There's {x} in this, and that rarely works for you.",
+    ],
+    sceneDoubtPlain: [
+      "Not sure about this one for you. Not much in it matches what you watch.",
+    ],
+    sceneFresh: [
+      "Fresh in, added {ago}, and you're the first to see it.",
+      "Added {ago}. Brand new to you.",
+    ],
+    // Stash's performer page.
+    performerUsual: [
+      "With {pf}, you mostly pick the {t} scenes: {a} of what you've played, against {b} of the rest.",
+      "You have a type with {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+    ],
+    performerStreak: [
+      "{n} this week already. You and {p} are on a streak.",
+      "That's {n} {pf} scenes this week. I see what's going on.",
+    ],
+    performerRegular: [
+      "One of your regulars: {n} scenes and {m} plays so far. No introduction needed.",
+      "You and {pf} know each other well: {m} plays across {n} scenes.",
+    ],
+    performerGoTo: [
+      "Your go-to {pf} scene is {r}, {k} plays and counting.",
+      "If it's {pf}, it's often {r}: {k} plays so far.",
+    ],
+    performerCoStar: [
+      "With {pf}, you mostly pick the scenes with {q}: {a} of what you've played, against {b} of the rest.",
+      "{pf} and {q} seem to be a pairing you like: {a} of the {pf} scenes you've played, but {b} of the others.",
+    ],
+    performerStudio: [
+      "You mostly watch {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+      "{s} is where you like {pf} best: {a} of your {pf} plays come from there, but only {b} of the rest.",
+    ],
+    performerLast: [
+      "Your last {pf} scene was {r}, {when}.",
+      "Last time it was {r}, {when}.",
+    ],
+    performerBacklog: [
+      "You've barely scratched the surface with {pf}: {u} of their {all} scenes are still unplayed.",
+      "{u} {pf} scenes you've never played. Plenty left to explore.",
+    ],
+    performerWaiting: [
+      "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+      "{waiting} you haven't touched yet, including {one} added {ago}.",
+    ],
+    performerIdleFavourite: [
+      "You favourited {p}, but the last play was {when}, and {waiting} still unplayed. Still a fan?",
+      "{p} is a favourite, yet you haven't played them since {since}. {waiting} still unplayed.",
+    ],
+    performerUnplayedFavourite: [
+      "You favourited {p} but haven't played any of their {all} scenes yet. Where to start?",
+    ],
+    performerDormant: [
+      "You haven't watched {p} since {since}. That's {d} months. Time for a revisit?",
+      "{d} months since your last {pf} scene. You used to play them a lot: {m} plays.",
+    ],
+    performerSimilar: [
+      "You haven't watched {p} yet, but you've played {n} of {q}'s scenes, and they're close. I think you'd get on.",
+      "New to you, but {p} is a lot like {q}, and you've played {n} of {qf}'s scenes. I've got a hunch.",
+    ],
+    performerTrait: [
+      "No surprise you're here. {trait} turn up {x}× as often in who you watch, and you've played {n} of {pf}'s scenes.",
+      "{trait} show up {x}× as often in who you watch as in your library. {p} fits, and {n} plays agree.",
+    ],
+    performerBlank: [
+      "{p}'s a blank to me: no plays from their {all} scenes, and nobody like them that you watch. New ground.",
+      "I don't know {p} yet. None of their {all} scenes has a play from you. Your first one will teach me.",
+    ],
+    // Insights: what the taste summary shows, said aloud.
+    insights: [
+      "This is what I've learned from what you watch. Correct me anywhere.",
+      "Your taste, as I see it. Anything surprise you?",
+    ],
+    insightTop: [
+      "{t} is your constant: it's on {pct} of the {n} scenes you've watched.",
+      "No contest at the top. {t} is on {pct} of everything you've watched.",
+    ],
+    insightRising: [
+      "You've been on a {t} streak: up from {a} to {b} of what you watch lately.",
+      "{t} is climbing, {a} to {b} of your watching in the last 90 days. Something new clicking?",
+    ],
+    insightFading: [
+      "{t} has gone quiet for you, from {a} down to {b}. Ran its course?",
+      "Less {t} lately: {a} before, {b} in the last 90 days.",
+    ],
+    insightApart: [
+      "{t} is only {a} of your library but {b} of what you watch. You seek it out.",
+      "You go looking for {t}: {b} of what you watch, from {a} of your library.",
+    ],
+    insightPassed: [
+      "Your library's full of {t}, {a} of it, and you hardly touch it: {b}.",
+      "{t} is on {a} of your library and just {b} of what you watch. Keep it?",
+    ],
+    insightAgrees: [
+      "You said yes to {t}, and you meant it: it's on {pct} of what you watch.",
+      "{t}: you told me you like it, and {pct} of what you watch backs that up.",
+    ],
+    insightDormant: [
+      "You and {p} go back. {n} plays, but none since {since}.",
+      "{p} used to be a regular: {n} plays, the last {when}.",
+    ],
+    insightRediscovered: [
+      "You came back to {r} after {m} months. Some things stick.",
+      "{m} months away, then back to {r}. A keeper.",
+    ],
+    insightWords: [
+      "You've picked {x} {n} times in Why these? as what makes a scene work.",
+      "{x}, {n} times in your Why these? answers. I've taken note.",
+    ],
+    insightCoverage: [
+      "You've watched {n} of your {all} scenes. Plenty of library left to explore.",
+      "{n} of {all} scenes watched so far. That's {pct} of your library.",
+    ],
+    insightPeak: [
+      "{t} peaked at {pct} of your watching in the three months to {when}.",
+      "Your {t} high point: {pct} of what you watched, in the quarter to {when}.",
+    ],
+    insightPeakNow: [
+      "{t} is at its peak right now: {pct} of what you've watched lately.",
+      "Never more {t} than now: {pct} of your last three months.",
+    ],
   };
   const PAGE_CHAT_MOODS = {
     first: "👋", again: "😄", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
@@ -11087,6 +11384,16 @@
     favouriteNote: "😍", whisparrNote: "📥", ownedNote: "📚", releasedNote: "✨", oldNote: "📼",
     curate_questions: "🤔", curate_reasons: "👂", curate_sentiment: "🧐", curate_progress: "📈",
     calledLike: "😄", calledDislike: "😌", answerSurprise: "😮", answerBlocked: "🤐", taughtMilestone: "🔥", reasonFlip: "😮", reasonRich: "🤩",
+    scenePairing: "😏", scenePerformerStudio: "😌", sceneTagNeighbor: "🎯", sceneTagRun: "🔥", scenePerformerRun: "🔥", sceneRecentNeighbor: "🎯",
+    sceneSatiated: "😌", sceneCooldown: "💤", sceneNotNow: "🤐", sceneNotNowPlain: "🤐", sceneHistoryBeats: "😮", sceneHistoryLags: "🤔",
+    sceneNewFace: "👀", sceneRadar: "🧐", sceneRadarPlain: "🧐", sceneRadarOne: "🧐", sceneRadarOnePlain: "🧐", scenePerformer: "😌", sceneTag: "🙂", sceneStudio: "🙂", sceneNeighbor: "🎯",
+    sceneResume: "⏯️", sceneReplay: "😍", sceneFresh: "✨",
+    scenePairingMild: "🙂", scenePerformerStudioMild: "🙂", sceneTagNeighborMild: "🙂", scenePerformerMild: "🙂", sceneTagMild: "🙂", sceneStudioMild: "🙂", sceneNeighborMild: "🙂",
+    sceneMixedPerformer: "🤔", sceneMixedTag: "🤔", sceneDoubtPerformer: "🤔", sceneDoubt: "🤔", sceneDoubtPlain: "🤔",
+    performerUsual: "😏", performerStreak: "🔥", performerRegular: "😌", performerGoTo: "😍", performerCoStar: "😏", performerStudio: "🙂", performerLast: "🙂", performerBacklog: "👀", performerWaiting: "👀", performerIdleFavourite: "🤔",
+    performerUnplayedFavourite: "🤔", performerDormant: "💤", performerSimilar: "👀", performerTrait: "😏", performerBlank: "🧐",
+    insights: "🧐", insightTop: "😌", insightRising: "📈", insightFading: "📉", insightApart: "😏", insightPassed: "🤔", insightAgrees: "😄",
+    insightDormant: "💤", insightRediscovered: "🤗", insightWords: "👂", insightCoverage: "📚", insightPeak: "📈", insightPeakNow: "🔥",
   };
   // A visit starts after half an hour away. Days visited feed the streak.
   function pageChatVisit(record, now = Date.now()) {
@@ -11490,10 +11797,401 @@
     }
     return null;
   }
+  // A Stash page a line can link a name to.
+  function pageChatTo(kind, id) {
+    return id == null || id === "" ? null : `/${kind}/${id}`;
+  }
+  // The first name, for a second mention in the same line.
+  function pageChatFirst(name) {
+    return String(name || "").split(/\s+/)[0];
+  }
+  function pageChatPercent(share) {
+    return `${Math.round(share * 100)}%`;
+  }
+  // A past day the way a person says it: today, yesterday, on Sunday,
+  // 3 weeks ago, in March.
+  function pageChatDay(ms, now = Date.now()) {
+    const day = (at) => new Date(at).toDateString();
+    if (day(ms) === day(now)) return "today";
+    if (day(ms) === day(now - PAGE_CHAT_DAY)) return "yesterday";
+    if (now - ms < 6 * PAGE_CHAT_DAY) return `on ${new Date(ms).toLocaleString("en", { weekday: "long" })}`;
+    if (now - ms < 60 * PAGE_CHAT_DAY) return rankingAgo(ms, now);
+    return `in ${rankingWhen(ms, now)}`;
+  }
+  function pageChatMonths(ms, now = Date.now()) {
+    return Math.max(1, Math.round((now - ms) / (30.4 * PAGE_CHAT_DAY)));
+  }
+  // The scene's tags the model counts in its favour, strongest first.
+  function pageChatLikedTags(scene, details) {
+    const byName = new Map((scene?.tags || []).map((tag) => [tag.name, tag]));
+    const seen = new Set();
+    return (details?.score?.components?.content?.top || [])
+      .filter((feature) => Number(feature.value) > 0)
+      .map((feature) => byName.get(feature.metadata?.tag_name))
+      .filter((tag) => tag && !seen.has(tag.id) && seen.add(tag.id))
+      .slice(0, 3);
+  }
+  function pageChatSimilarMatches(details) {
+    const ids = new Set();
+    for (const entry of details?.score?.components?.performer_similarity?.performers || []) {
+      for (const match of entry.matches || []) if (Number(match.affinity) > 0) ids.add(String(match.performer_id));
+    }
+    return [...ids].slice(0, 6);
+  }
+  const PAGE_CHAT_RECENT_DAYS = 14;
+  // How sure a scene-page line sounds follows the scene's appeal (-1..1):
+  // confident from SURE, measured down to DOUBT, hesitant below it. On a
+  // real library the median scene sat near 0.32, the bottom quarter
+  // below 0.13 and the top quarter above 0.5.
+  const PAGE_CHAT_SURE = 0.45;
+  const PAGE_CHAT_DOUBT = 0.15;
+  const PAGE_CHAT_SCENE_FIELDS = "id play_count last_played_at performers { id } tags { id }";
+  // One Stash request for everything the scene page's lines draw on: your
+  // played scenes with its performers (and the performers it resembles),
+  // its studio and its liked tags, the last two weeks of plays, and its
+  // nearest scenes by the model.
+  function pageChatSceneQuery(scene, details, now = Date.now()) {
+    const played = "play_count: { value: 0, modifier: GREATER_THAN }";
+    const variables = { since: new Date(now - PAGE_CHAT_RECENT_DAYS * PAGE_CHAT_DAY).toISOString() };
+    const parts = [
+      `total: findScenes(scene_filter: { ${played} }, filter: { per_page: 0 }) { count }`,
+      `recent: findScenes(scene_filter: { last_played_at: { value: $since, modifier: GREATER_THAN } }, filter: { per_page: -1 }) { scenes { ${PAGE_CHAT_SCENE_FIELDS} } }`,
+    ];
+    const params = ["$since: String!"];
+    const matches = pageChatSimilarMatches(details);
+    const people = [...new Set([...(scene.performers || []).map((performer) => String(performer.id)), ...matches])];
+    if (people.length) {
+      variables.people = people;
+      params.push("$people: [ID!]");
+      parts.push(`mine: findScenes(scene_filter: { ${played}, performers: { value: $people, modifier: INCLUDES } }, filter: { per_page: -1 }) { scenes { ${PAGE_CHAT_SCENE_FIELDS} } }`);
+    }
+    if (matches.length) {
+      variables.matches = matches.map(Number);
+      params.push("$matches: [Int!]");
+      parts.push("matches: findPerformers(performer_ids: $matches, filter: { per_page: -1 }) { performers { id name } }");
+    }
+    if (scene.studio?.id) {
+      variables.studio = [String(scene.studio.id)];
+      params.push("$studio: [ID!]");
+      parts.push(`studio: findScenes(scene_filter: { ${played}, studios: { value: $studio, modifier: INCLUDES, depth: 0 } }, filter: { per_page: -1 }) { scenes { id play_count } }`);
+    }
+    pageChatLikedTags(scene, details).forEach((tag, index) => {
+      variables[`tag${index}`] = [String(tag.id)];
+      params.push(`$tag${index}: [ID!]`);
+      parts.push(`tag${index}: findScenes(scene_filter: { ${played}, tags: { value: $tag${index}, modifier: INCLUDES, depth: 0 } }, filter: { per_page: 0 }) { count }`);
+    });
+    const near = (details?.score?.neighbors || []).map((neighbor) => Number(neighbor.scene_id)).filter(Number.isFinite).slice(0, 8);
+    if (near.length) {
+      variables.near = near;
+      params.push("$near: [Int!]");
+      parts.push("near: findScenes(scene_ids: $near, filter: { per_page: -1 }) { scenes { id title play_count last_played_at files { basename } } }");
+    }
+    return { query: `query CuratorPageChatScene(${params.join(", ")}) { ${parts.join(" ")} }`, variables };
+  }
+  // What to say on a scene's page. Each option names what it rests on: two
+  // reasons together where the evidence allows (a regular in a tag you
+  // watch, a recent run), else one, else the scene's own state (a pause
+  // point, a cooldown). `data` is pageChatSceneQuery's result plus
+  // `notNowAt` when you said Not now.
+  function pageChatSceneShelf(scene, details, data, now = Date.now()) {
+    const score = details?.score;
+    if (!scene || !score) return [];
+    const components = score.components || {};
+    const self = String(scene.id);
+    const others = (list) => (list || []).filter((entry) => String(entry.id) !== self);
+    const mine = others(data?.mine?.scenes);
+    const recent = others(data?.recent?.scenes).filter((entry) => now - (Date.parse(entry.last_played_at || "") || 0) < PAGE_CHAT_RECENT_DAYS * PAGE_CHAT_DAY);
+    const holding = (list, key, id) => list.filter((entry) => (entry[key] || []).some((item) => String(item.id) === String(id)));
+    const plays = (list) => list.reduce((sum, entry) => sum + (Number(entry.play_count) || 0), 0);
+    const total = Number(data?.total?.count) || 0;
+    const identity = new Map((components.performer_identity?.performers || []).map((entry) => [String(entry.performer_id), Number(entry.value) || 0]));
+    const cast = (scene.performers || []).filter((performer) => performer.name).map((performer) => {
+      const played = holding(mine, "performers", performer.id);
+      const lately = holding(recent, "performers", performer.id);
+      return {
+        performer, p: performer.name, played, n: played.length, m: plays(played), recent: lately.length,
+        week: lately.filter((entry) => now - Date.parse(entry.last_played_at) < 7 * PAGE_CHAT_DAY).length,
+        value: identity.get(String(performer.id)) || 0,
+      };
+    });
+    const regulars = cast.filter((entry) => entry.n >= 2 && entry.value > 0).sort((a, b) => b.n - a.n);
+    const regular = regulars[0];
+    const tags = pageChatLikedTags(scene, details).map((tag, index) => {
+      const count = Number(data?.[`tag${index}`]?.count) || 0;
+      return { tag, t: tag.name, count, share: total ? count / total : 0, recent: holding(recent, "tags", tag.id).length };
+    });
+    const tag = tags.filter((entry) => entry.count >= 3 && entry.share >= 0.1).sort((a, b) => b.share - a.share)[0];
+    const studioScenes = others(data?.studio?.scenes);
+    const studioValue = Number((components.studio?.studios || []).find((entry) => String(entry.studio_id) === String(scene.studio?.id))?.value) || 0;
+    const studio = scene.studio?.name && plays(studioScenes) >= 5 && studioValue > 0 ? { s: scene.studio.name, m: plays(studioScenes) } : null;
+    const nearScenes = new Map((data?.near?.scenes || []).map((entry) => [String(entry.id), entry]));
+    const nearby = (score.neighbors || []).filter((neighbor) => Number(neighbor.outcome) > 0 && String(neighbor.scene_id) !== self)
+      .map((neighbor) => ({ similarity: Number(neighbor.similarity) || 0, scene: nearScenes.get(String(neighbor.scene_id)) }))
+      .map((entry) => ({ ...entry, r: entry.scene && pageChatShortTitle(pageChatTitle(entry.scene)) }))
+      .filter((entry) => entry.r)
+      .sort((a, b) => b.similarity - a.similarity);
+    const neighbor = nearby.find((entry) => Number(entry.scene.play_count) >= 2);
+    const lastNeighbor = nearby.find((entry) => now - (Date.parse(entry.scene.last_played_at || "") || 0) < 7 * PAGE_CHAT_DAY);
+    const fit = components.fit || {};
+    const lastPlayed = Date.parse(scene.last_played_at || "") || 0;
+    const count = Number(scene.play_count) || 0;
+    const options = [];
+    const appeal = Number(score.appeal) || 0;
+    const tone = appeal >= PAGE_CHAT_SURE ? "sure" : appeal >= PAGE_CHAT_DOUBT ? "mild" : "doubt";
+    const add = (weight, key, values, links = {}) => options.push([weight, {
+      key: tone === "mild" && PAGE_CHAT_LINES[`${key}Mild`] ? `${key}Mild` : key, values, links,
+    }]);
+    // A hunch in the scene's favour; a scene that scores low gets none.
+    const hunch = (...args) => { if (tone !== "doubt") add(...args); };
+    const person = (entry) => pageChatTo("performers", entry.performer.id);
+    const tagTo = (entry) => pageChatTo("tags", entry.tag.id);
+    const sceneTo = (entry) => pageChatTo("scenes", entry.scene.id);
+    const studioTo = pageChatTo("studios", scene.studio?.id);
+    // The scene's own state first: these explain what you see in your picks.
+    const tired = Math.abs(Number(fit.satiation) || 0) > 0.005 && cast.filter((entry) => entry.week >= 2).sort((a, b) => b.week - a.week)[0];
+    if (tired) add(6, "sceneSatiated", { p: tired.p, n: tired.week }, { p: person(tired) });
+    if (Math.abs(Number(fit.not_now) || 0) > 0.005) {
+      add(6, data?.notNowAt ? "sceneNotNow" : "sceneNotNowPlain", data?.notNowAt ? { when: pageChatDay(data.notNowAt, now) } : {});
+    }
+    if (Number(scene.resume_time) >= 60 && count) add(5, "sceneResume", { t: pageChatClock(scene.resume_time) });
+    if (Math.abs(Number(fit.cooldown) || 0) > 0.02 && lastPlayed && now - lastPlayed < 30 * PAGE_CHAT_DAY && !tired) add(4, "sceneCooldown", { when: pageChatDay(lastPlayed, now) });
+    // Two reasons at once.
+    const combos = options.length;
+    const paired = regulars.flatMap((entry) => tags.map((each) => ({ entry, each, n: holding(entry.played, "tags", each.tag.id).length })))
+      .filter((pair) => pair.n >= 2).sort((a, b) => b.n - a.n)[0];
+    if (paired) hunch(5, "scenePairing", { p: paired.entry.p, t: paired.each.t, n: paired.n }, { p: person(paired.entry), t: tagTo(paired.each) });
+    const run = tags.filter((entry) => entry.recent >= 3).sort((a, b) => b.recent - a.recent)[0];
+    if (run && regular) hunch(5, "sceneTagRun", { t: run.t, n: run.recent, p: regular.p }, { t: tagTo(run), p: person(regular) });
+    const streak = regulars.filter((entry) => entry.recent >= 2).sort((a, b) => b.recent - a.recent)[0];
+    if (streak && !tired) hunch(4.5, "scenePerformerRun", { p: streak.p, n: streak.recent }, { p: person(streak) });
+    if (lastNeighbor) hunch(4.5, "sceneRecentNeighbor", { r: lastNeighbor.r, when: pageChatDay(Date.parse(lastNeighbor.scene.last_played_at), now) }, { r: sceneTo(lastNeighbor) });
+    if (regular && studio) hunch(4, "scenePerformerStudio", { p: regular.p, pf: pageChatFirst(regular.p), n: regular.n, s: studio.s, m: studio.m }, { p: person(regular), s: studioTo });
+    if (tag && neighbor) hunch(4, "sceneTagNeighbor", { t: tag.t, r: neighbor.r, n: neighbor.scene.play_count }, { t: tagTo(tag), r: sceneTo(neighbor) });
+    const general = Number(score.general_appeal) || 0;
+    const direct = Number(score.direct_appeal) || 0;
+    if (Number(score.direct_confidence) > 0.2 && count >= 2 && direct - general >= 0.25 && general < 0.05) add(4, "sceneHistoryBeats", { n: count });
+    const expected = regular?.p || tag?.t;
+    if (Number(score.direct_confidence) > 0.2 && direct < 0 && general > 0.15 && expected) add(4, "sceneHistoryLags", { x: expected }, { x: regular ? person(regular) : tagTo(tag) });
+    const names = new Map((data?.matches?.performers || []).map((performer) => [String(performer.id), performer.name]));
+    const similar = new Map((components.performer_similarity?.performers || []).map((entry) => [String(entry.performer_id), entry.matches || []]));
+    const newFace = cast.filter((entry) => !entry.n).map((entry) => {
+      const match = (similar.get(String(entry.performer.id)) || [])
+        .filter((each) => Number(each.affinity) > 0 && names.get(String(each.performer_id)))
+        .map((each) => ({ id: each.performer_id, q: names.get(String(each.performer_id)), n: holding(mine, "performers", each.performer_id).length }))
+        .filter((each) => each.n >= 3).sort((a, b) => b.n - a.n)[0];
+      return match && { entry, match };
+    }).find(Boolean);
+    if (newFace) {
+      const { entry, match } = newFace;
+      hunch(4, "sceneNewFace", { p: entry.p, q: match.q, n: match.n, qf: pageChatFirst(match.q) }, { p: person(entry), q: pageChatTo("performers", match.id) });
+    }
+    const unknown = !count && Number(score.confidence) < 0.3 && cast.length && cast.every((entry) => !entry.n);
+    if (unknown && !newFace) {
+      const studioName = scene.studio?.name && !studioScenes.length ? scene.studio.name : null;
+      if (cast.length === 1) add(3, studioName ? "sceneRadarOne" : "sceneRadarOnePlain", { p: cast[0].p, s: studioName }, { p: person(cast[0]), s: studioTo });
+      else add(3, studioName ? "sceneRadar" : "sceneRadarPlain", { k: cast.length, s: studioName }, { s: studioTo });
+    }
+    // Low scorers: what you like in it against what holds it back.
+    if (tone === "doubt" && !unknown) {
+      const byName = new Map((scene.tags || []).map((each) => [each.name, each]));
+      const drag = (components.content?.top || []).filter((feature) => Number(feature.value) < 0)
+        .map((feature) => byName.get(feature.metadata?.tag_name)).find(Boolean);
+      const dragTo = drag && { x: pageChatTo("tags", drag.id), t: pageChatTo("tags", drag.id) };
+      const liked = tags.find((entry) => entry.count >= 3);
+      if (regular && drag) add(5, "sceneMixedPerformer", { p: regular.p, m: regular.m, t: drag.name }, { p: person(regular), t: dragTo.t });
+      else if (liked && drag) add(5, "sceneMixedTag", { t: liked.t, x: drag.name }, { t: tagTo(liked), x: dragTo.x });
+      else if (regular) add(5, "sceneDoubtPerformer", { p: regular.p, m: regular.m }, { p: person(regular) });
+      else if (drag) add(5, "sceneDoubt", { x: drag.name }, { x: dragTo.x });
+      else add(3, "sceneDoubtPlain", {});
+    }
+    // One reason, when nothing pairs up.
+    if (options.length === combos) {
+      if (regular) hunch(2, "scenePerformer", { p: regular.p, n: regular.n, m: regular.m }, { p: person(regular) });
+      if (tag) hunch(2, "sceneTag", { t: tag.t, pct: pageChatPercent(tag.share) }, { t: tagTo(tag) });
+      if (studio) hunch(1.5, "sceneStudio", studio, { s: studioTo });
+      if (neighbor) hunch(2, "sceneNeighbor", { r: neighbor.r, n: neighbor.scene.play_count }, { r: sceneTo(neighbor) });
+    }
+    const added = Date.parse(scene.created_at || "") || 0;
+    if (!count && added && now - added < 7 * PAGE_CHAT_DAY) add(3, "sceneFresh", { ago: rankingAgo(added, now) });
+    if (count >= 3 && lastPlayed && now - lastPlayed > 60 * PAGE_CHAT_DAY) add(2, "sceneReplay", { n: count, when: pageChatDay(lastPlayed, now) });
+    return options;
+  }
+  // The tag that sets the performer's scenes you play apart from the ones
+  // you skip: on at least half your plays of them (and three), clearly
+  // rarer among the rest. A tag on nearly everything they make describes
+  // the performer (a body type, say), not a choice you made, so it never
+  // counts, and with fewer than two unplayed scenes there is no contrast.
+  // Only content tags (`content`, by id) that don't describe the people in
+  // a scene qualify: a nationality or age group follows the cast, so it's
+  // never a choice either.
+  function pageChatUsualTag(played, all, content) {
+    if (!content) return null;
+    const usual = pageChatPicked(played, all, (scene) => (scene.tags || []).filter((each) => content.has(String(each.id))));
+    return usual && { ...usual, tag: usual.item };
+  }
+  // The same contrast for anything a scene has: `facets(scene)` lists its
+  // { id, name } items (tags, co-stars, a studio). Returns the item on at
+  // least half your plays (and three), on at most 80% of everything, and
+  // at least 30 points rarer among the rest, with its counts.
+  function pageChatPicked(played, all, facets) {
+    const rest = all.length - played.length;
+    if (rest < 2 || !played.length) return null;
+    const counts = (list) => {
+      const byId = new Map();
+      for (const scene of list) for (const item of facets(scene)) {
+        const entry = byId.get(String(item.id)) || { item, n: 0 };
+        entry.n++;
+        byId.set(String(item.id), entry);
+      }
+      return byId;
+    };
+    const overall = counts(all);
+    const lead = (entry) => entry.n / played.length - entry.others / rest;
+    return [...counts(played).values()]
+      .map((entry) => ({ ...entry, others: overall.get(String(entry.item.id)).n - entry.n, rest }))
+      .filter((entry) => entry.n >= 3 && entry.n / played.length >= 0.5 && (entry.n + entry.others) / all.length <= 0.8 && lead(entry) >= 0.3)
+      .sort((a, b) => lead(b) - lead(a) || String(a.item.name).localeCompare(String(b.item.name)))[0] || null;
+  }
+  // What to say on a performer's page, from their scenes in your library
+  // (`data.theirs`), the closest performer the model leans on and your
+  // plays of them (`data.similar`), and optionally the trait lean.
+  function pageChatPerformerShelf(performer, details, data, { taste = null, content = null, now = Date.now() } = {}) {
+    if (!performer?.name) return [];
+    const p = performer.name;
+    const all = data?.theirs?.scenes || [];
+    const played = all.filter((scene) => Number(scene.play_count) > 0);
+    const n = played.length;
+    const m = played.reduce((sum, scene) => sum + Number(scene.play_count), 0);
+    const last = Math.max(0, ...played.map((scene) => Date.parse(scene.last_played_at || "") || 0));
+    const week = played.filter((scene) => now - (Date.parse(scene.last_played_at || "") || 0) < 7 * PAGE_CHAT_DAY).length;
+    const unplayed = all.filter((scene) => !(Number(scene.play_count) > 0));
+    const latest = unplayed.map((scene) => ({ scene, at: Date.parse(scene.created_at || "") || 0 })).sort((a, b) => b.at - a.at)[0];
+    const newest = latest?.at || 0;
+    const options = [];
+    // Their own name isn't linked: it's this page.
+    const u = unplayed.length;
+    const waiting = u === 1 ? `1 ${pageChatFirst(p)} scene is` : `${u} ${pageChatFirst(p)} scenes are`;
+    const add = (weight, key, values, links = {}) => options.push([weight, { key, values: { p, pf: pageChatFirst(p), all: all.length, n, m, u, waiting, ...values }, links }]);
+    if (week >= 2) add(6, "performerStreak", { n: week });
+    const usual = n >= 3 && pageChatUsualTag(played, all, content);
+    if (usual) {
+      add(5, "performerUsual", {
+        t: usual.tag.name, a: usual.n === n ? "all" : pageChatPercent(usual.n / n), b: usual.others ? pageChatPercent(usual.others / usual.rest) : "none",
+      }, { t: pageChatTo("tags", usual.tag.id) });
+    }
+    if (taste && n >= 2) {
+      const trait = rankingLikedTraits(taste, performer).map((name) => ({ name, lift: taste.lean.get(taste.byId.get(String(performer.id))?.gender)?.lifts?.get(name) || 0 }))
+        .filter((entry) => entry.lift >= 1.3).sort((a, b) => b.lift - a.lift)[0];
+      if (trait) {
+        const words = RANKING_TRAIT_NAMES[trait.name]?.[0];
+        if (words) add(4.5, "performerTrait", { trait: words, x: trait.lift.toFixed(1) });
+      }
+    }
+    if (performer.favorite && n && last && now - last > 60 * PAGE_CHAT_DAY && unplayed.length) add(5, "performerIdleFavourite", { when: pageChatDay(last, now), since: rankingWhen(last, now) });
+    if (performer.favorite && !n && all.length) add(5, "performerUnplayedFavourite", {});
+    if (!performer.favorite && n >= 3 && last && now - last > 90 * PAGE_CHAT_DAY) add(4, "performerDormant", { since: rankingWhen(last, now), d: pageChatMonths(last, now) });
+    if (n >= 2 && unplayed.length && newest && now - newest < 30 * PAGE_CHAT_DAY) add(3.5, "performerWaiting", { more: u === 1 ? "1 more is" : `${u} more are`, waiting: waiting.replace(/ (is|are)$/, ""), ago: rankingAgo(newest, now), newest: u === 1 ? "that one" : "the newest", one: "one" }, { newest: pageChatTo("scenes", latest.scene.id), one: pageChatTo("scenes", latest.scene.id) });
+    const shares = (entry) => ({ a: entry.n === n ? "all" : pageChatPercent(entry.n / n), b: entry.others ? pageChatPercent(entry.others / entry.rest) : "none" });
+    const coStar = n >= 3 && pageChatPicked(played, all, (scene) => (scene.performers || []).filter((each) => each.name && String(each.id) !== String(performer.id)));
+    if (coStar) add(4.5, "performerCoStar", { q: coStar.item.name, ...shares(coStar) }, { q: pageChatTo("performers", coStar.item.id) });
+    const studio = n >= 3 && pageChatPicked(played, all, (scene) => (scene.studio?.name ? [scene.studio] : []));
+    if (studio) add(4, "performerStudio", { s: studio.item.name, ...shares(studio) }, { s: pageChatTo("studios", studio.item.id) });
+    const named = (scene) => pageChatShortTitle(pageChatTitle(scene));
+    const goTo = played.filter((scene) => Number(scene.play_count) >= 3 && named(scene)).sort((a, b) => b.play_count - a.play_count)[0];
+    if (goTo && n >= 2) add(3.5, "performerGoTo", { r: named(goTo), k: goTo.play_count }, { r: pageChatTo("scenes", goTo.id) });
+    const lastScene = played.find((scene) => (Date.parse(scene.last_played_at || "") || 0) === last);
+    if (lastScene && named(lastScene) && now - last < 60 * PAGE_CHAT_DAY && week < 2) add(2.5, "performerLast", { r: named(lastScene), when: pageChatDay(last, now) }, { r: pageChatTo("scenes", lastScene.id) });
+    if (n && u >= 10 && u / all.length >= 0.5) add(3, "performerBacklog", {});
+    if (n >= 3 && week < 2) add(1.5, "performerRegular", {});
+    const close = (details?.evidence?.performers || []).filter((entry) => Number(entry.affinity) > 0 && entry.name)[0];
+    const closePlays = Number(data?.similar?.count) || 0;
+    if (!n && close && closePlays >= 3) add(5, "performerSimilar", { q: close.name, qf: pageChatFirst(close.name), n: closePlays }, { q: pageChatTo("performers", close.performer_id) });
+    if (!n && !performer.favorite && all.length && !(close && closePlays >= 3)) add(2, "performerBlank", {});
+    return options;
+  }
+  // Insights → Your taste, from get_taste_summary. `scenes` names the
+  // rediscovered scenes by id.
+  function pageChatInsightsShelf(data, scenes = new Map(), now = Date.now()) {
+    const totals = data?.totals;
+    if (!totals?.scenes_played) return [];
+    const watched = totals.scenes_played;
+    const options = [];
+    const add = (weight, key, values, links = {}) => options.push([weight, { key, values, links }]);
+    const tagTo = (item) => ({ t: pageChatTo("tags", item.tag_id) });
+    const top = data.likes?.[0];
+    if (top && top.watched_scenes / watched >= 0.1) add(2, "insightTop", { t: top.name, pct: pageChatPercent(top.watched_scenes / watched), n: watched.toLocaleString() }, tagTo(top));
+    const rising = data.shift?.rising?.[0];
+    if (rising) add(3, "insightRising", { t: rising.name, a: pageChatPercent(rising.before), b: pageChatPercent(rising.recent) }, tagTo(rising));
+    const fading = data.shift?.fading?.[0];
+    if (fading) add(2.5, "insightFading", { t: fading.name, a: pageChatPercent(fading.before), b: pageChatPercent(fading.recent) }, tagTo(fading));
+    const apart = data.apart?.more?.[0];
+    if (apart) add(3, "insightApart", { t: apart.name, a: pageChatPercent(apart.library_share), b: pageChatPercent(apart.watched_share) }, tagTo(apart));
+    const passed = data.apart?.passed?.[0];
+    if (passed) add(2, "insightPassed", { t: passed.name, a: pageChatPercent(passed.library_share), b: pageChatPercent(passed.watched_share) }, tagTo(passed));
+    const agreed = (data.likes || []).find((item) => item.answer > 0 && item.watched_scenes / watched >= 0.1 && item !== top);
+    if (agreed) add(2, "insightAgrees", { t: agreed.name, pct: pageChatPercent(agreed.watched_scenes / watched) }, tagTo(agreed));
+    const dormant = (data.dormant || []).find((item) => item.entity_type === "performer" || item.entity_type === "studio");
+    if (dormant) add(2.5, "insightDormant", { p: dormant.name, n: dormant.play_count, when: pageChatDay(dormant.last_played_at_ms, now), since: rankingWhen(dormant.last_played_at_ms, now) }, { p: pageChatTo(`${dormant.entity_type}s`, dormant.entity_id) });
+    const again = (data.rediscovered || []).map((item) => ({ item, r: pageChatShortTitle(pageChatTitle(scenes.get(String(item.scene_id)))) })).find((entry) => entry.r);
+    if (again) add(2, "insightRediscovered", { r: again.r, m: pageChatMonths(now - again.item.longest_gap_ms, now) }, { r: pageChatTo("scenes", again.item.scene_id) });
+    const word = data.reasons?.hits?.[0];
+    if (word && word.answers >= 3) add(1.5, "insightWords", { x: word.name, n: word.answers }, { x: pageChatTo(`${word.subject_type === "missing_tag" ? "tag" : word.subject_type}s`, word.subject_id) });
+    if (totals.library_scenes > watched) add(1, "insightCoverage", { n: watched.toLocaleString(), all: totals.library_scenes.toLocaleString(), pct: pageChatPercent(watched / totals.library_scenes) });
+    return options;
+  }
+  // A row under the pointer on Insights: a tag's peak, or how it sets you
+  // apart. Ids are "like:<tag>", "more:<tag>" and "passed:<tag>".
+  function pageChatInsightsNote(data, id) {
+    const [kind, tagId] = String(id).split(":");
+    if (kind === "like") {
+      const item = (data?.likes || []).find((entry) => String(entry.tag_id) === tagId);
+      const trend = item?.trend || [];
+      let peak = -1;
+      trend.forEach((value, index) => { if (value !== null && (peak < 0 || value > trend[peak])) peak = index; });
+      const window = data.windows?.[peak];
+      if (peak < 0 || !window || !(trend[peak] > 0)) return null;
+      const values = { t: item.name, pct: pageChatPercent(trend[peak]) };
+      const links = { t: pageChatTo("tags", item.tag_id) };
+      return peak === trend.length - 1 ? { key: "insightPeakNow", values, links } : { key: "insightPeak", values: { ...values, when: rankingWhen(window.end_ms) }, links };
+    }
+    const item = (kind === "more" ? data?.apart?.more : kind === "passed" ? data?.apart?.passed : null)?.find((entry) => String(entry.tag_id) === tagId);
+    return item ? { key: kind === "more" ? "insightApart" : "insightPassed", values: { t: item.name, a: pageChatPercent(item.library_share), b: pageChatPercent(item.watched_share) }, links: { t: pageChatTo("tags", item.tag_id) } } : null;
+  }
+  // A line split where its values go, each value keeping the page it
+  // links to (spec.links, by value name), if any.
+  function pageChatParts(line, values = {}, links = {}) {
+    const parts = [];
+    let at = 0;
+    for (const match of line.matchAll(/\{(\w+)\}/g)) {
+      if (match.index > at) parts.push({ text: line.slice(at, match.index) });
+      parts.push(match[1] in values ? { text: String(values[match[1]]), to: links[match[1]] || null } : { text: match[0] });
+      at = match.index + match[0].length;
+    }
+    if (at < line.length) parts.push({ text: line.slice(at) });
+    // "2 times" reads as "twice", "1 times" as "once".
+    parts.forEach((part, index) => {
+      const next = parts[index + 1];
+      const word = { 1: "once", 2: "twice" }[part.text];
+      if (word && !part.to && next?.text.startsWith(" times")) {
+        part.text = word;
+        parts[index + 1] = { ...next, text: next.text.slice(" times".length) };
+      }
+    });
+    if (parts[0]) parts[0] = { ...parts[0], text: parts[0].text.charAt(0).toUpperCase() + parts[0].text.slice(1) };
+    return parts;
+  }
   function pageChatFill(line, values = {}) {
-    let text = line;
-    for (const [key, value] of Object.entries(values)) text = text.replaceAll(`{${key}}`, value);
-    return text.charAt(0).toUpperCase() + text.slice(1);
+    return pageChatParts(line, values).map((part) => part.text).join("");
+  }
+  // Where a filled line's links sit, as character ranges.
+  function pageChatLinkRanges(parts) {
+    const ranges = [];
+    let at = 0;
+    for (const part of parts) {
+      if (part.to) ranges.push({ start: at, end: at + part.text.length, to: part.to });
+      at += part.text.length;
+    }
+    return ranges;
   }
   // The deck's next line that fits. Walking the deck (not taking the
   // shortest) keeps a tight space from repeating one line.
@@ -11501,8 +12199,9 @@
     for (const candidate of [spec, spec.fallback].filter(Boolean)) {
       const lines = PAGE_CHAT_LINES[candidate.key] || [];
       for (let tries = 0; tries < lines.length; tries++) {
-        const text = pageChatFill(rankingPick(PAGE_CHAT_LINES, candidate.key, `page:${candidate.key}`), candidate.values);
-        if (!text.includes("{") && fits(text)) return { text, mood: PAGE_CHAT_MOODS[candidate.key] || "🙂", key: candidate.key };
+        const parts = pageChatParts(rankingPick(PAGE_CHAT_LINES, candidate.key, `page:${candidate.key}`), candidate.values, candidate.links);
+        const text = parts.map((part) => part.text).join("");
+        if (!text.includes("{") && fits(text)) return { text, mood: PAGE_CHAT_MOODS[candidate.key] || "🙂", key: candidate.key, links: pageChatLinkRanges(parts) };
       }
     }
     return null;
@@ -11675,8 +12374,136 @@
       },
     };
   }
+  // Insights → Your taste speaks from the summary it already loaded.
+  function pageChatInsightsFeed(data) {
+    const again = (data?.rediscovered || []).slice(0, 3).map((item) => item.scene_id);
+    let facts = null;
+    return {
+      key: `insights:${data?.model_id || ""}`,
+      look: async () => {
+        const scenes = await (facts || (facts = pageChatSceneFacts(again)));
+        return { shelf: pageChatInsightsShelf(data, scenes), intro: () => ({ key: "insights" }) };
+      },
+      note: async (id) => pageChatInsightsNote(data, id),
+    };
+  }
+  // Stash's own scene and performer pages: no welcome (that's for
+  // Curator's page), and only the last line's kind is held back, so the
+  // strongest reason for each scene can win again on the next one.
+  function pageChatNotNowAt(sceneId) {
+    return operation({ operation: "get_feedback_history", page: 1, page_size: 100 })
+      .then((history) => history.items.find((item) => String(item.scene_id) === String(sceneId) && item.feedback_type === "not_now" && !item.reversed_by_id)?.occurred_at_ms || null)
+      .catch(() => null);
+  }
+  function pageChatScenePageFeed(scene, details) {
+    return {
+      key: `scene:${scene.id}:${details.model_id || ""}`,
+      greets: false,
+      memory: 1,
+      look: async () => {
+        const { query, variables } = pageChatSceneQuery(scene, details);
+        const [data, notNowAt] = await Promise.all([
+          stashQuery(query, variables).catch(() => ({})),
+          Math.abs(Number(details.score?.components?.fit?.not_now) || 0) > 0.005 ? pageChatNotNowAt(scene.id) : null,
+        ]);
+        return { shelf: pageChatSceneShelf(scene, details, { ...data, notNowAt }), intro: null };
+      },
+    };
+  }
+  const PAGE_CHAT_PERFORMER_QUERY = `query CuratorPageChatPerformer($id: [ID!], $close: [ID!], $withClose: Boolean!) {
+    theirs: findScenes(scene_filter: { performers: { value: $id, modifier: INCLUDES } }, filter: { per_page: -1 }) {
+      scenes { id title play_count last_played_at created_at tags { id name } studio { id name } performers { id name } files { basename } }
+    }
+    similar: findScenes(scene_filter: { play_count: { value: 0, modifier: GREATER_THAN }, performers: { value: $close, modifier: INCLUDES } }, filter: { per_page: 0 }) @include(if: $withClose) { count }
+  }`;
+  // The trait lean is optional flavour, loaded once.
+  let pageChatTasteLoad = null;
+  function pageChatTaste(affinities) {
+    if (!affinities) return Promise.resolve(null);
+    if (!pageChatTasteLoad) {
+      pageChatTasteLoad = stashQuery(RANKING_TRAITS_QUERY, {})
+        .then((data) => rankingTaste(data.findPerformers.performers, affinities))
+        .catch(() => null);
+    }
+    return pageChatTasteLoad;
+  }
+  // Which tags Curator counts as content about the scene itself (not who is
+  // in it), loaded once.
+  let pageChatContentTagsLoad = null;
+  function pageChatContentTags() {
+    if (!pageChatContentTagsLoad) {
+      pageChatContentTagsLoad = operation({ operation: "get_taste_profile" })
+        .then((profile) => new Set(profile.items.filter((item) => item.role === "content" && !item.describes_performer).map((item) => String(item.tag_id))))
+        .catch(() => { pageChatContentTagsLoad = null; return null; });
+    }
+    return pageChatContentTagsLoad;
+  }
+  function pageChatPerformerPageFeed(performer, details) {
+    return {
+      key: `performer:${performer.id}:${details.model_id || ""}`,
+      greets: false,
+      memory: 1,
+      look: async (context) => {
+        const close = (details.evidence?.performers || []).find((entry) => Number(entry.affinity) > 0 && entry.name);
+        const [data, taste, content] = await Promise.all([
+          stashQuery(PAGE_CHAT_PERFORMER_QUERY, { id: [String(performer.id)], close: close ? [String(close.performer_id)] : [], withClose: Boolean(close) }).catch(() => ({})),
+          pageChatTaste(context?.affinities),
+          pageChatContentTags(),
+        ]);
+        return { shelf: pageChatPerformerShelf(performer, details, data, { taste, content }), intro: null };
+      },
+    };
+  }
 
-  function PageChat({ view, feed }) {
+  // Where a chat on Curator's page may speak: after the header's tabs up to
+  // Curator's controls, or after the heading's text up to the lane
+  // buttons. A frame is { box, edge, lines: [{ text, blockers }], heading }:
+  // `box` is the element the chat is positioned in, `lines` the text whose
+  // right side is free up to `edge` or the first blocker on its line.
+  function pageChatCuratorFrame(root) {
+    const copy = root?.parentElement;
+    const page = copy?.closest(".curator-page");
+    if (!copy || !page) return null;
+    const lines = [];
+    const tabs = page.querySelector(".curator-header .curator-tabs");
+    const lastTab = tabs?.lastElementChild;
+    const controls = tabs?.closest(".curator-navigation")?.nextElementSibling;
+    if (lastTab) lines.push({ text: lastTab.getBoundingClientRect(), blockers: controls ? [controls.getBoundingClientRect()] : [] });
+    const heading = copy.querySelector("h1, h2");
+    if (heading) {
+      const actions = copy.parentElement?.querySelector(".curator-view-actions");
+      lines.push({ text: pageChatTextBox(heading), blockers: actions ? [...actions.children].map((child) => child.getBoundingClientRect()) : [] });
+    }
+    return { box: copy, edge: Math.min(document.documentElement.clientWidth, page.getBoundingClientRect().right) - 16, lines, heading: heading?.getBoundingClientRect() || null };
+  }
+  // The performer page: the free run right of the name and its icons.
+  function pageChatPerformerFrame(root) {
+    const host = root?.parentElement;
+    const heading = host?.previousElementSibling;
+    if (!host || heading?.tagName !== "H2") return null;
+    const parts = [...heading.children].map((child) => child.getBoundingClientRect()).filter((rect) => rect.width);
+    const text = parts.length ? {
+      left: Math.min(...parts.map((rect) => rect.left)), right: Math.max(...parts.map((rect) => rect.right)),
+      top: Math.min(...parts.map((rect) => rect.top)), bottom: Math.max(...parts.map((rect) => rect.bottom)),
+    } : pageChatTextBox(heading);
+    const line = { ...text, width: text.right - text.left, height: text.bottom - text.top };
+    const edge = Math.min(document.documentElement.clientWidth, heading.getBoundingClientRect().right) - 16;
+    return { box: host, edge, lines: [{ text: line, blockers: [] }], heading: heading.getBoundingClientRect() };
+  }
+  // The scene page's narrow column has no free run beside its title, so
+  // the chat always takes its slot under Curator's row.
+  function pageChatSceneFrame(root) {
+    const host = root?.parentElement;
+    if (!host) return null;
+    return { box: host, edge: host.getBoundingClientRect().right, lines: [], heading: (host.previousElementSibling || host).getBoundingClientRect() };
+  }
+  function pageChatTextBox(element) {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return range.getBoundingClientRect();
+  }
+  // `lines` is how many lines a comment may wrap to in a slot of its own.
+  function PageChat({ view, feed, frame = pageChatCuratorFrame, lines: wrap = 2 }) {
     const root = React.useRef(null);
     const probe = React.useRef(null);
     const [shown, setShown] = React.useState(null);
@@ -11693,38 +12520,22 @@
       getPluginSettings().then((settings) => active && setHidden(settings.hidePageComments === true), () => active && setHidden(false));
       return () => { active = false; };
     }, []);
-    // Free space on one line: after the header's tabs up to Curator's
-    // controls, or after the heading's text up to the lane buttons. The
-    // roomier one speaks.
+    // The roomiest free space on one line, else a line of its own.
     const measure = React.useCallback(() => {
-      const copy = root.current?.parentElement;
-      const page = copy?.closest(".curator-page");
-      if (!copy || !page) return null;
-      const box = copy.getBoundingClientRect();
-      const edge = Math.min(document.documentElement.clientWidth, page.getBoundingClientRect().right) - 16;
-      const spot = (text, blockers) => {
+      const found = frame(root.current);
+      if (!found) return null;
+      const box = found.box.getBoundingClientRect();
+      const spot = ({ text, blockers }) => {
         if (!text?.width) return null;
         const right = blockers.filter((rect) => rect.width && rect.top < text.bottom && rect.bottom > text.top && rect.left > text.right)
-          .reduce((left, rect) => Math.min(left, rect.left - 12), edge);
+          .reduce((left, rect) => Math.min(left, rect.left - 12), found.edge);
         return { left: text.right - box.left + 12, top: text.top - box.top + text.height / 2, room: right - text.right - 12, visible: text.top >= 0 && text.bottom <= window.innerHeight };
       };
-      const tabs = page.querySelector(".curator-header .curator-tabs");
-      const lastTab = tabs?.lastElementChild?.getBoundingClientRect();
-      const controls = tabs?.closest(".curator-navigation")?.nextElementSibling;
-      const header = spot(lastTab, controls ? [controls.getBoundingClientRect()] : []);
-      const heading = copy.querySelector("h1, h2");
-      let line = null;
-      if (heading) {
-        const range = document.createRange();
-        range.selectNodeContents(heading);
-        const actions = copy.parentElement?.querySelector(".curator-view-actions");
-        line = spot(range.getBoundingClientRect(), actions ? [...actions.children].map((child) => child.getBoundingClientRect()) : []);
-      }
-      const best = [header, line].filter(Boolean).sort((a, b) => b.room - a.room)[0];
+      const best = found.lines.map(spot).filter(Boolean).sort((a, b) => b.room - a.room)[0];
       if (best && best.room >= PAGE_CHAT_INLINE_BELOW) return best;
-      const own = heading?.getBoundingClientRect();
+      const own = found.heading;
       return { inline: true, room: box.width - 8, visible: Boolean(own) && own.top >= 0 && own.bottom <= window.innerHeight };
-    }, []);
+    }, [frame]);
     const fits = (spot) => (text) => {
       if (!probe.current) return false;
       probe.current.textContent = text;
@@ -11732,7 +12543,7 @@
       // own may wrap once.
       return probe.current.offsetWidth + 40 <= pageChatBudget(spot);
     };
-    const pageChatBudget = (spot) => (spot.inline ? spot.room * 1.8 : spot.room);
+    const pageChatBudget = (spot) => (spot.inline ? spot.room * (wrap - 0.2) : spot.room);
     function say(specs, kind) {
       const spot = measure();
       const own = ++ticket.current;
@@ -11766,7 +12577,9 @@
       window.addEventListener("resize", update);
       return () => window.removeEventListener("resize", update);
     }, [view]);
-    const reserve = hidden !== true && !session.quiet && (slotted || place?.inline);
+    // Held only once the setting says comments are on: a slot that opened
+    // and closed again would move the page.
+    const reserve = hidden === false && !session.quiet && (slotted || place?.inline);
     // A new visit greets once. Every view switch or new showing after that
     // gets a line or two about the view and what's on its shelf.
     const shownView = React.useRef(null);
@@ -11778,7 +12591,7 @@
       (async () => {
         const context = await pageChatContext(session);
         const look = () => feed.look(context).catch(() => ({ shelf: [], intro: null }));
-        if (!session.welcomed) {
+        if (!session.welcomed && feed.greets !== false) {
           pageChatWelcomed(session);
           pageChatIntroduced(session, view);
           const since = session.visit.previous;
@@ -11801,10 +12614,11 @@
         // Each view works through its kinds of line before repeating one.
         const said = session.said[view] || (session.said[view] = new Set());
         const { shelf, intro } = await look();
-        let lines = pageChatTalk(shelf, intro, [...session.recent, ...said], { first, redraw });
+        const recent = session.recent.slice(-(feed.memory ?? 4));
+        let lines = pageChatTalk(shelf, intro, [...recent, ...said], { first, redraw });
         if (!lines.length) {
           said.clear();
-          lines = pageChatTalk(shelf, intro, session.recent, { first, redraw });
+          lines = pageChatTalk(shelf, intro, recent, { first, redraw });
         }
         lines.forEach((line) => said.add(line.key));
         pageChatRemember(session);
@@ -11926,7 +12740,7 @@
       { className: "curator-page-chat-anchor", ref: root },
       React.createElement("span", { className: "curator-ranking-bubble curator-page-chat-probe", ref: probe, "aria-hidden": "true" }),
       reserve
-        ? React.createElement("span", { className: "curator-page-chat-slot" }, place?.inline && chat, place?.inline && ask)
+        ? React.createElement("span", { className: "curator-page-chat-slot", style: wrap === 2 ? undefined : { height: `${wrap * 1.55 + 0.3}rem` } }, place?.inline && chat, place?.inline && ask)
         : place?.inline && chat,
       !place?.inline && chat,
       !place?.inline && ask
@@ -11935,7 +12749,7 @@
   function PageChatLines({ lines, instant, onDone }) {
     const [count, setCount] = React.useState(1);
     return lines.slice(0, count).map((line, index) => React.createElement(RankingBubble, {
-      key: index, text: line.text, delay: index ? 250 : 0, instant,
+      key: index, text: line.text, links: line.links, delay: index ? 250 : 0, instant,
       className: index ? "curator-ranking-kicker curator-page-chat-bubble" : "curator-page-chat-bubble",
       onDone: () => { if (index + 1 < lines.length) setCount((value) => Math.max(value, index + 2)); else onDone?.(); },
     }));
@@ -12541,7 +13355,7 @@
   });
   Api.patch.after("PerformerPage", function (props, ...args) {
     const result = args[args.length - 1];
-    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}` }));
+    return React.createElement(React.Fragment, null, result, React.createElement(CuratorContextLink, { type: "performer", id: props.performer.id, label: props.performer.name || `Performer ${props.performer.id}`, performer: props.performer }));
   });
   Api.Event.addEventListener("stash:location", (event) => {
     attachPlayer(event.detail.data.location.pathname);

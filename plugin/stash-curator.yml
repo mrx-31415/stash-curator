@@ -29,7 +29,7 @@ settings:
     type: BOOLEAN
   hidePageComments:
     displayName: Hide Curator's comments
-    description: Hide the chat bubbles at the top of Curator's Recommendations page (welcome-backs, lane comments and card notes). Off by default.
+    description: Hide Curator's chat bubbles on its own pages (welcome-backs, lane comments, card notes, Insights) and on Stash's scene and performer pages. Off by default.
     type: BOOLEAN
   hideRankingComments:
     displayName: Hide comments in ranking plugins

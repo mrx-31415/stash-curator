@@ -105,7 +105,7 @@ vm.runInContext(source.slice(source.indexOf("  function CuratorAffinityGauge("),
 function pageControls(type, details) {
   state = [details, false];
   const page = context.CuratorContextLink({ type, id: performer.id, label: performer.name, target: "fixture" });
-  return { element: context.CuratorContextControls(page.props) };
+  return { element: context.CuratorContextControls(page.props.children[0].props) };
 }
 const performerControls = pageControls("performer", { affinity: 0.767, confidence: 0.90, affinity_details: { learned: 0.527, prior: 0.24 } }).element;
 assert.match(performerControls.props.className, /curator-context-group-performer/);
@@ -155,7 +155,7 @@ assert.equal(sceneControls.type, context.CuratorSceneAffinityPill);
 assert.equal(sceneControls.props.className, "curator-scene-page-pill");
 assert.equal(sceneControls.props.score.appeal, -0.4);
 state = [null, false];
-const unmounted = context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" });
+const unmounted = context.CuratorContextLink({ type: "performer", id: "17", target: "fixture" }).props.children[0];
 assert.equal(unmounted.type, context.CuratorEntityPanel);
 assert.equal(unmounted.props.details, null);
 const effects = [];

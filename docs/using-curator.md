@@ -91,6 +91,26 @@ the header tabs or the heading, so no buttons or cards are ever covered; on a
 phone or a narrow window, where that space is too small, the bubble gets its own
 line under the heading. Hover notes appear only beside the heading area.
 
+Curator also comments on **Insights** and on Stash's own scene and performer
+pages. On Insights it picks out something from your taste summary, such as a tag
+that is rising or fading, one you seek out more than your library holds, or a
+performer you haven't watched in a while. Resting the pointer on a tag row shows
+that tag's peak quarter. On a scene page it gives its hunch about the scene and
+the reasons for it, two at a time where your history allows: a performer you
+watch often together with a tag you watch, a recent run of scenes like it, or the
+closest scene you have replayed. How sure it sounds follows the scene's score:
+confident for a strong match, measured for a middling one, and hesitant for a
+low one, where it names what you like in the scene and what usually puts you
+off. It also explains a rest or a Not now. On a performer page it talks about
+your history with them: what sets the scenes you pick apart from the rest (a
+tag, a co-star or a studio, never a tag that only describes who is in the
+scene), your most replayed scene of theirs, a streak, a long gap, how many of
+their scenes are still unplayed, or the performer they resemble when you
+haven't watched them yet. Names in a comment link to their Stash page. On these pages the
+bubble sits beside the performer's name, or in a space kept under Curator's row
+on scene pages and on phones, so Stash's own layout never shifts. With the SFW
+Switch on, bubbles are blurred until you hover over them.
+
 Use the **×** on a bubble to dismiss it. The first time you do this during a
 visit, Curator asks whether to stay quiet for the rest of the visit or turn
 comments off. **Hide Curator's comments** in **Manage → Settings → Page
