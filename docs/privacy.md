@@ -46,8 +46,10 @@ Sending a scene also requests a release search by default, controlled by the
 
 ## Retention and diagnostics
 
-Curator keeps the current and previous published model snapshots and incrementally
-cleans older derived versions. Source cache, durable feedback, and event history are
+Curator keeps the current and previous published model snapshots and the feature
+versions they use. After each model update it deletes every older model and feature
+file in the `curator-derived` folder next to the sidecar, plus files left behind by
+interrupted builds once they are six hours old. Source cache, durable feedback, and event history are
 retained because they rebuild the model. Profiling retains the latest 200 operation
 and task traces; trace details omit SQL parameters and GraphQL variables. Disable
 profiling when finished and clear saved traces explicitly when no longer needed.
