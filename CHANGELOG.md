@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.1](https://github.com/mrx-31415/stash-curator/compare/v0.53.0...v0.53.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* delete superseded model and feature files from the derived cache ([#460](https://github.com/mrx-31415/stash-curator/issues/460)) ([c1762e1](https://github.com/mrx-31415/stash-curator/commit/c1762e151e0737d8d030e6cccdabd55664302aa6))
+
 ## [0.53.0](https://github.com/mrx-31415/stash-curator/compare/v0.52.0...v0.53.0) (2026-11-04)
 
 
