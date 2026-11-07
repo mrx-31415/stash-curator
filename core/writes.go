@@ -1120,7 +1120,14 @@ func submitSessions(db dbx, entries []jVal) (int64, error) {
 	signaled := false
 	err := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
+		paused, err := connPauseWindows(conn)
+		if err != nil {
+			return err
+		}
 		for _, session := range sessions {
+			if pausedAt(paused, session.startedAtMs) {
+				continue // learning was paused: the session is not recorded
+			}
 			if !session.hasImpression {
 				attributed, err := attributeImpression(conn, session)
 				if err != nil {

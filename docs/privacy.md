@@ -65,6 +65,17 @@ Databases, backups, and exported reports can reveal library titles, viewing hist
 and preferences. Treat them as private files. Before sharing diagnostic material,
 check it for personal data, server addresses, and credentials.
 
+## Pausing and forgetting viewing
+
+**Pause learning from viewing** (Settings → Plugins → Stash Curator) stops Curator
+learning from what you play while it is on: player sessions are not recorded, and
+plays from that time are left out when Curator rebuilds sessions from Stash's play
+history. Thumbs, tag answers and dismissals still count. To forget viewing after the
+fact, the `forget_viewing` operation (for example `{"hours": 48}`) removes the
+player sessions and their signals from that period and leaves its plays out of the
+history rebuild; the next model update no longer uses them. Stash's own play
+history is not changed.
+
 ## Backups, reset, and uninstall
 
 The default sidecar is `{pluginDir}/data/curator.sqlite3`. Configure another path

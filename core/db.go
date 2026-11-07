@@ -188,6 +188,9 @@ func openSidecar(pluginDir string, payload, settings jVal, attachArtifacts bool)
 		}
 		stage = time.Now()
 		err = applyPluginSettings(db, settings, nowMs())
+		if err == nil {
+			err = syncLearningPause(db, settings, nowMs())
+		}
 		currentTrace().record("core", "sidecar.settings", stage.UnixNano(), time.Since(stage).Nanoseconds(), jvNull())
 		if err != nil {
 			db.Close()

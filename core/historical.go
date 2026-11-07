@@ -313,6 +313,10 @@ func historicalRebuild(db dbx, sceneIDs []string, progress func(processed, total
 	if err := rows.Err(); err != nil {
 		return historicalBuildResult{}, err
 	}
+	paused, err := loadPauseWindows(db)
+	if err != nil {
+		return historicalBuildResult{}, err
+	}
 	plays := map[string][]historicalPlay{}
 	rows, err = db.Query(`SELECT scene_id, played_at_ms, ordinal FROM source_play `+clause+` ORDER BY scene_id, played_at_ms, ordinal`, args...)
 	if err != nil {
@@ -324,6 +328,9 @@ func historicalRebuild(db dbx, sceneIDs []string, progress func(processed, total
 		if err := rows.Scan(&sceneID, &playedAtMs, &ordinal); err != nil {
 			rows.Close()
 			return historicalBuildResult{}, err
+		}
+		if pausedAt(paused, playedAtMs) {
+			continue // played while learning was paused, or forgotten since
 		}
 		plays[sceneID] = append(plays[sceneID], historicalPlay{playedAtMs, ordinal})
 	}

@@ -222,6 +222,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitTagPreferences(pluginDir, payload)
 	case "submit_events":
 		return opSubmitEvents(pluginDir, payload)
+	case "forget_viewing":
+		return opForgetViewing(pluginDir, payload)
 	case "update_config":
 		return opUpdateConfig(pluginDir, payload)
 	case "get_prune_candidates":
