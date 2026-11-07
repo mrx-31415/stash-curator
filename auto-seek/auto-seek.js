@@ -89,14 +89,27 @@
 
   // The server's answer: the cached start, or one worked out now. Fails after
   // a while rather than keeping the viewer waiting for ever.
-  function analyseOnServer(id) {
+  function withTimeout(promise, ms) {
     let timer;
     return Promise.race([
-      operation({ op: "analyse", scene_id: id }),
+      promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Finding the start took too long; the server may be busy")), ANALYSIS_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error("Finding the start took too long; the server may be busy")), ms);
       }),
     ]).finally(() => clearTimeout(timer));
+  }
+
+  // While the model is still downloading on first use, keep waiting (the
+  // strip shows the download) instead of failing.
+  async function analyseOnServer(id) {
+    for (;;) {
+      try {
+        return await withTimeout(operation({ op: "analyse", scene_id: id }), ANALYSIS_TIMEOUT_MS);
+      } catch (error) {
+        if (!/still downloading/i.test(error.message)) throw error;
+        await sleep(2000);
+      }
+    }
   }
 
   // One analysis at a time, remembered per scene for this tab.
@@ -280,6 +293,7 @@
       `<span class="auto-seek-strip-label">${STRIP_ICON}<span></span></span>` +
       '<div class="auto-seek-strip-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-strip-peek-text"></span></div>' +
       '<button type="button" class="auto-seek-strip-close" aria-label="Hide the scan chart" title="Hide (Settings → Plugins → Auto Seek hides it for good)">×</button>';
+    strip.querySelector(".auto-seek-strip-label").addEventListener("click", () => strip.classList.toggle("is-quiet"));
     strip.querySelector(".auto-seek-strip-close").addEventListener("click", () => {
       try { sessionStorage.setItem(STRIP_HIDDEN_KEY, "1"); } catch (error) { /* hidden on this page only */ }
       strip.remove();
@@ -463,6 +477,11 @@
     flag.style.left = `${Math.min(100, Math.max(0, (100 * view.start) / view.duration))}%`;
     labelStrip(view, view.marked ? `Your start · ${formatTime(view.start)}` : `Starts at ${formatTime(view.start)}`);
     view.strip.classList.remove("is-busy");
+    // Once found, the words step aside after a moment so they don't cover
+    // the bars; hovering the strip (or tapping the logo) brings them back.
+    view.strip.classList.remove("is-quiet");
+    clearTimeout(view.quietTimer);
+    view.quietTimer = setTimeout(() => view.strip?.classList.add("is-quiet"), 4000);
     if (flash) {
       view.strip.classList.remove("is-found");
       void view.strip.offsetWidth; // restart the animation
@@ -471,6 +490,22 @@
   }
 
   // While the server works, poll what it has scored so far.
+  // What the server is doing, in words.
+  function phaseText(progress) {
+    const mb = (bytes) => Math.round((bytes || 0) / 1e6);
+    switch (progress.phase) {
+      case "downloading":
+        return `Downloading the model, ${mb(progress.received)} of ${mb(progress.total)} MB (first time only)…`;
+      case "waiting-download":
+        return progress.error ? `The model download failed: ${progress.error}` : "Preparing to download the model (first time only)…";
+      case "loading": return "Loading the model…";
+      case "sampling": return "Looking through the scene…";
+      case "zooming": return "Zooming in…";
+      case "pinpointing": return "Pinpointing the start…";
+      default: return "Finding where the action starts…";
+    }
+  }
+
   function watchProgress(view) {
     let stopped = false;
     (async () => {
@@ -478,10 +513,10 @@
       while (!stopped && current === view && view.state === "busy") {
         try {
           const progress = await operation({ op: "progress", scene_id: view.id });
-          if (!stopped && progress.samples?.length && (await ensureStrip(view))) {
+          if (!stopped && progress.phase && (await ensureStrip(view))) {
             view.strip.classList.add("is-busy");
-            labelStrip(view, "Finding where the action starts…");
-            paintStrip(view, progress);
+            labelStrip(view, phaseText(progress));
+            if (progress.samples?.length) paintStrip(view, progress);
           }
         } catch (error) { /* the result itself will arrive or fail */ }
         await sleep(200);

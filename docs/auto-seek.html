@@ -161,7 +161,12 @@ icon: auto-seek.svg
   };
   const play = () => {
     reset();
+    // The same status words as the plugin, pass by pass.
+    at(250, () => { label.textContent = 'Loading the model…'; });
     frames.forEach((t, k) => at(700 + k * 110, () => {
+      if (k === 0) label.textContent = 'Looking through the scene…';
+      if (k === 12) label.textContent = 'Zooming in…';
+      if (k === 17) label.textContent = 'Pinpointing the start…';
       const bar = document.createElement('i');
       const p = score(t, k);
       if (p >= 0.6) bar.className = 'hit';
