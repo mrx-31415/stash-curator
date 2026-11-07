@@ -37,7 +37,7 @@ settings:
     type: BOOLEAN
   leadIn:
     displayName: Lead-in (seconds)
-    description: Jump this many seconds before the detected start, for a smoother way in. Default 8.
+    description: Jump this many seconds before the detected start, for a smoother way in. Default 3.
     type: NUMBER
   hideScanChart:
     displayName: Hide the scan chart

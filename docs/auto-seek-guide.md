@@ -79,7 +79,7 @@ background.
 | Setting | What it does |
 |---|---|
 | Skip automatically | Jump to the start when a scene starts playing from the beginning. Off by default. |
-| Lead-in (seconds) | Jump this many seconds before the detected start. Default 8. |
+| Lead-in (seconds) | Jump this many seconds before the detected start. Default 3. |
 | Hide the scan chart | Don't draw the scored frames above the seek bar. |
 | Don't analyse new scenes | Only analyse scenes when opened or when you run the task. |
 | CPU threads per analysis | Threads the image model may use. Default 2. |

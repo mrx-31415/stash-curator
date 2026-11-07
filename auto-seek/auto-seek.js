@@ -118,10 +118,11 @@
     return known.get(id);
   }
 
-  // Where to jump: a few seconds before the detected start, for a smoother way in.
+  // Where to jump: just before the detected start, for a smoother way in.
+  // The search lands within seconds, so a short lead-in is enough.
   async function leadIn() {
     const value = Number((await settings()).plugin.leadIn);
-    return Number.isFinite(value) && value >= 0 ? Math.min(value, 60) : 8;
+    return Number.isFinite(value) && value >= 0 ? Math.min(value, 60) : 3;
   }
 
   // ── player ─────────────────────────────────────────────────────────────
