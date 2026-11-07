@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.54.0](https://github.com/mrx-31415/stash-curator/compare/v0.53.1...v0.54.0) (2026-11-07)
+
+
+### Features
+
+* add Auto Seek, a plugin that skips to where the action starts ([d8b754e](https://github.com/mrx-31415/stash-curator/commit/d8b754e2b665ac52c9ee59d7858f9c7215b28a24))
+* let viewers pause Curator's learning from viewing, and forget a period ([27ea574](https://github.com/mrx-31415/stash-curator/commit/27ea5745853fd78de28d4fc44a89a5ca3c18d862))
+* live scan strip under the player, and a look-back rule for unsure starts ([f8463ef](https://github.com/mrx-31415/stash-curator/commit/f8463efd5da82bd4ddb49ee14a03df918996777d))
+* shorten Auto Seek's default lead-in to 3 seconds ([6a902a0](https://github.com/mrx-31415/stash-curator/commit/6a902a0609281a3e2ab2351c52f2de4d7d1d6b3c))
+* show Auto Seek's scored frames above the seek bar ([550677e](https://github.com/mrx-31415/stash-curator/commit/550677e01a9594f6a6c3fd241922ae3048a57bb6))
+
+
+### Bug Fixes
+
+* scan from the scene's start when the jump is at the first scored frame ([c260931](https://github.com/mrx-31415/stash-curator/commit/c260931aab4057ecc9dd1bcb5a104182cc1ad189))
+
 ## [0.53.1](https://github.com/mrx-31415/stash-curator/compare/v0.53.0...v0.53.1) (2026-11-06)
 
 
