@@ -39,6 +39,12 @@ permalink: /curator/
   <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Answer Tag questions, tell Curator what makes your hits work in Why these?, or rate tags in Tag sentiment to teach Curator what you like. After a model update, Impact shows which preferences and recommendations changed.</p></section>
 </div>
 
+<div class="grid curator-principles">
+  <section class="card"><h3>Explains itself</h3><p>Open <strong>Why this?</strong> on any pick to see what put it there. Thumbs, tag answers and dismissals correct the model, and your corrections win.</p></section>
+  <section class="card"><h3>Never deletes anything</h3><p>Curator reads your library. The only change it can make is an explicit, reversible Prune tag. See <a href="{{ '/privacy/' | relative_url }}">Privacy</a>.</p></section>
+  <section class="card"><h3>Learns as you watch</h3><p>Viewing history and feedback keep shaping the lanes, and background tasks keep them up to date.</p></section>
+</div>
+
 ## Privacy and safety
 
 Runs locally. Your history, feedback, and model stay in a SQLite sidecar you control;

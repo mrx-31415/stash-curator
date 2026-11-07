@@ -92,6 +92,8 @@
         start: hit.start,
         duration: hit.duration,
         marked: hit.model === "user",
+        samples: hit.samples || [],
+        threshold: hit.threshold,
       }));
       queue = run.catch(() => {});
       known.set(id, run);
@@ -131,7 +133,7 @@
     const duration = Math.max(video.duration || 0, start);
     const before = { marked: view.marked, start: view.start };
     // Answer the tap at once; the save follows (a busy server can take seconds).
-    known.set(view.id, Promise.resolve({ start, duration, cached: true, marked: true }));
+    known.set(view.id, Promise.resolve({ start, duration, cached: true, marked: true, samples: view.samples, threshold: view.threshold }));
     view.promise = null;
     view.dismissed = true; // already there; no "Skip intro" now
     resolve(view).catch(() => {});
@@ -231,6 +233,40 @@
     setTimeout(() => box.remove(), 6000);
   }
 
+  // The frames the server scored, drawn just above the seek bar while the
+  // controls show: one bar per frame (its height is how sure the model was
+  // that the action had started; amber past the threshold) and a line at the
+  // start it picked. Settings → "Hide the scan chart" turns it off.
+  async function drawChart(view) {
+    const holder = view.video.closest(".video-js")?.querySelector(".vjs-progress-holder");
+    holder?.querySelector(".auto-seek-chart")?.remove();
+    if (!holder || !view.samples?.length || !(view.duration > 0)) return;
+    if ((await settings()).plugin.hideScanChart === true || current !== view) return;
+    const chart = document.createElement("div");
+    chart.className = "auto-seek-chart";
+    chart.setAttribute("aria-hidden", "true");
+    const at = (time) => `${Math.min(100, Math.max(0, (100 * time) / view.duration))}%`;
+    if (view.threshold != null) {
+      const line = document.createElement("span");
+      line.className = "auto-seek-chart-line";
+      line.style.bottom = `${100 * view.threshold}%`;
+      chart.appendChild(line);
+    }
+    for (const [time, score] of view.samples) {
+      const bar = document.createElement("i");
+      if (view.threshold != null && score >= view.threshold) bar.className = "hit";
+      bar.style.left = at(time);
+      bar.style.height = `${Math.max(14, 100 * score)}%`;
+      chart.appendChild(bar);
+    }
+    const flag = document.createElement("b");
+    flag.className = view.marked ? "marked" : "";
+    flag.style.left = at(view.start);
+    flag.title = view.marked ? "Your start" : "Where the action starts";
+    chart.appendChild(flag);
+    holder.appendChild(chart);
+  }
+
   // Look the start point up (or work it out) and keep the view in step.
   function resolve(view) {
     view.promise ||= startPoint(view.id).then(
@@ -238,8 +274,12 @@
         view.target = Math.max(0, result.start - (await leadIn()));
         view.marked = Boolean(result.marked);
         view.start = result.start;
+        view.duration = result.duration;
+        view.samples = result.samples || [];
+        view.threshold = result.threshold;
         view.state = "ready";
         render();
+        drawChart(view).catch(() => {});
         return view.target;
       },
       (error) => {

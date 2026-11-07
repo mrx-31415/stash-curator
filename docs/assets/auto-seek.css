@@ -65,12 +65,6 @@
 .as-time { color: #ffffffb0; display: flex; font-size: .78rem; font-variant-numeric: tabular-nums; justify-content: space-between; margin-top: .35rem; }
 .as-caption { color: var(--muted); font-size: .9rem; margin: .7rem .2rem 0; }
 
-/* Numbers */
-.as-stats { display: grid; gap: 1rem; grid-template-columns: repeat(4, 1fr); margin: 3rem 0 1rem; }
-.as-stat { border-left: 2px solid #5a4630; padding: .2rem 0 .2rem 1rem; }
-.as-stat b { background: linear-gradient(100deg, var(--amber), var(--ember)); -webkit-background-clip: text; background-clip: text; color: transparent; display: block; font-size: clamp(1.9rem, 4vw, 2.7rem); letter-spacing: -.03em; line-height: 1.1; }
-.as-stat span { color: var(--muted); font-size: .92rem; }
-
 /* How it works */
 .as-steps { counter-reset: step; display: grid; gap: 1rem; grid-template-columns: repeat(3, 1fr); }
 .as-step { background: linear-gradient(160deg, #1a1710, var(--surface) 45%); border: 1px solid #3a3022; border-radius: var(--radius); padding: 1.25rem; }
@@ -99,16 +93,14 @@
 .as-copy { background: #2a2214; border: 1px solid #5a4630; border-radius: 7px; color: #ffd27a; cursor: pointer; font: inherit; font-size: .8rem; margin-left: .5rem; padding: .15rem .5rem; }
 
 /* Honest corner */
-.as-split { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
-.as-split section { border: 1px solid var(--line); border-radius: var(--radius); padding: 1.2rem 1.25rem; }
-.as-split h3 { margin-top: 0; }
-.as-split ul { color: var(--muted); margin: 0; padding-left: 1.1rem; }
+.as-misses { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.2rem 1.4rem; }
+.as-misses p, .as-misses li { color: var(--muted); }
+.as-misses p:first-child { margin-top: 0; }
+.as-misses p:last-child { margin-bottom: 0; }
 
 @media (max-width: 900px) {
   .as-hero { grid-template-columns: 1fr; }
-  .as-stats { grid-template-columns: repeat(2, 1fr); }
-  .as-steps, .as-features, .as-split { grid-template-columns: 1fr; }
-}
+  .as-steps, .as-features, }
 
 @media (prefers-reduced-motion: reduce) {
   .as-scene i, .as-pill::before { animation: none; }

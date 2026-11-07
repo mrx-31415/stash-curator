@@ -479,6 +479,17 @@ def cache() -> sqlite3.Connection:
     return connection
 
 
+def chart(scores: str) -> dict:
+    """The frames behind a start point, for the player's chart: [time, score]
+    pairs and the threshold they were judged against. Results saved before
+    times were kept (bare scores) have none."""
+    try:
+        samples = [pair for pair in json.loads(scores or "[]") if isinstance(pair, list)]
+    except ValueError:
+        samples = []
+    return {"samples": samples, "threshold": RULE["threshold"]} if samples else {}
+
+
 def get_points(args: dict) -> dict:
     ids = [str(value) for value in args.get("scene_ids") or []][:500]
     if not ids or not os.path.isfile(CACHE_PATH):
@@ -486,7 +497,7 @@ def get_points(args: dict) -> dict:
     marks = ",".join("?" * len(ids))
     with contextlib.closing(cache()) as connection:
         rows = connection.execute(
-            "SELECT scene_id, start_s, duration_s, model, computed_at FROM start_point "
+            "SELECT scene_id, start_s, duration_s, model, computed_at, scores FROM start_point "
             f"WHERE scene_id IN ({marks})",
             ids,
         ).fetchall()
@@ -496,12 +507,19 @@ def get_points(args: dict) -> dict:
             ids,
         ).fetchall()
     points = {
-        scene_id: {"start": start, "duration": duration, "model": model, "computed_at": computed_at}
-        for scene_id, start, duration, model, computed_at in rows
+        scene_id: {
+            "start": start,
+            "duration": duration,
+            "model": model,
+            "computed_at": computed_at,
+            **chart(scores),
+        }
+        for scene_id, start, duration, model, computed_at, scores in rows
     }
     # A start the viewer marked wins over a computed one, whatever the model.
     for scene_id, start, duration, marked_at in marked:
         points[scene_id] = {
+            **points.get(scene_id, {}),
             "start": start,
             "duration": duration,
             "model": "user",
@@ -516,7 +534,10 @@ def put_point(args: dict) -> dict:
     duration = float(args["duration"])
     if not 0 <= start <= duration:
         raise ValueError("start must lie within the scene")
-    scores = json.dumps([round(float(value), 4) for value in args.get("scores") or []][:200])
+    # Every frame the search looked at, as [time, score]: the player draws them.
+    scores = json.dumps(
+        [[round(float(t), 2), round(float(p), 4)] for t, p in args.get("scores") or []][:200]
+    )
     with contextlib.closing(cache()) as connection, connection:
         connection.execute(
             "INSERT INTO start_point (scene_id, start_s, duration_s, model, scores, computed_at) "
@@ -755,13 +776,13 @@ def bisect_times(miss: float, hit: float, depth: int) -> list[float]:
 
 def search(
     score_at, duration: float, config: dict, rule: dict = RULE, eager: bool = False
-) -> tuple[float, list[float]]:
-    """The start point, and every score it looked at. `score_at(times)` cuts
+) -> tuple[float, list[tuple[float, float]]]:
+    """The start point, and every frame it looked at as (time, score). `score_at(times)` cuts
     and scores frames, returning None for a blank one; it is called in time
     order with small batches, so the search can stop early. `eager` asks for
     each pass's frames all at once instead, so they can be cut in parallel:
     the same answer, sooner, for a few more frames' work."""
-    seen: list[float] = []
+    seen: list[tuple[float, float]] = []
 
     def frames(times: list[float]):
         if eager:
@@ -787,7 +808,7 @@ def search(
     # With too many blank grabs the answer would come from position alone.
     if len(coarse) * 2 < looked:
         raise ValueError(EMPTY_FRAMES)
-    seen += coarse
+    seen += list(zip(coarse_t, coarse, strict=True))
     # Fine pass over the window, in time order, stopping at the first hit.
     low, high = scan_window(coarse_t, coarse, rule)
     start, last_miss = high, None
@@ -795,7 +816,7 @@ def search(
     for t, score in frames(scan_times(low, high, rule)):
         if score is None:
             continue
-        seen.append(score)
+        seen.append((t, score))
         if score >= rule["threshold"]:
             start, found = t, True
             break
@@ -810,7 +831,7 @@ def search(
             point = points[middle]
             score = known[point] if point in known else score_at([point])[0]
             if score is not None:
-                seen.append(score)
+                seen.append((point, score))
             if score is not None and score >= rule["threshold"]:
                 start = point
                 high_i = middle - 1
@@ -931,6 +952,8 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
         "duration": duration,
         "model": MODEL_ID,
         "frames": len(scores),
+        "samples": [[round(t, 2), round(p, 4)] for t, p in scores],
+        "threshold": RULE["threshold"],
         "timings_ms": {
             key: round(value * 1000)
             for key, value in (timings | {"query": queried - started} | LOAD_TIMES).items()
@@ -952,7 +975,12 @@ def analyse(args: dict, server: dict) -> dict:
     """The player's request: the cached start, or one worked out now."""
     scene_id = str(args["scene_id"])
     point = get_points({"scene_ids": [scene_id]}).get(scene_id)
-    if point and point["model"] in (MODEL_ID, "user") and not args.get("force"):
+    # A start saved before frame times were kept is worked out again once, so
+    # the player can draw its chart; a start the viewer marked always stands.
+    current = point and (
+        point["model"] == "user" or (point["model"] == MODEL_ID and point.get("samples"))
+    )
+    if current and not args.get("force"):
         return point
     return analyse_scene(scene_id, server, eager=True)
 

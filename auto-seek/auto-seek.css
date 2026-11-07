@@ -124,3 +124,48 @@
     display: none;
   }
 }
+
+/* The scan chart: the frames the server scored, above the seek bar. */
+.video-js .auto-seek-chart {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.45em);
+  height: 1.6em;
+  pointer-events: none;
+}
+
+.video-js .auto-seek-chart i {
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px 2px 0 0;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.video-js .auto-seek-chart i.hit {
+  background: #f5b400;
+}
+
+.video-js .auto-seek-chart b {
+  position: absolute;
+  bottom: -0.45em;
+  top: -0.2em;
+  width: 2px;
+  margin-left: -1px;
+  background: #f5b400;
+  box-shadow: 0 0 6px rgba(245, 180, 0, 0.8);
+}
+
+.video-js .auto-seek-chart b.marked {
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+.video-js .auto-seek-chart-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed rgba(255, 255, 255, 0.25);
+}

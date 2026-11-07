@@ -45,6 +45,10 @@ anything.
   the server is working the start out, a light band sweeps across it; when it shows
   an arrow, a tap jumps there. A toast confirms the jump and offers **Undo**.
 - The **target** button in the control bar does the same from the controls.
+- **The scan chart** sits just above the seek bar while the controls show: one bar
+  per frame the server looked at, taller the surer it was that the action had
+  started, amber once past the threshold, and a line at the start it picked (white
+  when it's your own). Hide it with *Hide the scan chart*.
 - **The flag** button sets the start yourself: pause where the action really starts
   and tap it. That scene starts there from now on, and a new model never overrides
   it. Tap Undo on the toast to put the previous start back.
@@ -76,6 +80,7 @@ background.
 |---|---|
 | Skip automatically | Jump to the start when a scene starts playing from the beginning. Off by default. |
 | Lead-in (seconds) | Jump this many seconds before the detected start. Default 8. |
+| Hide the scan chart | Don't draw the scored frames above the seek bar. |
 | Don't analyse new scenes | Only analyse scenes when opened or when you run the task. |
 | CPU threads per analysis | Threads the image model may use. Default 2. |
 | Don't download the model | Never download the model or runtime. Auto Seek then stays unavailable. |
@@ -95,9 +100,10 @@ worked out once per model.
 
 ### Accuracy
 
-On 196 scenes whose start points were picked and checked by hand, and held out of
-training, Auto Seek's search landed within 60 seconds of the hand-picked start in
-79% of them. When it misses, it is more often late than early. Typical causes:
+Auto Seek was tuned and tested on one library, so take this as a first impression
+rather than a promise. On 196 of its scenes whose start points were picked and
+checked by hand, and held out of training, the search landed within 60 seconds of
+the hand-picked start in 79% of them. When it misses, it is more often late than early. Typical causes:
 
 - **Late:** people are still dressed when the action begins, or the opening is slow
   and builds up.
