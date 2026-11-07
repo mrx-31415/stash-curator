@@ -155,7 +155,8 @@ def test_start_point_cache_round_trip(backend):
         backend.put_point({"scene_id": 7, "start": 2000, "duration": 1800})
 
 
-def test_progress_shows_frames_scored_so_far(backend):
+def test_progress_shows_frames_scored_so_far(backend, monkeypatch):
+    monkeypatch.setattr(backend, "status", lambda: {"ready": True, "supported": True})
     assert backend.scan_progress({"scene_id": 7}) == {}
     backend.write_progress("7", 1800.0, [[150, 0.1], [300, 0.9]])
     progress = backend.scan_progress({"scene_id": "7"})
@@ -294,6 +295,38 @@ def test_eager_search_asks_for_each_pass_at_once_with_the_same_answer(backend):
     assert backend.search(scorer(eager), 1200, {"previewSegments": 12}, eager=True) == expected
     assert len(eager[0]) == 12 and len(eager) == 3  # coarse, scan, bisection points
     assert len(lazy) > len(eager)
+
+
+def test_search_reports_its_passes_in_order(backend):
+    phases = []
+    backend.search(
+        lambda times: [0.97 if t >= 437 else 0.05 for t in times],
+        1200,
+        {"previewSegments": 12},
+        on_phase=phases.append,
+    )
+    assert phases == ["sampling", "zooming", "pinpointing"]
+
+
+def test_progress_reports_the_first_download(backend, monkeypatch):
+    monkeypatch.setattr(
+        backend,
+        "status",
+        lambda: {
+            "ready": False,
+            "supported": True,
+            "downloading": True,
+            "received": 5,
+            "total": 10,
+            "error": None,
+        },
+    )
+    assert backend.scan_progress({"scene_id": 7}) == {
+        "phase": "downloading",
+        "received": 5,
+        "total": 10,
+        "error": None,
+    }
 
 
 def test_search_gives_up_on_blank_frames(backend):

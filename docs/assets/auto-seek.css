@@ -46,19 +46,19 @@
 .as-time { color: #ffffffb0; display: flex; font-size: .75rem; font-variant-numeric: tabular-nums; justify-content: space-between; margin-top: .3rem; }
 
 /* The scan strip: the same look as in the plugin. */
-.as-strip { background: #000; border-top: 1px solid #1d1d1d; padding: 2.1rem 1rem .4rem; position: relative; }
-.as-strip-label { align-items: center; color: #ffffff99; display: flex; font-size: .78rem; gap: .45rem; left: .45rem; position: absolute; top: .3rem; }
-.as-strip-label img { height: 1.6rem; width: 1.6rem; }
-.as-strip-close { color: #ffffff8c; font-size: 1rem; position: absolute; right: .55rem; top: .35rem; }
-.as-strip-bars { height: 1.5rem; position: relative; }
+.as-strip { background: #000; border-top: 1px solid #1d1d1d; padding: .4rem 1rem .35rem; position: relative; }
+.as-strip-label { align-items: center; background: linear-gradient(90deg, #000 75%, transparent); color: #ffffffb8; display: flex; font-size: .78rem; gap: .45rem; left: 0; padding: 0 1.8rem 0 .5rem; position: absolute; top: 50%; transform: translateY(-50%); white-space: nowrap; z-index: 1; }
+.as-strip-label img { height: 1.5rem; width: 1.5rem; }
+.as-strip-close { color: #ffffff8c; font-size: 1rem; position: absolute; right: .5rem; top: 50%; transform: translateY(-50%); z-index: 2; }
+.as-strip-bars { height: 1.7rem; position: relative; }
 .as-strip-bars i { animation: as-grow .35s ease-out both; background: #6b7280; border-radius: 2px 2px 0 0; bottom: 0; margin-left: -2px; position: absolute; transform-origin: bottom; width: 4px; }
 .as-strip-bars i.hit { background: linear-gradient(#ffc93c, #ff8a1f); }
 @keyframes as-grow { from { opacity: 0; transform: scaleY(0); } to { opacity: 1; transform: scaleY(1); } }
 .as-strip-line { border-top: 1px dashed #ffffff2e; left: 0; position: absolute; right: 0; }
-.as-strip-flag { background: var(--amber); border-radius: 1px; bottom: -2px; box-shadow: 0 0 6px 1px #ffb81fbf; margin-left: -1px; opacity: 0; position: absolute; top: -6px; width: 2px; }
+.as-strip-flag { z-index: 3; background: linear-gradient(#fff3c4, #ffb81f 35%, #ff8a1f); border-radius: 3px; bottom: -4px; box-shadow: 0 0 10px 2px #ffb81fd9; margin-left: -3px; opacity: 0; position: absolute; top: -5px; width: 6px; }
 .as-strip.is-found .as-strip-flag { animation: as-flash 1.2s ease-out; opacity: 1; }
 .as-strip.is-found { animation: as-glow 1.2s ease-out; }
-@keyframes as-flash { 0% { box-shadow: 0 0 0 0 #ffb81f00; transform: scaleY(.2); } 25% { box-shadow: 0 0 18px 6px #ffd25af2; transform: scaleY(1.15); } 100% { box-shadow: 0 0 6px 1px #ffb81fbf; transform: scaleY(1); } }
+@keyframes as-flash { 0% { box-shadow: 0 0 0 0 #ffb81f00; transform: scaleY(.2); } 25% { box-shadow: 0 0 18px 6px #ffd25af2; transform: scaleY(1.15); } 100% { box-shadow: 0 0 10px 2px #ffb81fd9; transform: scaleY(1); } }
 @keyframes as-glow { 0% { background: #000; } 20% { background: #2a1a02; } 100% { background: #000; } }
 .as-strip.is-busy::after { animation: as-sweep 1.6s ease-in-out infinite; background: linear-gradient(90deg, transparent, #ffffff0f, transparent); content: ""; inset: 0; pointer-events: none; position: absolute; width: 30%; }
 .as-player:not(.is-ready) .as-strip-flag { opacity: 0; }

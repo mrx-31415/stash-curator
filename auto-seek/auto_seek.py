@@ -818,14 +818,21 @@ def bisect_times(miss: float, hit: float, depth: int) -> list[float]:
 
 
 def search(
-    score_at, duration: float, config: dict, rule: dict = RULE, eager: bool = False
+    score_at,
+    duration: float,
+    config: dict,
+    rule: dict = RULE,
+    eager: bool = False,
+    on_phase=None,
 ) -> tuple[float, list[tuple[float, float]]]:
     """The start point, and every frame it looked at as (time, score). `score_at(times)` cuts
     and scores frames, returning None for a blank one; it is called in time
     order with small batches, so the search can stop early. `eager` asks for
     each pass's frames all at once instead, so they can be cut in parallel:
-    the same answer, sooner, for a few more frames' work."""
+    the same answer, sooner, for a few more frames' work. `on_phase(name)`
+    hears which pass is running: sampling, zooming, pinpointing."""
     seen: list[tuple[float, float]] = []
+    phase = on_phase or (lambda name: None)
 
     def frames(times: list[float]):
         if eager:
@@ -835,6 +842,7 @@ def search(
             batch = times[i : i + FRAMES_PER_RUN]
             yield from zip(batch, score_at(batch), strict=True)
 
+    phase("sampling")
     # Coarse pass: once a few frames in a row are clearly past the start, the
     # later ones can't move the answer.
     coarse_t: list[float] = []
@@ -852,6 +860,7 @@ def search(
     if len(coarse) * 2 < looked:
         raise ValueError(EMPTY_FRAMES)
     seen += list(zip(coarse_t, coarse, strict=True))
+    phase("zooming")
     # Fine pass over the window, in time order, stopping at the first hit.
     plan = coarse_times(duration, config)
     low, high = scan_window(coarse_t, coarse, rule, origin=plan[0] if plan else None)
@@ -867,6 +876,7 @@ def search(
         last_miss = t
     # The start lies between the last miss and the first hit: bisect the gap.
     if found and last_miss is not None:
+        phase("pinpointing")
         points = bisect_times(last_miss, start, rule["refine_depth"])
         known = dict(zip(points, score_at(points), strict=True)) if eager and points else {}
         low_i, high_i = 0, len(points) - 1
@@ -955,10 +965,24 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
     path, duration = files[0]["path"], float(files[0]["duration"])
     config = data["configuration"]
     general = config.get("general") or {}
-    session = scorer(threads_setting(plugin_settings(config)))
+    live: list[list[float]] = []
+    status = {"phase": "loading"}
+    if eager:  # someone is watching the strip
+        write_progress(scene_id, duration, live, "loading")
+    try:
+        session = scorer(threads_setting(plugin_settings(config)))
+    except Exception:
+        # e.g. still downloading: the player should see the download instead
+        with contextlib.suppress(OSError):
+            os.remove(progress_path(scene_id))
+        raise
     ffmpeg = find_ffmpeg(general.get("ffmpegPath") or "", server)
     timings = {"cut": 0.0, "score": 0.0}
-    live: list[list[float]] = []
+
+    def on_phase(name: str) -> None:
+        status["phase"] = name
+        if eager:
+            write_progress(scene_id, duration, live, name)
 
     def score_at(times: list[float]) -> list[float | None]:
         t0 = time.monotonic()
@@ -977,14 +1001,14 @@ def analyse_scene(scene_id: str, server: dict, eager: bool = False) -> dict:
                 score = session.score(pixels, [t / duration, t / 60, duration / 3600])[0]
                 live.append([round(t, 2), round(score, 4)])
                 if eager:  # someone is watching the strip fill in
-                    write_progress(scene_id, duration, live)
+                    write_progress(scene_id, duration, live, status["phase"])
             out.append(score)
         timings["cut"] += t1 - t0
         timings["score"] += time.monotonic() - t1
         return out
 
     try:
-        start, scores = search(score_at, duration, general, eager=eager)
+        start, scores = search(score_at, duration, general, eager=eager, on_phase=on_phase)
     finally:
         with contextlib.suppress(OSError):
             os.remove(progress_path(scene_id))
@@ -1021,21 +1045,36 @@ def progress_path(scene_id: str) -> str:
     return os.path.join(DATA_DIR, "progress", f"{int(scene_id)}.json")
 
 
-def write_progress(scene_id: str, duration: float, samples: list) -> None:
-    """The frames scored so far, for the player's strip while it waits."""
+def write_progress(scene_id: str, duration: float, samples: list, phase: str = "") -> None:
+    """The frames scored so far and the pass running, for the player's strip
+    while it waits."""
     with contextlib.suppress(OSError, ValueError):
         write_json(
             progress_path(scene_id),
-            {"duration": duration, "threshold": RULE["threshold"], "samples": samples},
+            {
+                "duration": duration,
+                "threshold": RULE["threshold"],
+                "samples": samples,
+                "phase": phase,
+            },
         )
 
 
 def scan_progress(args: dict) -> dict:
-    """The frames an analysis running in another process has scored so far."""
+    """What an analysis running in another process is doing: the first-use
+    download (with bytes so far), or the pass running and the frames scored."""
     path = progress_path(str(args["scene_id"]))
     with contextlib.suppress(OSError):
         if time.time() - os.path.getmtime(path) < 300:
             return read_json(path, {})
+    current = status()
+    if not current["ready"] and current["supported"]:
+        return {
+            "phase": "downloading" if current["downloading"] else "waiting-download",
+            "received": current["received"],
+            "total": current["total"],
+            "error": current["error"],
+        }
     return {}
 
 
