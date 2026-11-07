@@ -31,7 +31,7 @@ wide: true
       <ul>
         <li>An image model finds where the action starts</li>
         <li><strong>Skip intro</strong> on the player, or skip automatically</li>
-        <li>Worked out in the background, ready on every device</li>
+        <li>Runs on your server, optionally ahead of time</li>
       </ul>
       <span class="hub-more">Explore Auto Seek →</span>
     </div>

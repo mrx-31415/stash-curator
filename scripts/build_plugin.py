@@ -310,7 +310,7 @@ AUTO_SEEK = ROOT / "auto-seek"
 AUTO_SEEK_FILES = ("auto_seek.py", "ort_api.py", "auto-seek.js", "auto-seek.css", "auto-seek.yml")
 AUTO_SEEK_DESCRIPTION = (
     "Skip the intro of every scene: finds where the action starts, on your server, "
-    "and jumps there on every device."
+    "and jumps straight there."
 )
 
 
