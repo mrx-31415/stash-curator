@@ -19,20 +19,30 @@ icon: auto-seek.svg
     </div>
   </div>
   <figure style="margin:0">
-    <div class="as-player" id="as-demo" role="img" aria-label="Animation of the Stash player: Auto Seek samples a 30 minute scene, zooms in where the scores jump, finds the start at 6:13, and skips to it when Skip intro is tapped.">
+    <div class="as-player" id="as-demo" role="img" aria-label="Animation of the Stash player with Auto Seek: while an intro plays, the strip under the player fills with the frames the server scored, grey before the action and amber after it; the start is found at 6:13, and Skip intro jumps there.">
       <div class="as-screen">
-        <div class="as-scene" aria-hidden="true"><i class="o1"></i><i class="o2"></i><i class="o3"></i></div>
-        <div class="as-label" aria-hidden="true">Finding the start…</div>
+        <video class="intro" muted playsinline loop preload="auto" poster="{{ '/assets/auto-seek-demo-poster.jpg' | relative_url }}" aria-hidden="true">
+          <source src="{{ '/assets/auto-seek-demo-intro.webm' | relative_url }}" type="video/webm">
+          <source src="{{ '/assets/auto-seek-demo-intro.mp4' | relative_url }}" type="video/mp4">
+        </video>
+        <video class="action" muted playsinline preload="auto" aria-hidden="true">
+          <source src="{{ '/assets/auto-seek-demo-action.webm' | relative_url }}" type="video/webm">
+          <source src="{{ '/assets/auto-seek-demo-action.mp4' | relative_url }}" type="video/mp4">
+        </video>
         <div class="as-toast" aria-hidden="true">Skipped to <b>6:04</b> · Undo</div>
         <div class="as-pill" aria-hidden="true">Skip intro<span class="arrow">›</span></div>
       </div>
-      <div class="as-bar" aria-hidden="true">
-        <div class="as-chart"><div class="as-window"></div><div class="as-threshold" style="bottom:60%"></div></div>
-        <div class="as-track"><div class="as-progress"></div><div class="as-flag"></div></div>
+      <div class="as-controls" aria-hidden="true">
+        <div class="as-track"><div class="as-progress"></div></div>
         <div class="as-time"><span class="now">0:00</span><span>30:00</span></div>
       </div>
+      <div class="as-strip" aria-hidden="true">
+        <span class="as-strip-label"><img src="{{ '/assets/auto-seek.svg' | relative_url }}" alt=""><span>Finding where the action starts…</span></span>
+        <span class="as-strip-close">×</span>
+        <div class="as-strip-bars"><span class="as-strip-line"></span><b class="as-strip-flag"></b></div>
+      </div>
     </div>
-    <figcaption class="as-caption">Each bar is one frame the server scored: how likely the action has started there. Amber ones are past the line.</figcaption>
+    <figcaption class="as-caption">The strip under the player shows each frame the server scored, as tall as the model was sure the action had started: grey before the line, amber after it. Demo footage from <a href="https://peach.blender.org">Big Buck Bunny</a> (CC BY 3.0, © Blender Foundation), shortened.</figcaption>
   </figure>
 </section>
 
@@ -111,67 +121,83 @@ icon: auto-seek.svg
   <p>When it's wrong, the flag fixes that scene for good.</p>
 </div>
 
-<p class="as-caption" style="margin-top:2.5rem">Auto Seek's model is a tuned version of <a href="https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K">LAION's CLIP ViT-B/32</a>, hosted at <a href="https://huggingface.co/mrx-31415/auto-seek">huggingface.co/mrx-31415/auto-seek</a>, and runs on <a href="https://onnxruntime.ai">ONNX Runtime</a>. The animation above is drawn in code; it contains no footage.</p>
+<p class="as-caption" style="margin-top:2.5rem">Auto Seek's model is a tuned version of <a href="https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K">LAION's CLIP ViT-B/32</a>, hosted at <a href="https://huggingface.co/mrx-31415/auto-seek">huggingface.co/mrx-31415/auto-seek</a>, and runs on <a href="https://onnxruntime.ai">ONNX Runtime</a>. The demo above uses footage from Big Buck Bunny (CC BY 3.0, © Blender Foundation).</p>
 </div>
 
 <script>
 (() => {
   const demo = document.getElementById('as-demo');
   if (!demo) return;
-  const duration = 1800, start = 372.7, lead = 8;
-  const chart = demo.querySelector('.as-chart'), label = demo.querySelector('.as-label');
+  // A made-up 30-minute scene whose action starts at 6:13: an intro clip
+  // loops while the server works, and the skip cuts to the action clip.
+  const duration = 1800, start = 372.7, lead = 8, ACTION_SECONDS = 8;
+  const intro = demo.querySelector('video.intro'), action = demo.querySelector('video.action');
+  const strip = demo.querySelector('.as-strip'), bars = demo.querySelector('.as-strip-bars');
+  const label = demo.querySelector('.as-strip-label span'), flag = demo.querySelector('.as-strip-flag');
   const progress = demo.querySelector('.as-progress'), now = demo.querySelector('.now');
   const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   const pct = (t) => `${(100 * t) / duration}%`;
-  const score = (t, k) => (t >= start ? 0.88 + ((k * 37) % 10) / 100 : 0.06 + ((k * 53) % 17) / 100);
-  // The plugin's own search on this made-up scene: coarse frames every 150 s
-  // (stopping after two sure ones), a scan of 300–450 s, then bisection.
-  const coarse = [0, 150, 300, 450, 600];
-  const scan = [300, 318.75, 337.5, 356.25, 375];
-  const bisect = [365.6, 370.3, 372.7];
-  demo.querySelector('.as-flag').style.left = pct(start);
-  const win = demo.querySelector('.as-window');
-  win.style.left = pct(300); win.style.width = pct(150);
-  const bars = [];
-  const add = (t, k, kind) => {
-    const bar = document.createElement('i');
-    bar.className = `as-col${kind ? ' is-scan' : ''}${score(t, k) >= 0.6 ? ' is-hit' : ''}`;
-    bar.style.left = pct(t); bar.style.height = `${100 * score(t, k)}%`;
-    chart.appendChild(bar); bars.push(bar); return bar;
-  };
-  const steps = [];
-  coarse.forEach((t, k) => steps.push([250 + k * 230, () => add(t, k, false).classList.add('is-shown')]));
-  steps.push([1500, () => { demo.classList.add('is-window'); label.textContent = 'Zooming in…'; }]);
-  scan.forEach((t, k) => steps.push([1750 + k * 200, () => add(t, k + 7, true).classList.add('is-shown')]));
-  steps.push([2850, () => { label.textContent = 'Pinpointing…'; }]);
-  bisect.forEach((t, k) => steps.push([3000 + k * 260, () => add(t, k + 3, true).classList.add('is-shown')]));
-  steps.push([3900, () => { demo.classList.add('is-ready'); label.textContent = `Start found at ${fmt(start)}`; }]);
-  steps.push([5000, () => demo.classList.add('is-tap')]);
-  steps.push([5250, () => {
-    demo.classList.remove('is-tap'); demo.classList.add('is-gone', 'is-toast', 'is-action');
-    progress.classList.add('is-jump'); progress.style.width = pct(start - lead); now.textContent = fmt(start - lead);
-    label.style.opacity = 0;
-  }]);
-  steps.push([7300, () => demo.classList.remove('is-toast')]);
+  const score = (t, k) => (t >= start ? 0.86 + ((k * 37) % 12) / 100 : 0.03 + ((k * 53) % 19) / 100);
+  // What the plugin scores for such a scene: the preview's 12 points, a scan
+  // where the score jumps, and the bisection points between miss and hit.
+  const frames = [
+    ...Array.from({ length: 12 }, (_, i) => i * 150),
+    300, 318.75, 337.5, 356.25, 375,
+    358.6, 360.9, 363.3, 365.6, 368, 370.3, 372.7,
+  ];
+  flag.style.left = pct(start);
+  demo.querySelector('.as-strip-line').style.bottom = '60%';
   let timers = [];
+  const at = (ms, run) => timers.push(setTimeout(run, ms));
   const reset = () => {
     timers.forEach(clearTimeout); timers = [];
-    bars.splice(0).forEach((bar) => bar.remove());
+    bars.querySelectorAll('i').forEach((bar) => bar.remove());
     demo.className = 'as-player';
-    progress.classList.remove('is-jump'); progress.style.width = '0'; now.textContent = '0:00';
-    label.style.opacity = 1; label.textContent = 'Finding the start…';
+    strip.className = 'as-strip is-busy';
+    label.textContent = 'Finding where the action starts…';
+    progress.style.transition = 'none'; progress.style.width = '0'; now.textContent = '0:00';
+    action.pause(); action.currentTime = 0;
+    intro.currentTime = 0; intro.play().catch(() => {});
   };
   const play = () => {
     reset();
-    for (const [at, run] of steps) timers.push(setTimeout(run, at));
-    timers.push(setTimeout(play, 9500));
+    frames.forEach((t, k) => at(700 + k * 110, () => {
+      const bar = document.createElement('i');
+      const p = score(t, k);
+      if (p >= 0.6) bar.className = 'hit';
+      bar.style.left = pct(t); bar.style.height = `${22 + 78 * p}%`;
+      bars.appendChild(bar);
+    }));
+    const found = 700 + frames.length * 110 + 250;
+    at(found, () => {
+      strip.className = 'as-strip is-found';
+      label.textContent = `Starts at ${fmt(start)}`;
+      demo.classList.add('is-ready');
+    });
+    at(found + 1300, () => demo.classList.add('is-tap'));
+    at(found + 1550, () => {
+      demo.classList.remove('is-tap'); demo.classList.add('is-gone', 'is-toast', 'is-action');
+      intro.pause(); action.play().catch(() => {});
+      progress.style.transition = 'width .5s cubic-bezier(.3,.8,.2,1)';
+      progress.style.width = pct(start - lead); now.textContent = fmt(start - lead);
+    });
+    at(found + 3600, () => demo.classList.remove('is-toast'));
+    at(found + 1550 + ACTION_SECONDS * 1000 + 300, play);
   };
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    reset(); steps.forEach(([, run]) => run());
-    demo.classList.remove('is-tap', 'is-toast');
+    frames.forEach((t, k) => {
+      const bar = document.createElement('i'); const p = score(t, k);
+      if (p >= 0.6) bar.className = 'hit';
+      bar.style.left = pct(t); bar.style.height = `${22 + 78 * p}%`; bars.appendChild(bar);
+    });
+    strip.className = 'as-strip'; label.textContent = `Starts at ${fmt(start)}`; demo.classList.add('is-ready');
     return;
   }
-  // Only animate while the player is on screen.
-  new IntersectionObserver(([entry]) => { if (entry.isIntersecting) play(); else { timers.forEach(clearTimeout); timers = []; } }).observe(demo);
+  // Runs while the player is on screen; scrolling back resumes from the top.
+  let running = false;
+  new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting && !running) { running = true; play(); }
+    else if (!entry.isIntersecting && running) { running = false; timers.forEach(clearTimeout); timers = []; intro.pause(); action.pause(); }
+  }).observe(demo);
 })();
 </script>
