@@ -772,10 +772,20 @@ def change_point(probs: list[float]) -> int:
     return best
 
 
-def scan_window(times: list[float], probs: list[float], rule: dict) -> tuple[float, float]:
+def scan_window(
+    times: list[float], probs: list[float], rule: dict, origin: float | None = None
+) -> tuple[float, float]:
     """The stretch to scan: from the change point, widened backwards over
-    frames that already look likely and forwards over ones not yet sure."""
+    frames that already look likely and forwards over ones not yet sure.
+    When the jump is already at the first frame scored, the start may lie
+    anywhere before it, so the scan begins at `origin` (where sampling
+    began, usually 0:00; the first sample can be a blank opening frame)."""
     index = change_point(probs)
+    if index == 0 and origin is not None and origin < times[0]:
+        high = 0
+        while high < len(probs) - 1 and probs[high] < rule["window_high"]:
+            high += 1
+        return origin, times[high]
     low = index - 1
     while low > 0 and probs[low - 1] >= rule["window_low"]:
         low -= 1
@@ -843,7 +853,8 @@ def search(
         raise ValueError(EMPTY_FRAMES)
     seen += list(zip(coarse_t, coarse, strict=True))
     # Fine pass over the window, in time order, stopping at the first hit.
-    low, high = scan_window(coarse_t, coarse, rule)
+    plan = coarse_times(duration, config)
+    low, high = scan_window(coarse_t, coarse, rule, origin=plan[0] if plan else None)
     start, last_miss = high, None
     found = False
     for t, score in frames(scan_times(low, high, rule)):

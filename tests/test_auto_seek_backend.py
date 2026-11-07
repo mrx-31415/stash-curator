@@ -252,6 +252,10 @@ def test_search_helpers(backend):
     # start can lie before a frame the model was unsure about.
     window = backend.scan_window([0, 100, 200, 300, 400], [0.02, 0.04, 0.44, 0.99, 1.0], rule)
     assert window == (100, 300)
+    # The jump at the very first frame scored (here 0:00 came out blank):
+    # the start may lie before it, so the scan begins where sampling began.
+    window = backend.scan_window([116, 232, 348], [0.98, 0.04, 0.92], rule, origin=0)
+    assert window == (0, 116)
     assert backend.scan_times(0, 300, rule) == [0, 37.5, 75, 112.5, 150, 187.5, 225, 262.5, 300]
     assert backend.scan_times(100, 130, rule) == [100, 115, 130]
     assert backend.scan_times(200, 200, rule) == [200]
