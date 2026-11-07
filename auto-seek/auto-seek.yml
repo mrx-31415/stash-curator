@@ -1,0 +1,53 @@
+name: Auto Seek
+description: Finds where the action starts in each scene and skips there, with a button on the player or automatically. Runs on the server.
+version: 0.1.0
+url: https://github.com/mrx-31415/stash-curator
+
+exec:
+  - python
+  - "{pluginDir}/auto_seek.py"
+  - "{pluginDir}"
+interface: raw
+errLog: info
+
+ui:
+  javascript:
+    - auto-seek.js
+  css:
+    - auto-seek.css
+
+tasks:
+  - name: Find start points
+    description: Analyses every scene that has no start point yet, newest first, at low priority. Safe to stop; it continues where it left off next time.
+    defaultArgs:
+      op: library
+
+hooks:
+  - name: Analyse new scenes
+    description: Queues scenes as a scan adds them, for a background worker on the server.
+    triggeredBy:
+      - Scene.Create.Post
+    defaultArgs:
+      op: hook
+
+settings:
+  autoSkip:
+    displayName: Skip automatically
+    description: When a scene starts playing from the beginning, jump to where the action starts. Off by default; the player button works either way.
+    type: BOOLEAN
+  leadIn:
+    displayName: Lead-in (seconds)
+    description: Jump this many seconds before the detected start, for a smoother way in. Default 8.
+    type: NUMBER
+  disableNewScenes:
+    displayName: Don't analyse new scenes
+    description: New scenes are analysed in the background as a scan adds them. Turn this on to analyse only when a scene is opened, or when you run the Find start points task.
+    type: BOOLEAN
+  threads:
+    displayName: CPU threads per analysis
+    description: How many CPU threads the image model may use while analysing a scene. Default 2.
+    type: NUMBER
+  disableDownload:
+    displayName: Don't download the model
+    description: Auto Seek fetches its 89 MB image model and an ONNX Runtime build for this server (10–80 MB) in the background soon after installation. Turn this on to prevent that; Auto Seek then stays unavailable.
+    type: BOOLEAN

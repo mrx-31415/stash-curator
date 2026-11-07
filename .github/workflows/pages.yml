@@ -54,7 +54,7 @@ jobs:
             build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
       - run: uv run --frozen python scripts/build_plugin.py --dev
-      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/index*.yml docs/dev/
+      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/auto-seek.zip dist/dev/index*.yml docs/dev/
       - name: Fetch the latest complete release's plugin source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,12 +63,12 @@ jobs:
           # fall back to the newest release whose indexes all verify.
           for tag in $(gh release list --limit 5 --json tagName --jq '.[].tagName'); do
             rm -rf stable && mkdir stable
-            gh release download "$tag" --dir stable --pattern 'stash-curator*.zip' --pattern 'index*.yml' || continue
+            gh release download "$tag" --dir stable --pattern 'stash-curator*.zip' --pattern 'auto-seek*.zip' --pattern 'index*.yml' || continue
             complete=true
+            # An index lists every plugin in the source (Curator, Auto Seek).
             for index in stable/index*.yml; do
-              archive=$(sed -n 's/^  path: //p' "$index")
-              digest=$(sed -n 's/^  sha256: //p' "$index")
-              echo "$digest  stable/$archive" | sha256sum --check --quiet || complete=false
+              paste <(sed -n 's/^  sha256: //p' "$index") <(sed -n 's/^  path: //p' "$index") \
+                | sed 's|\t|  stable/|' | sha256sum --check --quiet || complete=false
             done
             if [ "$complete" = true ] && [ -f stable/index.yml ]; then
               echo "Stable plugin source: $tag"

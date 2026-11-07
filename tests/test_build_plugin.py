@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import zipfile
@@ -65,6 +66,26 @@ def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
     index = (output.parent / "index.yml").read_text()
     assert "  path: stash-curator.zip\n" in index
     assert f"sha256: {sha256(output.read_bytes()).hexdigest()}" in index
+    # Auto Seek: one archive for every platform, listed in every index.
+    auto_seek = output.parent / "auto-seek.zip"
+    with zipfile.ZipFile(auto_seek) as package:
+        # Files at the root, as with Curator: Stash unpacks into plugins/<id>/.
+        assert set(package.namelist()) == {*build_plugin.AUTO_SEEK_FILES, "LICENSE"}
+        manifest = package.read("auto-seek.yml").decode()
+    assert f"version: {build_plugin.auto_seek_version()}\n" in manifest
+    for name in ("index.yml", "index-linux-amd64.yml"):
+        listed = (output.parent / name).read_text()
+        # Stash rejects the whole source on a YAML error: a plain value must not
+        # contain ": ", so descriptions that do are written as quoted strings.
+        for line in listed.splitlines():
+            _, _, value = line.strip().removeprefix("- ").partition(": ")
+            if value.startswith('"'):
+                assert json.loads(value)
+            else:
+                assert ": " not in value, line
+        assert f"description: {json.dumps(build_plugin.AUTO_SEEK_DESCRIPTION)}" in listed
+        assert "- id: auto-seek\n" in listed and "  path: auto-seek.zip\n" in listed
+        assert f"  sha256: {sha256(auto_seek.read_bytes()).hexdigest()}\n" in listed
 
 
 def test_binary_freshness_ignores_tests_but_tracks_embedded_migrations(

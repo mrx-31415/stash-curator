@@ -9,7 +9,7 @@ scenes you already have. Open **Why this?** to see why a scene appeared and corr
 the model when it gets something wrong. Connect [StashDB](https://stashdb.org)
 for optional external metadata leads scored against your local taste model.
 
-[Install](#install) · [Watch the video tour](https://mrx-31415.github.io/stash-curator/#tour)
+[Install](#install) · [Watch the video tour](https://mrx-31415.github.io/stash-curator/curator/#tour)
 
 <details open>
   <summary>Animated tour (show or hide)</summary>
@@ -18,7 +18,7 @@ for optional external metadata leads scored against your local taste model.
   </p>
 </details>
 
-<p align="center">The animated tour uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/#tour">credited Blender film clips</a>; no personal library appears. <a href="https://mrx-31415.github.io/stash-curator/#tour">Watch with playback controls</a>.</p>
+<p align="center">The animated tour uses fictional metadata and <a href="https://mrx-31415.github.io/stash-curator/curator/#tour">credited Blender film clips</a>; no personal library appears. <a href="https://mrx-31415.github.io/stash-curator/curator/#tour">Watch with playback controls</a>.</p>
 
 ## Install
 
@@ -40,6 +40,23 @@ and troubleshooting.
 Once the model is ready, start with **Recommendations → For You**. Open **Why this?**
 to inspect a suggestion, and use thumbs up/down or **Curate → Tag questions** to teach
 Curator your preferences. Feedback affects rankings after a model update.
+
+## New: Auto Seek
+
+<p align="center">
+  <a href="https://mrx-31415.github.io/stash-curator/auto-seek/"><img src="docs/assets/auto-seek-demo.gif" alt="Auto Seek on the Stash player: frames are scored across the scene, the search zooms in where the scores jump, finds the start, and Skip intro jumps there" width="640"></a>
+</p>
+
+**Skip the intro. Every scene.** Auto Seek is a separate plugin from the same plugin
+source. It finds where the action starts in each scene and jumps straight there: tap
+**Skip intro** on the player, or let it skip on its own. Your Stash server works it
+out in the background with a small image model, so every device, phones included,
+gets the answer instantly, and no frames leave your server. On hand-checked scenes it
+lands within a minute of the real start about 4 times out of 5, and a flag on the
+player fixes the rest for good.
+
+[See it in action](https://mrx-31415.github.io/stash-curator/auto-seek/) ·
+[Guide](docs/auto-seek-guide.md)
 
 ## Explore Curator
 

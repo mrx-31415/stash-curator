@@ -1,0 +1,126 @@
+.video-js .auto-seek-button,
+.video-js .auto-seek-mark {
+  cursor: pointer;
+}
+
+.video-js .auto-seek-button .auto-seek-icon,
+.video-js .auto-seek-mark .auto-seek-icon {
+  width: 1.5em;
+  height: 1.5em;
+  vertical-align: middle;
+}
+
+.video-js .auto-seek-button[data-state="busy"] .auto-seek-icon {
+  animation: auto-seek-pulse 1s ease-in-out infinite;
+}
+
+/* "Skip intro", over the picture while there is still an intro to skip. */
+.video-js .auto-seek-pill {
+  position: absolute;
+  right: 1.5em;
+  bottom: 5em;
+  z-index: 3;
+  padding: 0.5em 1.1em;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 1.4em;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* While the server works the start out, a light band sweeps across the pill. */
+.video-js .auto-seek-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: auto-seek-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes auto-seek-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-js .auto-seek-pill::before { animation: none; width: 100%; background: rgba(255, 255, 255, 0.15); }
+}
+
+.video-js .auto-seek-pill[data-state="busy"] {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.video-js .auto-seek-pill[data-state="ready"]::before {
+  display: none;
+}
+
+/* Ready: the same yellow as the player button. */
+.video-js .auto-seek-pill[data-state="ready"] {
+  border-color: #f5b400;
+}
+
+.video-js .auto-seek-pill:hover,
+.video-js .auto-seek-pill:focus-visible {
+  background: #fff;
+  color: #000;
+}
+
+.video-js .auto-seek-pill[hidden] {
+  display: none;
+}
+
+/* Out of the way while video.js hides its own controls during playback. */
+.video-js.vjs-user-inactive.vjs-playing .auto-seek-pill {
+  opacity: 0.35;
+  transition: opacity 0.5s;
+}
+
+.video-js .auto-seek-button[data-state="ready"] {
+  color: #f5b400;
+}
+
+.video-js .auto-seek-button[data-state="error"] {
+  opacity: 0.5;
+}
+
+@keyframes auto-seek-pulse {
+  50% { opacity: 0.3; }
+}
+
+.video-js .auto-seek-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 4em;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 0.4em 0.8em;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 1.2em;
+  white-space: nowrap;
+}
+
+.video-js .auto-seek-toast button {
+  margin-left: 0.5em;
+  border: 0;
+  background: none;
+  color: #f5b400;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Phones: the control bar has room for one more button, not two. The pill
+   over the picture does what the target button does, so the flag stays. */
+@media (max-width: 500px) {
+  .video-js .auto-seek-button {
+    display: none;
+  }
+}
