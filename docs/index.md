@@ -1,61 +1,61 @@
 ---
-title: Rediscover your Stash library
-description: Local recommendations shaped by viewing and feedback, with optional StashDB discovery.
+title: Plugins for Stash
+description: Stash Curator makes plugins for Stash. Curator recommends scenes from your library; Auto Seek skips every intro. Both run locally.
 wide: true
 ---
 
-<section class="hero">
-  <div>
-    <p class="eyebrow">Preview · Stash plugin</p>
-    <h1>Rediscover scenes in your Stash library.</h1>
-    <p class="lede">Curator uses your library metadata, viewing history, and feedback to recommend scenes you already have. Open <strong>Why this?</strong> to see why a scene appeared and correct the model when it gets something wrong. Connect StashDB for optional external metadata leads scored against your local taste model.</p>
-    <div class="actions"><a class="button" href="#install">Install the preview</a><a class="button secondary" href="{{ '/recommendations/' | relative_url }}">How it recommends</a></div>
-  </div>
-  <img class="hero-mark" src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="">
+<section class="hub-hero">
+  <p class="eyebrow">Stash Curator · plugins for Stash</p>
+  <h1>Get more out of your <span>Stash library.</span></h1>
+  <p class="lede">Two plugins that learn from your library and do the tedious part for you: one finds what to watch next, the other skips straight to where the action starts. Both run on your own server, and you can install either one, or both, from one plugin source.</p>
+  <div class="actions"><a class="button" href="#install">Install</a><a class="button secondary" href="#plugins">Meet the plugins</a></div>
 </section>
+
+<div class="hub-plugins" id="plugins">
+  <a class="hub-plugin curator" href="{{ '/curator/' | relative_url }}">
+    <div class="hub-visual"><img src="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" alt="" loading="lazy"></div>
+    <div class="hub-body">
+      <div class="hub-title"><img src="{{ '/assets/stash-curator.svg' | relative_url }}" alt="" width="52" height="52"><div><h2>Curator</h2><p>Rediscover scenes you already have.</p></div></div>
+      <ul>
+        <li>Seven lanes of recommendations, from For You to Blind Spots</li>
+        <li><strong>Why this?</strong> on every pick, and you can correct it</li>
+        <li>Roulette, playlists and optional StashDB discovery</li>
+      </ul>
+      <span class="hub-more">Explore Curator →</span>
+    </div>
+  </a>
+  <a class="hub-plugin auto-seek" href="{{ '/auto-seek/' | relative_url }}">
+    <div class="hub-visual"><img src="{{ '/assets/auto-seek-demo.gif' | relative_url }}" alt="" loading="lazy"></div>
+    <div class="hub-body">
+      <div class="hub-title"><img src="{{ '/assets/auto-seek.svg' | relative_url }}" alt="" width="52" height="52"><div><h2>Auto Seek <span class="hub-new">New</span></h2><p>Skip the intro. Every scene.</p></div></div>
+      <ul>
+        <li>An image model finds where the action starts</li>
+        <li><strong>Skip intro</strong> on the player, or skip automatically</li>
+        <li>Worked out in the background, ready on every device</li>
+      </ul>
+      <span class="hub-more">Explore Auto Seek →</span>
+    </div>
+  </a>
+</div>
 
 <section class="install" id="install">
   <p class="eyebrow">Install</p>
-  <h2>Install and build your first recommendations</h2>
-  <p>Requires Stash v0.31 and a <code>python</code> executable for the plugin launcher. Curator ships compiled core binaries for supported platforms; StashDB is optional. Add this URL under <strong>Settings → Plugins → Available Plugins</strong>:</p>
+  <h2>One plugin source, install what you like</h2>
+  <p>In Stash, open <strong>Settings → Plugins → Available Plugins</strong>, select <strong>Add Source</strong>, and add:</p>
   <pre><code>https://mrx-31415.github.io/stash-curator/index.yml</code></pre>
-  <p>Install <strong>Stash Curator</strong>, reload plugins, open the compass, and select <strong>Sync and build recommendations</strong> in the setup checklist or under <strong>Manage → Tasks</strong>. The first build can take several minutes. <a href="{{ '/getting-started/' | relative_url }}">Check prerequisites and follow the setup guide →</a></p>
-  <p>When it is ready, open <strong>Recommendations → For You</strong>. Try <strong>Why this?</strong> on a suggestion, then give a thumbs up/down or answer <strong>Curate → Tag questions</strong>. Feedback affects rankings after a model update.</p>
+  <p>Then install <strong>Stash Curator</strong>, <strong>Auto Seek</strong> or both, and reload plugins. They work independently. Both need Stash v0.31 and the <code>python</code> Stash already uses for plugins. Next steps: <a href="{{ '/getting-started/' | relative_url }}">getting started with Curator</a> · <a href="{{ '/auto-seek-guide/' | relative_url }}">the Auto Seek guide</a>.</p>
 </section>
 
-## Curator in action
-
-<section class="showcase" id="tour">
-  <div class="showcase-copy"><span class="pill">Tour</span><h3>From your home page to the next scene</h3><p>This short silent tour follows For You from Stash's home page into Curator, spins Roulette, and visits Find and Curate. Use the video controls to pause or replay it.</p></div>
-  <div class="capture"><video controls autoplay muted loop playsinline poster="{{ '/assets/showcase-tour-poster.jpg' | relative_url }}" aria-label="Stash Curator tour" aria-describedby="tour-description" width="960" height="675"><source src="{{ '/assets/showcase-tour.webm' | relative_url }}" type="video/webm"><source src="{{ '/assets/showcase-tour.mp4' | relative_url }}" type="video/mp4">Your browser cannot play this video. <a href="{{ '/assets/showcase-tour.mp4' | relative_url }}">Download the tour</a>.</video></div>
-  <p class="demo-note" id="tour-description">The video opens on Curator's For You row on the Stash home page and follows View in Curator to the For You lane. It opens Why this? on the first recommendation and switches to the Wall of moving previews. Roulette then gathers the lane into a wheel, spins, and expands the winning scene into Stash's player. The tour ends on Find's Similar results for a library scene and a Tag question in Curate with preview clips.</p>
-  <p class="demo-credit">Demo excerpts from <a href="https://video.blender.org/videos/watch/6402b77c-b61f-4a06-96ca-c8420a2becf4">Big Buck Bunny</a> and <a href="https://video.blender.org/videos/watch/64222c8a-c4c7-4b3b-9850-7fb2078edcf6">Glass Half</a> (<a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>), and <a href="https://video.blender.org/videos/watch/23f3ef79-15dc-44c5-aa45-cf92e78a4509">Caminandes: Llamigos</a> and <a href="https://video.blender.org/videos/watch/7b2eff2a-35f2-4403-9d88-d0dd6e4b5ba1">The Daily Dweebs</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>). © Blender Foundation. Excerpts shortened, muted, and cropped.</p>
-</section>
-
-<div class="grid">
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#choose-a-lane">Recommendations →</a></h3><p>Start with For You, find strong unwatched matches in Best Bets, or return to familiar scenes in Revisit. Stretch, Blind Spots, and Dormant help you explore more of your library, and New Arrivals picks from what you just added. Show lanes on Stash's home page, play one as a playlist, or let Roulette pick.</p></section>
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#find">Find →</a></h3><p>Find opens on Expand, which ranks a refreshed pool of StashDB leads when connected. Similar finds related scenes in your library or on StashDB; Performer Hunt follows a performer’s catalog. External results are leads, not proof that a scene is available locally.</p></section>
-  <section class="card"><h3><a href="{{ '/using-curator/' | relative_url }}#curate">Curate →</a></h3><p>Answer Tag questions, tell Curator what makes your hits work in Why these?, or rate tags in Tag sentiment to teach Curator what you like. After a model update, Impact shows which preferences and recommendations changed.</p></section>
+<div class="grid hub-principles">
+  <section class="card"><h3>Runs on your server</h3><p>Your library, history and feedback stay in files you control. Nothing is uploaded. The only network use is Curator's optional StashDB lookups and Auto Seek's one-off model download.</p></section>
+  <section class="card"><h3>Explains itself</h3><p>Curator shows why a scene was picked; Auto Seek shows where it will jump before it does. Both take corrections, and your corrections win.</p></section>
+  <section class="card"><h3>Never deletes anything</h3><p>The plugins read your library. The only change Curator can make is an explicit, reversible Prune tag. See <a href="{{ '/privacy/' | relative_url }}">Privacy</a>.</p></section>
 </div>
 
-## Privacy and safety
+## About
 
-Runs locally. Your history, feedback, and model stay in a SQLite sidecar you control;
-StashDB is optional, read-only, and never sees your model. The only Stash mutation is
-an explicit, reversible Prune tag — Curator never deletes media. See [Privacy]({{ '/privacy/' | relative_url }}).
-
-## Preview status
-
-Curator targets **Stash v0.31**. It remains preview software and
-pre-1.0. The first sync/model build can take several minutes on a large library. Its
-persistent background tasks can keep recommendations up to date, and you can schedule
-library syncs and backups. External discovery needs a configured
-StashDB connection. Start with [Getting
-started]({{ '/getting-started/' | relative_url }}), then read [Using Curator]({{ '/using-curator/' | relative_url }}).
-
-## Acknowledgements and project provenance
-
-The idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
-
-Stash Curator is primarily generated with AI coding agents under human direction,
-review, and testing.
+Stash Curator is open source under the AGPL-3.0 and is preview software, pre-1.0.
+Curator's idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
+The plugins are primarily generated with AI coding agents under human direction,
+review, and testing. Issues and ideas are welcome on
+[GitHub](https://github.com/mrx-31415/stash-curator).

@@ -10,7 +10,7 @@ related or external scenes, **Curate** to teach your preferences, and **Manage**
 history, Prune, tasks, backups, and settings.
 
 The screenshots show an isolated demo with fictional metadata and Blender film
-excerpts. [Film credits and licenses]({{ '/' | relative_url }}#tour).
+excerpts. [Film credits and licenses]({{ '/curator/' | relative_url }}#tour).
 
 ## Choose a lane
 

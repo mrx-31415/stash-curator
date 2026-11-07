@@ -25,5 +25,5 @@ different recommendations.
 - `record.py` drives the storyboard in headless Chromium and records CDP screencast
   frames. Page loads happen off camera, and a drawn cursor shows each click.
 
-The film credits on the docs homepage (`docs/index.md`, `#tour`) must list every
+The film credits on the docs homepage (`docs/curator.md`, `#tour`) must list every
 film `media.py` uses.

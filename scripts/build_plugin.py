@@ -17,6 +17,7 @@ install — only Go plus the repo's uv environment.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -302,6 +303,41 @@ def core_binaries(platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS) ->
     return [ROOT / "core" / "bin" / core_binary_name(goos, goarch) for goos, goarch in platforms]
 
 
+# Auto Seek is a separate plugin in the same plugin source: Python and
+# JavaScript only (it downloads its model and ONNX Runtime on first use), so
+# one archive serves every platform. Its version lives in its own manifest.
+AUTO_SEEK = ROOT / "auto-seek"
+AUTO_SEEK_FILES = ("auto_seek.py", "ort_api.py", "auto-seek.js", "auto-seek.css", "auto-seek.yml")
+AUTO_SEEK_DESCRIPTION = (
+    "Skip the intro of every scene: finds where the action starts, on your server, "
+    "and jumps there on every device."
+)
+
+
+def auto_seek_version() -> str:
+    match = re.search(r"(?m)^version: (\S+)$", (AUTO_SEEK / "auto-seek.yml").read_text("utf-8"))
+    if match is None:
+        raise RuntimeError("auto-seek.yml has no version")
+    return match.group(1)
+
+
+def build_auto_seek(directory: Path, dev_suffix: str = "") -> tuple[Path, str]:
+    """Package Auto Seek next to Curator's archives; returns the archive and
+    the version written into its manifest."""
+    plugin_version = auto_seek_version() + dev_suffix
+    archive_path = directory / "auto-seek.zip"
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in AUTO_SEEK_FILES:
+            data = (AUTO_SEEK / name).read_bytes()
+            if name == "auto-seek.yml":
+                data = re.sub(
+                    rb"(?m)^version: .*$", f"version: {plugin_version}".encode(), data, count=1
+                )
+            archive.writestr(name, data)
+        archive.write(ROOT / "LICENSE", "LICENSE")
+    return archive_path, plugin_version
+
+
 def build(
     output: Path = OUTPUT,
     plugin_version: str | None = None,
@@ -358,6 +394,22 @@ def build(
                     if relative.as_posix() not in excluded:
                         archive.write(path, relative)
     build_date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    dev_suffix = plugin_version[len(version()) :] if plugin_version.startswith(version()) else ""
+    auto_seek, auto_seek_ver = build_auto_seek(output.parent, dev_suffix)
+    auto_seek_entry = "\n".join(
+        (
+            "- id: auto-seek",
+            "  name: Auto Seek",
+            f"  version: {auto_seek_ver}",
+            f"  date: {build_date}",
+            f"  path: {auto_seek.name}",
+            f"  sha256: {sha256(auto_seek.read_bytes()).hexdigest()}",
+            "  metadata:",
+            # Quoted: the text has a colon, which plain YAML reads as a key.
+            f"    description: {json.dumps(AUTO_SEEK_DESCRIPTION, ensure_ascii=False)}",
+            "",
+        )
+    )
     for archive_path, index_name, _ in archives:
         digest = sha256(archive_path.read_bytes()).hexdigest()
         (output.parent / index_name).write_text(
@@ -374,7 +426,8 @@ def build(
                     "— curated to your taste.",
                     "",
                 )
-            ),
+            )
+            + auto_seek_entry,
             encoding="utf-8",
         )
     return output

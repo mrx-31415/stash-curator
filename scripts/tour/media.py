@@ -1,7 +1,7 @@
 """Download the tour's Blender films and cut them into short demo scenes.
 
 Every source is a Blender Foundation film under Creative Commons Attribution; the
-credits live in docs/index.md (#tour). Check a new film's license before adding
+credits live in docs/curator.md (#tour). Check a new film's license before adding
 it. The cut list is fixed so a re-recording shows the same library.
 
 Usage:
