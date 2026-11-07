@@ -51,9 +51,8 @@ Curator your preferences. Feedback affects rankings after a model update.
 source. It finds where the action starts in each scene and jumps straight there: tap
 **Skip intro** on the player, or let it skip on its own. Your Stash server works it
 out in the background with a small image model, so every device, phones included,
-gets the answer instantly, and no frames leave your server. On hand-checked scenes it
-lands within a minute of the real start about 4 times out of 5, and a flag on the
-player fixes the rest for good.
+gets the answer instantly, and no frames leave your server. When it picks the wrong
+spot, a flag on the player fixes that scene for good.
 
 [See it in action](https://mrx-31415.github.io/stash-curator/auto-seek/) ·
 [Guide](docs/auto-seek-guide.md)

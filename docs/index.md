@@ -46,11 +46,7 @@ wide: true
   <p>Then install <strong>Stash Curator</strong>, <strong>Auto Seek</strong> or both, and reload plugins. They work independently. Both need Stash v0.31 and the <code>python</code> Stash already uses for plugins. Next steps: <a href="{{ '/getting-started/' | relative_url }}">getting started with Curator</a> · <a href="{{ '/auto-seek-guide/' | relative_url }}">the Auto Seek guide</a>.</p>
 </section>
 
-<div class="grid hub-principles">
-  <section class="card"><h3>Runs on your server</h3><p>Your library, history and feedback stay in files you control. Nothing is uploaded. The only network use is Curator's optional StashDB lookups and Auto Seek's one-off model download.</p></section>
-  <section class="card"><h3>Explains itself</h3><p>Curator shows why a scene was picked; Auto Seek shows where it will jump before it does. Both take corrections, and your corrections win.</p></section>
-  <section class="card"><h3>Never deletes anything</h3><p>The plugins read your library. The only change Curator can make is an explicit, reversible Prune tag. See <a href="{{ '/privacy/' | relative_url }}">Privacy</a>.</p></section>
-</div>
+<section class="card hub-principle"><h3>Runs on your server</h3><p>Your library, history and feedback stay in files you control. Nothing is uploaded. The only network use is Curator's optional StashDB lookups and Auto Seek's one-off model download.</p></section>
 
 ## About
 

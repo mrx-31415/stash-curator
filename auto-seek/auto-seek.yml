@@ -39,6 +39,10 @@ settings:
     displayName: Lead-in (seconds)
     description: Jump this many seconds before the detected start, for a smoother way in. Default 8.
     type: NUMBER
+  hideScanChart:
+    displayName: Hide the scan chart
+    description: Above the seek bar, Auto Seek shows the frames it scored (amber once the action has started) and the start it picked. Turn this on to hide it.
+    type: BOOLEAN
   disableNewScenes:
     displayName: Don't analyse new scenes
     description: New scenes are analysed in the background as a scan adds them. Turn this on to analyse only when a scene is opened, or when you run the Find start points task.

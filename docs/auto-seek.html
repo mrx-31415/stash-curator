@@ -36,13 +36,6 @@ icon: auto-seek.svg
   </figure>
 </section>
 
-<div class="as-stats">
-  <div class="as-stat"><b>79%</b><span>of test scenes start within a minute of the spot a person picked by hand</span></div>
-  <div class="as-stat"><b>~16</b><span>frames looked at per scene, out of tens of thousands</span></div>
-  <div class="as-stat"><b>3–5 s</b><span>per scene on a home NAS, done in the background</span></div>
-  <div class="as-stat"><b>0</b><span>frames or viewing data leave your server</span></div>
-</div>
-
 <h2 id="how">How it finds the start</h2>
 <p class="lede">No chapter markers needed. An image model that knows what an intro looks like reads a handful of frames and homes in, like you would with the scrubber, only faster.</p>
 <div class="as-steps">
@@ -86,14 +79,14 @@ icon: auto-seek.svg
     <p>Frames are cut by Stash's own ffmpeg and scored right there. Nothing about your library is uploaded; the model is downloaded once and checked against its checksum.</p>
   </section>
   <section class="as-feature">
+    <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16"/><path d="M7 16v-2M11 16v-3M15 16V6M19 16V8"/></svg></span>
+    <h3>See what it saw</h3>
+    <p>A small chart above the seek bar shows every frame it scored and the start it picked, so you can tell at a glance why it jumped where it did. One setting hides it.</p>
+  </section>
+  <section class="as-feature">
     <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg></span>
     <h3>Runs where Stash runs</h3>
     <p>Docker on x86-64 and ARM (including 32-bit), Linux, Windows and Apple Silicon Macs. Nothing extra to install: the plugin fetches what your server needs. The ARM, Windows and Mac builds are new, so tell us how they do.</p>
-  </section>
-  <section class="as-feature">
-    <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
-    <h3>Light on a NAS</h3>
-    <p>About 16 frames per scene, low priority, one scene at a time, and a cap on parallel ffmpeg runs, so playback stays smooth while it works.</p>
   </section>
 </div>
 
@@ -109,23 +102,13 @@ icon: auto-seek.svg
 </section>
 
 <h2>Honest about the misses</h2>
-<div class="as-split">
-  <section>
-    <h3>Where it can slip</h3>
-    <ul>
-      <li>It judges single frames, so a slow-burn opening, or people still dressed when things get going, can make it start a little late.</li>
-      <li>Undressing or an interview without action can make it start early.</li>
-      <li>On average it was within a minute 4 times out of 5. The flag fixes the rest, for good.</li>
-    </ul>
-  </section>
-  <section>
-    <h3>Coming next</h3>
-    <ul>
-      <li>Starting at the kind of action you prefer, using the act recognition already built into the model.</li>
-      <li>Reading a few frames around each point, to see motion rather than poses.</li>
-      <li>Feeding your flags back in, so it learns your idea of a start.</li>
-    </ul>
-  </section>
+<div class="as-misses">
+  <p>Auto Seek is new and was tuned and tested on one library, so treat its accuracy as a first impression. There, about 4 in 5 picks landed within a minute of the start a person chose by hand. It judges single frames, so:</p>
+  <ul>
+    <li>a slow-burn opening, or people still dressed when things get going, can make it start a little late;</li>
+    <li>undressing or an interview without action can make it start early.</li>
+  </ul>
+  <p>When it's wrong, the flag fixes that scene for good.</p>
 </div>
 
 <p class="as-caption" style="margin-top:2.5rem">Auto Seek's model is a tuned version of <a href="https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K">LAION's CLIP ViT-B/32</a>, hosted at <a href="https://huggingface.co/mrx-31415/auto-seek">huggingface.co/mrx-31415/auto-seek</a>, and runs on <a href="https://onnxruntime.ai">ONNX Runtime</a>. The animation above is drawn in code; it contains no footage.</p>

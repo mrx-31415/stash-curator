@@ -134,8 +134,18 @@ def test_abandoned_lock_allows_a_new_download(backend, server, monkeypatch):
 def test_start_point_cache_round_trip(backend):
     assert backend.get_points({"scene_ids": ["7"]}) == {}
     backend.put_point(
-        {"scene_id": 7, "start": 312.5, "duration": 1800, "model": "m1", "scores": [0.1, 0.9]}
+        {
+            "scene_id": 7,
+            "start": 312.5,
+            "duration": 1800,
+            "model": "m1",
+            "scores": [(150, 0.1), (312.5, 0.9)],
+        }
     )
+    # The frames behind the start come back for the player's chart.
+    first = backend.get_points({"scene_ids": ["7"]})["7"]
+    assert first["samples"] == [[150, 0.1], [312.5, 0.9]]
+    assert first["threshold"] == backend.RULE["threshold"]
     backend.put_point({"scene_id": 7, "start": 300, "duration": 1800, "model": "m2"})
 
     point = backend.get_points({"scene_ids": [7, 8]})
@@ -143,6 +153,11 @@ def test_start_point_cache_round_trip(backend):
     assert point["7"]["start"] == 300 and point["7"]["model"] == "m2"
     with pytest.raises(ValueError):
         backend.put_point({"scene_id": 7, "start": 2000, "duration": 1800})
+
+
+def test_results_saved_before_frame_times_have_no_chart(backend):
+    assert backend.chart("[0.1, 0.9]") == {}
+    assert backend.chart("") == {} and backend.chart("not json") == {}
 
 
 def test_marked_start_wins_and_survives_recomputation(backend):
@@ -353,7 +368,15 @@ def test_model_is_read_from_a_local_copy_once_made(backend, monkeypatch, tmp_pat
 
 
 def test_analyse_answers_from_the_cache(backend, monkeypatch):
-    backend.put_point({"scene_id": 7, "start": 300, "duration": 1800, "model": backend.MODEL_ID})
+    backend.put_point(
+        {
+            "scene_id": 7,
+            "start": 300,
+            "duration": 1800,
+            "model": backend.MODEL_ID,
+            "scores": [(300, 0.9)],
+        }
+    )
     backend.put_point({"scene_id": 8, "start": 300, "duration": 1800, "model": "older"})
     worked = []
     monkeypatch.setattr(
@@ -364,6 +387,11 @@ def test_analyse_answers_from_the_cache(backend, monkeypatch):
     assert backend.analyse({"scene_id": 7}, {})["start"] == 300
     backend.analyse({"scene_id": 8}, {})
     assert worked == ["8"]  # a result from an older model is worked out again
+    # So is one saved before frame times were kept, once, for the player's chart.
+    with backend.cache() as connection:
+        connection.execute("UPDATE start_point SET scores = '[0.1, 0.9]' WHERE scene_id = '7'")
+    backend.analyse({"scene_id": 7}, {})
+    assert worked == ["8", "7"]
 
 
 def test_library_task_skips_answered_scenes_and_records_failures(backend, monkeypatch):
