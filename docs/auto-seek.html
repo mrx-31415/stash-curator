@@ -29,7 +29,7 @@ icon: auto-seek.svg
           <source src="{{ '/assets/auto-seek-demo-action.webm' | relative_url }}" type="video/webm">
           <source src="{{ '/assets/auto-seek-demo-action.mp4' | relative_url }}" type="video/mp4">
         </video>
-        <div class="as-toast" aria-hidden="true">Skipped to <b>6:04</b> · Undo</div>
+        <div class="as-toast" aria-hidden="true">Skipped to <b>6:09</b> · Undo</div>
         <div class="as-pill" aria-hidden="true">Skip intro<span class="arrow">›</span></div>
       </div>
       <div class="as-controls" aria-hidden="true">
@@ -62,7 +62,7 @@ icon: auto-seek.svg
   <section class="as-step">
     <svg viewBox="0 0 240 52" aria-hidden="true"><line x1="20" y1="44" x2="220" y2="44" stroke="#ffffff30" stroke-width="3"/><g fill="#5b6b85"><rect x="40" y="30" width="4" height="12" rx="1"/><rect x="120" y="32" width="4" height="10" rx="1"/></g><rect x="160" y="8" width="4" height="34" rx="1" fill="#ffb81f"/><rect x="140" y="10" width="4" height="32" rx="1" fill="#ffb81f"/><path d="M132 4v40" stroke="#ffb81f" stroke-width="3"/><circle cx="132" cy="4" r="4" fill="#ffb81f"/></svg>
     <h3>Pinpoint</h3>
-    <p>A few rounds of halving the gap land it within seconds. The player jumps a few seconds before that, for a smoother way in.</p>
+    <p>A few rounds of halving the gap land it within seconds. The player jumps a moment before that, for a smoother way in.</p>
   </section>
 </div>
 
@@ -130,7 +130,7 @@ icon: auto-seek.svg
   if (!demo) return;
   // A made-up 30-minute scene whose action starts at 6:13: an intro clip
   // loops while the server works, and the skip cuts to the action clip.
-  const duration = 1800, start = 372.7, lead = 8, ACTION_SECONDS = 8;
+  const duration = 1800, start = 372.7, lead = 3, ACTION_SECONDS = 8;
   const intro = demo.querySelector('video.intro'), action = demo.querySelector('video.action');
   const strip = demo.querySelector('.as-strip'), bars = demo.querySelector('.as-strip-bars');
   const label = demo.querySelector('.as-strip-label span'), flag = demo.querySelector('.as-strip-flag');
