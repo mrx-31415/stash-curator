@@ -99,6 +99,10 @@ settings:
     displayName: Sync page size
     description: Number of Stash records fetched per synchronization request. Default 250.
     type: NUMBER
+  pauseLearning:
+    displayName: Pause learning from viewing
+    description: While on, Curator ignores what you play, such as when testing, with guests or on a shared screen. Plays from this time are also left out when Curator reads Stash's play history. Thumbs, tag answers and dismissals still count.
+    type: BOOLEAN
   modelUpdateEventThreshold:
     displayName: Actions before model update
     description: Rebuild after this many new playback or feedback actions. Default 5.

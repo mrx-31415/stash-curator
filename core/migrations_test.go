@@ -34,18 +34,18 @@ func TestMigrateFullChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.currentVersion != 51 || status.latestVersion != 51 || len(status.pending) != 0 {
+	if status.currentVersion != 52 || status.latestVersion != 52 || len(status.pending) != 0 {
 		t.Fatalf("unexpected status: %+v", status)
 	}
-	if len(migrations) != 51 {
-		t.Fatalf("expected 51 migrations, got %d", len(migrations))
+	if len(migrations) != 52 {
+		t.Fatalf("expected 52 migrations, got %d", len(migrations))
 	}
 	var rows int
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 51 {
-		t.Fatalf("schema_migration has %d rows, want 51", rows)
+	if rows != 52 {
+		t.Fatalf("schema_migration has %d rows, want 52", rows)
 	}
 	// Idempotent second migrate.
 	if err := migrate(db, 1_700_000_000_001); err != nil {
@@ -54,7 +54,7 @@ func TestMigrateFullChain(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM schema_migration`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 51 {
+	if rows != 52 {
 		t.Fatalf("second migrate added rows: %d", rows)
 	}
 	var integrity string
