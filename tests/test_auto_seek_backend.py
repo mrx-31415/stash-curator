@@ -155,6 +155,15 @@ def test_start_point_cache_round_trip(backend):
         backend.put_point({"scene_id": 7, "start": 2000, "duration": 1800})
 
 
+def test_progress_shows_frames_scored_so_far(backend):
+    assert backend.scan_progress({"scene_id": 7}) == {}
+    backend.write_progress("7", 1800.0, [[150, 0.1], [300, 0.9]])
+    progress = backend.scan_progress({"scene_id": "7"})
+    assert progress["samples"] == [[150, 0.1], [300, 0.9]] and progress["duration"] == 1800.0
+    with pytest.raises(ValueError):
+        backend.progress_path("../x")  # scene ids only
+
+
 def test_results_saved_before_frame_times_have_no_chart(backend):
     assert backend.chart("[0.1, 0.9]") == {}
     assert backend.chart("") == {} and backend.chart("not json") == {}
@@ -239,6 +248,10 @@ def test_search_helpers(backend):
     assert backend.scan_window([0, 100, 200, 300], [0.1, 0.6, 0.7, 0.9], rule) == (0, 300)
     window = backend.scan_window([0, 100, 200, 300, 400], [0.1, 0.2, 0.95, 0.95, 0.95], rule)
     assert window == (100, 200)
+    # A "maybe" frame before the jump moves the scan one sample back: the
+    # start can lie before a frame the model was unsure about.
+    window = backend.scan_window([0, 100, 200, 300, 400], [0.02, 0.04, 0.44, 0.99, 1.0], rule)
+    assert window == (100, 300)
     assert backend.scan_times(0, 300, rule) == [0, 37.5, 75, 112.5, 150, 187.5, 225, 262.5, 300]
     assert backend.scan_times(100, 130, rule) == [100, 115, 130]
     assert backend.scan_times(200, 200, rule) == [200]
@@ -484,6 +497,28 @@ def test_worker_drains_the_queue(backend, monkeypatch):
     assert backend.done_ids(["7"]) == {"7"}  # failed with this model: not retried
     with backend.cache() as connection:
         assert connection.execute("SELECT COUNT(*) FROM pending").fetchone()[0] == 0
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_frame_preview_is_a_small_jpeg_of_that_moment(backend, tmp_path, monkeypatch):
+    import base64
+
+    video = tmp_path / "scene.mp4"
+    source = "testsrc=duration=4:size=640x360:rate=10"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", source, str(video)], check=True
+    )
+    monkeypatch.setattr(
+        backend,
+        "stash_query",
+        lambda *a: {
+            "findScene": {"files": [{"path": str(video), "duration": 4}]},
+            "configuration": {"general": {"ffmpegPath": shutil.which("ffmpeg")}},
+        },
+    )
+    frame = backend.frame_preview({"scene_id": 7, "time": 1.5}, {})
+    assert base64.b64decode(frame["jpeg"])[:2] == b"\xff\xd8"
+    assert backend.frame_preview({"scene_id": 7, "time": 60}, {})["jpeg"] is None
 
 
 def test_ffmpeg_runs_are_limited_across_processes(backend, monkeypatch):

@@ -23,6 +23,22 @@
     return h ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
   }
 
+  // Stash's sprite VTT: "HH:MM:SS.mmm --> HH:MM:SS.mmm" then
+  // "sprite.jpg#xywh=x,y,w,h", one cue per thumbnail.
+  function parseVtt(text) {
+    const seconds = (stamp) => stamp.split(":").reduce((total, part) => total * 60 + parseFloat(part), 0);
+    const cues = [];
+    const pattern = /([\d:.]+)\s*-->\s*([\d:.]+)\s*\n[^\n#]*#xywh=(\d+),(\d+),(\d+),(\d+)/g;
+    for (const match of text.matchAll(pattern)) {
+      cues.push({ start: seconds(match[1]), end: seconds(match[2]), x: +match[3], y: +match[4], w: +match[5], h: +match[6] });
+    }
+    return cues;
+  }
+
+  function spriteCue(cues, time) {
+    return cues.find((cue) => time >= cue.start && time < cue.end) || cues[cues.length - 1] || null;
+  }
+
   // ── end pure helpers ───────────────────────────────────────────────────
 
   async function graphql(query, variables) {
@@ -233,44 +249,253 @@
     setTimeout(() => box.remove(), 6000);
   }
 
-  // The frames the server scored, drawn just above the seek bar while the
-  // controls show: one bar per frame (its height is how sure the model was
-  // that the action had started; amber past the threshold) and a line at the
-  // start it picked. Settings → "Hide the scan chart" turns it off.
-  async function drawChart(view) {
+  // ── scan strip ─────────────────────────────────────────────────────────
+
+  // A thin strip under the video showing the frames the server scored: one
+  // bar each, as tall as the model was sure the action had started, orange
+  // past the threshold and grey before it. It fills in live while a scene is
+  // being worked out and flashes a line at the start once it is found. The
+  // × hides it for this tab; Settings → "Hide the scan chart" for good.
+  const STRIP_HIDDEN_KEY = "auto-seek:strip-hidden";
+  // Auto Seek's logo (docs/assets/auto-seek.svg) as a self-contained image:
+  // inline, its gradient, clip and glow references (url(#id)) resolve
+  // against Stash's <base href> in some browsers and break.
+  const STRIP_ICON = `<img class="auto-seek-strip-icon" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22%3E %3Cdefs%3E%3ClinearGradient id=%22g%22 x1=%2214%22 y1=%2210%22 x2=%22114%22 y2=%22118%22 gradientUnits=%22userSpaceOnUse%22%3E%3Cstop stop-color=%22%23ffcf3f%22/%3E%3Cstop offset=%22.55%22 stop-color=%22%23ff9a1f%22/%3E%3Cstop offset=%221%22 stop-color=%22%23ff5c39%22/%3E%3C/linearGradient%3E %3Cfilter id=%22glow%22 filterUnits=%22userSpaceOnUse%22 x=%220%22 y=%220%22 width=%22128%22 height=%22128%22%3E%3CfeGaussianBlur stdDeviation=%222.6%22 result=%22b%22/%3E%3CfeMerge%3E%3CfeMergeNode in=%22b%22/%3E%3CfeMergeNode in=%22SourceGraphic%22/%3E%3C/feMerge%3E%3C/filter%3E%3CclipPath id=%22k%22%3E%3Crect x=%2220%22 y=%2224%22 width=%2288%22 height=%2264%22 rx=%2213%22/%3E%3C/clipPath%3E%3CclipPath id=%22behind%22%3E%3Crect width=%2272%22 height=%22128%22/%3E%3C/clipPath%3E%3CclipPath id=%22ahead%22%3E%3Crect x=%2272%22 width=%2256%22 height=%22128%22/%3E%3C/clipPath%3E%3ClinearGradient id=%22t%22 x1=%2222%22 x2=%2272%22 gradientUnits=%22userSpaceOnUse%22%3E%3Cstop stop-color=%22%23ffb81f%22 stop-opacity=%220%22/%3E%3Cstop offset=%221%22 stop-color=%22%23ffb81f%22 stop-opacity=%22.42%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%22128%22 height=%22128%22 rx=%2234%22 fill=%22url(%23g)%22/%3E%3Crect x=%2220%22 y=%2224%22 width=%2288%22 height=%2264%22 rx=%2213%22 fill=%22%231b1208%22/%3E%3Cg clip-path=%22url(%23k)%22%3E%3Crect x=%2222%22 y=%2224%22 width=%2250%22 height=%2264%22 fill=%22url(%23t)%22/%3E%3Cg clip-path=%22url(%23ahead)%22%3E%3Cpath d=%22M44 38l18 18-18 18M64 38l18 18-18 18%22 fill=%22none%22 stroke=%22%23ffb81f%22 stroke-width=%228%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 opacity=%22.3%22/%3E%3C/g%3E%3Cg clip-path=%22url(%23behind)%22%3E%3Cpath d=%22M44 38l18 18-18 18M64 38l18 18-18 18%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%228%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/g%3E%3Cpath d=%22M72 24V88%22 stroke=%22%23ffd25a%22 stroke-width=%223.5%22 filter=%22url(%23glow)%22/%3E%3C/g%3E%3Crect x=%2224.0%22 y=%22108.5%22 width=%224%22 height=%223.5%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3Crect x=%2231.6%22 y=%22108.5%22 width=%224%22 height=%223.5%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3Crect x=%2239.2%22 y=%22108.5%22 width=%224%22 height=%223.5%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3Crect x=%2246.8%22 y=%22108.5%22 width=%224%22 height=%223.5%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3Crect x=%2254.4%22 y=%22107.6%22 width=%224%22 height=%224.4%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.46%22/%3E%3Crect x=%2262.0%22 y=%22103.0%22 width=%224%22 height=%229.0%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.63%22/%3E%3Crect x=%2269.6%22 y=%2298.0%22 width=%224%22 height=%2214.0%22 rx=%222%22 fill=%22%23fff%22 opacity=%221.00%22/%3E%3Crect x=%2277.2%22 y=%22102.2%22 width=%224%22 height=%229.8%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.66%22/%3E%3Crect x=%2284.8%22 y=%22107.3%22 width=%224%22 height=%224.7%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.46%22/%3E%3Crect x=%2292.4%22 y=%22108.4%22 width=%224%22 height=%223.6%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3Crect x=%22100.0%22 y=%22108.5%22 width=%224%22 height=%223.5%22 rx=%222%22 fill=%22%231b1208%22 opacity=%220.42%22/%3E%3C/svg%3E">`;
+
+  function stripDismissed() {
+    try { return sessionStorage.getItem(STRIP_HIDDEN_KEY) === "1"; } catch (error) { return false; }
+  }
+
+  async function ensureStrip(view) {
+    if (view.strip?.isConnected) return view.strip;
+    if (stripDismissed() || (await settings()).plugin.hideScanChart === true || current !== view) return null;
+    const wrapper = view.video.closest(".video-wrapper");
+    if (!wrapper?.parentElement || view.strip?.isConnected) return view.strip?.isConnected ? view.strip : null;
+    document.querySelectorAll(".auto-seek-strip").forEach((old) => old.remove());
+    const strip = document.createElement("div");
+    strip.className = "auto-seek-strip";
+    strip.innerHTML =
+      '<div class="auto-seek-strip-bars"><span class="auto-seek-strip-line"></span><b class="auto-seek-strip-flag" hidden></b></div>' +
+      `<span class="auto-seek-strip-label">${STRIP_ICON}<span></span></span>` +
+      '<div class="auto-seek-strip-peek" hidden><span class="auto-seek-strip-peek-image"></span><span class="auto-seek-strip-peek-text"></span></div>' +
+      '<button type="button" class="auto-seek-strip-close" aria-label="Hide the scan chart" title="Hide (Settings → Plugins → Auto Seek hides it for good)">×</button>';
+    strip.querySelector(".auto-seek-strip-close").addEventListener("click", () => {
+      try { sessionStorage.setItem(STRIP_HIDDEN_KEY, "1"); } catch (error) { /* hidden on this page only */ }
+      strip.remove();
+    });
+    wrapper.after(strip);
+    view.strip = strip;
+    view.stripDrawn = 0;
+    attachPeek(view, strip);
+    alignStrip(view);
+    // Keep the bars over the matching spot of the seek bar as the page resizes.
+    view.stripResize?.disconnect();
+    view.stripResize = new ResizeObserver(() => alignStrip(view));
+    view.stripResize.observe(strip);
+    return strip;
+  }
+
+  // Line the bars up with Stash's seek bar, so a bar sits over the moment it
+  // was taken from (the seek bar is inset by the player's buttons).
+  function alignStrip(view) {
+    const bars = view.strip?.querySelector(".auto-seek-strip-bars");
     const holder = view.video.closest(".video-js")?.querySelector(".vjs-progress-holder");
-    holder?.querySelector(".auto-seek-chart")?.remove();
-    if (!holder || !view.samples?.length || !(view.duration > 0)) return;
-    if ((await settings()).plugin.hideScanChart === true || current !== view) return;
-    const chart = document.createElement("div");
-    chart.className = "auto-seek-chart";
-    chart.setAttribute("aria-hidden", "true");
-    const at = (time) => `${Math.min(100, Math.max(0, (100 * time) / view.duration))}%`;
-    if (view.threshold != null) {
-      const line = document.createElement("span");
-      line.className = "auto-seek-chart-line";
-      line.style.bottom = `${100 * view.threshold}%`;
-      chart.appendChild(line);
+    if (!bars || !holder) return;
+    const seek = holder.getBoundingClientRect();
+    const strip = view.strip.getBoundingClientRect();
+    if (!seek.width || !strip.width) return;
+    bars.style.marginLeft = `${seek.left - strip.left}px`;
+    bars.style.width = `${seek.width}px`;
+  }
+
+  // Add the frames not drawn yet; `samples` only ever grows.
+  function paintStrip(view, { samples = [], duration, threshold }, pace = 90) {
+    const bars = view.strip?.querySelector(".auto-seek-strip-bars");
+    if (!bars || !(duration > 0)) return;
+    if (threshold != null) bars.querySelector(".auto-seek-strip-line").style.bottom = `${100 * threshold}%`;
+    view.stripPending ||= [];
+    if (samples.length < view.stripDrawn) {
+      bars.querySelectorAll("i").forEach((bar) => bar.remove());
+      view.stripPending = [];
+      view.stripDrawn = 0;
     }
-    for (const [time, score] of view.samples) {
-      const bar = document.createElement("i");
-      if (view.threshold != null && score >= view.threshold) bar.className = "hit";
-      bar.style.left = at(time);
-      bar.style.height = `${Math.max(14, 100 * score)}%`;
-      chart.appendChild(bar);
+    // Frames arrive in clumps (they are cut in parallel); they join a queue
+    // that adds one bar at a steady pace, so the strip visibly works through
+    // the scene frame by frame.
+    view.stripPending.push(...samples.slice(view.stripDrawn).map(([time, score]) => ({ time, score, duration, threshold })));
+    view.stripDrawn = samples.length;
+    if (!view.stripTimer) drainStrip(view, bars, pace);
+  }
+
+  function drainStrip(view, bars, pace) {
+    const next = view.stripPending.shift();
+    if (!next) {
+      view.stripTimer = null;
+      view.stripIdle?.();
+      return;
     }
-    const flag = document.createElement("b");
-    flag.className = view.marked ? "marked" : "";
-    flag.style.left = at(view.start);
-    flag.title = view.marked ? "Your start" : "Where the action starts";
-    chart.appendChild(flag);
-    holder.appendChild(chart);
+    const { time, score, duration, threshold } = next;
+    const bar = document.createElement("i");
+    if (threshold != null && score >= threshold) bar.className = "hit";
+    bar.style.left = `${Math.min(100, Math.max(0, (100 * time) / duration))}%`;
+    bar.style.height = `${22 + 78 * score}%`; // a visible stub even at 0
+    bar.dataset.time = time;
+    bar.dataset.score = score;
+    bars.appendChild(bar);
+    view.stripTimer = setTimeout(() => drainStrip(view, bars, pace), pace);
+  }
+
+  // Resolves once every queued bar is on the strip.
+  function stripSettled(view) {
+    if (!view.stripTimer && !view.stripPending?.length) return Promise.resolve();
+    return new Promise((resolve) => {
+      const previous = view.stripIdle;
+      view.stripIdle = () => { view.stripIdle = null; previous?.(); resolve(); };
+    });
+  }
+
+  // ── strip preview: Stash's own seek-bar sprite, when the scene has one ──
+
+  const spriteCache = new Map();
+  function sceneSprite(id) {
+    if (!spriteCache.has(id)) {
+      spriteCache.set(id, (async () => {
+        const data = await graphql(
+          "query AutoSeekSprite($id: ID!) { autoSeekSprite: findScene(id: $id) { paths { vtt sprite } } }",
+          { id },
+        );
+        const paths = data.autoSeekSprite?.paths;
+        if (!paths?.vtt || !paths?.sprite) return null;
+        const response = await fetch(paths.vtt, { credentials: "same-origin" });
+        if (!response.ok) return null;
+        return { sprite: paths.sprite, cues: parseVtt(await response.text()) };
+      })().catch(() => null));
+    }
+    return spriteCache.get(id);
+  }
+
+  // Exact frames for the preview, cut by the server once per bar and kept.
+  const frameCache = new Map();
+  let peekTimer = null;
+  async function exactFrame(id, time) {
+    const key = `${id}:${time}`;
+    if (!frameCache.has(key)) {
+      frameCache.set(key, operation({ op: "frame", scene_id: id, time })
+        .then((frame) => (frame.jpeg ? `data:image/jpeg;base64,${frame.jpeg}` : null))
+        .catch(() => null));
+    }
+    const url = await frameCache.get(key);
+    if (url) frameCache.set(key, url); // later hovers read the URL at once
+    return url;
+  }
+
+  function showImage(image, source) {
+    image.hidden = !source;
+    if (!source) return;
+    const { url, cue } = source;
+    image.style.backgroundImage = `url("${url}")`;
+    if (cue) {
+      image.style.width = `${cue.w}px`;
+      image.style.height = `${cue.h}px`;
+      image.style.backgroundSize = "";
+      image.style.backgroundPosition = `-${cue.x}px -${cue.y}px`;
+    } else {
+      image.style.width = "160px";
+      image.style.height = "90px";
+      image.style.backgroundSize = "cover";
+      image.style.backgroundPosition = "center";
+    }
+  }
+
+  function attachPeek(view, strip) {
+    const bars = strip.querySelector(".auto-seek-strip-bars");
+    const peek = strip.querySelector(".auto-seek-strip-peek");
+    const image = peek.querySelector(".auto-seek-strip-peek-image");
+    const text = peek.querySelector(".auto-seek-strip-peek-text");
+    const show = async (event) => {
+      const box = bars.getBoundingClientRect();
+      let nearest = null;
+      let distance = 10; // px: a bar is only a few pixels wide
+      for (const bar of bars.querySelectorAll("i")) {
+        const x = bar.getBoundingClientRect().left + bar.offsetWidth / 2;
+        if (Math.abs(x - event.clientX) < distance) { nearest = bar; distance = Math.abs(x - event.clientX); }
+      }
+      if (!nearest) { peek.hidden = true; return; }
+      const time = Number(nearest.dataset.time);
+      const score = Number(nearest.dataset.score);
+      text.textContent = `${formatTime(time)} · ${Math.round(100 * score)}%`;
+      peek.style.left = `${Math.min(Math.max(nearest.getBoundingClientRect().left - box.left, 60), box.width - 60)}px`;
+      peek.hidden = false;
+      peek.dataset.time = String(time);
+      // The seek-bar sprite first (instant, but its nearest thumbnail can be
+      // tens of seconds away), then the exact frame from the server.
+      const exact = frameCache.get(`${view.id}:${time}`);
+      if (typeof exact === "string") { showImage(image, { url: exact }); return; }
+      const sprite = await sceneSprite(view.id);
+      const cue = sprite && spriteCue(sprite.cues, time);
+      if (peek.dataset.time !== String(time)) return;
+      showImage(image, cue ? { url: sprite.sprite, cue } : null);
+      clearTimeout(peekTimer);
+      peekTimer = setTimeout(async () => {
+        const url = await exactFrame(view.id, time);
+        if (url && peek.dataset.time === String(time) && !peek.hidden) showImage(image, { url });
+      }, 120);
+    };
+    bars.addEventListener("pointermove", show);
+    bars.addEventListener("pointerdown", show);
+    bars.addEventListener("pointerleave", () => { peek.hidden = true; });
+  }
+
+  function labelStrip(view, text) {
+    const label = view.strip?.querySelector(".auto-seek-strip-label span");
+    if (label) label.textContent = text;
+  }
+
+  async function showStart(view, flash) {
+    if (!view.samples?.length || !(await ensureStrip(view))) return;
+    // A cached answer fills in quickly; a live one keeps its pace.
+    paintStrip(view, { samples: view.samples, duration: view.duration, threshold: view.threshold }, view.stripDrawn ? 90 : 25);
+    await stripSettled(view);
+    const flag = view.strip.querySelector(".auto-seek-strip-flag");
+    flag.hidden = false;
+    flag.classList.toggle("marked", Boolean(view.marked));
+    flag.style.left = `${Math.min(100, Math.max(0, (100 * view.start) / view.duration))}%`;
+    labelStrip(view, view.marked ? `Your start · ${formatTime(view.start)}` : `Starts at ${formatTime(view.start)}`);
+    view.strip.classList.remove("is-busy");
+    if (flash) {
+      view.strip.classList.remove("is-found");
+      void view.strip.offsetWidth; // restart the animation
+      view.strip.classList.add("is-found");
+    }
+  }
+
+  // While the server works, poll what it has scored so far.
+  function watchProgress(view) {
+    let stopped = false;
+    (async () => {
+      await sleep(250);
+      while (!stopped && current === view && view.state === "busy") {
+        try {
+          const progress = await operation({ op: "progress", scene_id: view.id });
+          if (!stopped && progress.samples?.length && (await ensureStrip(view))) {
+            view.strip.classList.add("is-busy");
+            labelStrip(view, "Finding where the action starts…");
+            paintStrip(view, progress);
+          }
+        } catch (error) { /* the result itself will arrive or fail */ }
+        await sleep(200);
+      }
+    })();
+    return () => { stopped = true; };
   }
 
   // Look the start point up (or work it out) and keep the view in step.
   function resolve(view) {
-    view.promise ||= startPoint(view.id).then(
+    if (view.promise) return view.promise;
+    const stopWatching = view.state === "busy" ? watchProgress(view) : () => {};
+    view.promise = startPoint(view.id).then(
       async (result) => {
+        stopWatching();
         view.target = Math.max(0, result.start - (await leadIn()));
         view.marked = Boolean(result.marked);
         view.start = result.start;
@@ -279,10 +504,11 @@
         view.threshold = result.threshold;
         view.state = "ready";
         render();
-        drawChart(view).catch(() => {});
+        showStart(view, true).catch(() => {});
         return view.target;
       },
       (error) => {
+        stopWatching();
         view.state = "error";
         view.error = error.message;
         view.promise = null;
@@ -413,6 +639,13 @@
     host.addEventListener("keydown", (event) => { if (event.key === " " || event.key === "k") takeOver(); }, true);
     video.addEventListener("playing", () => onFirstPlay(view));
     render();
+    // The strip shows at once, saying it is working, until bars arrive.
+    ensureStrip(view).then((strip) => {
+      if (strip && view.state === "busy") {
+        strip.classList.add("is-busy");
+        labelStrip(view, "Finding where the action starts…");
+      }
+    }).catch(() => {});
     // Work it out right away, so a click finds the answer ready.
     resolve(view).catch(() => {});
   }
@@ -424,6 +657,7 @@
     const id = sceneIdFrom(pathname);
     if (!id) {
       current = null;
+      document.querySelectorAll(".auto-seek-strip").forEach((strip) => strip.remove());
       return;
     }
     // Start right away; the player mounts a moment later and finds it running.

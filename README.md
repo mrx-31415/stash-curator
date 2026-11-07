@@ -44,8 +44,9 @@ Curator your preferences. Feedback affects rankings after a model update.
 ## New: Auto Seek
 
 <p align="center">
-  <a href="https://mrx-31415.github.io/stash-curator/auto-seek/"><img src="docs/assets/auto-seek-demo.gif" alt="Auto Seek on the Stash player: frames are scored across the scene, the search zooms in where the scores jump, finds the start, and Skip intro jumps there" width="640"></a>
+  <a href="https://mrx-31415.github.io/stash-curator/auto-seek/"><img src="docs/assets/auto-seek-demo.gif" alt="Auto Seek on the Stash player: while the intro plays, the strip under the player fills with the frames the server scored, grey before the action and amber after; it finds the start and Skip intro jumps there" width="640"></a>
 </p>
+<p align="center">Demo footage from <a href="https://peach.blender.org">Big Buck Bunny</a> (CC BY 3.0, © Blender Foundation), shortened.</p>
 
 **Skip the intro. Every scene.** Auto Seek is a separate plugin from the same plugin
 source. It finds where the action starts in each scene and jumps straight there: tap

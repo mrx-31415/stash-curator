@@ -51,6 +51,9 @@ wide: true
 ## About
 
 Stash Curator is open source under the AGPL-3.0 and is preview software, pre-1.0.
+Demo footage comes from Blender Foundation films under Creative Commons Attribution:
+[Big Buck Bunny](https://peach.blender.org) (CC BY 3.0) for Auto Seek, and the films
+credited on the [Curator page]({{ '/curator/' | relative_url }}#tour).
 Curator's idea was inspired by [Restash by Espionage9248](https://github.com/Espionage9248/Restash/tree/main/restash).
 The plugins are primarily generated with AI coding agents under human direction,
 review, and testing. Issues and ideas are welcome on
