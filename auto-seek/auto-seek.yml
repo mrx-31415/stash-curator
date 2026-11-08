@@ -1,6 +1,6 @@
 name: Auto Seek
 description: Finds where the action starts in each scene and skips there, with a button on the player or automatically. Runs on the server.
-version: 0.1.0 # x-release-please-version
+version: 0.2.0 # x-release-please-version
 url: https://github.com/mrx-31415/stash-curator
 
 exec:
