@@ -103,7 +103,7 @@ worked out once per model.
 Auto Seek was tuned and tested on one library, so take this as a first impression
 rather than a promise. On 196 of its scenes whose start points were picked and
 checked by hand, and held out of training, the search landed within 60 seconds of
-the hand-picked start in 79% of them. When it misses, it is more often late than early. Typical causes:
+the hand-picked start in 84% of them. When it misses, it is more often late than early. Typical causes:
 
 - **Late:** people are still dressed when the action begins, or the opening is slow
   and builds up.

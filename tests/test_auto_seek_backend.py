@@ -84,6 +84,27 @@ def test_download_resumes_and_verifies(backend, server):
     assert status["ready"] and not status["downloading"] and status["received"] == status["total"]
 
 
+def test_download_removes_files_an_earlier_version_pinned(backend, server):
+    base, files, _ = server
+    backend.FILES = (entry(base, files, "new.bin", b"new model"),)
+    old = Path(backend.FILES_DIR, "sub", "old.bin")
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"old model")
+    outside = Path(backend.DATA_DIR, "cache.sqlite3")
+    outside.write_bytes(b"keep")
+    Path(backend.VERIFIED_PATH).write_text(
+        json.dumps({"sub/old.bin": "x", "../cache.sqlite3": "y"})
+    )
+    Path(backend.LOCK_PATH).write_text("1")
+
+    backend.download()
+
+    assert not old.exists() and outside.read_bytes() == b"keep"
+    assert Path(backend.FILES_DIR, "sub", "new.bin").read_bytes() == b"new model"
+    assert set(json.loads(Path(backend.VERIFIED_PATH).read_text())) == {"sub/new.bin"}
+    assert backend.status()["ready"]
+
+
 def test_checksum_failure_is_reported_and_not_marked_ready(backend, server):
     base, files, _ = server
     backend.FILES = (entry(base, files, "a.bin", b"tampered", sha="0" * 64),)
