@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.55.0](https://github.com/mrx-31415/stash-curator/compare/v0.54.0...v0.55.0) (2026-11-08)
+
+
+### Features
+
+* status messages and a compact one-row Auto Seek strip ([b9435e4](https://github.com/mrx-31415/stash-curator/commit/b9435e4f7ac12374fe9aaa2fee16efa401ae51db))
+
+
+### Documentation
+
+* describe Auto Seek as running on demand, with background work optional ([9230eda](https://github.com/mrx-31415/stash-curator/commit/9230eda943d266fb2633cccc5885ffbf7317430a))
+
 ## [0.54.0](https://github.com/mrx-31415/stash-curator/compare/v0.53.1...v0.54.0) (2026-11-07)
 
 
