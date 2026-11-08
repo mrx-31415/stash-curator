@@ -146,7 +146,7 @@ icon: auto-seek.svg
     358.6, 360.9, 363.3, 365.6, 368, 370.3, 372.7,
   ];
   flag.style.left = pct(start);
-  demo.querySelector('.as-strip-line').style.bottom = '60%';
+  demo.querySelector('.as-strip-line').style.bottom = `${22 + 78 * 0.7}%`;
   let timers = [];
   const at = (ms, run) => timers.push(setTimeout(run, ms));
   const reset = () => {
@@ -169,7 +169,7 @@ icon: auto-seek.svg
       if (k === 17) label.textContent = 'Pinpointing the start…';
       const bar = document.createElement('i');
       const p = score(t, k);
-      if (p >= 0.6) bar.className = 'hit';
+      if (p >= 0.7) bar.className = 'hit';
       bar.style.left = pct(t); bar.style.height = `${22 + 78 * p}%`;
       bars.appendChild(bar);
     }));
@@ -192,7 +192,7 @@ icon: auto-seek.svg
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     frames.forEach((t, k) => {
       const bar = document.createElement('i'); const p = score(t, k);
-      if (p >= 0.6) bar.className = 'hit';
+      if (p >= 0.7) bar.className = 'hit';
       bar.style.left = pct(t); bar.style.height = `${22 + 78 * p}%`; bars.appendChild(bar);
     });
     strip.className = 'as-strip'; label.textContent = `Starts at ${fmt(start)}`; demo.classList.add('is-ready');

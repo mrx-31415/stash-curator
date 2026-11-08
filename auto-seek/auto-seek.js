@@ -327,7 +327,7 @@
   function paintStrip(view, { samples = [], duration, threshold }, pace = 90) {
     const bars = view.strip?.querySelector(".auto-seek-strip-bars");
     if (!bars || !(duration > 0)) return;
-    if (threshold != null) bars.querySelector(".auto-seek-strip-line").style.bottom = `${100 * threshold}%`;
+    if (threshold != null) bars.querySelector(".auto-seek-strip-line").style.bottom = `${22 + 78 * threshold}%`; // where a bar of that score ends
     view.stripPending ||= [];
     if (samples.length < view.stripDrawn) {
       bars.querySelectorAll("i").forEach((bar) => bar.remove());

@@ -64,14 +64,14 @@ WORKER_LOCK_PATH = os.path.join(DATA_DIR, "worker.lock")
 # start points and acts, int8 weights, raw RGB bytes in. Pinned to a commit of
 # https://huggingface.co/mrx-31415/auto-seek.
 MODEL = {
-    "path": "models/auto-seek-clip3-v1.onnx",
+    "path": "models/auto-seek-clip3-v2.onnx",
     "url": "https://huggingface.co/mrx-31415/auto-seek/resolve/"
-    "545c2c0a146c18c2279e33186f9074783d140aaa/auto-seek-clip3-v1.onnx",
-    "sha256": "94e1ecd4a67c2dffc64860d9ca19773d941b33c055804b91d027e31993ab230d",
-    "size": 88661598,
+    "d7aa38548cc784211c5d0578d3fc3249b368e512/auto-seek-clip3-v2.onnx",
+    "sha256": "683e3cb6c65f197ff78bc3c3da45e365682c32d5e7c739497b08aa2205654ca0",
+    "size": 88661597,
 }
 # Part of every cached result: a new model or rule recomputes older results.
-MODEL_ID = "clip3-v1+t60"
+MODEL_ID = "clip3-v2+t70"
 ACTS = ("ballerina", "cowgirl", "fingering", "from behind", "handjob",
         "missionary", "oral on her", "oral on him", "side/spoon", "titjob")  # fmt: skip
 
@@ -380,6 +380,23 @@ def unpack(entry: dict, archive: str) -> None:
     os.replace(staging, target)
 
 
+def remove_unused(verified: dict) -> None:
+    """Delete downloads an earlier version pinned (an older model, say), so an
+    update doesn't leave 89 MB behind."""
+    wanted = {entry["path"] for entry in FILES}
+    root = os.path.realpath(FILES_DIR)
+    for path in [path for path in verified if path not in wanted]:
+        target = os.path.realpath(os.path.join(FILES_DIR, path))
+        if target.startswith(root + os.sep):
+            if os.path.isdir(target):
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                with contextlib.suppress(OSError):
+                    os.remove(target)
+        del verified[path]
+    write_json(VERIFIED_PATH, verified)
+
+
 def download() -> None:
     verified = read_json(VERIFIED_PATH, {})
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -410,6 +427,7 @@ def download() -> None:
             fetch(entry, progress)
             verified[entry["path"]] = entry["sha256"]
             write_json(VERIFIED_PATH, verified)
+        remove_unused(verified)
         write_json(STATE_PATH, {"state": "ready", "received": 0, "updated_at": now()})
     except Exception as error:  # reported to the UI through status()
         write_json(
@@ -723,7 +741,7 @@ def blank(pixels: bytes) -> bool:
 # Tuned on hand-checked start points with the real search below (196 scenes:
 # 77% within 60 s of the viewer's start).
 RULE = {
-    "threshold": 0.6,  # a frame at or above this counts as started
+    "threshold": 0.7,  # a frame at or above this counts as started
     "window_low": 0.5,  # the scan widens back over coarse frames this likely
     # A "maybe" frame just before the jump: the start may lie before it, so the
     # scan starts one sample earlier (+2 points on the checked scenes, 4 won,
@@ -918,6 +936,9 @@ def model_bytes() -> bytes:
         with open(temporary, "wb") as out:
             out.write(model)
         os.replace(temporary, local)
+        for name in os.listdir(os.path.dirname(local)):  # an older model's copy
+            if name.endswith(".onnx") and name != os.path.basename(local):
+                os.remove(os.path.join(os.path.dirname(local), name))
     return model
 
 
