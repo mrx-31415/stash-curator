@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/mrx-31415/stash-curator/compare/v0.55.0...v0.56.0) (2026-11-08)
+
+
+### Features
+
+* Auto Seek model v2, trained on cleaner labels ([f666083](https://github.com/mrx-31415/stash-curator/commit/f6660835686493489b237f1c1ddf96e253deada1))
+
 ## [0.55.0](https://github.com/mrx-31415/stash-curator/compare/v0.54.0...v0.55.0) (2026-11-08)
 
 
