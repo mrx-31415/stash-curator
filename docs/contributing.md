@@ -122,20 +122,34 @@ are made (the same hook directory as the pre-push verifier; enable it with
 `git config core.hooksPath .githooks`). Use `--no-verify` only when a subject is
 truly exempt.
 
-On every push to `main`, release-please compares the merged commits against the last
-release, opens a `chore(main): release vX.Y.Z` pull request that bumps
-`pyproject.toml` and `curator/__init__.py`, and regenerates `CHANGELOG.md`. Merging
-that pull request creates the version tag and the GitHub Release; a follow-up job
-builds the plugin archive and attaches `dist/stash-curator.zip` and `dist/index.yml`
-to the release, then dispatches the Pages workflow.
+Curator and Auto Seek are released separately, each with its own version, tag and
+changelog. A commit belongs to the plugin whose files it changes: everything under
+`auto-seek/`, plus Auto Seek's docs pages, assets and tests, is Auto Seek's; the rest
+is Curator's. A commit that changes both counts for both.
+
+On every push to `main`, release-please compares the merged commits against each
+plugin's last release and opens one release pull request per plugin that has
+changes:
+
+- **Curator:** bumps `pyproject.toml` and `curator/__init__.py`, regenerates
+  `CHANGELOG.md`, and tags `vX.Y.Z`. A follow-up job builds Curator's archives and
+  attaches `dist/stash-curator*.zip` and `dist/index*.yml` to the release.
+- **Auto Seek:** bumps the `version:` line in `auto-seek/auto-seek.yml`, regenerates
+  `auto-seek/CHANGELOG.md`, and tags `auto-seek-vX.Y.Z`. A follow-up job runs
+  `scripts/build_plugin.py --only auto-seek` and attaches `dist/auto-seek.zip` and
+  `dist/auto-seek-index.yml`.
+
+Either job then dispatches the Pages workflow.
 
 GitHub Pages rebuilds on every push to `main` and serves two plugin sources. The
 development source under `/dev/` is built from `main` by
 `scripts/build_plugin.py --dev`, versioned `X.Y.Z+dev.N.<sha>` (N commits after
-release X.Y.Z; the release commit itself is plain `X.Y.Z`). The regular source
-serves the latest release's attached archives unchanged. Stash offers a plugin
-update only when the index `date` is newer, so regular-source users see an update
-only when a release lands. The development source is for maintainers and is
+release X.Y.Z; the release commit itself is plain `X.Y.Z`). The regular source is
+assembled by `scripts/stable_source.py`: Curator's archives and indexes from its
+latest complete release, with the Auto Seek entry swapped for the one from Auto
+Seek's latest release. Stash offers a plugin
+update only when the index `date` is newer, and each entry keeps its own release's date, so
+regular-source users see an update only for the plugin that was released. The development source is for maintainers and is
 deliberately not in the user guide.
 
 To test what the next release will contain, point an existing installation's plugin

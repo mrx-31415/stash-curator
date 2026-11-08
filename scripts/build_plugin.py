@@ -159,8 +159,9 @@ def version() -> str:
         return str(tomllib.load(source)["project"]["version"])
 
 
-def dev_version() -> str:
-    """Tag the release version with the commits merged since that release.
+def dev_version(component: str = ".") -> str:
+    """Tag a plugin's release version with the commits merged since that
+    release: Curator (".") or Auto Seek ("auto-seek").
 
     The dev plugin source rebuilds on every push to main, so the suffix tells
     which commit an installation runs; the release commit itself keeps the plain
@@ -172,11 +173,16 @@ def dev_version() -> str:
             ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    release = git("log", "-1", "--format=%H", "--", ".release-please-manifest.json")
+    base = version() if component == "." else auto_seek_version()
+    # The last commit that changed this plugin's line in the manifest: each
+    # plugin is released on its own, and both share the manifest.
+    manifest = ".release-please-manifest.json"
+    release = git("log", "-1", "--format=%H", "-G", f'"{re.escape(component)}": ', "--", manifest)
+    release = release or git("log", "-1", "--format=%H", "--", manifest)
     count = git("rev-list", "--count", f"{release}..HEAD")
     if count == "0":
-        return version()
-    return f"{version()}+dev.{count}.{git('rev-parse', '--short', 'HEAD')}"
+        return base
+    return f"{base}+dev.{count}.{git('rev-parse', '--short', 'HEAD')}"
 
 
 def core_binary_name(goos: str, goarch: str) -> str:
@@ -315,16 +321,25 @@ AUTO_SEEK_DESCRIPTION = (
 
 
 def auto_seek_version() -> str:
-    match = re.search(r"(?m)^version: (\S+)$", (AUTO_SEEK / "auto-seek.yml").read_text("utf-8"))
+    # The line carries release-please's marker comment, which bumps it.
+    match = re.search(r"(?m)^version: (\S+)", (AUTO_SEEK / "auto-seek.yml").read_text("utf-8"))
     if match is None:
         raise RuntimeError("auto-seek.yml has no version")
     return match.group(1)
 
 
-def build_auto_seek(directory: Path, dev_suffix: str = "") -> tuple[Path, str]:
-    """Package Auto Seek next to Curator's archives; returns the archive and
-    the version written into its manifest."""
-    plugin_version = auto_seek_version() + dev_suffix
+AUTO_SEEK_INDEX = "auto-seek-index.yml"
+
+
+def build_auto_seek(
+    directory: Path, plugin_version: str | None = None, build_date: str | None = None
+) -> tuple[Path, str]:
+    """Package Auto Seek, and write its plugin-source entry on its own to
+    auto-seek-index.yml (an Auto Seek release ships just these two files).
+    Returns the archive and its index entry."""
+    plugin_version = plugin_version or auto_seek_version()
+    build_date = build_date or datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    directory.mkdir(parents=True, exist_ok=True)
     archive_path = directory / "auto-seek.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in AUTO_SEEK_FILES:
@@ -335,13 +350,29 @@ def build_auto_seek(directory: Path, dev_suffix: str = "") -> tuple[Path, str]:
                 )
             archive.writestr(name, data)
         archive.write(ROOT / "LICENSE", "LICENSE")
-    return archive_path, plugin_version
+    entry = "\n".join(
+        (
+            "- id: auto-seek",
+            "  name: Auto Seek",
+            f"  version: {plugin_version}",
+            f"  date: {build_date}",
+            f"  path: {archive_path.name}",
+            f"  sha256: {sha256(archive_path.read_bytes()).hexdigest()}",
+            "  metadata:",
+            # Quoted: the text has a colon, which plain YAML reads as a key.
+            f"    description: {json.dumps(AUTO_SEEK_DESCRIPTION, ensure_ascii=False)}",
+            "",
+        )
+    )
+    (directory / AUTO_SEEK_INDEX).write_text(entry, encoding="utf-8")
+    return archive_path, entry
 
 
 def build(
     output: Path = OUTPUT,
     plugin_version: str | None = None,
     platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS,
+    auto_seek_version_: str | None = None,
 ) -> Path:
     """Package the plugin. Restricting ``platforms`` (the integration tests
     need only the host's Linux binary) skips the other cross-compiles; such
@@ -394,22 +425,10 @@ def build(
                     if relative.as_posix() not in excluded:
                         archive.write(path, relative)
     build_date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-    dev_suffix = plugin_version[len(version()) :] if plugin_version.startswith(version()) else ""
-    auto_seek, auto_seek_ver = build_auto_seek(output.parent, dev_suffix)
-    auto_seek_entry = "\n".join(
-        (
-            "- id: auto-seek",
-            "  name: Auto Seek",
-            f"  version: {auto_seek_ver}",
-            f"  date: {build_date}",
-            f"  path: {auto_seek.name}",
-            f"  sha256: {sha256(auto_seek.read_bytes()).hexdigest()}",
-            "  metadata:",
-            # Quoted: the text has a colon, which plain YAML reads as a key.
-            f"    description: {json.dumps(AUTO_SEEK_DESCRIPTION, ensure_ascii=False)}",
-            "",
-        )
-    )
+    # The indexes list both plugins (the dev source serves them as built); the
+    # regular source swaps in the latest Auto Seek release's entry instead
+    # (scripts/stable_source.py).
+    _, auto_seek_entry = build_auto_seek(output.parent, auto_seek_version_, build_date)
     for archive_path, index_name, _ in archives:
         digest = sha256(archive_path.read_bytes()).hexdigest()
         (output.parent / index_name).write_text(
@@ -441,6 +460,11 @@ if __name__ == "__main__":
         help="build the dev plugin source into dist/dev/ with a commit-tagged version",
     )
     parser.add_argument(
+        "--only",
+        choices=["auto-seek"],
+        help="package only this plugin (an Auto Seek release needs neither Go nor the core)",
+    )
+    parser.add_argument(
         "--platform",
         action="append",
         choices=[f"{goos}/{goarch}" for goos, goarch in SHIPPED_PLATFORMS],
@@ -452,7 +476,10 @@ if __name__ == "__main__":
         if args.platform
         else SHIPPED_PLATFORMS
     )
-    if args.dev:
-        print(build(DEV_OUTPUT, dev_version(), selected))
+    if args.only == "auto-seek":
+        directory = DEV_OUTPUT.parent if args.dev else OUTPUT.parent
+        print(build_auto_seek(directory, dev_version("auto-seek") if args.dev else None)[0])
+    elif args.dev:
+        print(build(DEV_OUTPUT, dev_version(), selected, dev_version("auto-seek")))
     else:
         print(build(platforms=selected))

@@ -86,6 +86,9 @@ def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
         assert f"description: {json.dumps(build_plugin.AUTO_SEEK_DESCRIPTION)}" in listed
         assert "- id: auto-seek\n" in listed and "  path: auto-seek.zip\n" in listed
         assert f"  sha256: {sha256(auto_seek.read_bytes()).hexdigest()}\n" in listed
+    # An Auto Seek release ships its entry on its own, identical to the one listed.
+    alone = (output.parent / build_plugin.AUTO_SEEK_INDEX).read_text()
+    assert alone.startswith("- id: auto-seek\n") and alone in listed
 
 
 def test_binary_freshness_ignores_tests_but_tracks_embedded_migrations(
@@ -160,3 +163,37 @@ def test_dev_version_counts_commits_since_the_last_release(tmp_path: Path, monke
         git("add", change)
         git("commit", "-qm", f"fix: {change}")
     assert build_plugin.dev_version() == f"1.2.3+dev.2.{git('rev-parse', '--short', 'HEAD')}"
+
+
+def test_each_plugin_counts_dev_commits_from_its_own_release(tmp_path: Path, monkeypatch) -> None:
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    manifest = tmp_path / ".release-please-manifest.json"
+    git("init", "-q")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n')
+    (tmp_path / "auto-seek").mkdir()
+    seek = tmp_path / "auto-seek" / "auto-seek.yml"
+    seek.write_text("name: Auto Seek\nversion: 0.2.0 # x-release-please-version\n")
+    manifest.write_text('{\n  ".": "1.2.3",\n  "auto-seek": "0.2.0"\n}\n')
+    git("add", ".")
+    git("commit", "-qm", "chore(main): release 1.2.3")
+    (tmp_path / "a").write_text("a")
+    git("add", "a")
+    git("commit", "-qm", "feat: a")
+    # Auto Seek is released; Curator's count carries on from its own release.
+    seek.write_text("name: Auto Seek\nversion: 0.3.0 # x-release-please-version\n")
+    manifest.write_text('{\n  ".": "1.2.3",\n  "auto-seek": "0.3.0"\n}\n')
+    git("add", ".")
+    git("commit", "-qm", "chore(main): release auto-seek 0.3.0")
+    monkeypatch.setattr(build_plugin, "ROOT", tmp_path)
+    monkeypatch.setattr(build_plugin, "AUTO_SEEK", tmp_path / "auto-seek")
+    head = git("rev-parse", "--short", "HEAD")
+    assert build_plugin.dev_version() == f"1.2.3+dev.2.{head}"
+    assert build_plugin.dev_version("auto-seek") == "0.3.0"
