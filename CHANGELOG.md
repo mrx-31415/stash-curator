@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.0](https://github.com/mrx-31415/stash-curator/compare/v0.56.0...v0.57.0) (2026-11-08)
+
+
+### Features
+
+* release Curator and Auto Seek separately ([ae54a31](https://github.com/mrx-31415/stash-curator/commit/ae54a31a8ce19ffd1b6e2a3d252778fa245f17b2))
+
 ## [0.56.0](https://github.com/mrx-31415/stash-curator/compare/v0.55.0...v0.56.0) (2026-11-08)
 
 
