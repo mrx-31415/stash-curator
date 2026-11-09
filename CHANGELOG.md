@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.58.0](https://github.com/mrx-31415/stash-curator/compare/v0.57.0...v0.58.0) (2026-11-09)
+
+
+### Features
+
+* add Incognito, a navbar switch that pauses play tracking ([ed39658](https://github.com/mrx-31415/stash-curator/commit/ed39658837bced3d1e4e2ea5737c917a0ddbf01f))
+* record no implicit signals while Incognito is on ([9334ca1](https://github.com/mrx-31415/stash-curator/commit/9334ca19d818d2c2b25d7a50bdc3226a806bad8c))
+
 ## [0.57.0](https://github.com/mrx-31415/stash-curator/compare/v0.56.0...v0.57.0) (2026-11-08)
 
 
