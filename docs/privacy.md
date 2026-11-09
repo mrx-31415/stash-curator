@@ -76,6 +76,16 @@ player sessions and their signals from that period and leaves its plays out of t
 history rebuild; the next model update no longer uses them. Stash's own play
 history is not changed.
 
+**Incognito** is a separate plugin from the same plugin source that also leaves Stash's
+history alone. It adds a switch to Stash's navbar, beside Settings. While it is on,
+this browser records no plays anywhere. Stash's player saves no resume point, play
+duration or play count. Curator records nothing it would learn from implicitly: no
+lane views, and no player session that was open while it was on, including a scene
+opened from a lane but not played. Thumbs, dismissals and answers still count.
+The switch belongs to the browser and stays on across reloads until you turn it off.
+It does not cover other browsers or devices, and adding a play by hand on a scene's
+History tab still counts.
+
 ## Backups, reset, and uninstall
 
 The default sidecar is `{pluginDir}/data/curator.sqlite3`. Configure another path

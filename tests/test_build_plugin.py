@@ -66,29 +66,31 @@ def test_platform_archives_keep_runtime_files_and_only_the_matching_binary(
     index = (output.parent / "index.yml").read_text()
     assert "  path: stash-curator.zip\n" in index
     assert f"sha256: {sha256(output.read_bytes()).hexdigest()}" in index
-    # Auto Seek: one archive for every platform, listed in every index.
-    auto_seek = output.parent / "auto-seek.zip"
-    with zipfile.ZipFile(auto_seek) as package:
-        # Files at the root, as with Curator: Stash unpacks into plugins/<id>/.
-        assert set(package.namelist()) == {*build_plugin.AUTO_SEEK_FILES, "LICENSE"}
-        manifest = package.read("auto-seek.yml").decode()
-    assert f"version: {build_plugin.auto_seek_version()}\n" in manifest
-    for name in ("index.yml", "index-linux-amd64.yml"):
-        listed = (output.parent / name).read_text()
-        # Stash rejects the whole source on a YAML error: a plain value must not
-        # contain ": ", so descriptions that do are written as quoted strings.
-        for line in listed.splitlines():
-            _, _, value = line.strip().removeprefix("- ").partition(": ")
-            if value.startswith('"'):
-                assert json.loads(value)
-            else:
-                assert ": " not in value, line
-        assert f"description: {json.dumps(build_plugin.AUTO_SEEK_DESCRIPTION)}" in listed
-        assert "- id: auto-seek\n" in listed and "  path: auto-seek.zip\n" in listed
-        assert f"  sha256: {sha256(auto_seek.read_bytes()).hexdigest()}\n" in listed
-    # An Auto Seek release ships its entry on its own, identical to the one listed.
-    alone = (output.parent / build_plugin.AUTO_SEEK_INDEX).read_text()
-    assert alone.startswith("- id: auto-seek\n") and alone in listed
+    # Companions: one archive each for every platform, listed in every index.
+    for companion in build_plugin.COMPANIONS.values():
+        archive = output.parent / f"{companion.id}.zip"
+        with zipfile.ZipFile(archive) as package:
+            # Files at the root, as with Curator: Stash unpacks into plugins/<id>/.
+            assert set(package.namelist()) == {*companion.files, "LICENSE"}
+            manifest = package.read(f"{companion.id}.yml").decode()
+        assert f"version: {build_plugin.companion_version(companion)}\n" in manifest
+        for name in ("index.yml", "index-linux-amd64.yml"):
+            listed = (output.parent / name).read_text()
+            # Stash rejects the whole source on a YAML error: a plain value must not
+            # contain ": ", so descriptions that do are written as quoted strings.
+            for line in listed.splitlines():
+                _, _, value = line.strip().removeprefix("- ").partition(": ")
+                if value.startswith('"'):
+                    assert json.loads(value)
+                else:
+                    assert ": " not in value, line
+            assert f"description: {json.dumps(companion.description)}" in listed
+            assert f"- id: {companion.id}\n" in listed
+            assert f"  path: {archive.name}\n" in listed
+            assert f"  sha256: {sha256(archive.read_bytes()).hexdigest()}\n" in listed
+        # A companion release ships its entry on its own, identical to the one listed.
+        alone = (output.parent / companion.index).read_text()
+        assert alone.startswith(f"- id: {companion.id}\n") and alone in listed
 
 
 def test_binary_freshness_ignores_tests_but_tracks_embedded_migrations(
@@ -193,7 +195,6 @@ def test_each_plugin_counts_dev_commits_from_its_own_release(tmp_path: Path, mon
     git("add", ".")
     git("commit", "-qm", "chore(main): release auto-seek 0.3.0")
     monkeypatch.setattr(build_plugin, "ROOT", tmp_path)
-    monkeypatch.setattr(build_plugin, "AUTO_SEEK", tmp_path / "auto-seek")
     head = git("rev-parse", "--short", "HEAD")
     assert build_plugin.dev_version() == f"1.2.3+dev.2.{head}"
     assert build_plugin.dev_version("auto-seek") == "0.3.0"

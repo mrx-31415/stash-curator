@@ -30,6 +30,7 @@ import tomllib
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -161,7 +162,7 @@ def version() -> str:
 
 def dev_version(component: str = ".") -> str:
     """Tag a plugin's release version with the commits merged since that
-    release: Curator (".") or Auto Seek ("auto-seek").
+    release: Curator (".") or a companion plugin's id.
 
     The dev plugin source rebuilds on every push to main, so the suffix tells
     which commit an installation runs; the release commit itself keeps the plain
@@ -173,7 +174,7 @@ def dev_version(component: str = ".") -> str:
             ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
         ).stdout.strip()
 
-    base = version() if component == "." else auto_seek_version()
+    base = version() if component == "." else companion_version(COMPANIONS[component])
     # The last commit that changed this plugin's line in the manifest: each
     # plugin is released on its own, and both share the manifest.
     manifest = ".release-please-manifest.json"
@@ -309,42 +310,74 @@ def core_binaries(platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS) ->
     return [ROOT / "core" / "bin" / core_binary_name(goos, goarch) for goos, goarch in platforms]
 
 
-# Auto Seek is a separate plugin in the same plugin source: Python and
-# JavaScript only (it downloads its model and ONNX Runtime on first use), so
-# one archive serves every platform. Its version lives in its own manifest.
-AUTO_SEEK = ROOT / "auto-seek"
-AUTO_SEEK_FILES = ("auto_seek.py", "ort_api.py", "auto-seek.js", "auto-seek.css", "auto-seek.yml")
-AUTO_SEEK_DESCRIPTION = (
-    "Skip the intro of every scene: finds where the action starts, on your server, "
-    "and jumps straight there."
-)
+# Companion plugins ship in the same plugin source, each from its own folder with
+# its own release-please component and version (in its manifest). They carry no
+# core binary, so one archive serves every platform.
+@dataclass(frozen=True)
+class Companion:
+    id: str
+    name: str
+    files: tuple[str, ...]
+    description: str
+
+    @property
+    def directory(self) -> Path:
+        return ROOT / self.id
+
+    @property
+    def index(self) -> str:
+        """The release's own index: just this plugin's entry."""
+        return f"{self.id}-index.yml"
 
 
-def auto_seek_version() -> str:
+COMPANIONS = {
+    companion.id: companion
+    for companion in (
+        # Python and JavaScript only: it downloads its model and ONNX Runtime on first use.
+        Companion(
+            "auto-seek",
+            "Auto Seek",
+            ("auto_seek.py", "ort_api.py", "auto-seek.js", "auto-seek.css", "auto-seek.yml"),
+            "Skip the intro of every scene: finds where the action starts, on your server, "
+            "and jumps straight there.",
+        ),
+        Companion(
+            "incognito",
+            "Incognito",
+            ("incognito.js", "incognito.css", "incognito.yml"),
+            "A navbar switch that pauses play tracking: while it is on, Stash and Curator "
+            "record nothing you watch in this browser.",
+        ),
+    )
+}
+
+
+def companion_version(companion: Companion) -> str:
     # The line carries release-please's marker comment, which bumps it.
-    match = re.search(r"(?m)^version: (\S+)", (AUTO_SEEK / "auto-seek.yml").read_text("utf-8"))
+    manifest = companion.directory / f"{companion.id}.yml"
+    match = re.search(r"(?m)^version: (\S+)", manifest.read_text("utf-8"))
     if match is None:
-        raise RuntimeError("auto-seek.yml has no version")
+        raise RuntimeError(f"{manifest.name} has no version")
     return match.group(1)
 
 
-AUTO_SEEK_INDEX = "auto-seek-index.yml"
-
-
-def build_auto_seek(
-    directory: Path, plugin_version: str | None = None, build_date: str | None = None
+def build_companion(
+    companion: Companion,
+    directory: Path,
+    plugin_version: str | None = None,
+    build_date: str | None = None,
 ) -> tuple[Path, str]:
-    """Package Auto Seek, and write its plugin-source entry on its own to
-    auto-seek-index.yml (an Auto Seek release ships just these two files).
-    Returns the archive and its index entry."""
-    plugin_version = plugin_version or auto_seek_version()
+    """Package a companion plugin, and write its plugin-source entry on its own
+    to <id>-index.yml (its release ships just these two files). Returns the
+    archive and its index entry."""
+    plugin_version = plugin_version or companion_version(companion)
     build_date = build_date or datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     directory.mkdir(parents=True, exist_ok=True)
-    archive_path = directory / "auto-seek.zip"
+    archive_path = directory / f"{companion.id}.zip"
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name in AUTO_SEEK_FILES:
-            data = (AUTO_SEEK / name).read_bytes()
-            if name == "auto-seek.yml":
+        for name in companion.files:
+            data = (companion.directory / name).read_bytes()
+            if name == f"{companion.id}.yml":
                 data = re.sub(
                     rb"(?m)^version: .*$", f"version: {plugin_version}".encode(), data, count=1
                 )
@@ -352,19 +385,19 @@ def build_auto_seek(
         archive.write(ROOT / "LICENSE", "LICENSE")
     entry = "\n".join(
         (
-            "- id: auto-seek",
-            "  name: Auto Seek",
+            f"- id: {companion.id}",
+            f"  name: {companion.name}",
             f"  version: {plugin_version}",
             f"  date: {build_date}",
             f"  path: {archive_path.name}",
             f"  sha256: {sha256(archive_path.read_bytes()).hexdigest()}",
             "  metadata:",
             # Quoted: the text has a colon, which plain YAML reads as a key.
-            f"    description: {json.dumps(AUTO_SEEK_DESCRIPTION, ensure_ascii=False)}",
+            f"    description: {json.dumps(companion.description, ensure_ascii=False)}",
             "",
         )
     )
-    (directory / AUTO_SEEK_INDEX).write_text(entry, encoding="utf-8")
+    (directory / companion.index).write_text(entry, encoding="utf-8")
     return archive_path, entry
 
 
@@ -372,7 +405,7 @@ def build(
     output: Path = OUTPUT,
     plugin_version: str | None = None,
     platforms: tuple[tuple[str, str], ...] = SHIPPED_PLATFORMS,
-    auto_seek_version_: str | None = None,
+    companion_versions: dict[str, str] | None = None,
 ) -> Path:
     """Package the plugin. Restricting ``platforms`` (the integration tests
     need only the host's Linux binary) skips the other cross-compiles; such
@@ -425,10 +458,15 @@ def build(
                     if relative.as_posix() not in excluded:
                         archive.write(path, relative)
     build_date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-    # The indexes list both plugins (the dev source serves them as built); the
-    # regular source swaps in the latest Auto Seek release's entry instead
+    # The indexes list every plugin (the dev source serves them as built); the
+    # regular source swaps in each companion's latest release entry instead
     # (scripts/stable_source.py).
-    _, auto_seek_entry = build_auto_seek(output.parent, auto_seek_version_, build_date)
+    companion_entries = "".join(
+        build_companion(
+            companion, output.parent, (companion_versions or {}).get(companion.id), build_date
+        )[1]
+        for companion in COMPANIONS.values()
+    )
     for archive_path, index_name, _ in archives:
         digest = sha256(archive_path.read_bytes()).hexdigest()
         (output.parent / index_name).write_text(
@@ -446,7 +484,7 @@ def build(
                     "",
                 )
             )
-            + auto_seek_entry,
+            + companion_entries,
             encoding="utf-8",
         )
     return output
@@ -461,8 +499,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--only",
-        choices=["auto-seek"],
-        help="package only this plugin (an Auto Seek release needs neither Go nor the core)",
+        choices=sorted(COMPANIONS),
+        help="package only this companion plugin (its release needs neither Go nor the core)",
     )
     parser.add_argument(
         "--platform",
@@ -476,10 +514,14 @@ if __name__ == "__main__":
         if args.platform
         else SHIPPED_PLATFORMS
     )
-    if args.only == "auto-seek":
+    if args.only:
         directory = DEV_OUTPUT.parent if args.dev else OUTPUT.parent
-        print(build_auto_seek(directory, dev_version("auto-seek") if args.dev else None)[0])
+        companion = COMPANIONS[args.only]
+        print(
+            build_companion(companion, directory, dev_version(args.only) if args.dev else None)[0]
+        )
     elif args.dev:
-        print(build(DEV_OUTPUT, dev_version(), selected, dev_version("auto-seek")))
+        versions = {name: dev_version(name) for name in COMPANIONS}
+        print(build(DEV_OUTPUT, dev_version(), selected, versions))
     else:
         print(build(platforms=selected))

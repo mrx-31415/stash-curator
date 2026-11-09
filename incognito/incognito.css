@@ -1,0 +1,12 @@
+/* Stash renders its utility buttons twice: in the navbar strip and in the collapsible
+   menu, each shown at different widths. The switch's state should be visible at every
+   width, so it stays in the strip and its menu copy is hidden. */
+.top-nav .navbar-collapse .incognito-toggle {
+  display: none !important;
+}
+
+.incognito-toggle.active.minimal:not(.disabled),
+.incognito-toggle.active.minimal:not(.disabled):hover {
+  background-color: rgba(181, 140, 255, 0.18);
+  color: #c9a8ff;
+}

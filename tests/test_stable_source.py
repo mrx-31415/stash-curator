@@ -105,3 +105,54 @@ def test_a_release_still_uploading_is_skipped(tmp_path, releases) -> None:
 
     assert source == "Curator from v0.57.0, Auto Seek from auto-seek-v0.3.0"
     assert (tmp_path / "out" / "index.yml").read_text() == curator_entry + good_entry
+
+
+def test_companion_lists_agree() -> None:
+    from scripts import build_plugin
+
+    assert {
+        companion.id: companion.name for companion in build_plugin.COMPANIONS.values()
+    } == stable_source.COMPANIONS
+
+
+def test_a_companion_never_released_is_left_out(tmp_path, releases) -> None:
+    release, download = releases
+    seek = release("auto-seek-v0.3.0")
+    seek_entry = entry("auto-seek", seek, "auto-seek.zip", b"seek 3", "2026-01-03")
+    (seek / "auto-seek-index.yml").write_text(seek_entry)
+    curator = release("v0.58.0")
+    curator_entry = entry("stash-curator", curator, "stash-curator.zip", b"c58", "2026-01-05")
+    # Curator's index lists main's unreleased Incognito, whose archive it does not attach.
+    unreleased = entry("incognito", curator, "incognito.zip", b"main's incognito", "2026-01-05")
+    (curator / "incognito.zip").unlink()
+    (curator / "index.yml").write_text(curator_entry + unreleased)
+
+    source = stable_source.assemble(tmp_path / "out", ["v0.58.0", "auto-seek-v0.3.0"], download)
+
+    assert source == "Curator from v0.58.0, Auto Seek from auto-seek-v0.3.0"
+    assert (tmp_path / "out" / "index.yml").read_text() == curator_entry + seek_entry
+    assert not (tmp_path / "out" / "incognito.zip").exists()
+
+
+def test_every_companion_carries_its_latest_release(tmp_path, releases) -> None:
+    release, download = releases
+    incognito = release("incognito-v0.1.0")
+    incognito_entry = entry("incognito", incognito, "incognito.zip", b"inc 1", "2026-01-04")
+    (incognito / "incognito-index.yml").write_text(incognito_entry)
+    seek = release("auto-seek-v0.3.0")
+    seek_entry = entry("auto-seek", seek, "auto-seek.zip", b"seek 3", "2026-01-03")
+    (seek / "auto-seek-index.yml").write_text(seek_entry)
+    curator = release("v0.58.0")
+    curator_entry = entry("stash-curator", curator, "stash-curator.zip", b"c58", "2026-01-05")
+    (curator / "index.yml").write_text(curator_entry)
+
+    source = stable_source.assemble(
+        tmp_path / "out", ["v0.58.0", "incognito-v0.1.0", "auto-seek-v0.3.0"], download
+    )
+
+    out = tmp_path / "out"
+    assert source == (
+        "Curator from v0.58.0, Auto Seek from auto-seek-v0.3.0, Incognito from incognito-v0.1.0"
+    )
+    assert (out / "index.yml").read_text() == curator_entry + seek_entry + incognito_entry
+    assert (out / "incognito.zip").read_bytes() == b"inc 1"

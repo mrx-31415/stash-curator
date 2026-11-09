@@ -122,10 +122,13 @@ are made (the same hook directory as the pre-push verifier; enable it with
 `git config core.hooksPath .githooks`). Use `--no-verify` only when a subject is
 truly exempt.
 
-Curator and Auto Seek are released separately, each with its own version, tag and
-changelog. A commit belongs to the plugin whose files it changes: everything under
-`auto-seek/`, plus Auto Seek's docs pages, assets and tests, is Auto Seek's; the rest
-is Curator's. A commit that changes both counts for both.
+Curator and its companion plugins, Auto Seek and Incognito, are released separately,
+each with its own version, tag and changelog. A commit belongs to the plugin whose
+files it changes: everything under `auto-seek/`, plus Auto Seek's docs pages, assets
+and tests, is Auto Seek's. Everything under `incognito/`, plus its tests, is
+Incognito's. The rest is Curator's. A commit that changes several counts for each.
+Companions are listed in `COMPANIONS` in `scripts/build_plugin.py` and
+`scripts/stable_source.py`.
 
 On every push to `main`, release-please compares the merged commits against each
 plugin's last release and opens one release pull request per plugin that has
@@ -138,16 +141,18 @@ changes:
   `auto-seek/CHANGELOG.md`, and tags `auto-seek-vX.Y.Z`. A follow-up job runs
   `scripts/build_plugin.py --only auto-seek` and attaches `dist/auto-seek.zip` and
   `dist/auto-seek-index.yml`.
+- **Incognito:** the same, from `incognito/incognito.yml`, tagging
+  `incognito-vX.Y.Z` and attaching `dist/incognito.zip` and `dist/incognito-index.yml`.
 
-Either job then dispatches the Pages workflow.
+Each job then dispatches the Pages workflow.
 
 GitHub Pages rebuilds on every push to `main` and serves two plugin sources. The
 development source under `/dev/` is built from `main` by
 `scripts/build_plugin.py --dev`, versioned `X.Y.Z+dev.N.<sha>` (N commits after
 release X.Y.Z; the release commit itself is plain `X.Y.Z`). The regular source is
 assembled by `scripts/stable_source.py`: Curator's archives and indexes from its
-latest complete release, with the Auto Seek entry swapped for the one from Auto
-Seek's latest release. Stash offers a plugin
+latest complete release, with each companion's entry swapped for the one from its
+latest release (a companion never released yet is left out). Stash offers a plugin
 update only when the index `date` is newer, and each entry keeps its own release's date, so
 regular-source users see an update only for the plugin that was released. The development source is for maintainers and is
 deliberately not in the user guide.

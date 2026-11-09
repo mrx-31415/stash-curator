@@ -58,6 +58,13 @@ spot, a flag on the player fixes that scene for good.
 [See it in action](https://mrx-31415.github.io/stash-curator/auto-seek/) ·
 [Guide](docs/auto-seek-guide.md)
 
+## Incognito
+
+**Watch without a trace.** Incognito is a small plugin from the same plugin source. It
+adds a switch to Stash's navbar. While it is on, this browser records no plays: Stash
+saves no resume point, play count or history, and Curator learns nothing from what
+you watch. Curator is optional. [Details](docs/privacy.md#pausing-and-forgetting-viewing)
+
 ## Explore Curator
 
 ### Recommendations
