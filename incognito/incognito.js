@@ -135,7 +135,7 @@
       return React.createElement(
         Button,
         {
-          className: `minimal d-flex align-items-center h-100 incognito-toggle${active ? " active" : ""}`,
+          className: `minimal d-flex align-items-center align-self-center mr-2 incognito-toggle${active ? " active" : ""}`,
           title,
           "aria-label": title,
           "aria-pressed": active,
