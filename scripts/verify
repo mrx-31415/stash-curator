@@ -123,6 +123,9 @@ case "${1:-}" in
     plugin_dir="/tmp/stash-curator-integration/plugins/stash-curator"
     mkdir -p "$plugin_dir"
     unzip -oq dist/stash-curator.zip -d "$plugin_dir"
+    # Incognito is a companion plugin; its tests need it installed beside Curator.
+    mkdir -p /tmp/stash-curator-integration/plugins/incognito
+    unzip -oq dist/incognito.zip -d /tmp/stash-curator-integration/plugins/incognito
     # copy config
     cp tests/integration/stash-config.yml /tmp/stash-curator-integration/config.yml
     # Stash creates none of these itself; when they are missing it only warns, then

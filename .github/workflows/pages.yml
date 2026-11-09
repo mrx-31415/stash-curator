@@ -54,7 +54,7 @@ jobs:
             build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
       - run: uv run --frozen python scripts/build_plugin.py --dev
-      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/auto-seek.zip dist/dev/index*.yml docs/dev/
+      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/auto-seek.zip dist/dev/incognito.zip dist/dev/index*.yml docs/dev/
       - name: Assemble the regular plugin source from the latest release of each plugin
         env:
           GH_TOKEN: ${{ github.token }}

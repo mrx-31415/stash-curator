@@ -12,13 +12,15 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    # Curator is the root package (outputs without a prefix); Auto Seek is
-    # released on its own from auto-seek/ (outputs prefixed with its path).
+    # Curator is the root package (outputs without a prefix); each companion
+    # (auto-seek/, incognito/) is released on its own (outputs prefixed with its path).
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       auto_seek_created: ${{ steps.release.outputs['auto-seek--release_created'] }}
       auto_seek_tag: ${{ steps.release.outputs['auto-seek--tag_name'] }}
+      incognito_created: ${{ steps.release.outputs['incognito--release_created'] }}
+      incognito_tag: ${{ steps.release.outputs['incognito--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -86,6 +88,29 @@ jobs:
         run: >-
           gh release upload "${{ needs.release-please.outputs.auto_seek_tag }}"
           dist/auto-seek.zip dist/auto-seek-index.yml
+      - name: Publish the release to the stable plugin source
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main
+
+  attach-incognito:
+    name: Attach Incognito's plugin archive to release
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: needs.release-please.outputs.incognito_created == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.21"
+          python-version: "3.12"
+      # JavaScript only: no Go or core binaries needed.
+      - run: uv run --frozen python scripts/build_plugin.py --only incognito
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release upload "${{ needs.release-please.outputs.incognito_tag }}"
+          dist/incognito.zip dist/incognito-index.yml
       - name: Publish the release to the stable plugin source
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -20,7 +20,11 @@
         "scripts/build_auto_seek_runtime.sh",
         "tests/test_auto_seek_backend.py",
         "tests/plugin/test_auto_seek.py",
-        "tests/plugin/test_auto_seek.cjs"
+        "tests/plugin/test_auto_seek.cjs",
+        "incognito",
+        "tests/plugin/test_incognito.py",
+        "tests/plugin/test_incognito.cjs",
+        "tests/integration/test_incognito.py"
       ],
       "extra-files": [
         {
@@ -42,6 +46,17 @@
         {
           "type": "generic",
           "path": "auto-seek.yml"
+        }
+      ]
+    },
+    "incognito": {
+      "release-type": "simple",
+      "component": "incognito",
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "incognito.yml"
         }
       ]
     }
