@@ -9291,6 +9291,8 @@
   }
 
   function enqueue(entry) {
+    // Incognito: implicit signals (lane impressions, player sessions) are not recorded.
+    if (incognito()) return;
     const queue = readQueue();
     if (queue.some((item) => queueId(item) === queueId(entry))) {
       flushQueue();
@@ -9304,14 +9306,27 @@
     flushQueue();
   }
 
+  // The Incognito plugin's switch (incognito/incognito.js). While it is on Curator records no
+  // implicit signals: lane impressions are not queued, and a player session that was open at
+  // any point while it was on is dropped whole (with its lane origin) rather than sent in part.
+  // Explicit actions (thumbs, dismissals, answers) still count.
+  function incognito() {
+    try {
+      return window.StashIncognito?.isActive?.() === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   let tracker = null;
   function finishTracker(naturalCompletion) {
     if (!tracker) return;
     tracker.tick();
     tracker.closeRange();
     tracker.detach();
-    const value = tracker.value;
+    const { value, incognito: unrecorded } = tracker;
     tracker = null;
+    if (unrecorded()) return;
     enqueue({ ...value, ended_at_ms: Date.now(), natural_completion: naturalCompletion });
   }
 
@@ -9357,6 +9372,7 @@
     };
     let media = null;
     let playing = false;
+    let unrecorded = incognito();
     let positioned = false;
     let lastWall = performance.now();
     let rangeStart = null;
@@ -9366,6 +9382,7 @@
     function tick() {
       const now = performance.now();
       if (playing) value.active_seconds += Math.min(5, Math.max(0, (now - lastWall) / 1000));
+      if (incognito()) unrecorded = true;
       lastWall = now;
       // A replaced or removed element reports nothing; keep the last position we did observe.
       if (!media) return;
@@ -9422,6 +9439,7 @@
       value,
       tick,
       closeRange,
+      incognito: () => unrecorded,
       detach: () => {
         clearInterval(watch);
         unbind();
