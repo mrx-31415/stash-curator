@@ -159,3 +159,21 @@ def test_incognito_hides_lane_views_and_opens(
         opened = [e for e in events if e.get("session_id") and e.get("lane") == "for_you"]
         assert [str(e["scene_id"]) for e in opened] == [lane_page[0]], events
     assert errors == []
+
+
+@pytest.mark.parametrize("width", [1440, 390], ids=["desktop", "mobile"])
+def test_incognito_switch_lines_up_with_navbar_buttons(
+    page: Page, base_url: str, seeded: None, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 844})
+    page.goto(base_url + "/scenes", wait_until="domcontentloaded")
+    _dismiss_modals(page)
+    switch = page.locator(".navbar-buttons .incognito-toggle")
+    new = page.locator(".navbar-buttons > .mr-2 .btn")
+    row = page.locator(".navbar-buttons")
+    switch_box, new_box, row_box = switch.bounding_box(), new.bounding_box(), row.bounding_box()
+    assert switch_box and new_box and row_box
+    # Centred in the navbar's button row, as Stash's own buttons are (it once sat at the top).
+    middle = switch_box["y"] + switch_box["height"] / 2
+    assert abs(middle - (row_box["y"] + row_box["height"] / 2)) <= 1
+    assert switch_box["x"] >= new_box["x"] + new_box["width"] + 4  # not touching
