@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.1](https://github.com/mrx-31415/stash-curator/compare/v0.58.0...v0.58.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* keep lanes from redrawing on return, and center the Incognito switch ([#478](https://github.com/mrx-31415/stash-curator/issues/478)) ([dfb0653](https://github.com/mrx-31415/stash-curator/commit/dfb0653bb5d553a292fe0074f1e8b6d33cc01cd9))
+
 ## [0.58.0](https://github.com/mrx-31415/stash-curator/compare/v0.57.0...v0.58.0) (2026-11-09)
 
 
