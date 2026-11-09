@@ -584,13 +584,24 @@
     clearSlateCache();
   }
 
+  // The navigation entry describes how the document was loaded, not how this page was reached:
+  // after one reload it reads "reload" for the rest of the tab's life, so returning to the page
+  // (Back, or the navbar) looked like another reload and rotated the lane. Only the first mount
+  // of a reloaded document, on the page that was reloaded, counts.
+  let reloadMountSeen = false;
   function rotateOnRepeatedReload(lane, page) {
     const navigation = window.performance?.getEntriesByType?.("navigation")?.[0];
+    let reloaded = false;
+    try {
+      reloaded = navigation?.type === "reload" && !reloadMountSeen
+        && new URL(navigation.name).pathname === window.location.pathname;
+    } catch (_) { /* An unparsable entry is not a reload of this page. */ }
+    reloadMountSeen = true;
     const identity = `${localDay()}:${lane}:${page}`;
     let count = 0;
     try {
       const previous = JSON.parse(sessionStorage.getItem(RELOAD_ROTATION_KEY) || "null");
-      if (navigation?.type === "reload") {
+      if (reloaded) {
         count = previous?.identity === identity && Number.isInteger(previous.count) ? previous.count + 1 : 1;
       }
       sessionStorage.setItem(RELOAD_ROTATION_KEY, JSON.stringify({ identity, count }));
