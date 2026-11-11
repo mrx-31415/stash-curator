@@ -2,6 +2,8 @@ name: Documentation and plugin source
 
 # The stable plugin source serves the latest release's own archives, so its
 # index date (all Stash compares to offer updates) only moves on a release.
+# Auto Seek and Incognito come from their own repositories' releases (and dev
+# builds), fetched on each run.
 # The dev source under /dev/ is rebuilt from main on every push. The release
 # workflow dispatches this one after attaching a new release's archives.
 on:
@@ -54,7 +56,11 @@ jobs:
             build-${{ runner.os }}-
       - uses: actions/configure-pages@v6
       - run: uv run --frozen python scripts/build_plugin.py --dev
-      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/auto-seek.zip dist/dev/incognito.zip dist/dev/index*.yml docs/dev/
+      - run: mkdir -p docs/dev && cp dist/dev/stash-curator*.zip dist/dev/index*.yml docs/dev/
+      # Auto Seek and Incognito live in their own repositories; both sources keep
+      # listing them for installations made from here.
+      - name: Add the companion plugins' dev builds
+        run: uv run --frozen python scripts/stable_source.py --dev docs/dev
       - name: Assemble the regular plugin source from the latest release of each plugin
         env:
           GH_TOKEN: ${{ github.token }}

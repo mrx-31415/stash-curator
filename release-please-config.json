@@ -1,12 +1,10 @@
 {
-  "separate-pull-requests": true,
   "packages": {
     ".": {
       "release-type": "python",
       "component": "stash-curator",
       "include-component-in-tag": false,
       "exclude-paths": [
-        "auto-seek",
         "docs/auto-seek.html",
         "docs/auto-seek-guide.md",
         "docs/assets/auto-seek.css",
@@ -16,15 +14,7 @@
         "docs/assets/auto-seek-demo-intro.mp4",
         "docs/assets/auto-seek-demo-intro.webm",
         "docs/assets/auto-seek-demo-action.mp4",
-        "docs/assets/auto-seek-demo-action.webm",
-        "scripts/build_auto_seek_runtime.sh",
-        "tests/test_auto_seek_backend.py",
-        "tests/plugin/test_auto_seek.py",
-        "tests/plugin/test_auto_seek.cjs",
-        "incognito",
-        "tests/plugin/test_incognito.py",
-        "tests/plugin/test_incognito.cjs",
-        "tests/integration/test_incognito.py"
+        "docs/assets/auto-seek-demo-action.webm"
       ],
       "extra-files": [
         {
@@ -35,28 +25,6 @@
           "type": "toml",
           "path": "uv.lock",
           "jsonpath": "$.package[?(@.name.value=='stash-curator')].version"
-        }
-      ]
-    },
-    "auto-seek": {
-      "release-type": "simple",
-      "component": "auto-seek",
-      "include-component-in-tag": true,
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "auto-seek.yml"
-        }
-      ]
-    },
-    "incognito": {
-      "release-type": "simple",
-      "component": "incognito",
-      "include-component-in-tag": true,
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "incognito.yml"
         }
       ]
     }
