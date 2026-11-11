@@ -26,6 +26,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    env:
+      HUB_TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -74,3 +76,11 @@ jobs:
           path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
+      # The plugin hub (mrx-31415/stash-plugins) mirrors these indexes. It
+      # checks hourly; with a HUB_DISPATCH_TOKEN secret it is told once the new
+      # indexes are live. It deploys only when something changed.
+      - name: Tell the plugin hub
+        if: env.HUB_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.HUB_TOKEN }}
+        run: gh api repos/mrx-31415/stash-plugins/dispatches -f event_type=plugin-released
