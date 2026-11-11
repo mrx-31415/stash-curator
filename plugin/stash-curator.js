@@ -9317,7 +9317,7 @@
     flushQueue();
   }
 
-  // The Incognito plugin's switch (incognito/incognito.js). While it is on Curator records no
+  // The Incognito plugin's switch (mrx-31415/stash-incognito). While it is on Curator records no
   // implicit signals: lane impressions are not queued, and a player session that was open at
   // any point while it was on is dropped whole (with its lane origin) rather than sent in part.
   // Explicit actions (thumbs, dismissals, answers) still count.

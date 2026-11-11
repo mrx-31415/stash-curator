@@ -122,38 +122,30 @@ are made (the same hook directory as the pre-push verifier; enable it with
 `git config core.hooksPath .githooks`). Use `--no-verify` only when a subject is
 truly exempt.
 
-Curator and its companion plugins, Auto Seek and Incognito, are released separately,
-each with its own version, tag and changelog. A commit belongs to the plugin whose
-files it changes: everything under `auto-seek/`, plus Auto Seek's docs pages, assets
-and tests, is Auto Seek's. Everything under `incognito/`, plus its tests, is
-Incognito's. The rest is Curator's. A commit that changes several counts for each.
-Companions are listed in `COMPANIONS` in `scripts/build_plugin.py` and
-`scripts/stable_source.py`.
+Curator's companion plugins, Auto Seek and Incognito, are developed and released in
+their own repositories, [stash-auto-seek](https://github.com/mrx-31415/stash-auto-seek)
+and [stash-incognito](https://github.com/mrx-31415/stash-incognito). Auto Seek's docs
+pages and assets stay on this site, outside Curator's changelog
+(`release-please-config.json`). `tests/integration/test_incognito.py` stays here too: it
+installs Incognito's latest release beside Curator.
 
-On every push to `main`, release-please compares the merged commits against each
-plugin's last release and opens one release pull request per plugin that has
-changes:
-
-- **Curator:** bumps `pyproject.toml` and `curator/__init__.py`, regenerates
-  `CHANGELOG.md`, and tags `vX.Y.Z`. A follow-up job builds Curator's archives and
-  attaches `dist/stash-curator*.zip` and `dist/index*.yml` to the release.
-- **Auto Seek:** bumps the `version:` line in `auto-seek/auto-seek.yml`, regenerates
-  `auto-seek/CHANGELOG.md`, and tags `auto-seek-vX.Y.Z`. A follow-up job runs
-  `scripts/build_plugin.py --only auto-seek` and attaches `dist/auto-seek.zip` and
-  `dist/auto-seek-index.yml`.
-- **Incognito:** the same, from `incognito/incognito.yml`, tagging
-  `incognito-vX.Y.Z` and attaching `dist/incognito.zip` and `dist/incognito-index.yml`.
-
-Each job then dispatches the Pages workflow.
+On every push to `main`, release-please compares the merged commits against Curator's
+last release and opens a release pull request when there are changes. Merging it bumps
+`pyproject.toml` and `curator/__init__.py`, regenerates `CHANGELOG.md`, and tags
+`vX.Y.Z`. A follow-up job builds Curator's archives from that tag and attaches
+`dist/stash-curator*.zip` and `dist/index*.yml` to the release, then dispatches the
+Pages workflow.
 
 GitHub Pages rebuilds on every push to `main` and serves two plugin sources. The
 development source under `/dev/` is built from `main` by
 `scripts/build_plugin.py --dev`, versioned `X.Y.Z+dev.N.<sha>` (N commits after
 release X.Y.Z; the release commit itself is plain `X.Y.Z`). The regular source is
 assembled by `scripts/stable_source.py`: Curator's archives and indexes from its
-latest complete release, with each companion's entry swapped for the one from its
-latest release (a companion never released yet is left out). Stash offers a plugin
-update only when the index `date` is newer, and each entry keeps its own release's date, so
+latest complete release, plus each companion's latest release from its own
+repository; the development source adds each companion's build from its `main`. Both
+sources keep listing the companions for installations made from them, though the
+[plugin hub](https://github.com/mrx-31415/stash-plugins) is now their main source.
+Stash offers a plugin update only when the index `date` is newer, and each entry keeps its own release's date, so
 regular-source users see an update only for the plugin that was released. The development source is for maintainers and is
 deliberately not in the user guide.
 
