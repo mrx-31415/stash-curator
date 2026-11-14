@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/mrx-31415/stash-curator/compare/v0.58.1...v0.59.0) (2026-11-14)
+
+
+### Features
+
+* add a Whisparr overview to Find for missing scenes ([#483](https://github.com/mrx-31415/stash-curator/issues/483)) ([629efd9](https://github.com/mrx-31415/stash-curator/commit/629efd966be731e8a2e4c66e65b69c4e2ae2ace2))
+
 ## [0.58.1](https://github.com/mrx-31415/stash-curator/compare/v0.58.0...v0.58.1) (2026-11-09)
 
 
