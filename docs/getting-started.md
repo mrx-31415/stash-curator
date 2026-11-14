@@ -155,7 +155,8 @@ FansDB's discovery queries have been checked live; JAVStash's schema is compatib
 but authenticated discovery results have not yet been verified.
 
 Whisparr v3 is also optional. Configure its URL and API key only if you want the
-explicit **Send to Whisparr** action on external scene cards. Curator sends an item
+explicit **Send to Whisparr** action on external scene cards and the **Find →
+Whisparr** overview of missing scenes. Curator sends an item
 only when the StashDB endpoint is selected; other endpoints disable this action.
 You must select the action explicitly. **Search Whisparr immediately** is enabled by
 default, so sending a scene also requests a release search. The URL must be

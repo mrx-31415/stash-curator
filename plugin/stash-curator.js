@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faArrowTrendDown, faArrowTrendUp, faBalanceScale, faBed, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faForward, faGlobe, faHeart, faHistory, faInbox, faLightbulb, faList, faMoon, faPlay, faPlayCircle, faRotateLeft, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const { faArrowTrendDown, faArrowTrendUp, faBalanceScale, faBed, faBell, faBellSlash, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faForward, faGlobe, faHeart, faHistory, faInbox, faLightbulb, faList, faMoon, faPlay, faPlayCircle, faRotateLeft, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faTrash, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -98,6 +98,12 @@
       label: "Performer Hunt",
       icon: faCrosshairs,
       description: "Stash-box performers and their scenes, checked against your library.",
+    },
+    {
+      value: "whisparr",
+      label: "Whisparr",
+      icon: faInbox,
+      description: "Scenes in Whisparr, checked against your library: search the missing ones.",
     },
     {
       value: "feedback",
@@ -220,7 +226,7 @@
     description: "Find similar scenes in your library, discover Stash-box releases, and browse performer catalogs.",
   };
   const FIND_SECTIONS = NAV_ITEMS.filter(
-    (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt"
+    (item) => item.value === "similar" || item.value === "expand" || item.value === "hunt" || item.value === "whisparr"
   );
   const FIND_SECTION_VALUES = new Set(FIND_SECTIONS.map((item) => item.value));
   // Curate's own sections. Tag questions and Tag sentiment teach tags directly
@@ -6437,6 +6443,281 @@
     );
   }
 
+  // Find → Whisparr: what Whisparr tracks, checked against your library,
+  // with search, monitor and remove. Remove never deletes files.
+  const WHISPARR_STATUSES = [
+    { value: "missing", label: "Missing", description: "In Whisparr with no file and nothing downloading. Search to look for them now." },
+    { value: "downloading", label: "Downloading", description: "In Whisparr's download queue." },
+    { value: "not_in_stash", label: "Not in Stash", description: "Whisparr has the file, but no Stash scene is linked to that StashDB scene yet. A Stash scan, then Identify, usually links it." },
+    { value: "in_library", label: "In library", description: "Linked to a scene in your library." },
+    { value: "all", label: "All", description: "Everything Whisparr tracks." },
+  ];
+  const WHISPARR_SORTS = [
+    { value: "match", label: "Best match" },
+    { value: "added_new", label: "Newest added" },
+    { value: "added_old", label: "Oldest added" },
+    { value: "released", label: "Newest release" },
+  ];
+  const WHISPARR_PAGE = 60;
+  const WHISPARR_CONFIRM_SEARCH = 20;
+  const WHISPARR_CHUNK = 500;
+  function whisparrTime(value) {
+    const ms = Date.parse(value || "");
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  function whisparrCounts(items) {
+    const counts = { missing: 0, downloading: 0, not_in_stash: 0, in_library: 0, all: items.length };
+    for (const item of items) counts[item.status] = (counts[item.status] || 0) + 1;
+    return counts;
+  }
+  // Status, Curator-sent and text filters, then the chosen order.
+  function whisparrVisible(items, { status = "missing", query = "", sort = "match", sentOnly = false } = {}) {
+    const needle = String(query).trim().toLowerCase();
+    const added = (item) => whisparrTime(item.added);
+    const orders = {
+      match: (a, b) => (b.score ?? -1) - (a.score ?? -1) || added(b) - added(a),
+      added_new: (a, b) => added(b) - added(a),
+      added_old: (a, b) => added(a) - added(b),
+      released: (a, b) => whisparrTime(b.release_date) - whisparrTime(a.release_date) || added(b) - added(a),
+    };
+    const order = orders[sort] || orders.match;
+    return items
+      .filter((item) => (status === "all" || item.status === status)
+        && (!sentOnly || item.sent_at_ms != null)
+        && (!needle || `${item.title || ""} ${item.studio || ""}`.toLowerCase().includes(needle)))
+      .sort((a, b) => order(a, b) || a.id - b.id);
+  }
+  async function runWhisparrAction(action, items) {
+    let count = 0;
+    for (let start = 0; start < items.length; start += WHISPARR_CHUNK) {
+      const chunk = items.slice(start, start + WHISPARR_CHUNK);
+      const args = { operation: "whisparr_action", action, whisparr_ids: chunk.map((item) => item.id) };
+      if (action === "remove") args.stashdb_ids = chunk.map((item) => item.stashdb_id).filter(Boolean);
+      const result = await operation(args, 60000);
+      count += Number(result?.count || 0);
+    }
+    return count;
+  }
+  function whisparrScenes(count) {
+    return `${count.toLocaleString()} ${count === 1 ? "scene" : "scenes"}`;
+  }
+  function whisparrNotice(action, count) {
+    const scenes = whisparrScenes(count);
+    if (action === "search") return `Whisparr is searching for ${scenes}. Grabs move to Downloading; refresh in a minute.`;
+    if (action === "monitor") return `Whisparr now monitors ${scenes} and grabs them when a release appears.`;
+    if (action === "unmonitor") return `Whisparr stopped monitoring ${scenes}.`;
+    return `Removed ${scenes} from Whisparr. Downloaded files stay on disk.`;
+  }
+  function whisparrNotConfigured(message) {
+    return /URL and API key are required|only available when the StashDB endpoint/.test(String(message || ""));
+  }
+  // Page chat on the Whisparr tab: arrivals, what's still waiting, and the
+  // missing scene that fits best.
+  function pageChatWhisparrShelf(data, now = Date.now()) {
+    const items = data?.items || [];
+    const options = [];
+    const add = (weight, key, values, links = {}) => options.push([weight, { key, values, links }]);
+    const sent = items.filter((item) => item.sent_at_ms != null);
+    const arrived = sent
+      .filter((item) => item.status === "in_library" && now - item.sent_at_ms < 30 * PAGE_CHAT_DAY)
+      .sort((a, b) => b.sent_at_ms - a.sent_at_ms)
+      .map((item) => ({ item, r: pageChatShortTitle(item.title) }))
+      .find((entry) => entry.r);
+    if (arrived) add(3, "whisparrArrived", { r: arrived.r, when: pageChatDay(arrived.item.sent_at_ms, now) }, { r: pageChatTo("scenes", arrived.item.local_scene_id) });
+    const waiting = sent.filter((item) => item.status === "missing");
+    if (waiting.length >= 2) add(2, "whisparrWaiting", { n: waiting.length.toLocaleString(), when: pageChatDay(Math.min(...waiting.map((item) => item.sent_at_ms)), now) });
+    const best = items
+      .filter((item) => item.status === "missing" && item.score != null)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => ({ item, r: pageChatShortTitle(item.title) }))
+      .find((entry) => entry.r);
+    if (best) add(2, "whisparrBest", { r: best.r, s: Number(best.item.score).toFixed(2) });
+    const grabbed = items.filter((item) => item.status === "not_in_stash").length;
+    if (grabbed) add(2.5, "whisparrGrabbed", { n: grabbed.toLocaleString() });
+    return options;
+  }
+  function WhisparrRow({ item, whisparrUrl, selected, busy, searched, onSelect, onAction }) {
+    const stashdbUrl = item.stashdb_id ? `https://stashdb.org/scenes/${item.stashdb_id}` : null;
+    const localUrl = item.local_scene_id ? `/scenes/${item.local_scene_id}` : null;
+    const whisparrLink = whisparrUrl && item.title_slug ? `${whisparrUrl}/movie/${encodeURIComponent(item.title_slug)}` : null;
+    const titleUrl = localUrl || stashdbUrl;
+    const status = WHISPARR_STATUSES.find((entry) => entry.value === item.status);
+    const added = whisparrTime(item.added);
+    const facts = [
+      item.studio,
+      item.release_date && String(item.release_date).slice(0, 10),
+      added && `added ${formatTimeAgo(added)}`,
+      item.sent_at_ms != null && `sent by Curator ${formatTimeAgo(item.sent_at_ms)}`,
+    ].filter(Boolean);
+    const queue = item.queue;
+    const progress = queue ? Math.round(Number(queue.progress || 0) * 100) : 0;
+    const icon = (glyph) => React.createElement(FontAwesomeIcon, { icon: glyph });
+    const link = (href, title, glyph, external = true) => href && React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, title, "aria-label": title, ...(external ? { target: "_blank", rel: "noopener noreferrer" } : {}) }, icon(glyph));
+    return React.createElement(
+      "div",
+      { className: "curator-whisparr-row scene-card", "data-status": item.status },
+      React.createElement("input", { type: "checkbox", className: "curator-whisparr-select", checked: selected, onChange: () => onSelect(item.id), "aria-label": `Select ${item.title || "scene"}` }),
+      React.createElement(
+        titleUrl ? "a" : "div",
+        { className: "scene-card-image curator-whisparr-thumb", ...(titleUrl ? { href: titleUrl, ...(localUrl ? {} : { target: "_blank", rel: "noopener noreferrer" }) } : {}) },
+        item.image && React.createElement("img", { src: item.image, alt: "", loading: "lazy" })
+      ),
+      React.createElement(
+        "div",
+        { className: "card-section curator-whisparr-info" },
+        React.createElement("h3", { className: "card-section-title" }, item.title || "Untitled"),
+        facts.length > 0 && React.createElement("div", { className: "curator-whisparr-facts" }, facts.join(" · ")),
+        React.createElement(
+          "div",
+          { className: "curator-whisparr-badges" },
+          React.createElement("span", { className: `curator-whisparr-status curator-whisparr-status-${item.status}`, title: status?.description }, status?.label || item.status),
+          item.monitored && React.createElement("span", { className: "curator-whisparr-badge", title: "Whisparr grabs this when a release appears" }, "Monitored"),
+          item.score != null && React.createElement("span", { className: "curator-whisparr-badge", title: "Curator's match score from Find (0..1)" }, `Match ${Number(item.score).toFixed(2)}`),
+          searched && item.status === "missing" && React.createElement("span", { className: "curator-whisparr-badge" }, "Search sent")
+        ),
+        queue && React.createElement(
+          "div",
+          { className: "curator-whisparr-queue" },
+          React.createElement("div", { className: "curator-whisparr-progress", role: "progressbar", "aria-valuenow": progress, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Download progress" }, React.createElement("span", { style: { width: `${progress}%` } })),
+          React.createElement("small", null, [`${progress}%`, queue.state, queue.time_left && `${queue.time_left} left`].filter(Boolean).join(" · ")),
+          queue.problem && React.createElement("small", { className: "text-warning" }, queue.problem)
+        )
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-whisparr-actions" },
+        item.status === "missing" && React.createElement(Button, { size: "sm", variant: searched ? "secondary" : "primary", disabled: busy, onClick: () => onAction("search", [item]), title: searched ? "Search again" : "Search for this scene now" }, icon(faSearch), busy ? " Searching…" : searched ? " Again" : " Search"),
+        item.status !== "in_library" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.monitored ? "primary" : "secondary", disabled: busy, onClick: () => onAction(item.monitored ? "unmonitor" : "monitor", [item]), title: item.monitored ? "Stop monitoring" : "Monitor: grab it when a release appears", "aria-label": item.monitored ? "Stop monitoring" : "Monitor", "aria-pressed": item.monitored }, icon(item.monitored ? faBell : faBellSlash)),
+        localUrl && link(localUrl, "Open in your library", faPlay, false),
+        link(stashdbUrl, "Open on StashDB", faExternalLinkAlt),
+        link(whisparrLink, "Open in Whisparr", faInbox),
+        React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", disabled: busy, onClick: () => onAction("remove", [item]), title: "Remove from Whisparr (files stay on disk)", "aria-label": "Remove from Whisparr" }, icon(faTrash))
+      )
+    );
+  }
+  function WhisparrPanel({ onOpenSettings }) {
+    const [data, setData] = React.useState(null);
+    const [error, setError] = React.useState("");
+    const [loading, setLoading] = React.useState(true);
+    const [reload, setReload] = React.useState(0);
+    const [status, setStatus] = React.useState("missing");
+    const [sort, setSort] = React.useState("match");
+    const [query, setQuery] = React.useState("");
+    const [sentOnly, setSentOnly] = React.useState(false);
+    const [limit, setLimit] = React.useState(WHISPARR_PAGE);
+    const [selected, setSelected] = React.useState(() => new Set());
+    const [busy, setBusy] = React.useState(null);
+    const [notice, setNotice] = React.useState("");
+    const [searched, setSearched] = React.useState(() => new Set());
+    React.useEffect(() => {
+      let active = true;
+      setLoading(true);
+      operation({ operation: "get_whisparr_overview" }, 90000).then(
+        (result) => { if (active) { setData(result); setError(""); } },
+        (failure) => { if (active) setError(failure.message); }
+      ).finally(() => { if (active) setLoading(false); });
+      return () => { active = false; };
+    }, [reload]);
+    const feed = React.useMemo(() => data && { key: `whisparr:${reload}`, look: async () => ({ shelf: pageChatWhisparrShelf(data), intro: null }) }, [data]);
+    usePageChatFeed("whisparr", feed);
+    React.useEffect(() => { setLimit(WHISPARR_PAGE); setSelected(new Set()); }, [status, query, sort, sentOnly]);
+    const items = data?.items || [];
+    const counts = React.useMemo(() => whisparrCounts(items), [data]);
+    const visible = React.useMemo(() => whisparrVisible(items, { status, query, sort, sentOnly }), [data, status, query, sort, sentOnly]);
+    const chosen = visible.filter((item) => selected.has(item.id));
+    const statusInfo = WHISPARR_STATUSES.find((entry) => entry.value === status);
+    function toggle(id) {
+      setSelected((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+    }
+    async function act(action, targets) {
+      if (!targets.length || busy) return;
+      const scenes = whisparrScenes(targets.length);
+      if (action === "search" && targets.length > WHISPARR_CONFIRM_SEARCH && !window.confirm(`Search for ${scenes} in Whisparr? Each one queries your indexers.`)) return;
+      if (action === "remove" && !window.confirm(`Remove ${scenes} from Whisparr? Downloaded files stay on disk.`)) return;
+      const ids = new Set(targets.map((item) => item.id));
+      setBusy({ action, ids });
+      setNotice("");
+      setError("");
+      try {
+        const count = await runWhisparrAction(action, targets);
+        setData((current) => {
+          if (!current) return current;
+          if (action === "remove") return { ...current, items: current.items.filter((item) => !ids.has(item.id)) };
+          if (action === "monitor" || action === "unmonitor") return { ...current, items: current.items.map((item) => ids.has(item.id) ? { ...item, monitored: action === "monitor" } : item) };
+          return current;
+        });
+        if (action === "search") setSearched((current) => new Set([...current, ...ids]));
+        setSelected(new Set());
+        setNotice(whisparrNotice(action, count));
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(null);
+      }
+    }
+    if (error && whisparrNotConfigured(error)) {
+      return React.createElement(
+        "section",
+        { className: "curator-whisparr" },
+        React.createElement("div", { className: "alert alert-info" },
+          React.createElement("p", null, "Whisparr isn't set up. Add its URL and API key in Settings, with StashDB as the selected endpoint."),
+          React.createElement(Button, { size: "sm", variant: "primary", onClick: onOpenSettings }, React.createElement(FontAwesomeIcon, { icon: faCog }), " Open settings"))
+      );
+    }
+    const allShownSelected = visible.length > 0 && visible.slice(0, limit).every((item) => selected.has(item.id));
+    return React.createElement(
+      "section",
+      { className: "curator-whisparr", "aria-busy": loading },
+      React.createElement(
+        "div",
+        { className: "curator-whisparr-statuses", role: "tablist", "aria-label": "Whisparr status" },
+        WHISPARR_STATUSES.map((entry) => React.createElement(
+          "button",
+          { key: entry.value, type: "button", role: "tab", className: `curator-whisparr-chip curator-whisparr-status-${entry.value}`, "aria-selected": status === entry.value, onClick: () => setStatus(entry.value), title: entry.description },
+          entry.label,
+          React.createElement("span", { className: "curator-whisparr-count" }, data ? counts[entry.value].toLocaleString() : "…")
+        ))
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-whisparr-toolbar" },
+        React.createElement("input", { type: "search", className: "form-control form-control-sm curator-whisparr-query", placeholder: "Filter by title or studio", value: query, onChange: (event) => setQuery(event.target.value), "aria-label": "Filter by title or studio" }),
+        React.createElement("select", { className: "form-control form-control-sm curator-whisparr-sort", value: sort, onChange: (event) => setSort(event.target.value), "aria-label": "Sort" }, WHISPARR_SORTS.map((entry) => React.createElement("option", { key: entry.value, value: entry.value }, entry.label))),
+        React.createElement(Button, { size: "sm", variant: sentOnly ? "primary" : "secondary", "aria-pressed": sentOnly, onClick: () => setSentOnly((value) => !value), title: "Only scenes Curator sent to Whisparr" }, "Sent by Curator"),
+        React.createElement(Button, { size: "sm", variant: "secondary", disabled: loading, onClick: () => setReload((value) => value + 1), title: "Reload from Whisparr" }, React.createElement(FontAwesomeIcon, { icon: faSync, className: loading ? "curator-rotate-icon-spinning" : undefined }), " Refresh"),
+        status === "missing" && visible.length > 0 && React.createElement(Button, { className: "curator-whisparr-search-all", size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", visible) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), ` Search ${visible.length === 1 ? "it" : `all ${visible.length.toLocaleString()}`}`)
+      ),
+      statusInfo && React.createElement("p", { className: "curator-whisparr-hint" }, statusInfo.description),
+      data && !data.library_ready && React.createElement("div", { className: "alert alert-info" }, "Curator is still matching your library to StashDB. Scenes you own show as In library once that finishes."),
+      notice && React.createElement("div", { className: "alert alert-success", role: "status" }, notice),
+      error && React.createElement("div", { className: "alert alert-danger", role: "alert" }, error),
+      visible.length > 0 && React.createElement(
+        "div",
+        { className: "curator-whisparr-selection" },
+        React.createElement("label", null,
+          React.createElement("input", { type: "checkbox", checked: allShownSelected, onChange: () => setSelected(allShownSelected ? new Set() : new Set(visible.slice(0, limit).map((item) => item.id))) }),
+          chosen.length ? ` ${chosen.length.toLocaleString()} selected` : " Select shown"),
+        chosen.length > 0 && React.createElement(React.Fragment, null,
+          React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", chosen.filter((item) => item.status === "missing")) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), " Search"),
+          React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("monitor", chosen) }, React.createElement(FontAwesomeIcon, { icon: faBell }), " Monitor"),
+          React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("unmonitor", chosen) }, React.createElement(FontAwesomeIcon, { icon: faBellSlash }), " Unmonitor"),
+          React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("remove", chosen) }, React.createElement(FontAwesomeIcon, { icon: faTrash }), " Remove"))
+      ),
+      loading && !data && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Whisparr…")),
+      data && visible.length === 0 && React.createElement("div", { className: "alert alert-info" }, query || sentOnly ? "No scenes match these filters." : status === "missing" ? "Nothing missing: every scene in Whisparr has a file or is downloading." : `No scenes are ${statusInfo?.label.toLowerCase() || "here"}.`),
+      React.createElement(
+        "div",
+        { className: "curator-whisparr-list" },
+        visible.slice(0, limit).map((item) => React.createElement(WhisparrRow, { key: item.id, item, whisparrUrl: data?.whisparr_url, selected: selected.has(item.id), busy: Boolean(busy?.ids.has(item.id)), searched: searched.has(item.id), onSelect: toggle, onAction: act }))
+      ),
+      visible.length > limit && React.createElement(Button, { className: "curator-whisparr-more", size: "sm", variant: "secondary", onClick: () => setLimit((value) => value + WHISPARR_PAGE) }, `Show more (${(visible.length - limit).toLocaleString()} left)`)
+    );
+  }
+
   function ExpandPanel({ initialType = "scene", huntOnly = false, endless = false }) {
     const initialFilters = React.useMemo(() => defaultFilters(huntOnly ? "hunt" : "expand"), []);
     const expandSpec = React.useMemo(() => huntOnly ? {
@@ -8801,6 +9082,8 @@
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [page, setPage] = useUrlPage(laneByValue.has(lane) ? `page_${lane}` : "page_for_you");
     const [configReady, setConfigReady] = React.useState(false);
+    const [whisparrEnabled, setWhisparrEnabled] = React.useState(false);
+    const findSections = FIND_SECTIONS.filter((section) => section.value !== "whisparr" || whisparrEnabled || lane === "whisparr");
     const [moods, setMoods] = React.useState([]);
     const [moodID, setMoodID] = React.useState(readMoodID);
     const togetherMode = Boolean(moodID);
@@ -8918,6 +9201,7 @@
           cachedConfigUpdatedAtMs = data.updated_at_ms;
           setDiversityEnabled(Boolean(data.config.diversity_enabled));
           setEndlessEnabled(Boolean(data.config.recommendation_endless_scroll));
+          setWhisparrEnabled(Boolean(data.whisparr_enabled));
           applyMoods(data.config.moods || [], false);
           persistSlateCache();
           setConfigReady(true);
@@ -9144,7 +9428,7 @@
       FIND_SECTION_VALUES.has(lane) && React.createElement(
         "div",
         { className: "curator-find-switcher", role: "tablist", "aria-label": "Find content" },
-        FIND_SECTIONS.map((section) => React.createElement(
+        findSections.map((section) => React.createElement(
           "button",
           {
             key: section.value,
@@ -9232,6 +9516,7 @@
       lane === "insights" && !loadingComponents && React.createElement(InsightsPanel, { onOpenSentiment: () => openCurate("sentiment") }),
       configReady && lane === "expand" && React.createElement(ExpandPanel, { key: "expand", endless: endlessEnabled }),
       configReady && lane === "hunt" && React.createElement(ExpandPanel, { key: "hunt", initialType: "hunt", huntOnly: true, endless: endlessEnabled }),
+      configReady && lane === "whisparr" && React.createElement(WhisparrPanel, { onOpenSettings: () => openManage("settings") }),
       // Prune renders scene cards directly, same as SimilarityPanel above, so
       // it keeps its pre-existing !loadingComponents gate even though it now
       // mounts inside ManagePanel rather than as its own top-level branch.
@@ -11036,6 +11321,22 @@
       "{n} of these are already in Whisparr.",
       "Whisparr has {n} of these covered.",
     ],
+    whisparrArrived: [
+      "{r} landed in your library. You sent it {when}.",
+      "You sent {r} {when}, and now it's yours.",
+    ],
+    whisparrWaiting: [
+      "{n} scenes you sent are still missing. The oldest went out {when}.",
+      "{n} of your sends are still missing; the first went out {when}.",
+    ],
+    whisparrBest: [
+      "{r} is the missing one that fits you best ({s}).",
+      "Of everything missing, {r} matches you most: {s}.",
+    ],
+    whisparrGrabbed: [
+      "{n} downloaded in Whisparr but not linked in Stash yet. A scan and Identify should fix that.",
+      "Whisparr has files for {n} that Stash hasn't matched. Try a scan, then Identify.",
+    ],
     similarEmpty: [
       "Pick a scene you love and I'll find its cousins.",
       "Show me one you like, I'll find more like it.",
@@ -11449,6 +11750,7 @@
     whyPerformer: "😏", whyTags: "🙂", whyBoth: "😌", whyStudio: "🙂", whyReplay: "😍", hookPerformer: "🧐", hookTags: "🧐", hookBoth: "🧐", hookStudio: "🧐", spotlight: "😌", unplayedOne: "👀", quickOne: "⏱️", longOne: "🍿",
     expandRegular: "😏", expandSpotlight: "😌", expandFavourite: "😍", expandUnwatched: "🤔",
     expandStudio: "🙂", expandNewRelease: "✨", expandRecent: "✨", expandDeepCut: "📼", whisparrRun: "📥",
+    whisparrArrived: "📬", whisparrWaiting: "⏳", whisparrBest: "🎯", whisparrGrabbed: "🧐",
     similarEmpty: "🔎", seedLoved: "😍", seedUnplayed: "🤔", sharedPerformer: "😏", sameStudio: "🙂", closest: "🎯",
     huntEmpty: "🎯", huntOwned: "📚", huntNone: "👀", huntComplete: "🏆", huntRecent: "✨", huntFirst: "📼", huntRegular: "😌",
     favouriteNote: "😍", whisparrNote: "📥", ownedNote: "📚", releasedNote: "✨", oldNote: "📼",

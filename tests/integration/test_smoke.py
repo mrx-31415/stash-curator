@@ -120,6 +120,7 @@ TABS: list[tuple[str, list[str]]] = [
         ["Your taste", "Your taste summary needs play history", "no published model"],
     ),
     ("?view=hunt", ["Select a local performer linked to Stash-box"]),
+    ("?view=whisparr", ["Whisparr isn't set up"]),
     (
         "?view=feedback",
         [

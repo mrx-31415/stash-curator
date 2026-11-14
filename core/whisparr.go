@@ -42,6 +42,10 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return jvNull(), errors.New(whisparrRejection(resp.StatusCode, raw))
 	}
+	// Bulk editor deletes answer 200 with no body.
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return jvNull(), nil
+	}
 	parsed, err := parseJSON(raw)
 	if err != nil {
 		return jvNull(), errors.New("Whisparr returned invalid JSON")
