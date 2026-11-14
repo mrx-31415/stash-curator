@@ -43,6 +43,10 @@ Curator records the StashDB ids of scenes it has sent, in the local database onl
 to mark them in Find.
 Sending a scene also requests a release search by default, controlled by the
 **Search Whisparr immediately** setting.
+Opening **Find → Whisparr** reads Whisparr's scene list and download queue and
+compares them with your library inside Curator; nothing from your library is sent to
+Whisparr. Searches, monitoring changes, and removals there happen only when you
+choose them, and a removal never deletes files.
 
 ## Retention and diagnostics
 

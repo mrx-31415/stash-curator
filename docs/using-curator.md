@@ -588,6 +588,32 @@ Expand and StashDB Similar scenes. Disable it to inspect candidates marked
 **Likely local · exact PHash**; a matching PHash is strong evidence, not guaranteed
 identity.
 
+### Whisparr
+
+When Whisparr is configured, Find gains a **Whisparr** tab. It lists every scene
+Whisparr tracks and checks each one against your library by StashDB id:
+
+| Status | Meaning |
+| --- | --- |
+| **Missing** | In Whisparr with no file and nothing downloading |
+| **Downloading** | In Whisparr's download queue, with progress and any warning |
+| **Not in Stash** | Whisparr has the file, but no Stash scene is linked to that StashDB scene yet. A Stash scan, then Identify, usually links it |
+| **In library** | Linked to a scene in your library; the title opens it |
+
+The tab opens on **Missing**, ordered by **Best match**: the match score Find gave the
+scene, for scenes still in Find's cache, then the newest additions. **Search all N**
+asks Whisparr to search for every missing scene shown, and **Search** on a row
+searches for one. Searches for more than 20 scenes ask first, because each one
+queries your indexers. Searched scenes move to **Downloading** once Whisparr grabs a
+release; use **Refresh** to reload.
+
+Select scenes with their checkboxes to search, monitor, stop monitoring, or remove
+them together. **Monitor** lets Whisparr grab a scene when a release appears; Curator
+sends scenes unmonitored. **Remove** takes the scene out of Whisparr only: downloaded
+files always stay on disk, and the scene no longer shows **Sent to Whisparr** in Find.
+Filter by title or studio, or with **Sent by Curator** show only the scenes Curator
+sent.
+
 ## Prune
 
 Open **Manage → Prune** to review explicit dislikes, suspected poor fits, and
