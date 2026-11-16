@@ -234,6 +234,7 @@ def test_slate_api_materializes_only_through_requested_page(
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
         gender: str = "",
+        exclude_studio_ids: tuple[str, ...] = (),
     ) -> Slate:
         requested_counts.append(count)
         return recommend(
@@ -246,6 +247,7 @@ def test_slate_api_materializes_only_through_requested_page(
             performer_ids=performer_ids,
             studio_ids=studio_ids,
             gender=gender,
+            exclude_studio_ids=exclude_studio_ids,
         )
 
     monkeypatch.setattr(SlateBuilder, "recommend", observed)

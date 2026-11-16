@@ -63,6 +63,10 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	if err != nil {
 		return jvNull(), err
 	}
+	excludeStudioNames, err := stringList(args.get("exclude_studio_names"))
+	if err != nil {
+		return jvNull(), err
+	}
 	hidePhash := argsBool(args, "hide_phash_matches", true)
 	hideDismissed := argsBool(args, "hide_dismissed", true)
 	minimumScore := -1.0
@@ -104,13 +108,13 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		}
 	}
 	return expandResults(db, entityType, page, sortBy, performerID, favoriteOnly, gender,
-		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery,
+		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, performerQuery, studioQuery,
 		hidePhash, hideDismissed, minimumScore, count, links)
 }
 
 // expandResults mirrors ExpandService.results.
 func expandResults(db dbx, entityType string, page int64, sortBy string, performerID jVal,
-	favoriteOnly bool, gender string, includeTags, excludeTags, performerNames, studioNames []string,
+	favoriteOnly bool, gender string, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string,
 	performerQuery, studioQuery string, hidePhash, hideDismissed bool, minimumScore float64, count int64,
 	links jVal) (jVal, error) {
 	if (entityType != "scene" && entityType != "performer") || (sortBy != "match" && sortBy != "newest") {
@@ -211,7 +215,7 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	digest := sha256.New()
 	encoder := json.NewEncoder(digest)
 	if err := encoder.Encode([]any{stashdbEndpoint, entityType, sortBy, performerID.marshalCompact(), favoriteOnly, gender,
-		includeTags, excludeTags, performerNames, studioNames, performerQuery, studioQuery, hidePhash,
+		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, performerQuery, studioQuery, hidePhash,
 		minimumScore, includeGroups, excludeGroups, blockedGroups, byExternalID, byPhash, revision,
 		sortedKeys(hidden), sortedKeys(dislikedIDs)}); err != nil {
 		return jvNull(), err
@@ -392,7 +396,7 @@ AND lower(rtrim(COALESCE((SELECT value FROM application_meta WHERE key='expand_c
 					continue
 				}
 				if entityType == "scene" && !expandSceneMatches(payload, includeTags, excludeTags,
-					performerNames, studioNames, performerQuery, studioQuery,
+					performerNames, studioNames, excludeStudioNames, performerQuery, studioQuery,
 					includeGroups, excludeGroups, blockedGroups) {
 					continue
 				}
@@ -526,6 +530,102 @@ func getStashdbPerformerSearchBody(pluginDir string, payload, settings jVal) (jV
 	return jvObj(jvKey("items", items)), nil
 }
 
+// opGetStashdbStudioSearch — name search over Stash-box studios for the
+// Studios filter in Expand, Performer Hunt and StashDB Similar, so a studio
+// that is not in the local library can still narrow remote scenes. The
+// filter matches by name, so items carry the name the scene payloads use.
+func opGetStashdbStudioSearch(pluginDir string, payload jVal) (jVal, error) {
+	return profiledOperation(pluginDir, payload, "get_stashdb_studio_search",
+		func(settings jVal) (jVal, error) { return getStashdbStudioSearchBody(payload) })
+}
+
+func getStashdbStudioSearchBody(payload jVal) (jVal, error) {
+	args := payload.get("args")
+	query := strings.TrimSpace(argsString(args, "query", ""))
+	if len(query) > 100 {
+		return jvNull(), errors.New("query must be a string up to 100 bytes")
+	}
+	limit := argsInt(args, "limit", 8)
+	if limit < 1 || limit > 50 {
+		limit = 8
+	}
+	items := jvArr()
+	if query == "" {
+		return jvObj(jvKey("items", items)), nil
+	}
+	clientURL, apiKey, err := stashdbClient(payload)
+	if err != nil {
+		return jvNull(), err
+	}
+	// "names" also matches aliases and the parent network, and StashDB pages
+	// a like-match alphabetically, so a common word can push the studio of
+	// that exact name off the page. Look the exact name up first, then the
+	// like-match, and put direct name hits first.
+	var studios []jVal
+	if !isThePornDB(stashdbEndpoint) {
+		data, err := stashdbQuery(clientURL, apiKey, stashdbStudioExactQuery, jvObj(jvKey("name", jvStr(query))))
+		if err != nil {
+			return jvNull(), err
+		}
+		if exact := data.get("findStudio"); exact.kind == jObj {
+			studios = append(studios, exact)
+		}
+	}
+	search := jvObj(
+		jvKey("page", jvInt(1)),
+		jvKey("per_page", jvInt(25)),
+		jvKey("names", jvStr(query)),
+		jvKey("sort", jvStr("NAME")),
+		jvKey("direction", jvStr("ASC")),
+	)
+	data, err := stashdbQuery(clientURL, apiKey, stashdbStudioSearchQuery, jvObj(jvKey("input", search)))
+	if err != nil {
+		return jvNull(), err
+	}
+	seen := map[string]bool{}
+	for _, studio := range studios {
+		seen[studio.get("id").asString()] = true
+	}
+	for _, studio := range data.get("queryStudios").get("studios").arr {
+		if id := studio.get("id").asString(); !seen[id] {
+			seen[id] = true
+			studios = append(studios, studio)
+		}
+	}
+	needle := strings.ToLower(query)
+	rank := func(studio jVal) int {
+		name := strings.ToLower(pythonStrOrEmpty(studio.get("name")))
+		switch {
+		case name == needle:
+			return 0
+		case strings.HasPrefix(name, needle):
+			return 1
+		case strings.Contains(name, needle):
+			return 2
+		}
+		return 3
+	}
+	sort.SliceStable(studios, func(i, j int) bool { return rank(studios[i]) < rank(studios[j]) })
+	for _, studio := range studios {
+		if int64(len(items.arr)) >= limit {
+			break
+		}
+		if pythonStrOrEmpty(studio.get("name")) == "" {
+			continue
+		}
+		parent := jvNull()
+		if name := pythonStrOrEmpty(studio.get("parent").get("name")); name != "" {
+			parent = jvStr(name)
+		}
+		items.arr = append(items.arr, jvObj(
+			jvKey("id", studio.get("id")),
+			jvKey("name", studio.get("name")),
+			jvKey("parent_name", parent),
+		))
+	}
+	return jvObj(jvKey("items", items)), nil
+}
+
 // opGetPerformerHunt mirrors backend.py's _profiled-wrapped get_performer_hunt.
 func opGetPerformerHunt(pluginDir string, payload jVal) (jVal, error) {
 	return profiledOperation(pluginDir, payload, "get_performer_hunt",
@@ -548,6 +648,14 @@ func getPerformerHuntBody(pluginDir string, payload, settings jVal) (jVal, error
 	if err != nil {
 		return jvNull(), err
 	}
+	studioNames, err := stringList(args.get("studio_names"))
+	if err != nil {
+		return jvNull(), err
+	}
+	excludeStudioNames, err := stringList(args.get("exclude_studio_names"))
+	if err != nil {
+		return jvNull(), err
+	}
 	clientURL, apiKey, err := stashdbClient(payload)
 	if err != nil {
 		return jvNull(), err
@@ -557,13 +665,13 @@ func getPerformerHuntBody(pluginDir string, payload, settings jVal) (jVal, error
 		return jvNull(), err
 	}
 	result, err := expandPerformerHunt(db, clientURL, apiKey, links, performerID,
-		performerHuntLimit, includeTags, excludeTags)
+		performerHuntLimit, includeTags, excludeTags, studioNames, excludeStudioNames)
 	return result, err
 }
 
 // expandPerformerHunt mirrors ExpandService.performer_hunt.
 func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performerID string,
-	limit int64, includeTags, excludeTags []string) (jVal, error) {
+	limit int64, includeTags, excludeTags, studioNames, excludeStudioNames []string) (jVal, error) {
 	var name sql.NullString
 	err := db.QueryRow(`SELECT name FROM source_performer WHERE performer_id=?`, performerID).Scan(&name)
 	isLocal := err == nil
@@ -676,7 +784,7 @@ func expandPerformerHunt(db dbx, clientURL, apiKey string, links jVal, performer
 	}
 	items := make([]jVal, 0, len(scenes))
 	for _, scene := range scenes {
-		if !expandSceneMatches(scene.payload, includeTags, excludeTags, nil, nil, "", "",
+		if !expandSceneMatches(scene.payload, includeTags, excludeTags, nil, studioNames, excludeStudioNames, "", "",
 			includeGroups, excludeGroups, blockedGroups) {
 			continue
 		}
@@ -779,6 +887,10 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 	if err != nil {
 		return jvNull(), err
 	}
+	excludeStudioNames, err := stringList(args.get("exclude_studio_names"))
+	if err != nil {
+		return jvNull(), err
+	}
 	favoriteOnly := argsBool(args, "favorite_only", false)
 	includeOwned := argsBool(args, "include_owned", false)
 	hidePhash := argsBool(args, "hide_phash_matches", true)
@@ -799,7 +911,7 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 		return jvNull(), err
 	}
 	return expandTargetedSimilar(db, clientURL, apiKey, links, entityType, entityID,
-		gender, 100, includeTags, excludeTags, performerNames, studioNames,
+		gender, 100, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames,
 		favoriteOnly, includeOwned, hidePhash, hideDismissed, minimumSimilarity)
 }
 

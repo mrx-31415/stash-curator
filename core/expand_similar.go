@@ -18,7 +18,7 @@ import (
 // (optionally restricted to candidate_ids) against a local scene or
 // performer, with the same similarity/appeal blend and why strings.
 func (s *expandService) similar(entityType, entityID string, count int64, candidateIDs map[string]bool,
-	includeTags, excludeTags, performerNames, studioNames []string, favoriteOnly bool,
+	includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string, favoriteOnly bool,
 	minimumSimilarity float64, hideDismissed bool) (jVal, error) {
 	if minimumSimilarity < 0 || minimumSimilarity > 1 {
 		return jvNull(), errors.New("minimum_similarity must be between 0 and 1")
@@ -182,7 +182,7 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 					continue
 				}
 			}
-			if !expandSceneMatches(payload, includeTags, excludeTags, performerNames, studioNames,
+			if !expandSceneMatches(payload, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames,
 				"", "", includeGroups, excludeGroups, nil) {
 				continue
 			}
@@ -475,7 +475,7 @@ func profileMatchFull(left, right *performerProfile, weights map[string]float64)
 // expandTargetedSimilar mirrors ExpandService.targeted_similar: retrieve a
 // StashDB pool biased toward the target, score/merge it, and rank it.
 func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityType, entityID,
-	gender string, count int64, includeTags, excludeTags, performerNames, studioNames []string,
+	gender string, count int64, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string,
 	favoriteOnly, includeOwned, hidePhash, hideDismissed bool, minimumSimilarity float64) (jVal, error) {
 	service := newExpandService(db)
 	modelID, err := currentModelID(db)
@@ -689,7 +689,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	}
 	stageStart := time.Now()
 	result, err := service.similar(entityType, entityID, count*2, candidateIDs,
-		includeTags, excludeTags, performerNames, studioNames, favoriteOnly, minimumSimilarity, hideDismissed)
+		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, favoriteOnly, minimumSimilarity, hideDismissed)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -708,7 +708,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	if entityType == "scene" {
 		sceneFiltered := make([]jVal, 0, len(filtered))
 		for _, item := range filtered {
-			if expandSceneMatches(item.get("payload"), nil, nil, nil, nil, "", "",
+			if expandSceneMatches(item.get("payload"), nil, nil, nil, nil, nil, "", "",
 				nil, nil, blockedGroups) {
 				sceneFiltered = append(sceneFiltered, item)
 			}

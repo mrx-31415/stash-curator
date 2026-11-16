@@ -135,7 +135,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.deepEqual(plain(session.request), {
     lane: "best_bets", page: 1, count: 2, exploration: 0, mood_id: "mood", together_mode: true,
     draw_seed: "seed", draw_at_ms: 123, exclude_scene_ids: ["99"],
-    include_tags: ["A"], exclude_tags: ["B"], performer_ids: ["2"], studio_ids: ["3"], gender: "FEMALE",
+    include_tags: ["A"], exclude_tags: ["B"], performer_ids: ["2"], studio_ids: ["3"], exclude_studio_ids: [], gender: "FEMALE",
   });
   batches = [slate([2, 3, 4], "second")]; missing.add("3");
   await context.fillRoulette(session, 3);

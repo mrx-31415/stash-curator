@@ -748,6 +748,7 @@ def _slate(api: CuratorAPI, args: dict[str, Any]) -> dict[str, object]:
         exclude_tags=_string_list(args.get("exclude_tags")),
         performer_ids=_string_list(args.get("performer_ids")),
         studio_ids=_string_list(args.get("studio_ids")),
+        exclude_studio_ids=_string_list(args.get("exclude_studio_ids")),
         gender=str(args.get("gender") or ""),
     )
 
@@ -929,6 +930,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 studio_query=str(args.get("studio_query") or ""),
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
+                exclude_studio_names=_string_list(args.get("exclude_studio_names")),
                 hide_phash_matches=bool(args.get("hide_phash_matches", True)),
                 hide_dismissed=bool(args.get("hide_dismissed", True)),
                 minimum_score=(
@@ -947,6 +949,8 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 limit=PERFORMER_HUNT_LIMIT,
                 include_tags=_string_list(args.get("include_tags")),
                 exclude_tags=_string_list(args.get("exclude_tags")),
+                studio_names=_string_list(args.get("studio_names")),
+                exclude_studio_names=_string_list(args.get("exclude_studio_names")),
             )
         if operation == "get_stashdb_performer_search":
             return ExpandService(connection, endpoint).stashdb_performer_search(
@@ -975,6 +979,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_names=_string_list(args.get("performer_names")),
                 studio_names=_string_list(args.get("studio_names")),
+                exclude_studio_names=_string_list(args.get("exclude_studio_names")),
                 favorite_only=bool(args.get("favorite_only", False)),
                 include_owned=bool(args.get("include_owned", False)),
                 hide_phash_matches=bool(args.get("hide_phash_matches", True)),
@@ -1335,6 +1340,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 exclude_tags=_string_list(args.get("exclude_tags")),
                 performer_ids=_string_list(args.get("performer_ids")),
                 studio_ids=_string_list(args.get("studio_ids")),
+                exclude_studio_ids=_string_list(args.get("exclude_studio_ids")),
                 favorite_only=bool(args.get("favorite_only", False)),
                 minimum_similarity=(
                     float(args["minimum_similarity"])

@@ -983,3 +983,61 @@ def test_slice1_profiling_trace_parity(
         assert any(e["cat"] == "sqlite" for e in events)
         for event in events:
             assert {"name", "cat", "ph", "ts", "dur", "pid", "tid"} <= set(event)
+
+
+STUDIO_ONE_SCENES = {"old-good", "recent-good"}
+
+
+def _scene_ids(output: object) -> list[str]:
+    assert isinstance(output, dict)
+    return [str(item.get("scene_id") or item.get("id")) for item in output["items"]]
+
+
+def test_get_slate_excluded_studio_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_slate",
+        model_sidecar,
+        stub_stash,
+        lane="for_you",
+        count=5,
+        page=1,
+        exclude_studio_ids=["studio-1"],
+        impression_id="fixed-impression-slate-exclude-studio",
+    )
+    assert_slice1_identical(
+        binary,
+        PLUGIN_DIR,
+        raw,
+        same_path=model_sidecar,
+        timing_fields=("timings_ms", "ranking_timings_ms"),
+    )
+    unfiltered = json.loads(raw)
+    del unfiltered["args"]["exclude_studio_ids"]
+    before = json.loads(run_backend(binary, PLUGIN_DIR, json.dumps(unfiltered).encode()).stdout)
+    after = json.loads(run_backend(binary, PLUGIN_DIR, raw).stdout)
+    assert set(_scene_ids(before["output"])) & STUDIO_ONE_SCENES
+    assert not set(_scene_ids(after["output"])) & STUDIO_ONE_SCENES
+
+
+def test_get_similar_excluded_studio_byte_identical(
+    model_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_similar",
+        model_sidecar,
+        stub_stash,
+        entity_type="scene",
+        entity_id="unseen-good",
+        count=5,
+        page=1,
+        minimum_similarity=0,
+        exclude_studio_ids=["studio-1"],
+        impression_id="fixed-impression-similar-exclude-studio",
+    )
+    assert_slice1_identical(
+        binary, PLUGIN_DIR, raw, same_path=model_sidecar, timing_fields=("timings_ms",)
+    )
+    output = json.loads(run_backend(binary, PLUGIN_DIR, raw).stdout)["output"]
+    assert _scene_ids(output) and not set(_scene_ids(output)) & STUDIO_ONE_SCENES

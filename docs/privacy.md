@@ -31,7 +31,8 @@ layout, the list that **Customize** edits.
 
 StashDB discovery is optional and uses the StashDB connection and API key configured
 in Stash. Using external discovery or refreshing its cache sends read-only metadata
-searches for tags, performers, and scenes. Search seeds can reflect your preferences;
+searches for tags, performers, studios, and scenes; typing in a Studios or performer
+picker there sends that text as a name search. Search seeds can reflect your preferences;
 StashDB therefore sees which metadata is requested. Scoring happens locally. Viewing
 history, feedback, learned weights, local URLs, and the preference model are not
 uploaded to StashDB. Optional scheduled Expand refreshes contact StashDB without an

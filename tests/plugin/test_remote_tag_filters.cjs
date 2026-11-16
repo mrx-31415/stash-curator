@@ -75,10 +75,10 @@ async function check() {
     ["similar", "stashdb", true], ["similar", "library", false],
     ["recommendations", undefined, false],
   ]) {
-    const tags = nodes(context.FilterBar({ variant, source, entityType: "scene", minimum: 0 }))
+    const tags = nodes(context.FilterBar({ variant, source, entityType: "scene", minimum: 0, includeTags: [], excludeTags: [] }))
       .filter((node) => node.type === context.FilterTokens && node.props.kind === "tag");
-    assert.equal(tags.length, 2);
-    assert.equal(tags.every((node) => node.props.searchBoth === expected), true);
+    assert.equal(tags.length, 1); // One box holds included and excluded tags.
+    assert.equal(tags[0].props.searchBoth, expected);
   }
 }
 check().catch((error) => { console.error(error); process.exitCode = 1; });

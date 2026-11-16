@@ -160,6 +160,20 @@ query CuratorPerformerSearch($input: PerformerQueryInput!) {
 }
 `
 
+const stashdbStudioSearchQuery = `
+query CuratorStudioSearch($input: StudioQueryInput!) {
+  queryStudios(input: $input) {
+    studios { id name parent { id name } }
+  }
+}
+`
+
+const stashdbStudioExactQuery = `
+query CuratorStudioExact($name: String!) {
+  findStudio(name: $name) { id name parent { id name } }
+}
+`
+
 // graphqlOperationName mirrors curator.graphql.client._operation_name.
 func graphqlOperationName(document string) string {
 	re := regexp.MustCompile(`\b(?:query|mutation)\s+([A-Za-z_][A-Za-z0-9_]*)`)

@@ -516,7 +516,7 @@ func (m *anchorMatcher) best(performer jVal, recorded jVal) (anchorMatch, bool) 
 // ── scene matching and diversity ──────────────────────────────────────────
 
 // expandSceneMatches mirrors ExpandService._scene_matches.
-func expandSceneMatches(payload jVal, includeTags, excludeTags, performerNames, studioNames []string,
+func expandSceneMatches(payload jVal, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string,
 	performerQuery, studioQuery string, includeGroups, excludeGroups, blockedGroups []map[string]bool) bool {
 	tags := map[string]bool{}
 	for _, item := range payload.get("tags").arr {
@@ -549,6 +549,11 @@ func expandSceneMatches(payload jVal, includeTags, excludeTags, performerNames, 
 			wanted[strings.ToLower(value)] = true
 		}
 		if !wanted[studio] {
+			return false
+		}
+	}
+	for _, value := range excludeStudioNames {
+		if strings.ToLower(value) == studio {
 			return false
 		}
 	}

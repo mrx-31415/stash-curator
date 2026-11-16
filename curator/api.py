@@ -215,6 +215,7 @@ class CuratorAPI:
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
+        exclude_studio_ids: tuple[str, ...] = (),
         gender: str = "",
     ) -> dict[str, object]:
         if page < 1 or not 1 <= count <= 500:
@@ -262,7 +263,13 @@ class CuratorAPI:
         end = page * count
         builder = SlateBuilder(self.connection, diversity_enabled=bool(config["diversity_enabled"]))
         has_filters = bool(
-            together_mode or include_tags or exclude_tags or performer_ids or studio_ids or gender
+            together_mode
+            or include_tags
+            or exclude_tags
+            or performer_ids
+            or studio_ids
+            or exclude_studio_ids
+            or gender
         )
         # A filtered request always recomputes total from a full candidate
         # fetch, the same way an exploration request does, since the cached
@@ -303,6 +310,7 @@ class CuratorAPI:
             exclude_tags=exclude_tags,
             performer_ids=performer_ids,
             studio_ids=studio_ids,
+            exclude_studio_ids=exclude_studio_ids,
             gender=gender,
         )
         available = tuple(item for item in built.items if item.scene_id not in excluded)
@@ -777,6 +785,7 @@ class CuratorAPI:
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
+        exclude_studio_ids: tuple[str, ...] = (),
         favorite_only: bool = False,
         minimum_similarity: float = 0.18,
         exclude_scene_ids: set[str] | None = None,
@@ -799,6 +808,7 @@ class CuratorAPI:
                 exclude_tags=exclude_tags,
                 performer_ids=performer_ids,
                 studio_ids=studio_ids,
+                exclude_studio_ids=exclude_studio_ids,
                 favorite_only=favorite_only,
                 minimum_similarity=minimum_similarity,
             )
@@ -953,6 +963,7 @@ class CuratorAPI:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
         hide_phash_matches: bool = True,
         hide_dismissed: bool = True,
         minimum_score: float = -1.0,
@@ -972,6 +983,7 @@ class CuratorAPI:
             studio_query=studio_query,
             performer_names=performer_names,
             studio_names=studio_names,
+            exclude_studio_names=exclude_studio_names,
             hide_phash_matches=hide_phash_matches,
             hide_dismissed=hide_dismissed,
             minimum_score=minimum_score,
