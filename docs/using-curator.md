@@ -452,10 +452,15 @@ each refresh fetches up to 1,000 candidates within a 90-day release window; you 
 adjust both in settings.
 
 External results are metadata leads, not proof that a scene is available locally.
-Filters and ordering apply before paging. Include and exclude tag pickers search
-both local tags and the cached StashDB tag catalog in Expand, Performer Hunt, and
-StashDB Similar. StashDB-only tags do not need to exist in your library; names and
-aliases filter remote results. Refresh Expand's cache to update that catalog.
+Filters and ordering apply before paging. The **Tags** and **Studios** boxes each
+hold both included and excluded items: a new pick is included, and the **+**/**−**
+switch on its chip moves it to excluded and back. Included tags must all be on a
+scene; included studios keep scenes from any of them; an excluded tag or studio
+always removes the scene. In Expand, Performer Hunt, and StashDB Similar both boxes
+also search StashDB. StashDB tags come from the cached catalog (refresh Expand's
+cache to update it) and match remote results by name and alias; StashDB studios
+are searched by name, alias, or network and match the studio name on each scene,
+so neither needs to exist in your library.
 If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
 it sends only the scene you select. Curator remembers the send, so the card shows
 **Sent to Whisparr** on later visits. Use
@@ -522,7 +527,7 @@ It compares exact StashDB scene links and separates
 All, In library, and Not linked locally results; unlinked does not mean definitively
 missing because local scenes without StashDB identities cannot be matched. Queries
 follow StashDB pagination up to 1,000 scenes and disclose when that cap truncates the
-result. Include and exclude tag filters apply to the fetched result.
+result. Tag and studio filters apply to the fetched result.
 
 Performer pages keep **Similar** and **Performer Hunt** in the collapsed
 [Curator affinity bar](#affinity-on-detail-pages), alongside the score and confidence.

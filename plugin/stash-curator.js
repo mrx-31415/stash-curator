@@ -512,7 +512,8 @@
       include_tags: (filters.includeTags || []).map((item) => item.name),
       exclude_tags: (filters.excludeTags || []).map((item) => item.name),
       performer_ids: (filters.performers || []).map((item) => String(item.id)),
-      studio_ids: (filters.studios || []).map((item) => String(item.id)), gender: filters.gender || "",
+      studio_ids: (filters.studios || []).map((item) => String(item.id)),
+      exclude_studio_ids: (filters.excludeStudios || []).map((item) => String(item.id)), gender: filters.gender || "",
     };
   }
   // Play lane hands a fixed batch to Stash's own scene queue (?qs=…), which owns
@@ -779,6 +780,10 @@
     const [state, setState] = React.useState(() => parseUrlState(new URLSearchParams(routeLocation.search), spec));
     const stateRef = React.useRef(state);
     stateRef.current = state;
+    // Updates made before the next render (e.g. moving a filter chip from
+    // one list to another) build on each other and share one history entry.
+    const pendingRef = React.useRef(false);
+    pendingRef.current = false;
     const appliedSearchRef = React.useRef(routeLocation.search.replace(/^\?/, ""));
     // Re-seed from the URL on back/forward or any external navigation; our own
     // writes stamp appliedSearchRef first, so they are not re-applied here.
@@ -790,6 +795,9 @@
     }, [routeLocation.search]);
     function update(updater, options = {}) {
       const next = typeof updater === "function" ? updater(stateRef.current) : updater;
+      stateRef.current = next;
+      const replace = options.replace || pendingRef.current;
+      pendingRef.current = true;
       const location = locationRef.current;
       const route = new URLSearchParams(appliedSearchRef.current);
       for (const [key, field] of Object.entries(spec.fields)) {
@@ -816,7 +824,7 @@
       }
       appliedSearchRef.current = search;
       setState(next);
-      history[options.replace ? "replace" : "push"]({ pathname: location.pathname, search });
+      history[replace ? "replace" : "push"]({ pathname: location.pathname, search });
     }
     return [state, update];
   }
@@ -924,7 +932,7 @@
   function loadSlate(lane, page = 1, prefetched = false, filters = null) {
     rotateDay();
     const togetherMode = readTogetherMode();
-    const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.gender));
+    const hasFilters = Boolean(filters && (filters.includeTags?.length || filters.excludeTags?.length || filters.performers?.length || filters.studios?.length || filters.excludeStudios?.length || filters.gender));
     const key = slateKey(lane, page);
     if (!hasFilters && !togetherMode) {
       if (slateCache.has(key)) return Promise.resolve(slateCache.get(key));
@@ -947,6 +955,7 @@
         exclude_tags: (filters.excludeTags || []).map((item) => item.name),
         performer_ids: (filters.performers || []).map((item) => String(item.id)),
         studio_ids: (filters.studios || []).map((item) => String(item.id)),
+        exclude_studio_ids: (filters.excludeStudios || []).map((item) => String(item.id)),
         gender: filters.gender || "",
       } : {}),
     };
@@ -5811,7 +5820,9 @@
     );
   }
 
-  function FilterTokens({ kind, label, values, onChange, disabled = false, searchBoth = false }) {
+  // With `excluded`/`onExcludedChange`, one box holds both lists: new picks
+  // are included, and each chip's +/− switch moves it to the other list.
+  function FilterTokens({ kind, label, values, onChange, excluded = null, onExcludedChange = null, disabled = false, searchBoth = false }) {
     const [query, setQuery] = React.useState("");
     const [remoteResults, setRemoteResults] = React.useState([]);
     const [remoteError, setRemoteError] = React.useState("");
@@ -5819,20 +5830,25 @@
     const tags = GQL.useFindTagsQuery({ variables, skip: kind !== "tag" || !query || disabled });
     const studios = GQL.useFindStudiosQuery({ variables, skip: kind !== "studio" || !query || disabled });
     const performers = GQL.useFindPerformersQuery({ variables, skip: kind !== "performer" || !query || disabled });
-    // Remote tag search reuses the cached Stash-box catalog; performer search
-    // queries Stash-box directly. Local completions render immediately.
+    // Remote tag search reuses the cached Stash-box catalog; performer and
+    // studio search query Stash-box directly. Local completions render
+    // immediately.
     React.useEffect(() => {
       setRemoteResults([]);
       setRemoteError("");
-      if (!["performer", "tag"].includes(kind) || !searchBoth || !query || disabled) {
+      if (!["performer", "tag", "studio"].includes(kind) || !searchBoth || !query || disabled) {
         return undefined;
       }
       let active = true;
       const timer = setTimeout(() => {
-        const request = kind === "tag" ? { operation: "get_external_tag_search", query } : { operation: "get_stashdb_performer_search", query, limit: 8 };
+        const request = kind === "tag"
+          ? { operation: "get_external_tag_search", query }
+          : kind === "studio"
+            ? { operation: "get_stashdb_studio_search", query, limit: 8 }
+            : { operation: "get_stashdb_performer_search", query, limit: 8 };
         operation(request).then(
           (result) => { if (active) { setRemoteResults(result.items || []); setRemoteError(result.ready === false ? "Refresh Expand cache to load Stash-box tags." : ""); } },
-          (failure) => { if (active && kind === "tag") setRemoteError(failure.message || "Stash-box tag search unavailable."); }
+          (failure) => { if (active && kind !== "performer") setRemoteError(failure.message || `Stash-box ${kind} search unavailable.`); }
         );
       }, 300);
       return () => { active = false; clearTimeout(timer); };
@@ -5870,11 +5886,45 @@
             }).map((item) => ({ ...item, id: `stashdb:${item.id}`, source: "remote", external: true }))] : local;
           })()
         : kind === "studio"
-          ? studios.data?.findStudios?.studios || []
+          ? (() => {
+              // Studio filters match scenes by name, so a Stash-box studio
+              // that shares a library studio's name is the same filter.
+              const local = (studios.data?.findStudios?.studios || []).map((item) => ({ ...item, source: "local" }));
+              if (!searchBoth) return local;
+              const seen = new Set(local.map((item) => item.name.toLowerCase()));
+              return [...local, ...remoteResults.filter((item) => {
+                const name = String(item.name || "").toLowerCase();
+                if (!name || seen.has(name)) return false;
+                seen.add(name);
+                return true;
+              }).map((item) => ({ ...item, id: `stashdb-studio:${item.id}`, disambiguation: item.parent_name || "", source: "remote", external: true }))];
+            })()
           : [];
+    const both = Array.isArray(excluded) && typeof onExcludedChange === "function";
+    const excludedValues = both ? excluded : [];
+    const sameItem = (left, right) => String(left.id) === String(right.id);
     function add(item) {
-      if (!values.some((value) => String(value.id) === String(item.id))) onChange([...values, item]);
+      if (![...values, ...excludedValues].some((value) => sameItem(value, item))) onChange([...values, item]);
       setQuery("");
+    }
+    function toggle(item, isExcluded) {
+      if (isExcluded) {
+        onExcludedChange(excludedValues.filter((value) => !sameItem(value, item)));
+        onChange([...values, item]);
+      } else {
+        onChange(values.filter((value) => !sameItem(value, item)));
+        onExcludedChange([...excludedValues, item]);
+      }
+    }
+    function chip(item, isExcluded) {
+      const remove = () => (isExcluded ? onExcludedChange(excludedValues.filter((value) => !sameItem(value, item))) : onChange(values.filter((value) => !sameItem(value, item))));
+      if (!both) return React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: remove }, item.name, " ×");
+      return React.createElement(
+        "span",
+        { key: `${isExcluded ? "exclude" : "include"}-${item.id}`, className: `curator-token-chip ${isExcluded ? "curator-token-exclude" : "curator-token-include"}` },
+        React.createElement("button", { type: "button", className: "curator-token-mode", "aria-pressed": isExcluded, title: isExcluded ? `Excluding ${item.name}; switch to include` : `Including ${item.name}; switch to exclude`, "aria-label": isExcluded ? `Include ${item.name} instead` : `Exclude ${item.name} instead`, onClick: () => toggle(item, isExcluded) }, isExcluded ? "−" : "+"),
+        React.createElement("button", { type: "button", title: `Remove ${item.name}`, onClick: remove }, item.name, " ×")
+      );
     }
     function optionText(item) {
       return item.external && item.disambiguation ? `${item.name} (${item.disambiguation})` : item.name;
@@ -5883,7 +5933,7 @@
       "label",
       { className: "curator-token-filter" },
       React.createElement("span", null, label),
-      React.createElement("div", { className: "curator-token-input" }, values.map((item) => React.createElement("button", { key: item.id, type: "button", title: `Remove ${item.name}`, onClick: () => onChange(values.filter((value) => value.id !== item.id)) }, item.name, " ×")), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && options.length > 0) { event.preventDefault(); add(options[0]); } }, placeholder: values.length ? "Add…" : `Search ${label.toLowerCase()}…` })),
+      React.createElement("div", { className: "curator-token-input" }, values.map((item) => chip(item, false)), excludedValues.map((item) => chip(item, true)), disabled ? null : React.createElement("input", { value: query, onChange: (event) => setQuery(event.target.value), onKeyDown: (event) => { if (event.key === "Enter" && options.length > 0) { event.preventDefault(); add(options[0]); } }, placeholder: values.length || excludedValues.length ? "Add…" : `Search ${label.toLowerCase()}…`, "aria-label": `Search ${label.toLowerCase()}` })),
       query && options.length > 0 && React.createElement("div", { className: "curator-token-options" }, options.map((item) => React.createElement("button", { key: item.id, type: "button", onClick: () => add(item) }, React.createElement("span", { className: "curator-token-option-name" }, optionText(item)), searchBoth && React.createElement("span", { className: "curator-token-source-badge" }, item.source === "remote" ? "Stash-box" : "Library")))),
       remoteError && React.createElement("span", { role: "status" }, remoteError)
     );
@@ -5897,7 +5947,9 @@
     const [error, setError] = React.useState("");
     const [switchId] = React.useState(() => `curator-default-switch-${uuid()}`);
     const fields = [...Object.keys(current).sort(), "id", "name"];
-    const selected = Object.keys(saved.presets || {}).find((key) => JSON.stringify(saved.presets[key], fields) === JSON.stringify(current, fields)) || "";
+    // Presets saved before a list field existed still match when it is empty.
+    const listDefaults = Object.fromEntries(Object.entries(current).filter(([, value]) => Array.isArray(value)).map(([key]) => [key, []]));
+    const selected = Object.keys(saved.presets || {}).find((key) => JSON.stringify({ ...listDefaults, ...saved.presets[key] }, fields) === JSON.stringify(current, fields)) || "";
     async function save() {
       const clean = name.trim();
       if (!clean || saving) return;
@@ -5946,6 +5998,7 @@
     excludeTags, onExcludeTagsChange,
     performers, onPerformersChange,
     studios, onStudiosChange,
+    excludeStudios, onExcludeStudiosChange,
     favoriteOnly, onToggleFavorite,
     hidePhashMatches, onToggleHidePhash,
     hideDismissed, onToggleHideDismissed,
@@ -5971,10 +6024,9 @@
       React.createElement(
         "div",
         null,
-        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Include tags", searchBoth: remoteTags, values: includeTags, onChange: onIncludeTagsChange }),
-        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Exclude tags", searchBoth: remoteTags, values: excludeTags, onChange: onExcludeTagsChange }),
+        showScene && React.createElement(FilterTokens, { kind: "tag", label: "Tags", searchBoth: remoteTags, values: includeTags, onChange: onIncludeTagsChange, excluded: excludeTags, onExcludedChange: onExcludeTagsChange }),
         sceneGated && showScene && React.createElement(FilterTokens, { kind: "performer", label: "Performers", values: performers, onChange: onPerformersChange }),
-        sceneGated && showScene && React.createElement(FilterTokens, { kind: "studio", label: "Studios", values: studios, onChange: onStudiosChange }),
+        (variant === "hunt" || (sceneGated && showScene)) && React.createElement(FilterTokens, { kind: "studio", label: "Studios", searchBoth: remoteTags, values: studios, onChange: onStudiosChange, excluded: excludeStudios || [], onExcludedChange: onExcludeStudiosChange }),
         rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
         rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, "Hide exact PHash matches"),
         onToggleHideDismissed && showScene && React.createElement(Button, { size: "sm", variant: hideDismissed ? "primary" : "secondary", "aria-pressed": hideDismissed, title: "Hide StashDB scenes you marked Not interested or Not now. Turn off to see them and show them again.", onClick: onToggleHideDismissed }, "Hide dismissed scenes"),
@@ -6047,6 +6099,7 @@
         excludeTags: initialFilters.excludeTags || [],
         filterPerformers: initialFilters.performers || [],
         filterStudios: initialFilters.studios || [],
+        filterExcludeStudios: initialFilters.excludeStudios || [],
         minimumSimilarity: initialFilters.minimum ?? 0.18,
         hidePhashMatches: initialFilters.hidePhashMatches !== false,
         includeOwned: true,
@@ -6071,6 +6124,7 @@
         excludeTags: urlListField("sim_exclude_tags", initialFilters.excludeTags || []),
         filterPerformers: urlListField("sim_performers", initialFilters.performers || []),
         filterStudios: urlListField("sim_studios", initialFilters.studios || []),
+        filterExcludeStudios: urlListField("sim_exclude_studios", initialFilters.excludeStudios || []),
         minimumSimilarity: urlNumberField("sim_min_sim", initialFilters.minimum ?? 0.18),
         hidePhashMatches: urlBoolField("sim_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("sim_hide_dismissed", true),
@@ -6088,7 +6142,7 @@
       page: urlPageSpec("page_similar"),
     }), [initialFilters]);
     const [urlState, updateUrl] = useUrlState(similarSpec);
-    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity, hidePhashMatches, hideDismissed, includeOwned, fetchTick } = urlState;
+    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity, hidePhashMatches, hideDismissed, includeOwned, fetchTick } = urlState;
     const [query, setQuery] = React.useState("");
     const [search, setSearch] = React.useState("");
     const [result, setResult] = React.useState(null);
@@ -6138,8 +6192,8 @@
     // filterStateRef, so filters stay lazy (applied on the next fetch) exactly
     // as before.
     const continuationRequest = React.useRef(null);
-    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity });
-    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, minimumSimilarity };
+    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity });
+    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity };
     const requestKey = selected
       ? [source, entityType, String(selected.id), selected.label || "", source === "stashdb" ? "s" : String(page), excludedIds.join(","), source === "stashdb" ? (includeOwned ? "1" : "0") : "s", fetchTick].join("|")
       : null;
@@ -6164,6 +6218,8 @@
         performer_names: filters.filterPerformers.map((item) => item.name),
         studio_ids: filters.filterStudios.map((item) => String(item.id)),
         studio_names: filters.filterStudios.map((item) => item.name),
+        exclude_studio_ids: (filters.filterExcludeStudios || []).map((item) => String(item.id)),
+        exclude_studio_names: (filters.filterExcludeStudios || []).map((item) => item.name),
         minimum_similarity: filters.minimumSimilarity,
       };
       if (source === "stashdb") request.include_owned = includeOwned;
@@ -6197,7 +6253,7 @@
       return () => { active = false; };
     }, [requestKey]);
     function applySaved(value) {
-      updateUrl((s) => ({ ...s, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], filterPerformers: value.performers || [], filterStudios: value.studios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumSimilarity: value.minimum ?? 0.18 }));
+      updateUrl((s) => ({ ...s, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], filterPerformers: value.performers || [], filterStudios: value.studios || [], filterExcludeStudios: value.excludeStudios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumSimilarity: value.minimum ?? 0.18 }));
     }
     function choose(entity) {
       setFollowUps([]);
@@ -6251,7 +6307,7 @@
     }
     const sendWhisparr = (id) => operation({ operation: "send_whisparr", external_id: id });
     const externalDismissals = useExternalDismissals(gender);
-    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (filterPerformers?.length || 0) + (filterStudios?.length || 0) + (filterExcludeStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     // Curator's comments by the heading talk about the seed and its matches.
     const chatKey = loading || error || (selected && !result) ? null : `${source}:${entityType}:${selected?.id || ""}:${page}:${items.slice(0, 12).map((item) => item.id ?? item.entity_id).join(",")}`;
     const chatFeed = React.useMemo(() => chatKey && pageChatSimilarFeed(chatKey, { source, entityType, seedId: selected?.id, items }), [chatKey]);
@@ -6282,7 +6338,7 @@
         React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
         !deck && source === "stashdb" && entityType === "scene" && externalDismissals.sweepToggle(),
         React.createElement(RecommendationViewSelector, { label: "Find view", views: source === "library" && entityType === "scene" ? ["cards", "thumbnails", "wall"] : source === "stashdb" && entityType === "scene" ? ["cards", "thumbnails", "deck"] : ["cards", "thumbnails"], view: deck ? "deck" : gridView === "thumbnails" ? "thumbnails" : source === "library" && entityType === "scene" && wall ? "wall" : "cards", onChange: (value) => { changeFindView(value === "thumbnails" || value === "deck" ? value : "cards"); if (wall !== (value === "wall")) toggleWall(); } }),
-        React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, minimum: minimumSimilarity }, onApply: applySaved })
+        React.createElement(SavedFilters, { scope: "similar", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers: filterPerformers, studios: filterStudios, excludeStudios: filterExcludeStudios, minimum: minimumSimilarity }, onApply: applySaved })
       ),
       filtersOpen && React.createElement(FilterBar, {
         variant: "similar",
@@ -6292,6 +6348,7 @@
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
         performers: filterPerformers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, filterPerformers: value })),
         studios: filterStudios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, filterStudios: value })),
+        excludeStudios: filterExcludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, filterExcludeStudios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
         ...(source === "stashdb" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })) } : {}),
@@ -6728,7 +6785,8 @@
         favoriteOnly: false,
         gender: initialFilters.gender ?? "FEMALE",
         performers: [],
-        studios: [],
+        studios: initialFilters.studios || [],
+        excludeStudios: initialFilters.excludeStudios || [],
         minimumScore: 0,
         performer: null,
         huntView: "unlinked",
@@ -6751,6 +6809,8 @@
         huntSort: urlStringField("hunt_sort", "date", (value) => ["date", "score"].includes(value)),
         includeTags: urlListField("hunt_include_tags", initialFilters.includeTags || []),
         excludeTags: urlListField("hunt_exclude_tags", initialFilters.excludeTags || []),
+        studios: urlListField("hunt_studios", initialFilters.studios || []),
+        excludeStudios: urlListField("hunt_exclude_studios", initialFilters.excludeStudios || []),
         hidePhashMatches: urlBoolField("hunt_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("hunt_hide_dismissed", true),
       },
@@ -6766,6 +6826,7 @@
         excludeTags: initialFilters.excludeTags || [],
         performers: initialFilters.performers || [],
         studios: initialFilters.studios || [],
+        excludeStudios: initialFilters.excludeStudios || [],
         minimumScore: initialFilters.minimum ?? 0,
         hidePhashMatches: initialFilters.hidePhashMatches !== false,
         page: 1,
@@ -6780,6 +6841,7 @@
         excludeTags: urlListField("exp_exclude_tags", initialFilters.excludeTags || []),
         performers: urlListField("exp_performers", initialFilters.performers || []),
         studios: urlListField("exp_studios", initialFilters.studios || []),
+        excludeStudios: urlListField("exp_exclude_studios", initialFilters.excludeStudios || []),
         minimumScore: urlNumberField("exp_min_score", initialFilters.minimum ?? 0),
         hidePhashMatches: urlBoolField("exp_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("exp_hide_dismissed", true),
@@ -6792,7 +6854,7 @@
       },
     }, [huntOnly, initialFilters]);
     const [urlState, updateUrl] = useUrlState(expandSpec);
-    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, minimumScore, hidePhashMatches, hideDismissed, page, performer: huntPerformer, huntView, huntSort } = urlState;
+    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, excludeStudios, minimumScore, hidePhashMatches, hideDismissed, page, performer: huntPerformer, huntView, huntSort } = urlState;
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
@@ -6821,8 +6883,8 @@
       const request = entityType === "shortlist"
         ? { operation: "get_shortlist", page }
         : entityType === "hunt"
-          ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name) }
-          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed && !deck, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), minimum_score: minimumScore };
+          ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), studio_names: studios.map((item) => item.name), exclude_studio_names: excludeStudios.map((item) => item.name) }
+          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed && !deck, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), exclude_studio_names: excludeStudios.map((item) => item.name), minimum_score: minimumScore };
       continuationRequest.current = request;
       operation(request, entityType === "hunt" ? 60000 : undefined).then(
         (result) => {
@@ -6850,7 +6912,7 @@
       }, () => {});
     }, []);
     function applySaved(value) {
-      updateUrl((s) => ({ ...s, page: 1, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], performers: value.performers || [], studios: value.studios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumScore: value.minimum ?? 0 }));
+      updateUrl((s) => ({ ...s, page: 1, gender: value.gender ?? "FEMALE", favoriteOnly: Boolean(value.favoriteOnly), includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], performers: value.performers || [], studios: value.studios || [], excludeStudios: value.excludeStudios || [], hidePhashMatches: value.hidePhashMatches !== false, minimumScore: value.minimum ?? 0 }));
     }
     async function refresh() {
       clearEndlessCache();
@@ -6930,7 +6992,7 @@
       }));
     }
     const pager = data?.ready && !endless && !deck && React.createElement(Pager, { page, total: entityType === "hunt" ? huntItems.length : data.total, pageSize: entityType === "hunt" ? pageSize : data.page_size, hasMore: entityType === "hunt" ? huntHasMore : data.has_more, loading, onPage: (value) => updateUrl((s) => ({ ...s, page: value })), label: entityType === "hunt" ? "Performer Hunt pages" : entityType === "shortlist" ? "Shortlist pages" : "Expand pages" });
-    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
+    const activeFilterCount = (includeTags?.length || 0) + (excludeTags?.length || 0) + (performers?.length || 0) + (studios?.length || 0) + (excludeStudios?.length || 0) + (favoriteOnly ? 1 : 0) + (hidePhashMatches ? 1 : 0);
     return React.createElement(
       "section",
       { className: huntOnly ? "curator-hunt" : "curator-expand" },
@@ -6943,8 +7005,8 @@
         entityType === "scene" && React.createElement("label", { className: "curator-toolbar-select" }, React.createElement(FontAwesomeIcon, { icon: faSortAmountDown }), React.createElement("select", { value: sort, onChange: (event) => updateUrl((s) => ({ ...s, page: 1, sort: event.target.value })), "aria-label": "Sort Expand results" }, React.createElement("option", { value: "match" }, "Best match"), React.createElement("option", { value: "newest" }, "Newest"))),
         !listView && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeFilterCount)),
         !deck && !listView && entityType !== "performer" && externalDismissals.sweepToggle(),
-        entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags }, onApply: (value) => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [] })) }),
-        !listView && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, minimum: minimumScore }, onApply: applySaved }),
+        entityType === "hunt" && React.createElement(SavedFilters, { scope: "hunt", current: { hidePhashMatches, includeTags, excludeTags, studios, excludeStudios }, onApply: (value) => { updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: value.hidePhashMatches !== false, includeTags: value.includeTags || [], excludeTags: value.excludeTags || [], studios: value.studios || [], excludeStudios: value.excludeStudios || [] })); setFilterVersion((count) => count + 1); } }),
+        !listView && entityType !== "hunt" && React.createElement(SavedFilters, { scope: "expand", current: { gender, favoriteOnly, hidePhashMatches, includeTags, excludeTags, performers, studios, excludeStudios, minimum: minimumScore }, onApply: applySaved }),
         performerId && React.createElement(Button, { size: "sm", variant: "link", onClick: () => updateUrl((s) => ({ ...s, page: 1, performerId: null })) }, "Clear performer filter"),
         React.createElement(Button, { className: "curator-icon-button", size: "sm", disabled: entityType === "hunt" && !huntPerformer, title: entityType === "hunt" ? "Refresh this performer's scenes directly from Stash-box." : "Refresh the bounded Stash-box candidate cache in a background task.", "aria-label": entityType === "hunt" ? "Refresh Performer Hunt" : "Refresh Expand cache", onClick: refresh }, React.createElement(FontAwesomeIcon, { icon: faSync })),
         data?.fetched_at_ms && React.createElement("small", null, `${Date.now() > data.expires_at_ms ? "Stale · " : ""}Updated ${new Date(data.fetched_at_ms).toLocaleString()}`)
@@ -6965,9 +7027,11 @@
         entityType,
         includeTags, onIncludeTagsChange: (value) => updateUrl((s) => ({ ...s, includeTags: value })),
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
+        studios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, studios: value })),
+        excludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, excludeStudios: value })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
         hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })),
-        onApply: () => (updateUrl((s) => ({ ...s, page: 1 })), setFiltersOpen(false)),
+        onApply: () => { updateUrl((s) => ({ ...s, page: 1 })); setFilterVersion((value) => value + 1); setFiltersOpen(false); },
       }),
       !listView && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
         variant: "expand",
@@ -6976,6 +7040,7 @@
         excludeTags, onExcludeTagsChange: (value) => updateUrl((s) => ({ ...s, excludeTags: value })),
         performers, onPerformersChange: (value) => updateUrl((s) => ({ ...s, performers: value })),
         studios, onStudiosChange: (value) => updateUrl((s) => ({ ...s, studios: value })),
+        excludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, excludeStudios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
         ...(entityType === "scene" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, page: 1, hideDismissed: !s.hideDismissed })) } : {}),
@@ -9111,14 +9176,16 @@
     const [filterExcludeTags, setFilterExcludeTags] = React.useState(initialSlateFilters.excludeTags || []);
     const [filterPerformers, setFilterPerformers] = React.useState(initialSlateFilters.performers || []);
     const [filterStudios, setFilterStudios] = React.useState(initialSlateFilters.studios || []);
+    const [filterExcludeStudios, setFilterExcludeStudios] = React.useState(initialSlateFilters.excludeStudios || []);
     const [filterGender, setFilterGender] = React.useState(initialSlateFilters.gender || "");
-    const slateFilters = { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender };
-    const activeSlateFilterCount = filterIncludeTags.length + filterExcludeTags.length + filterPerformers.length + filterStudios.length + (filterGender ? 1 : 0);
+    const slateFilters = { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, excludeStudios: filterExcludeStudios, gender: filterGender };
+    const activeSlateFilterCount = filterIncludeTags.length + filterExcludeTags.length + filterPerformers.length + filterStudios.length + filterExcludeStudios.length + (filterGender ? 1 : 0);
     function applySavedSlateFilters(value, resetPage = true) {
       setFilterIncludeTags(value.includeTags || []);
       setFilterExcludeTags(value.excludeTags || []);
       setFilterPerformers(value.performers || []);
       setFilterStudios(value.studios || []);
+      setFilterExcludeStudios(value.excludeStudios || []);
       setFilterGender(value.gender || "");
       if (resetPage) setPage(1);
     }
@@ -9248,7 +9315,7 @@
       return () => {
         active = false;
       };
-    }, [lane, page, refreshKey, configReady, moodID, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterGender]);
+    }, [lane, page, refreshKey, configReady, moodID, filterIncludeTags, filterExcludeTags, filterPerformers, filterStudios, filterExcludeStudios, filterGender]);
     React.useEffect(() => {
       if (!laneByValue.has(lane)) return;
       let timer;
@@ -9497,7 +9564,7 @@
           laneByValue.has(lane) && slate && React.createElement(Button, { className: "curator-rotate-button", size: "sm", variant: "secondary", disabled: loading || !slate.items.length, onClick: showSomethingElse, "aria-busy": rotatingLane === lane, title: "Show me something else", "aria-label": "Show me something else" }, React.createElement(FontAwesomeIcon, { icon: faSync, className: rotatingLane === lane ? "curator-rotate-icon-spinning" : "curator-rotate-icon" }), " ", rotatingLane === lane ? "Finding…" : "New picks"),
           laneByValue.has(lane) && React.createElement(RecommendationViewSelector, { view: recommendationView, onChange: changeRecommendationView }),
           laneByValue.has(lane) && React.createElement(Button, { size: "sm", variant: filtersOpen ? "primary" : "secondary", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen((value) => !value) }, React.createElement(FontAwesomeIcon, { icon: faFilter }), " Filters", activeSlateFilterCount > 0 && React.createElement("span", { className: "curator-filter-count" }, activeSlateFilterCount)),
-          configReady && laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, gender: filterGender }, onApply: applySavedSlateFilters })
+          configReady && laneByValue.has(lane) && React.createElement(SavedFilters, { scope: "recommendations", current: { includeTags: filterIncludeTags, excludeTags: filterExcludeTags, performers: filterPerformers, studios: filterStudios, excludeStudios: filterExcludeStudios, gender: filterGender }, onApply: applySavedSlateFilters })
         )
       ),
       laneByValue.has(lane) && filtersOpen && React.createElement(FilterBar, {
@@ -9507,6 +9574,7 @@
         excludeTags: filterExcludeTags, onExcludeTagsChange: (value) => setFilterExcludeTags(value),
         performers: filterPerformers, onPerformersChange: (value) => setFilterPerformers(value),
         studios: filterStudios, onStudiosChange: (value) => setFilterStudios(value),
+        excludeStudios: filterExcludeStudios, onExcludeStudiosChange: (value) => setFilterExcludeStudios(value),
         gender: filterGender, onGenderChange: (event) => setFilterGender(event.target.value),
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),

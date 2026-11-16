@@ -515,6 +515,18 @@ func (c *tpdbClient) query(operation string, variables jVal) (jVal, error) {
 			rows.arr = append(rows.arr, tpdbScene(row))
 		}
 		return jvObj(jvKey("queryScenes", jvObj(jvKey("count", jvInt(total)), jvKey("scenes", rows)))), nil
+	case "CuratorStudioSearch":
+		params := url.Values{"q": {input.get("names").asString()}}
+		_, raw, err := c.list("/sites", params, page, size)
+		if err != nil {
+			return jvNull(), err
+		}
+		rows := jvArr()
+		for _, site := range raw {
+			// Scene payloads name the studio by its site, so the site is the match key.
+			rows.arr = append(rows.arr, jvObj(jvKey("id", site.get("uuid")), jvKey("name", site.get("name")), jvKey("parent", jvNull())))
+		}
+		return jvObj(jvKey("queryStudios", jvObj(jvKey("studios", rows)))), nil
 	case "CuratorSimilarPerformers", "CuratorPerformerSearch":
 		params := url.Values{"orderBy": {"most_relevant"}}
 		if input.get("sort").asString() == "NAME" {

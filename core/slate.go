@@ -148,9 +148,13 @@ func slateFromArgs(db dbx, config, args jVal) (jVal, error) {
 	if err != nil {
 		return jvNull(), err
 	}
+	excludeStudioIDs, err := stringList(args.get("exclude_studio_ids"))
+	if err != nil {
+		return jvNull(), err
+	}
 	gender := argsString(args, "gender", "")
 	return getSlateCore(db, config, lane, count, page, impressionID, context, excludedSet, exploration, drawSeed, drawAtMs,
-		includeTags, excludeTags, performerIDs, studioIDs, gender, requestedMoodID(args))
+		includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs, gender, requestedMoodID(args))
 }
 
 // getSlateCore mirrors CuratorAPI.get_slate after arg coercion. The filter
@@ -159,7 +163,7 @@ func slateFromArgs(db dbx, config, args jVal) (jVal, error) {
 // candidates; they don't change ranking. A filtered materialized request
 // scans candidate IDs for its exact total but hydrates only the requested
 // page; exploratory requests still recompute the full slate.
-func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, drawSeed string, drawAtMs int64, includeTags, excludeTags, performerIDs, studioIDs []string, gender string, moodID string) (jVal, error) {
+func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressionID, context jVal, excluded map[string]bool, exploration float64, drawSeed string, drawAtMs int64, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs []string, gender string, moodID string) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid recommendation page")
 	}
@@ -179,7 +183,7 @@ func getSlateCore(db dbx, config jVal, lane string, count, page int64, impressio
 	end := page * count
 	diversityEnabled := cfg.get("diversity_enabled").truthy()
 
-	sceneFilter, err := buildSceneFilter(db, includeTags, excludeTags, performerIDs, studioIDs, gender)
+	sceneFilter, err := buildSceneFilter(db, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs, gender)
 	if err != nil {
 		return jvNull(), err
 	}
@@ -1331,8 +1335,8 @@ func attachedGenerationID(db dbx, kind string) string {
 // already been classified by the model: no minimum-similarity or
 // favorite-only knob, since those are about ranking a candidate against a
 // source entity, not about narrowing a pre-picked set.
-func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs []string, gender string) (func(string) bool, error) {
-	if len(includeTags) == 0 && len(excludeTags) == 0 && len(performerIDs) == 0 && len(studioIDs) == 0 && gender == "" {
+func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs []string, gender string) (func(string) bool, error) {
+	if len(includeTags) == 0 && len(excludeTags) == 0 && len(performerIDs) == 0 && len(studioIDs) == 0 && len(excludeStudioIDs) == 0 && gender == "" {
 		return nil, nil
 	}
 	// Scene performers are only consulted by the gender and performer
@@ -1353,7 +1357,7 @@ func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs 
 		}
 	}
 	var studioByScene map[string]string
-	if len(studioIDs) > 0 {
+	if len(studioIDs) > 0 || len(excludeStudioIDs) > 0 {
 		studioByScene, err = studios(db)
 		if err != nil {
 			return nil, err
@@ -1393,6 +1397,10 @@ func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs 
 	for _, id := range studioIDs {
 		studioIDSet[id] = true
 	}
+	excludeStudioSet := make(map[string]bool, len(excludeStudioIDs))
+	for _, id := range excludeStudioIDs {
+		excludeStudioSet[id] = true
+	}
 	return func(sceneID string) bool {
 		candidatePerformers := performers[sceneID]
 		if gender != "" {
@@ -1431,6 +1439,9 @@ func buildSceneFilter(db dbx, includeTags, excludeTags, performerIDs, studioIDs 
 			return false
 		}
 		if len(studioIDSet) > 0 && !studioIDSet[studioByScene[sceneID]] {
+			return false
+		}
+		if excludeStudioSet[studioByScene[sceneID]] {
 			return false
 		}
 		return true

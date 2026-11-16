@@ -192,6 +192,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetPerformerHunt(pluginDir, payload)
 	case "get_stashdb_performer_search":
 		return opGetStashdbPerformerSearch(pluginDir, payload)
+	case "get_stashdb_studio_search":
+		return opGetStashdbStudioSearch(pluginDir, payload)
 	case "get_external_similar":
 		return opGetExternalSimilar(pluginDir, payload)
 	case "send_whisparr":

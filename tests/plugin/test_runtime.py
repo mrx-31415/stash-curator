@@ -1018,8 +1018,8 @@ def test_plugin_performer_hunt_keeps_results_and_reuses_external_cards() -> None
     assert '["all", `All ${huntCounts.all}`]' in source
     assert '["linked", `In library ${huntCounts.linked}`]' in source
     assert '["unlinked", `Not linked locally ${huntCounts.unlinked}`]' in source
-    assert 'kind: "tag", label: "Include tags"' in source
-    assert 'kind: "tag", label: "Exclude tags"' in source
+    assert 'kind: "tag", label: "Tags"' in source
+    assert "excluded: excludeTags, onExcludedChange: onExcludeTagsChange" in source
     # Similar/Expand/Hunt share one FilterBar component (variant-gated), so
     # this markup now appears once in FilterBar's definition rather than
     # once per hand-duplicated filter panel.
@@ -1113,7 +1113,8 @@ def test_panels_serialize_full_view_state_to_the_url() -> None:
     assert 'urlNumberField("prn_aggr"' in source
     # URL writes are batched into one history push per user action.
     assert "const search = route.toString();" in source
-    assert 'history[options.replace ? "replace" : "push"]' in source
+    assert "const replace = options.replace || pendingRef.current;" in source
+    assert 'history[replace ? "replace" : "push"]' in source
 
 
 def test_score_review_view_is_a_maintenance_nav_item_and_uses_the_slate_card() -> None:

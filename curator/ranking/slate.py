@@ -553,6 +553,7 @@ class SlateBuilder:
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
         gender: str = "",
+        exclude_studio_ids: tuple[str, ...] = (),
     ) -> Slate:
         started = time.perf_counter()
         timings: dict[str, int] = {}
@@ -566,7 +567,7 @@ class SlateBuilder:
         if model_id is None:
             raise RuntimeError("no published model; run build-model first")
         scene_filter = self._scene_filter(
-            include_tags, exclude_tags, performer_ids, studio_ids, gender
+            include_tags, exclude_tags, performer_ids, studio_ids, gender, exclude_studio_ids
         )
         if exploration == 0:
             materialized = self._load_materialized_slate(model_id, lane, count, scene_filter)
@@ -1340,6 +1341,7 @@ class SlateBuilder:
         performer_ids: tuple[str, ...],
         studio_ids: tuple[str, ...],
         gender: str,
+        exclude_studio_ids: tuple[str, ...] = (),
     ) -> Callable[[str], bool] | None:
         """A predicate for get_slate's include/exclude tag, performer,
         studio, and gender filters, or None when none are set. Mirrors the
@@ -1350,11 +1352,18 @@ class SlateBuilder:
         ranking a candidate against a source entity, not about narrowing a
         pre-picked set.
         """
-        if not (include_tags or exclude_tags or performer_ids or studio_ids or gender):
+        if not (
+            include_tags
+            or exclude_tags
+            or performer_ids
+            or studio_ids
+            or exclude_studio_ids
+            or gender
+        ):
             return None
         performers = self._scene_performers()
         genders = self._performer_genders() if gender else {}
-        studios = self._studios() if studio_ids else {}
+        studios = self._studios() if studio_ids or exclude_studio_ids else {}
         included = equivalent_tag_names(self.connection, include_tags)
         excluded = equivalent_tag_names(self.connection, exclude_tags)
         filter_names = set().union(*included, *excluded)
@@ -1372,6 +1381,8 @@ class SlateBuilder:
             if any(group & candidate_tags for group in excluded):
                 return False
             if performer_id_set and not performer_id_set <= candidate_performers:
+                return False
+            if studios.get(scene_id) in exclude_studio_ids:
                 return False
             return not (studio_id_set and studios.get(scene_id) not in studio_id_set)
 

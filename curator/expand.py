@@ -684,6 +684,8 @@ class ExpandService:
         limit: int = PERFORMER_HUNT_LIMIT,
         include_tags: tuple[str, ...] = (),
         exclude_tags: tuple[str, ...] = (),
+        studio_names: tuple[str, ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
     ) -> dict[str, object]:
         local = self.connection.execute(
             "SELECT name FROM source_performer WHERE performer_id=?", (performer_id,)
@@ -768,6 +770,8 @@ class ExpandService:
                 scene["payload"],
                 include_tags,
                 exclude_tags,
+                studio_names=studio_names,
+                exclude_studio_names=exclude_studio_names,
                 include_groups=include_groups,
                 exclude_groups=exclude_groups,
                 blocked_groups=blocked_groups,
@@ -815,6 +819,7 @@ class ExpandService:
         studio_query: str = "",
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
         hide_phash_matches: bool = True,
         hide_dismissed: bool = True,
         minimum_score: float = -1.0,
@@ -913,6 +918,7 @@ class ExpandService:
                 include_groups,
                 exclude_groups,
                 blocked_groups=blocked_groups,
+                exclude_studio_names=exclude_studio_names,
             ):
                 continue
             rows.append(
@@ -966,6 +972,7 @@ class ExpandService:
         include_groups: tuple[frozenset[str], ...] = (),
         exclude_groups: tuple[frozenset[str], ...] = (),
         blocked_groups: tuple[frozenset[str], ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
     ) -> bool:
         tags = {str(item.get("name") or "").casefold() for item in payload.get("tags", [])}
         cast = {
@@ -979,6 +986,7 @@ class ExpandService:
             and not any(group & tags for group in exclude_groups)
             and (not performer_names or all(value.casefold() in cast for value in performer_names))
             and (not studio_names or studio in {value.casefold() for value in studio_names})
+            and studio not in {value.casefold() for value in exclude_studio_names}
             and (not performer_query or performer_query.casefold() in " ".join(cast))
             and (not studio_query or studio_query.casefold() in studio)
         )
@@ -1341,6 +1349,7 @@ class ExpandService:
         exclude_tags: tuple[str, ...] = (),
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
         favorite_only: bool = False,
         minimum_similarity: float = 0.15,
         hide_dismissed: bool = True,
@@ -1428,6 +1437,7 @@ class ExpandService:
                     studio_names,
                     include_groups=include_groups,
                     exclude_groups=exclude_groups,
+                    exclude_studio_names=exclude_studio_names,
                 ):
                     continue
                 if favorite_only and not any(
@@ -1612,6 +1622,7 @@ class ExpandService:
         exclude_tags: tuple[str, ...] = (),
         performer_names: tuple[str, ...] = (),
         studio_names: tuple[str, ...] = (),
+        exclude_studio_names: tuple[str, ...] = (),
         favorite_only: bool = False,
         include_owned: bool = False,
         hide_phash_matches: bool = True,
@@ -1761,6 +1772,7 @@ class ExpandService:
             exclude_tags=exclude_tags,
             performer_names=performer_names,
             studio_names=studio_names,
+            exclude_studio_names=exclude_studio_names,
             favorite_only=favorite_only,
             minimum_similarity=minimum_similarity,
             hide_dismissed=hide_dismissed,

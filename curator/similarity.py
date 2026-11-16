@@ -208,6 +208,7 @@ class SimilarityService:
         exclude_tags: tuple[str, ...] = (),
         performer_ids: tuple[str, ...] = (),
         studio_ids: tuple[str, ...] = (),
+        exclude_studio_ids: tuple[str, ...] = (),
         favorite_only: bool = False,
         minimum_similarity: float = 0.18,
     ) -> tuple[SimilarityResult, ...]:
@@ -316,6 +317,8 @@ class SimilarityService:
             if performer_ids and not set(performer_ids) <= candidate_performers:
                 continue
             if studio_ids and studios.get(candidate_id) not in studio_ids:
+                continue
+            if exclude_studio_ids and studios.get(candidate_id) in exclude_studio_ids:
                 continue
             content_value = content_overlaps.get(candidate_id, 0.0)
             structure = 1 - abs(

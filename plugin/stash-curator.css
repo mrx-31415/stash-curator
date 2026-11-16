@@ -2779,6 +2779,28 @@ html.kb-classic .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon 
   font-size: 0.75rem;
 }
 
+.curator-token-chip {
+  align-items: stretch;
+  border: 1px solid var(--chip-mode);
+  border-radius: var(--curator-radius-sm);
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.curator-token-include { --chip-mode: #2f9e44; }
+.curator-token-exclude { --chip-mode: #e03131; }
+
+.curator-token-input .curator-token-chip button { border-radius: 0; }
+
+.curator-token-input .curator-token-mode {
+  background: var(--chip-mode);
+  color: #fff;
+  font-weight: 700;
+  min-width: 1.4rem;
+}
+
+.curator-token-exclude button:not(.curator-token-mode) { text-decoration: line-through; }
+
 .curator-token-input input {
   background: transparent;
   border: 0;

@@ -35,7 +35,7 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
   assert.deepEqual(plain(requests[0]), {
     lane: "for_you", page: 1, count: 2, exploration: 0, mood_id: "mood-one", together_mode: true,
     draw_seed: "draw-one", draw_at_ms: 123, exclude_scene_ids: [99, "1", "2"],
-    include_tags: ["Include"], exclude_tags: ["Exclude"], performer_ids: ["10"], studio_ids: ["20"], gender: "FEMALE",
+    include_tags: ["Include"], exclude_tags: ["Exclude"], performer_ids: ["10"], studio_ids: ["20"], exclude_studio_ids: [], gender: "FEMALE",
     operation: "get_slate", context: { route: "/plugins/stash-curator", playlist: true },
   });
   const url = new URL(routes[0], "http://stash");

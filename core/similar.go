@@ -307,6 +307,10 @@ func getSimilarBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	if err != nil {
 		return jvNull(), err
 	}
+	excludeStudioIDs, err := stringList(args.get("exclude_studio_ids"))
+	if err != nil {
+		return jvNull(), err
+	}
 	favoriteOnly := argsBool(args, "favorite_only", false)
 	minimumSimilarity := 0.18
 	if v := args.get("minimum_similarity"); v.kind != jNull {
@@ -317,12 +321,12 @@ func getSimilarBody(pluginDir string, payload, settings jVal) (jVal, error) {
 		return jvNull(), err
 	}
 	defer readDB.Close()
-	return similarCore(db, readDB, entityType, entityID, count, page, impressionID, gender, includeTags, excludeTags, performerIDs, studioIDs, favoriteOnly, minimumSimilarity, excludedSet)
+	return similarCore(db, readDB, entityType, entityID, count, page, impressionID, gender, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs, favoriteOnly, minimumSimilarity, excludedSet)
 }
 
 // similarCore mirrors CuratorAPI.similar after arg coercion.
 func similarCore(db, read dbx, entityType, entityID string, count, page int64, impressionID jVal,
-	gender string, includeTags, excludeTags, performerIDs, studioIDs []string,
+	gender string, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs []string,
 	favoriteOnly bool, minimumSimilarity float64, excluded map[string]bool) (jVal, error) {
 	if page < 1 || count < 1 || count > 500 {
 		return jvNull(), fmt.Errorf("invalid Similar page")
@@ -342,7 +346,7 @@ func similarCore(db, read dbx, entityType, entityID string, count, page int64, i
 	idColumn := "scene_id"
 	labelColumn := "title"
 	if entityType == "scene" {
-		results, err = service.scenes(entityID, requested, gender, includeTags, excludeTags, performerIDs, studioIDs, favoriteOnly, minimumSimilarity)
+		results, err = service.scenes(entityID, requested, gender, includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs, favoriteOnly, minimumSimilarity)
 		if err != nil {
 			return jvNull(), err
 		}
@@ -515,7 +519,7 @@ func recordRankedImpressionConn(conn *sql.Conn, impressionID, lane, modelID stri
 
 // scenes mirrors SimilarityService.scenes.
 func (s *similarityService) scenes(sceneID string, count int64, gender string,
-	includeTags, excludeTags, performerIDs, studioIDs []string, favoriteOnly bool, minimumSimilarity float64) ([]*similarityResult, error) {
+	includeTags, excludeTags, performerIDs, studioIDs, excludeStudioIDs []string, favoriteOnly bool, minimumSimilarity float64) ([]*similarityResult, error) {
 	var probe int
 	err := s.db.QueryRow(`SELECT 1 FROM model_scene_score WHERE model_id=? AND scene_id=?`, s.modelID, sceneID).Scan(&probe)
 	if err == sql.ErrNoRows {
@@ -676,6 +680,10 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 	for _, id := range studioIDs {
 		studioIDSet[id] = true
 	}
+	excludeStudioSet := make(map[string]bool, len(excludeStudioIDs))
+	for _, id := range excludeStudioIDs {
+		excludeStudioSet[id] = true
+	}
 	var results []*similarityResult
 	for candidateID := range candidateIDs {
 		candidateAppeal := s.appeals[candidateID]
@@ -762,6 +770,9 @@ WHERE model_id=? AND performer_id=? ORDER BY rank`, s.modelID, targetID)
 			if !ok || !studioIDSet[candidateStudio] {
 				continue
 			}
+		}
+		if len(excludeStudioSet) > 0 && excludeStudioSet[loads.studios[candidateID]] {
+			continue
 		}
 		contentValue := loads.contentOverlaps[candidateID]
 		structure := 1 - mathAbs(targetStructure-minFloat64(1.0, mathMax(0.0, float64(len(candidatePerformers)-1))/3.0))

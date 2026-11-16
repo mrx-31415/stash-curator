@@ -781,6 +781,55 @@ def test_get_performer_hunt_external_id_byte_identical(
     assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
 
 
+def test_get_performer_hunt_studio_filter_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_performer_hunt",
+        expand_sidecar,
+        stub_stash,
+        performer_id="ext-p3",
+        studio_names=["studio two"],
+    )
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+    output = json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"]
+    assert [item["id"] for item in output["items"]] == ["stashdb-scene-3"]
+
+
+def test_get_performer_hunt_excluded_studio_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_performer_hunt",
+        expand_sidecar,
+        stub_stash,
+        performer_id="ext-p3",
+        exclude_studio_names=["Studio Two"],
+    )
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+    output = json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"]
+    assert [item["id"] for item in output["items"]] == ["stashdb-scene-4"]
+
+
+def test_get_expand_excluded_studio_byte_identical(
+    expand_sidecar: Path, binary: Path, stub_stash: str
+) -> None:
+    raw = payload(
+        "get_expand",
+        expand_sidecar,
+        stub_stash,
+        entity_type="scene",
+        page=1,
+        count=10,
+        minimum_score=-1,
+        exclude_studio_names=["studio one"],
+    )
+    assert_slice2_identical(binary, PLUGIN_DIR, raw, expand_sidecar, stub_stash)
+    output = json.loads(run_backend_env(binary, PLUGIN_DIR, raw, stub_stash).stdout)["output"]
+    studios = {item["payload"]["studio"]["name"] for item in output["items"]}
+    assert output["items"] and "Studio One" not in studios
+
+
 def test_get_performer_hunt_unlinked_byte_identical(
     expand_sidecar: Path, binary: Path, stub_stash: str
 ) -> None:
