@@ -69,6 +69,7 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	}
 	hidePhash := argsBool(args, "hide_phash_matches", true)
 	hideDismissed := argsBool(args, "hide_dismissed", true)
+	hideWhisparr := argsBool(args, "hide_whisparr", true)
 	minimumScore := -1.0
 	if v := args.get("minimum_score"); v.kind != jNull {
 		minimumScore, err = pythonFloat(v)
@@ -109,13 +110,13 @@ func getExpandBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	}
 	return expandResults(db, entityType, page, sortBy, performerID, favoriteOnly, gender,
 		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, performerQuery, studioQuery,
-		hidePhash, hideDismissed, minimumScore, count, links)
+		hidePhash, hideDismissed, hideWhisparr, minimumScore, count, links)
 }
 
 // expandResults mirrors ExpandService.results.
 func expandResults(db dbx, entityType string, page int64, sortBy string, performerID jVal,
 	favoriteOnly bool, gender string, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string,
-	performerQuery, studioQuery string, hidePhash, hideDismissed bool, minimumScore float64, count int64,
+	performerQuery, studioQuery string, hidePhash, hideDismissed, hideWhisparr bool, minimumScore float64, count int64,
 	links jVal) (jVal, error) {
 	if (entityType != "scene" && entityType != "performer") || (sortBy != "match" && sortBy != "newest") {
 		return jvNull(), errors.New("invalid Expand query")
@@ -201,6 +202,13 @@ func expandResults(db dbx, entityType string, page int64, sortBy string, perform
 	hidden := map[string]bool{}
 	if hideDismissed {
 		for externalID := range dismissed {
+			hidden[externalID] = true
+		}
+	}
+	// Scenes Curator already sent to Whisparr are on their way; hiding them
+	// keeps Expand about scenes still to decide on.
+	if hideWhisparr {
+		for externalID := range sentToWhisparr {
 			hidden[externalID] = true
 		}
 	}
@@ -895,6 +903,7 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 	includeOwned := argsBool(args, "include_owned", false)
 	hidePhash := argsBool(args, "hide_phash_matches", true)
 	hideDismissed := argsBool(args, "hide_dismissed", true)
+	hideWhisparr := argsBool(args, "hide_whisparr", true)
 	minimumSimilarity := 0.15
 	if v := args.get("minimum_similarity"); v.kind != jNull {
 		minimumSimilarity, err = pythonFloat(v)
@@ -912,7 +921,7 @@ func getExternalSimilarBody(pluginDir string, payload, settings jVal) (jVal, err
 	}
 	return expandTargetedSimilar(db, clientURL, apiKey, links, entityType, entityID,
 		gender, 100, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames,
-		favoriteOnly, includeOwned, hidePhash, hideDismissed, minimumSimilarity)
+		favoriteOnly, includeOwned, hidePhash, hideDismissed, hideWhisparr, minimumSimilarity)
 }
 
 // recordDurationMs mirrors curator.profiling.record_duration: a back-dated

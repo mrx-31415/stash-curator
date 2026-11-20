@@ -462,8 +462,12 @@ cache to update it) and match remote results by name and alias; StashDB studios
 are searched by name, alias, or network and match the studio name on each scene,
 so neither needs to exist in your library.
 If Whisparr is configured, **Send to Whisparr** appears on external scene cards;
-it sends only the scene you select. Curator remembers the send, so the card shows
-**Sent to Whisparr** on later visits. Use
+it sends only the scene you select. Curator remembers the send. Expand, StashDB
+Similar, and Performer Hunt leave sent scenes out from the next load onwards, so
+they don't crowd out scenes you have not decided on yet. A scene you just sent stays
+in place, with its **Sent to Whisparr** badge, until the results reload. To see sent
+scenes again, turn off **Hide sent to Whisparr** in the view's **Filters**. The
+triage deck in Expand and Performer Hunt still includes them. Use
 **Rate tags** to rate tags that map exactly to local tags.
 Saved candidates appear in **Expand → Shortlist**.
 

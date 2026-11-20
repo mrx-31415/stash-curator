@@ -822,6 +822,7 @@ class ExpandService:
         exclude_studio_names: tuple[str, ...] = (),
         hide_phash_matches: bool = True,
         hide_dismissed: bool = True,
+        hide_whisparr: bool = False,
         minimum_score: float = -1.0,
         count: int = 50,
         links: dict[str, dict[str, str]] | None = None,
@@ -868,6 +869,8 @@ class ExpandService:
             (entity_type, self.stashbox_endpoint.rstrip("/"), self.stashbox_endpoint.rstrip("/")),
         ):
             if hide_dismissed and str(row["external_id"]) in dismissed:
+                continue
+            if hide_whisparr and str(row["external_id"]) in sent_to_whisparr:
                 continue
             payload = json.loads(row["payload_json"])
             score = float(row["score"])
@@ -1353,6 +1356,7 @@ class ExpandService:
         favorite_only: bool = False,
         minimum_similarity: float = 0.15,
         hide_dismissed: bool = True,
+        hide_whisparr: bool = False,
     ) -> dict[str, object]:
         if not 0 <= minimum_similarity <= 1:
             raise ValueError("minimum_similarity must be between 0 and 1")
@@ -1418,6 +1422,8 @@ class ExpandService:
                 if candidate_ids is not None and str(row["external_id"]) not in candidate_ids:
                     continue
                 if hide_dismissed and str(row["external_id"]) in dismissed:
+                    continue
+                if hide_whisparr and str(row["external_id"]) in sent_to_whisparr:
                     continue
                 adjusted = self._with_performer_dislike(
                     {"payload": json.loads(row["payload_json"]), "score": float(row["score"])},
@@ -1627,6 +1633,7 @@ class ExpandService:
         include_owned: bool = False,
         hide_phash_matches: bool = True,
         hide_dismissed: bool = True,
+        hide_whisparr: bool = False,
         minimum_similarity: float = 0.15,
     ) -> dict[str, object]:
         model_id = RecommendationModelStore(self.connection).current_model_id()
@@ -1776,6 +1783,7 @@ class ExpandService:
             favorite_only=favorite_only,
             minimum_similarity=minimum_similarity,
             hide_dismissed=hide_dismissed,
+            hide_whisparr=hide_whisparr,
         )
         raw_items = result["items"]
         assert isinstance(raw_items, list)
