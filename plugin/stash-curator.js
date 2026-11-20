@@ -6002,6 +6002,7 @@
     favoriteOnly, onToggleFavorite,
     hidePhashMatches, onToggleHidePhash,
     hideDismissed, onToggleHideDismissed,
+    hideWhisparr, onToggleHideWhisparr,
     gender, onGenderChange,
     minimum, onMinimumChange,
     applyVisible = true, onApply,
@@ -6030,6 +6031,7 @@
         rankingOnly && sceneGated && showScene && React.createElement(Button, { size: "sm", variant: favoriteOnly ? "primary" : "secondary", ...favoriteExtra, onClick: onToggleFavorite }, React.createElement(FontAwesomeIcon, { icon: faHeart }), " Favorites"),
         rankingOnly && showScene && React.createElement(Button, { size: "sm", variant: hidePhashMatches ? "primary" : "secondary", "aria-pressed": hidePhashMatches, title: "Hide remote scenes when a local file has the same exact PHash", onClick: onToggleHidePhash }, "Hide exact PHash matches"),
         onToggleHideDismissed && showScene && React.createElement(Button, { size: "sm", variant: hideDismissed ? "primary" : "secondary", "aria-pressed": hideDismissed, title: "Hide StashDB scenes you marked Not interested or Not now. Turn off to see them and show them again.", onClick: onToggleHideDismissed }, "Hide dismissed scenes"),
+        onToggleHideWhisparr && showScene && React.createElement(Button, { size: "sm", variant: hideWhisparr ? "primary" : "secondary", "aria-pressed": hideWhisparr, title: "Hide StashDB scenes Curator already sent to Whisparr. A scene you send now stays until the results reload.", onClick: onToggleHideWhisparr }, "Hide sent to Whisparr"),
         sceneGated && React.createElement("label", { className: "curator-toolbar-select", title: "Limit results by performer gender" }, React.createElement(FontAwesomeIcon, { icon: faVenus }), React.createElement("select", { value: gender, onChange: onGenderChange, "aria-label": genderAriaLabel }, React.createElement("option", { value: "FEMALE" }, "Female"), React.createElement("option", { value: "MALE" }, "Male"), React.createElement("option", { value: "TRANSGENDER_FEMALE" }, "Trans female"), React.createElement("option", { value: "TRANSGENDER_MALE" }, "Trans male"), React.createElement("option", { value: "" }, "All genders"))),
         rankingOnly && sceneGated && showScene && React.createElement("label", { className: "curator-match-filter" }, React.createElement("span", null, `Minimum match ${minimum.toFixed(2)}`), React.createElement("input", { type: "range", className: "curator-range", min: minimumMin, max: "0.8", step: "0.05", value: minimum, onChange: onMinimumChange })),
         applyVisible && React.createElement(Button, { size: "sm", variant: "primary", onClick: onApply }, "Apply")
@@ -6128,6 +6130,7 @@
         minimumSimilarity: urlNumberField("sim_min_sim", initialFilters.minimum ?? 0.18),
         hidePhashMatches: urlBoolField("sim_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("sim_hide_dismissed", true),
+        hideWhisparr: urlBoolField("sim_hide_whisparr", true),
         includeOwned: urlBoolField("sim_include_owned", true),
         excludedIds: {
           param: "sim_excluded",
@@ -6142,7 +6145,7 @@
       page: urlPageSpec("page_similar"),
     }), [initialFilters]);
     const [urlState, updateUrl] = useUrlState(similarSpec);
-    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity, hidePhashMatches, hideDismissed, includeOwned, fetchTick } = urlState;
+    const { entityType, source, selected, page, excludedIds, gender, favoriteOnly, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity, hidePhashMatches, hideDismissed, hideWhisparr, includeOwned, fetchTick } = urlState;
     const [query, setQuery] = React.useState("");
     const [search, setSearch] = React.useState("");
     const [result, setResult] = React.useState(null);
@@ -6192,8 +6195,8 @@
     // filterStateRef, so filters stay lazy (applied on the next fetch) exactly
     // as before.
     const continuationRequest = React.useRef(null);
-    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity });
-    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, hideDismissed, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity };
+    const filterStateRef = React.useRef({ gender, favoriteOnly, hidePhashMatches, hideDismissed, hideWhisparr, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity });
+    filterStateRef.current = { gender, favoriteOnly, hidePhashMatches, hideDismissed, hideWhisparr, includeTags, excludeTags, filterPerformers, filterStudios, filterExcludeStudios, minimumSimilarity };
     const requestKey = selected
       ? [source, entityType, String(selected.id), selected.label || "", source === "stashdb" ? "s" : String(page), excludedIds.join(","), source === "stashdb" ? (includeOwned ? "1" : "0") : "s", fetchTick].join("|")
       : null;
@@ -6211,7 +6214,7 @@
         gender: filters.gender,
         favorite_only: filters.favoriteOnly,
         hide_phash_matches: filters.hidePhashMatches,
-        ...(source === "stashdb" ? { hide_dismissed: filters.hideDismissed } : {}),
+        ...(source === "stashdb" ? { hide_dismissed: filters.hideDismissed, hide_whisparr: filters.hideWhisparr } : {}),
         include_tags: filters.includeTags.map((item) => item.name),
         exclude_tags: filters.excludeTags.map((item) => item.name),
         performer_ids: filters.filterPerformers.map((item) => String(item.id)),
@@ -6351,7 +6354,7 @@
         excludeStudios: filterExcludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, filterExcludeStudios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
-        ...(source === "stashdb" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })) } : {}),
+        ...(source === "stashdb" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })), hideWhisparr, onToggleHideWhisparr: () => updateUrl((s) => ({ ...s, hideWhisparr: !s.hideWhisparr })) } : {}),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, gender: event.target.value })),
         minimum: minimumSimilarity, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumSimilarity: Number(event.target.value) })),
         applyVisible: Boolean(selected),
@@ -6813,6 +6816,7 @@
         excludeStudios: urlListField("hunt_exclude_studios", initialFilters.excludeStudios || []),
         hidePhashMatches: urlBoolField("hunt_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("hunt_hide_dismissed", true),
+        hideWhisparr: urlBoolField("hunt_hide_whisparr", true),
       },
       page: urlPageSpec("page_hunt"),
     } : {
@@ -6845,6 +6849,7 @@
         minimumScore: urlNumberField("exp_min_score", initialFilters.minimum ?? 0),
         hidePhashMatches: urlBoolField("exp_hide_phash", initialFilters.hidePhashMatches !== false),
         hideDismissed: urlBoolField("exp_hide_dismissed", true),
+        hideWhisparr: urlBoolField("exp_hide_whisparr", true),
       },
       page: urlPageSpec((state) => `page_expand_${state.entityType}`),
       prune(route, state) {
@@ -6854,7 +6859,7 @@
       },
     }, [huntOnly, initialFilters]);
     const [urlState, updateUrl] = useUrlState(expandSpec);
-    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, excludeStudios, minimumScore, hidePhashMatches, hideDismissed, page, performer: huntPerformer, huntView, huntSort } = urlState;
+    const { entityType, sort, performerId, favoriteOnly, gender, includeTags, excludeTags, performers, studios, excludeStudios, minimumScore, hidePhashMatches, hideDismissed, hideWhisparr, page, performer: huntPerformer, huntView, huntSort } = urlState;
     const [filtersOpen, setFiltersOpen] = React.useState(false);
     const [filterVersion, setFilterVersion] = React.useState(0);
     const [data, setData] = React.useState(null);
@@ -6884,7 +6889,7 @@
         ? { operation: "get_shortlist", page }
         : entityType === "hunt"
           ? { operation: "get_performer_hunt", performer_id: String(huntPerformer.id), include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), studio_names: studios.map((item) => item.name), exclude_studio_names: excludeStudios.map((item) => item.name) }
-          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed && !deck, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), exclude_studio_names: excludeStudios.map((item) => item.name), minimum_score: minimumScore };
+          : { operation: "get_expand", page, entity_type: entityType, sort, performer_id: performerId, favorite_only: favoriteOnly, hide_phash_matches: hidePhashMatches, hide_dismissed: hideDismissed && !deck, hide_whisparr: hideWhisparr && !deck, gender, include_tags: includeTags.map((item) => item.name), exclude_tags: excludeTags.map((item) => item.name), performer_names: performers.map((item) => item.name), studio_names: studios.map((item) => item.name), exclude_studio_names: excludeStudios.map((item) => item.name), minimum_score: minimumScore };
       continuationRequest.current = request;
       operation(request, entityType === "hunt" ? 60000 : undefined).then(
         (result) => {
@@ -6898,7 +6903,7 @@
         (failure) => active && (setError(failure.message), setLoading(false))
       );
       return () => { active = false; };
-    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, deck, gender, filterVersion, version, page, huntPerformer?.id]);
+    }, [entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, hideWhisparr, deck, gender, filterVersion, version, page, huntPerformer?.id]);
     React.useEffect(() => {
       if (!data?.initializing || error || loading) return;
       const timer = setTimeout(() => setVersion((value) => value + 1), 3000);
@@ -6951,7 +6956,7 @@
     // Shortlist is a saved list: no filters, sort, or dismissals.
     const listView = entityType === "shortlist";
     const huntItemsRaw = entityType === "hunt"
-      ? (data?.items || []).filter((item) => (!hidePhashMatches || item.match_type !== "phash") && (!hideDismissed || !item.dismissed))
+      ? (data?.items || []).filter((item) => (!hidePhashMatches || item.match_type !== "phash") && (!hideDismissed || !item.dismissed) && (!hideWhisparr || deck || !item.in_whisparr))
       : [];
     const huntCounts = {
       all: huntItemsRaw.length,
@@ -7031,6 +7036,7 @@
         excludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, excludeStudios: value })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, hidePhashMatches: !s.hidePhashMatches })),
         hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, hideDismissed: !s.hideDismissed })),
+        hideWhisparr, onToggleHideWhisparr: () => updateUrl((s) => ({ ...s, hideWhisparr: !s.hideWhisparr })),
         onApply: () => { updateUrl((s) => ({ ...s, page: 1 })); setFilterVersion((value) => value + 1); setFiltersOpen(false); },
       }),
       !listView && entityType !== "hunt" && filtersOpen && React.createElement(FilterBar, {
@@ -7043,7 +7049,7 @@
         excludeStudios, onExcludeStudiosChange: (value) => updateUrl((s) => ({ ...s, excludeStudios: value })),
         favoriteOnly, onToggleFavorite: () => updateUrl((s) => ({ ...s, page: 1, favoriteOnly: !s.favoriteOnly })),
         hidePhashMatches, onToggleHidePhash: () => updateUrl((s) => ({ ...s, page: 1, hidePhashMatches: !s.hidePhashMatches })),
-        ...(entityType === "scene" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, page: 1, hideDismissed: !s.hideDismissed })) } : {}),
+        ...(entityType === "scene" ? { hideDismissed, onToggleHideDismissed: () => updateUrl((s) => ({ ...s, page: 1, hideDismissed: !s.hideDismissed })), hideWhisparr, onToggleHideWhisparr: () => updateUrl((s) => ({ ...s, page: 1, hideWhisparr: !s.hideWhisparr })) } : {}),
         gender, onGenderChange: (event) => updateUrl((s) => ({ ...s, page: 1, gender: event.target.value })),
         minimum: minimumScore, onMinimumChange: (event) => updateUrl((s) => ({ ...s, minimumScore: Number(event.target.value) })),
         onApply: () => { clearEndlessCache(); updateUrl((s) => ({ ...s, page: 1 })); setFilterVersion((value) => value + 1); },
@@ -7058,7 +7064,7 @@
       pager,
       data?.ready && deck && !loading && React.createElement(TriageDeck, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort]), first: data, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), gender, whisparrEnabled, onWhisparr: sendWhisparr, onItemChange: patchItem }),
       data?.ready && !deck && (endless
-        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, gridView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
+        ? !loading && React.createElement(EndlessFindResults, { key: JSON.stringify([entityType, sort, performerId, favoriteOnly, hidePhashMatches, hideDismissed, hideWhisparr, gender, filterVersion, version, page, huntPerformer?.id, huntView, huntSort, pageSize]), cacheKey: endlessBatchKey(data, ["expand", continuationRequest.current, gridView, huntView, huntSort, pageSize]), first: data, page, pageSize: entityType === "hunt" ? pageSize : data.page_size || pageSize, clientItems: entityType === "hunt" ? huntItems : null, loadPage: (nextPage) => operation({ ...continuationRequest.current, page: nextPage }), renderPage: renderExpandPage })
         : renderExpandPage({ ...data, items: visibleItems })),
       data?.ready && !deck && !listView && entityType !== "performer" && externalDismissals.sweepBar(!endless),
       pager

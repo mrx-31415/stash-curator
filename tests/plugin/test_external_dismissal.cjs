@@ -236,6 +236,23 @@ function harness() {
   await settle();
   assert.equal(empty(), null);
   assert.equal(closed, 1);
+
+  // Expand, Hunt and StashDB Similar offer "Hide sent to Whisparr" next to
+  // Hide dismissed; a view that passes no handler shows no button.
+  const barContext = { React: createRuntime().React, Button: "button", FontAwesomeIcon: "icon", FilterTokens: "tokens", faHeart: "heart", faVenus: "venus" };
+  vm.createContext(barContext);
+  vm.runInContext(source.slice(source.indexOf("  function FilterBar("), source.indexOf("  function relationshipChips(")) + "\nglobalThis.FilterBar = FilterBar;", barContext);
+  let toggled = 0;
+  const bar = (extra) => barContext.FilterBar({ variant: "expand", entityType: "scene", includeTags: [], excludeTags: [], performers: [], studios: [], excludeStudios: [], gender: "FEMALE", minimum: 0, hideDismissed: true, onToggleHideDismissed: () => {}, ...extra });
+  const whisparrToggle = (tree) => byText(tree, "Hide sent to Whisparr");
+  const on = whisparrToggle(bar({ hideWhisparr: true, onToggleHideWhisparr: () => { toggled += 1; } }));
+  assert.equal(on.props["aria-pressed"], true);
+  assert.equal(on.props.variant, "primary");
+  on.props.onClick();
+  assert.equal(toggled, 1);
+  assert.equal(whisparrToggle(bar({ hideWhisparr: false, onToggleHideWhisparr: () => {} })).props.variant, "secondary");
+  assert.equal(whisparrToggle(bar({})), undefined);
+  assert.equal(whisparrToggle(bar({ entityType: "performer", hideWhisparr: true, onToggleHideWhisparr: () => {} })), undefined);
 })().catch((error) => {
   console.error(error);
   process.exit(1);

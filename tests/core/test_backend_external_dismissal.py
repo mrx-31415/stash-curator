@@ -158,8 +158,10 @@ def test_batch_dismissal_matches_and_skips_uncached(
 def test_find_items_mark_scenes_sent_to_whisparr(
     binary: Path, stub_stash: str, sidecar: Path
 ) -> None:
-    similar_args = {"entity_type": "scene", "entity_id": "recent-good"}
-    expand = payload("get_expand", sidecar, stub_stash, gender="", hide_phash_matches=False)
+    similar_args = {"entity_type": "scene", "entity_id": "recent-good", "hide_whisparr": False}
+    expand = payload(
+        "get_expand", sidecar, stub_stash, gender="", hide_phash_matches=False, hide_whisparr=False
+    )
     hunt = payload("get_performer_hunt", sidecar, stub_stash, performer_id="ext-p3")
     similar = payload("get_external_similar", sidecar, stub_stash, **similar_args)
     sent = {_output(binary, raw, stub_stash)["items"][0]["id"] for raw in (expand, hunt, similar)}
@@ -179,6 +181,45 @@ def test_find_items_mark_scenes_sent_to_whisparr(
         assert {item["id"] for item in items if item["in_whisparr"]} == sent & {
             item["id"] for item in items
         }
+
+
+def test_expand_and_similar_hide_scenes_sent_to_whisparr(
+    binary: Path, stub_stash: str, sidecar: Path
+) -> None:
+    similar_args = {"entity_type": "scene", "entity_id": "recent-good"}
+    expand = payload("get_expand", sidecar, stub_stash, gender="", hide_phash_matches=False)
+    similar = payload("get_external_similar", sidecar, stub_stash, **similar_args)
+    before = _output(binary, expand, stub_stash)
+    expand_ids = [item["id"] for item in before["items"]]
+    similar_ids = [item["id"] for item in _output(binary, similar, stub_stash)["items"]]
+    assert len(expand_ids) > 1 and before["total"] == len(expand_ids) and similar_ids
+    sent = {expand_ids[0], similar_ids[0]}
+    with sqlite3.connect(sidecar) as connection:
+        connection.executemany(
+            "INSERT INTO external_whisparr_sent(endpoint, external_id, sent_at_ms)"
+            " VALUES ('https://stashdb.org/graphql', ?, 1)",
+            [(id,) for id in sorted(sent)],
+        )
+    # Hidden by default, and the result cache notices the new send.
+    assert_slice2_identical(binary, PLUGIN_DIR, expand, sidecar, stub_stash)
+    assert_slice2_identical(
+        binary, PLUGIN_DIR, similar, sidecar, stub_stash, timing_fields=("timings_ms",)
+    )
+    expand_after = _output(binary, expand, stub_stash)
+    assert {item["id"] for item in expand_after["items"]} == set(expand_ids) - sent
+    assert expand_after["total"] == len(set(expand_ids) - sent)
+    similar_after = {item["id"] for item in _output(binary, similar, stub_stash)["items"]}
+    assert not similar_after & sent
+    # Turned off, they come back with their badge.
+    shown = payload(
+        "get_expand", sidecar, stub_stash, gender="", hide_phash_matches=False, hide_whisparr=False
+    )
+    assert_slice2_identical(binary, PLUGIN_DIR, shown, sidecar, stub_stash)
+    marked = {
+        item["id"]: item["in_whisparr"] for item in _output(binary, shown, stub_stash)["items"]
+    }
+    assert set(marked) == set(expand_ids)
+    assert {id for id, value in marked.items() if value} == sent & set(expand_ids)
 
 
 def test_find_views_skip_active_dismissals(binary: Path, stub_stash: str, sidecar: Path) -> None:

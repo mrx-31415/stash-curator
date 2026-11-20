@@ -19,7 +19,7 @@ import (
 // performer, with the same similarity/appeal blend and why strings.
 func (s *expandService) similar(entityType, entityID string, count int64, candidateIDs map[string]bool,
 	includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string, favoriteOnly bool,
-	minimumSimilarity float64, hideDismissed bool) (jVal, error) {
+	minimumSimilarity float64, hideDismissed, hideWhisparr bool) (jVal, error) {
 	if minimumSimilarity < 0 || minimumSimilarity > 1 {
 		return jvNull(), errors.New("minimum_similarity must be between 0 and 1")
 	}
@@ -163,7 +163,8 @@ AND lower(rtrim(COALESCE(json_extract(payload_json,'$.curator_endpoint'),
 			}
 			externalID := asDBString(row["external_id"])
 			_, isDismissed := dismissed[externalID]
-			if (candidateIDs != nil && !candidateIDs[externalID]) || (hideDismissed && isDismissed) {
+			if (candidateIDs != nil && !candidateIDs[externalID]) || (hideDismissed && isDismissed) ||
+				(hideWhisparr && sentToWhisparr[externalID]) {
 				continue
 			}
 			payload, err := parseJSON([]byte(asDBString(row["payload_json"])))
@@ -476,7 +477,7 @@ func profileMatchFull(left, right *performerProfile, weights map[string]float64)
 // StashDB pool biased toward the target, score/merge it, and rank it.
 func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityType, entityID,
 	gender string, count int64, includeTags, excludeTags, performerNames, studioNames, excludeStudioNames []string,
-	favoriteOnly, includeOwned, hidePhash, hideDismissed bool, minimumSimilarity float64) (jVal, error) {
+	favoriteOnly, includeOwned, hidePhash, hideDismissed, hideWhisparr bool, minimumSimilarity float64) (jVal, error) {
 	service := newExpandService(db)
 	modelID, err := currentModelID(db)
 	if err != nil {
@@ -689,7 +690,7 @@ func expandTargetedSimilar(db dbx, clientURL, apiKey string, links jVal, entityT
 	}
 	stageStart := time.Now()
 	result, err := service.similar(entityType, entityID, count*2, candidateIDs,
-		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, favoriteOnly, minimumSimilarity, hideDismissed)
+		includeTags, excludeTags, performerNames, studioNames, excludeStudioNames, favoriteOnly, minimumSimilarity, hideDismissed, hideWhisparr)
 	if err != nil {
 		return jvNull(), err
 	}
