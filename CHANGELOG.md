@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.60.0](https://github.com/mrx-31415/stash-curator/compare/v0.59.0...v0.60.0) (2026-11-20)
+
+
+### Features
+
+* **find:** hide scenes already sent to Whisparr ([#487](https://github.com/mrx-31415/stash-curator/issues/487)) ([003d594](https://github.com/mrx-31415/stash-curator/commit/003d594dea594bdd80db0ff3c25af135880ebdd9))
+* include or exclude studios and tags from one filter box ([#485](https://github.com/mrx-31415/stash-curator/issues/485)) ([814a2d6](https://github.com/mrx-31415/stash-curator/commit/814a2d68abc9f4f2fbc64c29be012e4a23dbe7ed))
+
 ## [0.59.0](https://github.com/mrx-31415/stash-curator/compare/v0.58.1...v0.59.0) (2026-11-14)
 
 
