@@ -48,12 +48,14 @@ Curator your preferences. Feedback affects rankings after a model update.
 </p>
 <p align="center">Demo footage from <a href="https://peach.blender.org">Big Buck Bunny</a> (CC BY 3.0, © Blender Foundation), shortened.</p>
 
-**Skip the intro. Every scene.** Auto Seek is a separate plugin from the same plugin
+**Stop scrubbing. Skip to the part you want.** Auto Seek is a separate plugin from the same plugin
 source. It finds where the action starts in each scene and jumps straight there: tap
 **Skip intro** on the player, or let it skip on its own. A small image model works it
 out on your Stash server in a few seconds when you open a scene, or ahead of time in
 the background if you like, and no frames leave your server. When it picks the wrong
-spot, a flag on the player fixes that scene for good.
+spot, a flag on the player fixes that scene for good. You choose what counts as the
+start, from kissing to sex positions, and a timeline under the player maps every act
+it sees across the scene, to jump to and zoom into.
 
 [See it in action](https://mrx-31415.github.io/stash-curator/auto-seek/) ·
 [Guide](docs/auto-seek-guide.md) ·
