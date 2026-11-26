@@ -111,6 +111,18 @@ bubble sits beside the performer's name, or in a space kept under Curator's row
 on scene pages and on phones, so Stash's own layout never shifts. With the SFW
 Switch on, bubbles are blurred until you hover over them.
 
+Pick how Curator sounds under **Curator's voice** in **Manage → Settings → Page
+settings** (or `chatVoice` in Stash's plugin settings): Friend (the default),
+Clerk, Connoisseur, Wit, Minimalist, Detective, Captain, Butler, or Classic, the
+original voice. Each says the same things its own way, in its comments and in
+ranking plugins. Every voice greets you with the time of day when it isn't late,
+and now and then says something rarer than usual. Curator also remembers a little
+from the same visit: a scene it suggested earlier can come up again on another
+lane, and a performer who won a recent ranking session can come up on a lane or
+on their own page. A thumbs up, thumbs down, **Not now** or **Never show** on a
+lane card gets a short reply, and a lane can point out its oldest or best-rated
+scene.
+
 Use the **×** on a bubble to dismiss it. The first time you do this during a
 visit, Curator asks whether to stay quiet for the rest of the visit or turn
 comments off. **Hide Curator's comments** in **Manage → Settings → Page
