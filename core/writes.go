@@ -1275,6 +1275,10 @@ var allowedConfigKeys = map[string]bool{
 	"schedule_backup_enabled":                true,
 	"schedule_backup_interval_hours":         true,
 	"schedule_backup_at_hour":                true,
+	"whisparr_sweep_enabled":                 true,
+	"whisparr_sweep_interval_minutes":        true,
+	"whisparr_sweep_batch_size":              true,
+	"whisparr_sweep_give_up_days":            true,
 }
 
 // pythonListRepr renders a []string like Python's repr of a list of strings.

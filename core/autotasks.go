@@ -40,11 +40,17 @@ func autoPayloadFromState(state workerState) jVal {
 // does, but without the worker-ensure dance (the daemon IS the worker). An
 // active job of the same type coalesces into a no-op.
 func enqueueAutoTask(db dbx, mode string, payload jVal, now int64) (bool, error) {
+	return enqueueTask(db, mode, payload, now, true)
+}
+
+// enqueueTask is enqueueAutoTask with the deferral choice explicit: an
+// automatic job waits while a Curator page is open; others run right away.
+func enqueueTask(db dbx, mode string, payload jVal, now int64, automatic bool) (bool, error) {
 	args := payload.get("args")
 	if args.kind != jObj {
 		args = jvObj()
 	}
-	args.set("automatic", jvBool(true))
+	args.set("automatic", jvBool(automatic))
 	payload.set("args", args)
 	payloadRaw, err := marshalJVal(payload)
 	if err != nil {
@@ -329,6 +335,10 @@ func schedulerStayAlive(db dbx, now int64) (bool, error) {
 	config := cfg.get("config")
 	if anyScheduleEnabled(config) {
 		return true, nil
+	}
+	// Scenes still in the Whisparr search rotation need the daemon to pace them.
+	if active, err := whisparrSearchActive(db, config); err != nil || active {
+		return active, err
 	}
 	if !config.get("auto_tasks_enabled").truthy() {
 		return false, nil

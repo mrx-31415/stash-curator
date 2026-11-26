@@ -411,7 +411,7 @@ def test_migration_parity_python_accepts_go(tmp_path: Path, binary: Path) -> Non
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
     finally:
         connection.close()
-    assert status.current_version == status.latest_version == 52
+    assert status.current_version == status.latest_version == 53
     assert not status.pending_versions
     assert integrity == "ok"
 

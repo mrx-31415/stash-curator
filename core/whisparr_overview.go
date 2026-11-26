@@ -390,6 +390,9 @@ func whisparrActionBody(pluginDir string, payload, settings jVal) (jVal, error) 
 AND external_id IN (SELECT value FROM json_each(?))`, stashdbEndpoint, encoded.marshalCompact()); err != nil {
 				return jvNull(), err
 			}
+			if err := forgetWhisparrSearch(db, stashIDs); err != nil {
+				return jvNull(), err
+			}
 		}
 	default:
 		return jvNull(), errors.New("action must be search, monitor, unmonitor, or remove")

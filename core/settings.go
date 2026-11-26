@@ -44,6 +44,10 @@ var defaultPluginConfig = jvObj(
 	jvKey("schedule_backup_enabled", jvBool(false)),
 	jvKey("schedule_backup_interval_hours", jvInt(24)),
 	jvKey("schedule_backup_at_hour", jvNull()),
+	jvKey("whisparr_sweep_enabled", jvBool(true)),
+	jvKey("whisparr_sweep_interval_minutes", jvInt(15)),
+	jvKey("whisparr_sweep_batch_size", jvInt(3)),
+	jvKey("whisparr_sweep_give_up_days", jvInt(60)),
 )
 
 type settingConv int
@@ -88,6 +92,10 @@ var settingMapping = []struct {
 	{"scheduleBackupEnabled", "schedule_backup_enabled", convBool},
 	{"scheduleBackupIntervalHours", "schedule_backup_interval_hours", convFloat},
 	{"scheduleBackupAtHour", "schedule_backup_at_hour", convInt},
+	{"whisparrSweepEnabled", "whisparr_sweep_enabled", convBool},
+	{"whisparrSweepIntervalMinutes", "whisparr_sweep_interval_minutes", convFloat},
+	{"whisparrSweepBatchSize", "whisparr_sweep_batch_size", convInt},
+	{"whisparrSweepGiveUpDays", "whisparr_sweep_give_up_days", convInt},
 }
 
 func convertSetting(v jVal, conv settingConv) (jVal, error) {
@@ -304,6 +312,24 @@ func validateConfig(values jVal) error {
 		}
 		if !isJSONInt(v) || pythonInt(v) < 0 || pythonInt(v) > 23 {
 			return fmt.Errorf("%s must be an integer from 0 to 23", key)
+		}
+	}
+	if v := values.get("whisparr_sweep_enabled"); v.kind != jNull && v.kind != jBool {
+		return fmt.Errorf("whisparr_sweep_enabled must be true or false")
+	}
+	if v := values.get("whisparr_sweep_interval_minutes"); v.kind != jNull {
+		if f, err := pythonFloat(v); v.kind != jNum || err != nil || f < 5 || f > 24*60 {
+			return fmt.Errorf("whisparr_sweep_interval_minutes must be between 5 and 1440")
+		}
+	}
+	if v := values.get("whisparr_sweep_batch_size"); v.kind != jNull {
+		if !isJSONInt(v) || pythonInt(v) < 1 || pythonInt(v) > 50 {
+			return fmt.Errorf("whisparr_sweep_batch_size must be an integer from 1 to 50")
+		}
+	}
+	if v := values.get("whisparr_sweep_give_up_days"); v.kind != jNull {
+		if !isJSONInt(v) || pythonInt(v) < 1 || pythonInt(v) > 365 {
+			return fmt.Errorf("whisparr_sweep_give_up_days must be an integer from 1 to 365")
 		}
 	}
 	for _, key := range []string{"page_size", "sync_page_size"} {

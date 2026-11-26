@@ -558,6 +558,10 @@ def _apply_plugin_settings(connection: Any, settings: dict[str, Any]) -> None:
         "scheduleBackupEnabled": ("schedule_backup_enabled", bool),
         "scheduleBackupIntervalHours": ("schedule_backup_interval_hours", float),
         "scheduleBackupAtHour": ("schedule_backup_at_hour", int),
+        "whisparrSweepEnabled": ("whisparr_sweep_enabled", bool),
+        "whisparrSweepIntervalMinutes": ("whisparr_sweep_interval_minutes", float),
+        "whisparrSweepBatchSize": ("whisparr_sweep_batch_size", int),
+        "whisparrSweepGiveUpDays": ("whisparr_sweep_give_up_days", int),
         "modelUpdateMaxWaitMinutes": ("model_update_max_wait_minutes", float),
         "modelUpdateMinIntervalMinutes": ("model_update_min_interval_minutes", float),
         "pruneTagName": ("prune_tag_name", str),
@@ -1069,20 +1073,45 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
             key = str(settings.get("whisparrApiKey") or "").strip()
             root = str(settings.get("whisparrRootFolder") or "").strip()
             profile = int(settings.get("whisparrQualityProfileId") or 0)
+            # With the rolling search on, the daemon searches sent scenes a few
+            # at a time instead of one search per send.
+            config = api.config()["config"]
+            rotation = isinstance(config, dict) and bool(config.get("whisparr_sweep_enabled"))
             result = WhisparrClient(url, key).send_scene(
                 external_id,
                 str(payload_json.get("title") or "Added by Stash Curator"),
                 root,
                 profile,
                 monitor=bool(settings.get("whisparrMonitor", True)),
-                search=bool(settings.get("whisparrSearchImmediately", True)),
+                search=not rotation and bool(settings.get("whisparrSearchImmediately", True)),
             )
+            sent_at = time.time_ns() // 1_000_000
             with transaction(connection):
                 connection.execute(
                     "INSERT OR IGNORE INTO external_whisparr_sent"
                     "(endpoint, external_id, sent_at_ms) VALUES (?, ?, ?)",
-                    (STASHDB.casefold(), external_id, time.time_ns() // 1_000_000),
+                    (STASHDB.casefold(), external_id, sent_at),
                 )
+                whisparr_id = result.get("id")
+                if (
+                    rotation
+                    and isinstance(whisparr_id, int)
+                    and not isinstance(whisparr_id, bool)
+                    and whisparr_id > 0
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO whisparr_search
+                        (external_id, whisparr_id, added_at_ms, attempts, last_searched_at_ms,
+                         next_due_at_ms, state, updated_at_ms)
+                        VALUES (?, ?, ?, 0, NULL, ?, 'active', ?)
+                        ON CONFLICT(external_id) DO UPDATE SET whisparr_id=excluded.whisparr_id,
+                        added_at_ms=excluded.added_at_ms, attempts=0, last_searched_at_ms=NULL,
+                        next_due_at_ms=excluded.next_due_at_ms, state='active',
+                        updated_at_ms=excluded.updated_at_ms
+                        """,
+                        (external_id, whisparr_id, sent_at, sent_at, sent_at),
+                    )
             return result
         if operation == "submit_feedback":
             entries = args.get("entries")

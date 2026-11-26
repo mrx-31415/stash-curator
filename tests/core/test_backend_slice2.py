@@ -372,6 +372,7 @@ class _StubWhisparr(BaseHTTPRequestHandler):
     movies: ClassVar[list[dict[str, object]]] = []
     # When set, POST /movie answers with this (status, body) instead of adding.
     add_rejection: ClassVar[tuple[int, object] | None] = None
+    posts: ClassVar[list[str]] = []
 
     def do_GET(self) -> None:
         if self.path.startswith("/api/v3/movie"):
@@ -387,6 +388,7 @@ class _StubWhisparr(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
+        self.posts.append(self.path)
         if "/api/v3/movie" in self.path and self.add_rejection is not None:
             self._respond(self.add_rejection[1], self.add_rejection[0])
             return
@@ -1042,6 +1044,36 @@ def test_send_whisparr_already_exists_byte_identical(
         _StubExpand.plugin_settings = {}
 
 
+def test_send_whisparr_leaves_the_search_to_the_rotation(
+    tmp_path: Path, binary: Path, stub_stash: str, stub_whisparr: str
+) -> None:
+    """With the rolling search on, a send adds the scene and queues it, but
+    never fires its own search, even with "Search immediately" set."""
+    _StubWhisparr.movies = []
+    _StubExpand.plugin_settings = {
+        "whisparrUrl": stub_whisparr,
+        "whisparrApiKey": "test-key",
+        "whisparrSearchImmediately": True,
+    }
+    try:
+        for runner in (None, binary):
+            _StubWhisparr.posts.clear()
+            sidecar = tmp_path / f"{'go' if runner else 'py'}.sqlite3"
+            make_expand_sidecar(sidecar)
+            raw = payload("send_whisparr", sidecar, stub_stash, external_id="cand-2")
+            result = run_backend_env(runner, PLUGIN_DIR, raw, stub_stash)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert _StubWhisparr.posts == ["/api/v3/tag", "/api/v3/movie"]
+            with sqlite3.connect(sidecar) as connection:
+                searches = connection.execute(
+                    "SELECT external_id, whisparr_id, state FROM whisparr_search"
+                ).fetchall()
+            assert searches == [("cand-2", 77, "active")]
+    finally:
+        _StubWhisparr.posts.clear()
+        _StubExpand.plugin_settings = {}
+
+
 def test_send_whisparr_records_the_scene(
     tmp_path: Path, binary: Path, stub_stash: str, stub_whisparr: str
 ) -> None:
@@ -1060,6 +1092,11 @@ def test_send_whisparr_records_the_scene(
                     "SELECT endpoint, external_id FROM external_whisparr_sent"
                 ).fetchall()
             assert rows == [("https://stashdb.org/graphql", "cand-2")]
+            # The rolling search (on by default) takes over the scene's search.
+            searches = connection.execute(
+                "SELECT external_id, whisparr_id, attempts, state FROM whisparr_search"
+            ).fetchall()
+            assert searches == [("cand-2", 55, 0, "active")]
     finally:
         _StubWhisparr.movies = []
         _StubExpand.plugin_settings = {}

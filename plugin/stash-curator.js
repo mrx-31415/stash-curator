@@ -7546,6 +7546,7 @@
     compact: "Compact legacy Curator data",
     vacuum: "Vacuum compacted Curator data",
     "expand-refresh": "Refresh Expand cache",
+    "whisparr-search": "Search Whisparr for missing scenes",
   };
 
   function taskModeLabel(job) {
@@ -8129,7 +8130,11 @@
         { key: "whisparrRootFolder", type: "STRING", label: "Whisparr root folder override", description: "Optional. Leave empty to use Whisparr's first configured root folder." },
         { key: "whisparrQualityProfileId", type: "NUMBER", optional: true, label: "Whisparr quality profile ID override", description: "Optional. Leave empty to use Whisparr's fallback (or first) quality profile." },
         { key: "whisparrMonitor", type: "BOOLEAN", default: true, label: "Monitor scenes sent to Whisparr", description: "Add scenes as monitored, so Whisparr grabs a release that appears after the scene was sent. Enabled by default." },
-        { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "Start a release search after adding a scene. Enabled by default." },
+        { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "With the rolling search off, start a release search right after adding a scene. Enabled by default." },
+        { key: "whisparrSweepEnabled", configKey: "whisparr_sweep_enabled", type: "BOOLEAN", label: "Rolling Whisparr search", description: "Search for sent scenes a few at a time in the background, and keep retrying the ones Whisparr has not found, so a bulk send never trips indexer rate limits. Enabled by default; keeps the background worker resident while scenes are waiting." },
+        { key: "whisparrSweepIntervalMinutes", configKey: "whisparr_sweep_interval_minutes", type: "NUMBER", label: "Rolling search interval (minutes)", description: "Time between background searches. Default 15 (5 to 1440)." },
+        { key: "whisparrSweepBatchSize", configKey: "whisparr_sweep_batch_size", type: "NUMBER", label: "Scenes per rolling search", description: "How many scenes each background search asks Whisparr for. Default 3 (1 to 50)." },
+        { key: "whisparrSweepGiveUpDays", configKey: "whisparr_sweep_give_up_days", type: "NUMBER", label: "Stop searching after (days)", description: "Stop retrying a scene this many days after it was sent. Default 60 (1 to 365)." },
       ],
     },
     {

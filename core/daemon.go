@@ -536,7 +536,9 @@ func ensureAutoWorker(pluginDir string, payload jVal, settings jVal, db dbx) {
 	}
 	config := cfg.get("config")
 	if !config.get("auto_tasks_enabled").truthy() && !anyScheduleEnabled(config) {
-		return
+		if active, err := whisparrSearchActive(db, config); err != nil || !active {
+			return
+		}
 	}
 	fingerprint, err := workerBinaryFingerprint(pluginDir)
 	if err != nil || rotateStaleWorker(pluginDir, fingerprint) != nil {
@@ -807,6 +809,7 @@ func runDaemon(pluginDir string) {
 	recoverOrphanJobs(loop, nowMs())
 	autoPayload := autoPayloadFromState(state)
 	lastTick := nowMs()
+	lastSweepTick := int64(0)
 	idleSince := nowMs()
 	schedulerFailures := 0
 	for {
@@ -864,6 +867,14 @@ func runDaemon(pluginDir string) {
 					infoLog("auto-enqueued task " + mode)
 				}
 				schedulerFailures = 0
+			}
+		}
+		if now-lastSweepTick >= autoTickMs {
+			lastSweepTick = now
+			if queued, err := whisparrSweepTick(loop, autoPayload, now); err != nil {
+				errorLog("Whisparr search scheduling failed: " + err.Error())
+			} else if queued {
+				infoLog("auto-enqueued task " + whisparrSearchTask)
 			}
 		}
 		jobID, startedAtMs, payload, mode, err := claimQueuedJob(loop, pageActive)

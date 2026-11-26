@@ -282,7 +282,14 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 	root := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrRootFolder")))
 	profile := pythonInt(settings.get("whisparrQualityProfileId"))
 	monitor := argsBool(settings, "whisparrMonitor", true)
-	search := argsBool(settings, "whisparrSearchImmediately", true)
+	// With the rolling search on, the daemon searches sent scenes a few at a
+	// time instead of one search per send.
+	cfg, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	rotation := readWhisparrSweepConfig(cfg.get("config")).enabled
+	search := !rotation && argsBool(settings, "whisparrSearchImmediately", true)
 	title := pythonStrOrEmpty(scenePayload.get("title"))
 	if title == "" {
 		title = "Added by Stash Curator"
@@ -292,9 +299,16 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 		return jvNull(), err
 	}
 	// Remember the send so Find can mark the scene and batch dismissals skip it.
+	sentAt := nowMs()
 	if err := execImmediate(db, `INSERT OR IGNORE INTO external_whisparr_sent(endpoint, external_id, sent_at_ms)
-VALUES (lower(?), ?, ?)`, stashdbEndpoint, externalID, nowMs()); err != nil {
+VALUES (lower(?), ?, ?)`, stashdbEndpoint, externalID, sentAt); err != nil {
 		return jvNull(), err
+	}
+	if whisparrID := pythonInt(result.get("id")); rotation && whisparrID > 0 {
+		if err := queueWhisparrSearch(db, externalID, whisparrID, sentAt); err != nil {
+			return jvNull(), err
+		}
+		ensureAutoWorker(pluginDir, payload, settings, db)
 	}
 	return result, nil
 }
