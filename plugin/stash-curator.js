@@ -6513,6 +6513,7 @@
     { value: "downloading", label: "Downloading", description: "In Whisparr's download queue." },
     { value: "not_in_stash", label: "Not in Stash", description: "Whisparr has the file, but no Stash scene is linked to that StashDB scene yet. A Stash scan, then Identify, usually links it." },
     { value: "in_library", label: "In library", description: "Linked to a scene in your library." },
+    { value: "rotation", label: "Rolling search", description: "Scenes Curator is still searching for in the background, a few at a time, until Whisparr finds them." },
     { value: "all", label: "All", description: "Everything Whisparr tracks." },
   ];
   const WHISPARR_SORTS = [
@@ -6520,6 +6521,7 @@
     { value: "added_new", label: "Newest added" },
     { value: "added_old", label: "Oldest added" },
     { value: "released", label: "Newest release" },
+    { value: "next_search", label: "Next search" },
   ];
   const WHISPARR_PAGE = 60;
   const WHISPARR_CONFIRM_SEARCH = 20;
@@ -6529,9 +6531,58 @@
     return Number.isFinite(ms) ? ms : 0;
   }
   function whisparrCounts(items) {
-    const counts = { missing: 0, downloading: 0, not_in_stash: 0, in_library: 0, all: items.length };
-    for (const item of items) counts[item.status] = (counts[item.status] || 0) + 1;
+    const counts = { missing: 0, downloading: 0, not_in_stash: 0, in_library: 0, rotation: 0, all: items.length };
+    for (const item of items) {
+      counts[item.status] = (counts[item.status] || 0) + 1;
+      if (whisparrRotating(item)) counts.rotation += 1;
+    }
     return counts;
+  }
+  function whisparrRotating(item) {
+    return item?.rotation?.state === "active";
+  }
+  function formatTimeUntil(ms, now = Date.now()) {
+    const minutes = Math.round((ms - now) / 60000);
+    if (minutes < 1) return "soon";
+    if (minutes < 60) return `in ${minutes}m`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `in ${hours}h`;
+    return `in ${Math.round(hours / 24)}d`;
+  }
+  function whisparrSearches(count) {
+    return `${count.toLocaleString()} ${count === 1 ? "search" : "searches"}`;
+  }
+  // The scene's place in the rolling search: when it was last searched and
+  // when the next search can happen (never before the next sweep round).
+  function whisparrRotationLine(item, summary, now = Date.now()) {
+    const rotation = item?.rotation;
+    if (!rotation) return null;
+    const attempts = Number(rotation.attempts || 0);
+    if (rotation.state === "gave_up") return `Rolling search gave up after ${whisparrSearches(attempts)}`;
+    if (rotation.state === "stopped") return attempts ? `Stopped retrying after ${whisparrSearches(attempts)}` : "Stopped retrying";
+    if (rotation.state === "done") return attempts ? `Found by the rolling search after ${whisparrSearches(attempts)}` : null;
+    const parts = [attempts ? `Searched ${attempts}×` : "In the rolling search"];
+    if (rotation.last_searched_at_ms != null) parts.push(`last ${formatTimeAgo(rotation.last_searched_at_ms)}`);
+    const release = whisparrTime(item.release_date);
+    if (summary && !summary.enabled) parts.push("rolling search is off");
+    else if (release > now && release >= rotation.next_due_at_ms) parts.push(`waits for its release ${formatTimeUntil(release, now)}`);
+    else if (item.status === "downloading") parts.push("waiting while Whisparr downloads");
+    else {
+      const next = Math.max(Number(rotation.next_due_at_ms || 0), Number(summary?.next_sweep_at_ms || 0));
+      parts.push(attempts ? `next ${formatTimeUntil(next, now)}` : `first search ${formatTimeUntil(next, now)}`);
+    }
+    return parts.join(" · ");
+  }
+  // The rolling search as a whole: its pace, the next round, and any pause.
+  function whisparrRotationStatus(summary, waiting, now = Date.now()) {
+    if (!summary) return null;
+    if (!summary.enabled) return waiting ? { tone: "info", text: `Rolling search is off. ${whisparrScenes(waiting)} would still be searched in the background; turn it on in Settings.` } : null;
+    if (summary.last_error) return { tone: "warning", text: `Rolling search couldn't reach Whisparr on its last round (${summary.last_error}). It tries again ${formatTimeUntil(summary.next_sweep_at_ms, now)}.` };
+    if (summary.paused_until_ms) return { tone: "warning", text: `Rolling search is paused: Whisparr reports an indexer in backoff. It resumes ${formatTimeUntil(summary.paused_until_ms, now)}.` };
+    if (!waiting) return null;
+    const pace = `${summary.batch_size} every ${Math.round(summary.interval_ms / 60000)} min`;
+    const last = summary.last_run_at_ms ? ` · last round ${formatTimeAgo(summary.last_run_at_ms)}` : "";
+    return { tone: "info", text: `Rolling search: ${whisparrScenes(waiting)} waiting, ${pace} · next round ${formatTimeUntil(summary.next_sweep_at_ms, now)}${last}.` };
   }
   // Status, Curator-sent and text filters, then the chosen order.
   function whisparrVisible(items, { status = "missing", query = "", sort = "match", sentOnly = false } = {}) {
@@ -6542,10 +6593,12 @@
       added_new: (a, b) => added(b) - added(a),
       added_old: (a, b) => added(a) - added(b),
       released: (a, b) => whisparrTime(b.release_date) - whisparrTime(a.release_date) || added(b) - added(a),
+      next_search: (a, b) => Number(whisparrRotating(b)) - Number(whisparrRotating(a))
+        || (a.rotation?.next_due_at_ms ?? Infinity) - (b.rotation?.next_due_at_ms ?? Infinity) || added(b) - added(a),
     };
     const order = orders[sort] || orders.match;
     return items
-      .filter((item) => (status === "all" || item.status === status)
+      .filter((item) => (status === "all" || item.status === status || (status === "rotation" && whisparrRotating(item)))
         && (!sentOnly || item.sent_at_ms != null)
         && (!needle || `${item.title || ""} ${item.studio || ""}`.toLowerCase().includes(needle)))
       .sort((a, b) => order(a, b) || a.id - b.id);
@@ -6555,7 +6608,9 @@
     for (let start = 0; start < items.length; start += WHISPARR_CHUNK) {
       const chunk = items.slice(start, start + WHISPARR_CHUNK);
       const args = { operation: "whisparr_action", action, whisparr_ids: chunk.map((item) => item.id) };
-      if (action === "remove") args.stashdb_ids = chunk.map((item) => item.stashdb_id).filter(Boolean);
+      if (action === "remove" || action === "stop") args.stashdb_ids = chunk.map((item) => item.stashdb_id).filter(Boolean);
+      // Rotation rows pair each Whisparr id with its StashDB id.
+      if (action === "rotate") args.stashdb_ids = chunk.map((item) => item.stashdb_id || "");
       const result = await operation(args, 60000);
       count += Number(result?.count || 0);
     }
@@ -6569,6 +6624,8 @@
     if (action === "search") return `Whisparr is searching for ${scenes}. Grabs move to Downloading; refresh in a minute.`;
     if (action === "monitor") return `Whisparr now monitors ${scenes} and grabs them when a release appears.`;
     if (action === "unmonitor") return `Whisparr stopped monitoring ${scenes}.`;
+    if (action === "rotate") return `Added ${scenes} to the rolling search. Curator searches for them a few at a time.`;
+    if (action === "stop") return `Stopped the rolling search for ${scenes}.`;
     return `Removed ${scenes} from Whisparr. Downloaded files stay on disk.`;
   }
   function whisparrNotConfigured(message) {
@@ -6599,7 +6656,7 @@
     if (grabbed) add(2.5, "whisparrGrabbed", { n: grabbed.toLocaleString() });
     return options;
   }
-  function WhisparrRow({ item, whisparrUrl, selected, busy, searched, onSelect, onAction }) {
+  function WhisparrRow({ item, whisparrUrl, rotation, selected, busy, searched, onSelect, onAction }) {
     const stashdbUrl = item.stashdb_id ? `https://stashdb.org/scenes/${item.stashdb_id}` : null;
     const localUrl = item.local_scene_id ? `/scenes/${item.local_scene_id}` : null;
     const whisparrLink = whisparrUrl && item.title_slug ? `${whisparrUrl}/movie/${encodeURIComponent(item.title_slug)}` : null;
@@ -6614,6 +6671,8 @@
     ].filter(Boolean);
     const queue = item.queue;
     const progress = queue ? Math.round(Number(queue.progress || 0) * 100) : 0;
+    const rotationLine = whisparrRotationLine(item, rotation);
+    const rotating = whisparrRotating(item);
     const icon = (glyph) => React.createElement(FontAwesomeIcon, { icon: glyph });
     const link = (href, title, glyph, external = true) => href && React.createElement("a", { className: "btn btn-secondary btn-sm curator-icon-action", href, title, "aria-label": title, ...(external ? { target: "_blank", rel: "noopener noreferrer" } : {}) }, icon(glyph));
     return React.createElement(
@@ -6630,6 +6689,7 @@
         { className: "card-section curator-whisparr-info" },
         React.createElement("h3", { className: "card-section-title" }, item.title || "Untitled"),
         facts.length > 0 && React.createElement("div", { className: "curator-whisparr-facts" }, facts.join(" · ")),
+        rotationLine && React.createElement("div", { className: `curator-whisparr-rotation-line${rotating ? " is-active" : ""}` }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationLine}`),
         React.createElement(
           "div",
           { className: "curator-whisparr-badges" },
@@ -6650,6 +6710,9 @@
         "div",
         { className: "curator-whisparr-actions" },
         item.status === "missing" && React.createElement(Button, { size: "sm", variant: searched ? "secondary" : "primary", disabled: busy, onClick: () => onAction("search", [item]), title: searched ? "Search again" : "Search for this scene now" }, icon(faSearch), busy ? " Searching…" : searched ? " Again" : " Search"),
+        rotating
+          ? React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "primary", disabled: busy, onClick: () => onAction("stop", [item]), title: "Stop retrying: take it out of the rolling search", "aria-label": "Stop retrying", "aria-pressed": true }, icon(faHistory))
+          : item.status === "missing" && item.stashdb_id && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", disabled: busy, onClick: () => onAction("rotate", [item]), title: "Add to the rolling search: Curator keeps searching for it in the background", "aria-label": "Add to rolling search", "aria-pressed": false }, icon(faHistory)),
         item.status !== "in_library" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.monitored ? "primary" : "secondary", disabled: busy, onClick: () => onAction(item.monitored ? "unmonitor" : "monitor", [item]), title: item.monitored ? "Stop monitoring" : "Monitor: grab it when a release appears", "aria-label": item.monitored ? "Stop monitoring" : "Monitor", "aria-pressed": item.monitored }, icon(item.monitored ? faBell : faBellSlash)),
         localUrl && link(localUrl, "Open in your library", faPlay, false),
         link(stashdbUrl, "Open on StashDB", faExternalLinkAlt),
@@ -6711,6 +6774,16 @@
           if (!current) return current;
           if (action === "remove") return { ...current, items: current.items.filter((item) => !ids.has(item.id)) };
           if (action === "monitor" || action === "unmonitor") return { ...current, items: current.items.map((item) => ids.has(item.id) ? { ...item, monitored: action === "monitor" } : item) };
+          if (action === "rotate" || action === "stop") {
+            const now = Date.now();
+            const nextItems = current.items.map((item) => {
+              if (!ids.has(item.id)) return item;
+              if (action === "stop") return whisparrRotating(item) ? { ...item, rotation: { ...item.rotation, state: "stopped" } } : item;
+              return item.stashdb_id ? { ...item, rotation: { state: "active", attempts: 0, added_at_ms: now, last_searched_at_ms: null, next_due_at_ms: now } } : item;
+            });
+            const active = nextItems.filter(whisparrRotating).length;
+            return { ...current, items: nextItems, rotation: current.rotation && { ...current.rotation, active } };
+          }
           return current;
         });
         if (action === "search") setSearched((current) => new Set([...current, ...ids]));
@@ -6732,6 +6805,9 @@
       );
     }
     const allShownSelected = visible.length > 0 && visible.slice(0, limit).every((item) => selected.has(item.id));
+    const rotationStatus = data && whisparrRotationStatus(data.rotation, counts.rotation);
+    const canRotate = chosen.filter((item) => item.status === "missing" && item.stashdb_id && !whisparrRotating(item));
+    const canStop = chosen.filter(whisparrRotating);
     return React.createElement(
       "section",
       { className: "curator-whisparr", "aria-busy": loading },
@@ -6755,6 +6831,7 @@
         status === "missing" && visible.length > 0 && React.createElement(Button, { className: "curator-whisparr-search-all", size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", visible) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), ` Search ${visible.length === 1 ? "it" : `all ${visible.length.toLocaleString()}`}`)
       ),
       statusInfo && React.createElement("p", { className: "curator-whisparr-hint" }, statusInfo.description),
+      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`),
       data && !data.library_ready && React.createElement("div", { className: "alert alert-info" }, "Curator is still matching your library to StashDB. Scenes you own show as In library once that finishes."),
       notice && React.createElement("div", { className: "alert alert-success", role: "status" }, notice),
       error && React.createElement("div", { className: "alert alert-danger", role: "alert" }, error),
@@ -6768,14 +6845,16 @@
           React.createElement(Button, { size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", chosen.filter((item) => item.status === "missing")) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), " Search"),
           React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("monitor", chosen) }, React.createElement(FontAwesomeIcon, { icon: faBell }), " Monitor"),
           React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("unmonitor", chosen) }, React.createElement(FontAwesomeIcon, { icon: faBellSlash }), " Unmonitor"),
+          canRotate.length > 0 && React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("rotate", canRotate), title: "Keep searching for these in the background, a few at a time" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` Add to rolling search (${canRotate.length.toLocaleString()})`),
+          canStop.length > 0 && React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("stop", canStop) }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` Stop retrying (${canStop.length.toLocaleString()})`),
           React.createElement(Button, { size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: () => act("remove", chosen) }, React.createElement(FontAwesomeIcon, { icon: faTrash }), " Remove"))
       ),
       loading && !data && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, "Loading Whisparr…")),
-      data && visible.length === 0 && React.createElement("div", { className: "alert alert-info" }, query || sentOnly ? "No scenes match these filters." : status === "missing" ? "Nothing missing: every scene in Whisparr has a file or is downloading." : `No scenes are ${statusInfo?.label.toLowerCase() || "here"}.`),
+      data && visible.length === 0 && React.createElement("div", { className: "alert alert-info" }, query || sentOnly ? "No scenes match these filters." : status === "rotation" ? "Nothing in the rolling search. Scenes you send join it; add missing ones with Add to rolling search." : status === "missing" ? "Nothing missing: every scene in Whisparr has a file or is downloading." : `No scenes are ${statusInfo?.label.toLowerCase() || "here"}.`),
       React.createElement(
         "div",
         { className: "curator-whisparr-list" },
-        visible.slice(0, limit).map((item) => React.createElement(WhisparrRow, { key: item.id, item, whisparrUrl: data?.whisparr_url, selected: selected.has(item.id), busy: Boolean(busy?.ids.has(item.id)), searched: searched.has(item.id), onSelect: toggle, onAction: act }))
+        visible.slice(0, limit).map((item) => React.createElement(WhisparrRow, { key: item.id, item, whisparrUrl: data?.whisparr_url, rotation: data?.rotation, selected: selected.has(item.id), busy: Boolean(busy?.ids.has(item.id)), searched: searched.has(item.id), onSelect: toggle, onAction: act }))
       ),
       visible.length > limit && React.createElement(Button, { className: "curator-whisparr-more", size: "sm", variant: "secondary", onClick: () => setLimit((value) => value + WHISPARR_PAGE) }, `Show more (${(visible.length - limit).toLocaleString()} left)`)
     );

@@ -460,3 +460,115 @@ ON CONFLICT(singleton) DO UPDATE SET last_run_at_ms=excluded.last_run_at_ms, pau
 		jvKey("active", jvInt(active)),
 	), nil
 }
+
+// whisparrSearchRows is each rotation row, keyed by StashDB id, in the shape
+// the Whisparr overview shows on a scene.
+func whisparrSearchRows(db dbx) (map[string]jVal, error) {
+	rows, err := db.Query(`SELECT external_id, state, attempts, added_at_ms, last_searched_at_ms, next_due_at_ms
+FROM whisparr_search`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]jVal{}
+	for rows.Next() {
+		var id, state string
+		var attempts, added, nextDue int64
+		var last sql.NullInt64
+		if err := rows.Scan(&id, &state, &attempts, &added, &last, &nextDue); err != nil {
+			return nil, err
+		}
+		lastValue := jvNull()
+		if last.Valid {
+			lastValue = jvInt(last.Int64)
+		}
+		out[id] = jvObj(
+			jvKey("state", jvStr(state)),
+			jvKey("attempts", jvInt(attempts)),
+			jvKey("added_at_ms", jvInt(added)),
+			jvKey("last_searched_at_ms", lastValue),
+			jvKey("next_due_at_ms", jvInt(nextDue)),
+		)
+	}
+	return out, rows.Err()
+}
+
+// whisparrRotationSummary describes the sweep for the overview: its pace,
+// when the next one can run, and why it is paused, if it is.
+func whisparrRotationSummary(db dbx, config jVal, searches map[string]jVal) (jVal, error) {
+	cfg := readWhisparrSweepConfig(config)
+	var lastRun, pausedUntil int64
+	var lastError sql.NullString
+	err := db.QueryRow(`SELECT last_run_at_ms, paused_until_ms, last_error FROM whisparr_sweep WHERE singleton=1`).
+		Scan(&lastRun, &pausedUntil, &lastError)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return jvNull(), err
+	}
+	var active int64
+	for _, search := range searches {
+		if search.get("state").asString() == "active" {
+			active++
+		}
+	}
+	nextSweep := lastRun + cfg.intervalMs
+	if pausedUntil > nextSweep {
+		nextSweep = pausedUntil
+	}
+	lastRunValue, pausedValue, errorValue := jvNull(), jvNull(), jvNull()
+	if lastRun > 0 {
+		lastRunValue = jvInt(lastRun)
+	}
+	if pausedUntil > nowMs() {
+		pausedValue = jvInt(pausedUntil)
+	}
+	if lastError.Valid && lastError.String != "" {
+		errorValue = jvStr(lastError.String)
+	}
+	return jvObj(
+		jvKey("enabled", jvBool(cfg.enabled)),
+		jvKey("interval_ms", jvInt(cfg.intervalMs)),
+		jvKey("batch_size", jvInt(int64(cfg.batchSize))),
+		jvKey("give_up_ms", jvInt(cfg.giveUpMs)),
+		jvKey("active", jvInt(active)),
+		jvKey("last_run_at_ms", lastRunValue),
+		jvKey("next_sweep_at_ms", jvInt(nextSweep)),
+		jvKey("paused_until_ms", pausedValue),
+		jvKey("last_error", errorValue),
+	), nil
+}
+
+// rotateWhisparrScenes is the overview's "add to rotation": each StashDB id
+// paired with its Whisparr id joins (or restarts in) the rotation.
+func rotateWhisparrScenes(db dbx, whisparrIDs, stashdbIDs jVal, now int64) (int64, error) {
+	if !isList(stashdbIDs) || len(stashdbIDs.arr) != len(whisparrIDs.arr) {
+		return 0, errors.New("stashdb_ids must pair with whisparr_ids")
+	}
+	var count int64
+	seen := map[string]bool{}
+	for i, value := range stashdbIDs.arr {
+		id := strings.TrimSpace(pythonStrOrEmpty(value))
+		whisparrID := pythonInt(whisparrIDs.arr[i])
+		if id == "" || whisparrID < 1 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if err := queueWhisparrSearch(db, id, whisparrID, now); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
+// stopWhisparrSearches is the overview's "stop retrying".
+func stopWhisparrSearches(db dbx, stashdbIDs []string, now int64) error {
+	if len(stashdbIDs) == 0 {
+		return nil
+	}
+	encoded := jvArr()
+	for _, id := range stashdbIDs {
+		encoded.arr = append(encoded.arr, jvStr(id))
+	}
+	return execImmediate(db, `UPDATE whisparr_search SET state='stopped', updated_at_ms=?
+WHERE state='active' AND external_id IN (SELECT value FROM json_each(?))`, now, encoded.marshalCompact())
+}
