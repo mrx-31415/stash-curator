@@ -1074,6 +1074,7 @@ def _api(payload: dict[str, Any], operation: str, settings: dict[str, Any]) -> d
                 str(payload_json.get("title") or "Added by Stash Curator"),
                 root,
                 profile,
+                monitor=bool(settings.get("whisparrMonitor", True)),
                 search=bool(settings.get("whisparrSearchImmediately", True)),
             )
             with transaction(connection):

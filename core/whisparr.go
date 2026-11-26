@@ -83,10 +83,48 @@ func whisparrRejection(status int, raw []byte) string {
 	return text
 }
 
+// whisparrCuratorTag labels every scene Curator adds, so they can be told
+// apart from scenes added in Whisparr itself.
+const whisparrCuratorTag = "curator"
+
+// whisparrCuratorTagID mirrors WhisparrClient._curator_tag_id: find the
+// curator tag (Whisparr compares labels case-insensitively), else create it.
+func whisparrCuratorTagID(baseURL string, headers map[string]string) (jVal, error) {
+	tags, err := whisparrRequest("GET", baseURL, headers, "/tag", jvNull())
+	if err != nil {
+		return jvNull(), err
+	}
+	var tag jVal = jvNull()
+	if tags.kind == jArr {
+		for _, item := range tags.arr {
+			if item.kind == jObj && strings.EqualFold(strings.TrimSpace(pythonStrOrEmpty(item.get("label"))), whisparrCuratorTag) {
+				tag = item
+				break
+			}
+		}
+	}
+	if tag.kind == jNull {
+		if tag, err = whisparrRequest("POST", baseURL, headers, "/tag",
+			jvObj(jvKey("label", jvStr(whisparrCuratorTag)))); err != nil {
+			return jvNull(), err
+		}
+	}
+	tagID := jvNull()
+	if tag.kind == jObj {
+		tagID = tag.get("id")
+	}
+	if id, err := strconv.ParseInt(tagID.num, 10, 64); tagID.kind != jNum || err != nil || id < 1 {
+		return jvNull(), errors.New("Whisparr did not return the curator tag")
+	}
+	return tagID, nil
+}
+
 // sendWhisparrScene mirrors WhisparrClient.send_scene for the send_whisparr
 // operation: find the movie by stashId, else pick a root folder and quality
-// profile, add the movie, and optionally trigger the search command.
-func sendWhisparrScene(baseURL, apiKey, stashdbID, title, rootFolder string, qualityProfileID int64, search bool) (jVal, error) {
+// profile, add the movie with the curator tag (monitored when asked, so
+// Whisparr's RSS sync grabs a later release), and optionally trigger the
+// search command.
+func sendWhisparrScene(baseURL, apiKey, stashdbID, title, rootFolder string, qualityProfileID int64, monitor, search bool) (jVal, error) {
 	if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(apiKey) == "" {
 		return jvNull(), errors.New("Whisparr URL and API key are required")
 	}
@@ -157,15 +195,24 @@ func sendWhisparrScene(baseURL, apiKey, stashdbID, title, rootFolder string, qua
 	if title == "" {
 		title = "Added by Stash Curator"
 	}
+	tagID, err := whisparrCuratorTagID(baseURL, headers)
+	if err != nil {
+		return jvNull(), err
+	}
+	monitorOption := "none"
+	if monitor {
+		monitorOption = "movieOnly"
+	}
 	created, err := whisparrRequest("POST", baseURL, headers, "/movie", jvObj(
 		jvKey("foreignId", jvStr(stashdbID)),
 		jvKey("stashId", jvStr(stashdbID)),
 		jvKey("title", jvStr(title)),
 		jvKey("rootFolderPath", jvStr(rootFolder)),
 		jvKey("qualityProfileId", jvInt(qualityProfileID)),
-		jvKey("monitored", jvBool(false)),
+		jvKey("monitored", jvBool(monitor)),
+		jvKey("tags", jvArr(tagID)),
 		jvKey("addOptions", jvObj(
-			jvKey("monitor", jvStr("none")),
+			jvKey("monitor", jvStr(monitorOption)),
 			jvKey("searchForMovie", jvBool(false)),
 		)),
 	))
@@ -234,12 +281,13 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 	key := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrApiKey")))
 	root := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrRootFolder")))
 	profile := pythonInt(settings.get("whisparrQualityProfileId"))
+	monitor := argsBool(settings, "whisparrMonitor", true)
 	search := argsBool(settings, "whisparrSearchImmediately", true)
 	title := pythonStrOrEmpty(scenePayload.get("title"))
 	if title == "" {
 		title = "Added by Stash Curator"
 	}
-	result, err := sendWhisparrScene(url, key, externalID, title, root, profile, search)
+	result, err := sendWhisparrScene(url, key, externalID, title, root, profile, monitor, search)
 	if err != nil {
 		return jvNull(), err
 	}

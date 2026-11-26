@@ -42,6 +42,11 @@ def _rejection(status: int, raw: bytes) -> str:
     return f"Whisparr rejected the request (HTTP {status})" + (f": {detail}" if detail else "")
 
 
+# Every scene Curator adds carries this tag, so it can be told apart from
+# scenes added in Whisparr itself.
+CURATOR_TAG = "curator"
+
+
 class WhisparrClient:
     def __init__(self, url: str, api_key: str, *, transport: Transport = _transport) -> None:
         if not url.strip() or not api_key.strip():
@@ -57,6 +62,7 @@ class WhisparrClient:
         root_folder: str = "",
         quality_profile_id: int = 0,
         *,
+        monitor: bool = True,
         search: bool = True,
     ) -> dict[str, object]:
         movies = self._request("GET", f"/movie?{urllib.parse.urlencode({'stashId': stashdb_id})}")
@@ -100,6 +106,7 @@ class WhisparrClient:
             quality_profile_id = int(profile.get("id") or 0) if profile else 0
             if quality_profile_id < 1:
                 raise RuntimeError("Whisparr has no configured quality profile")
+        tag_id = self._curator_tag_id()
         created = self._request(
             "POST",
             "/movie",
@@ -109,8 +116,14 @@ class WhisparrClient:
                 "title": title or "Added by Stash Curator",
                 "rootFolderPath": root_folder,
                 "qualityProfileId": quality_profile_id,
-                "monitored": False,
-                "addOptions": {"monitor": "none", "searchForMovie": False},
+                # Monitored scenes are grabbed by Whisparr's RSS sync when a
+                # release appears later.
+                "monitored": monitor,
+                "tags": [tag_id],
+                "addOptions": {
+                    "monitor": "movieOnly" if monitor else "none",
+                    "searchForMovie": False,
+                },
             },
         )
         if not isinstance(created, dict):
@@ -121,6 +134,25 @@ class WhisparrClient:
         if search:
             self._request("POST", "/command", {"name": "MoviesSearch", "movieIds": [movie_id]})
         return {"status": "sent", "id": movie_id}
+
+    def _curator_tag_id(self) -> int:
+        """Find the curator tag (labels compare case-insensitively), else create it."""
+        tags = self._request("GET", "/tag")
+        tag = next(
+            (
+                item
+                for item in (tags if isinstance(tags, list) else [])
+                if isinstance(item, dict)
+                and str(item.get("label") or "").strip().casefold() == CURATOR_TAG
+            ),
+            None,
+        )
+        if tag is None:
+            tag = self._request("POST", "/tag", {"label": CURATOR_TAG})
+        tag_id = tag.get("id") if isinstance(tag, dict) else None
+        if not isinstance(tag_id, int) or isinstance(tag_id, bool) or tag_id < 1:
+            raise RuntimeError("Whisparr did not return the curator tag")
+        return tag_id
 
     def _request(self, method: str, path: str, payload: object | None = None) -> Any:
         body = json.dumps(payload, separators=(",", ":")).encode() if payload is not None else None

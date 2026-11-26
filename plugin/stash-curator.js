@@ -8128,6 +8128,7 @@
         { key: "whisparrApiKey", type: "PASSWORD", label: "Whisparr API key", description: "Optional Whisparr API key. It is used only by the plugin backend." },
         { key: "whisparrRootFolder", type: "STRING", label: "Whisparr root folder override", description: "Optional. Leave empty to use Whisparr's first configured root folder." },
         { key: "whisparrQualityProfileId", type: "NUMBER", optional: true, label: "Whisparr quality profile ID override", description: "Optional. Leave empty to use Whisparr's fallback (or first) quality profile." },
+        { key: "whisparrMonitor", type: "BOOLEAN", default: true, label: "Monitor scenes sent to Whisparr", description: "Add scenes as monitored, so Whisparr grabs a release that appears after the scene was sent. Enabled by default." },
         { key: "whisparrSearchImmediately", type: "BOOLEAN", default: true, label: "Search Whisparr immediately", description: "Start a release search after adding a scene. Enabled by default." },
       ],
     },

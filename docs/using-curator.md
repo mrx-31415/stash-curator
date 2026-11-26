@@ -629,11 +629,12 @@ queries your indexers. Searched scenes move to **Downloading** once Whisparr gra
 release; use **Refresh** to reload.
 
 Select scenes with their checkboxes to search, monitor, stop monitoring, or remove
-them together. **Monitor** lets Whisparr grab a scene when a release appears; Curator
-sends scenes unmonitored. **Remove** takes the scene out of Whisparr only: downloaded
-files always stay on disk, and the scene no longer shows **Sent to Whisparr** in Find.
-Filter by title or studio, or with **Sent by Curator** show only the scenes Curator
-sent.
+them together. **Monitor** lets Whisparr grab a scene when a release appears. Curator
+sends scenes monitored and tagged `curator` in Whisparr; turn off **Monitor scenes
+sent to Whisparr** in settings to send them unmonitored. **Remove** takes the scene
+out of Whisparr only: downloaded files always stay on disk, and the scene no longer
+shows **Sent to Whisparr** in Find. Filter by title or studio, or with **Sent by
+Curator** show only the scenes Curator sent.
 
 ## Prune
 
