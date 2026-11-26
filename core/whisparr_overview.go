@@ -348,6 +348,19 @@ func opWhisparrAction(pluginDir string, payload jVal) (jVal, error) {
 func whisparrActionBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	args := payload.get("args")
 	action := argsString(args, "action", "")
+	if action == "resume" {
+		// "Try now" on a paused rolling search: Curator-side only.
+		db, err := openAPISidecar(pluginDir, payload, settings)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer db.Close()
+		if err := resumeWhisparrSweep(db); err != nil {
+			return jvNull(), err
+		}
+		ensureAutoWorker(pluginDir, payload, settings, db)
+		return jvObj(jvKey("action", jvStr(action)), jvKey("count", jvInt(0))), nil
+	}
 	rawIDs := args.get("whisparr_ids")
 	if !isList(rawIDs) || len(rawIDs.arr) == 0 || len(rawIDs.arr) > whisparrActionLimit {
 		return jvNull(), fmt.Errorf("whisparr_ids must be a list of 1 to %d ids", whisparrActionLimit)
@@ -437,7 +450,7 @@ AND external_id IN (SELECT value FROM json_each(?))`, stashdbEndpoint, encoded.m
 			return jvNull(), err
 		}
 	default:
-		return jvNull(), errors.New("action must be search, monitor, unmonitor, remove, rotate, or stop")
+		return jvNull(), errors.New("action must be search, monitor, unmonitor, remove, rotate, stop, or resume")
 	}
 	return jvObj(jvKey("action", jvStr(action)), jvKey("count", jvInt(int64(len(ids.arr))))), nil
 }

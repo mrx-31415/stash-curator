@@ -78,6 +78,8 @@ assert.equal(status(rotation, 0), null, "nothing to say with nothing waiting");
 assert.equal(status({ ...rotation, paused_until_ms: NOW + 2 * 3600000 }).tone, "warning");
 assert.match(status({ ...rotation, paused_until_ms: NOW + 2 * 3600000 }).text, /indexer in backoff\. It resumes in 2h\.$/);
 assert.match(status({ ...rotation, last_error: "HTTP 500" }).text, /couldn't reach Whisparr on its last round \(HTTP 500\)/);
+assert.ok(status({ ...rotation, last_error: "HTTP 500" }).retry && status({ ...rotation, paused_until_ms: NOW + 1 }).retry, "a paused rotation offers Try now");
+assert.ok(!status(rotation).retry);
 assert.match(status({ ...rotation, enabled: false }).text, /^Rolling search is off\./);
 context.formatTimeAgo = () => "recently";
 

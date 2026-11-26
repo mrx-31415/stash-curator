@@ -16,6 +16,7 @@ type sweepStub struct {
 	commands      string // GET /command body
 	searches      []string
 	fail          bool
+	missing       map[string]bool // "METHOD path" answering 404
 }
 
 func (stub *sweepStub) serve(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +24,10 @@ func (stub *sweepStub) serve(w http.ResponseWriter, r *http.Request) {
 	if stub.fail {
 		w.WriteHeader(http.StatusInternalServerError)
 		io.WriteString(w, `{"message":"Boom"}`)
+		return
+	}
+	if stub.missing[r.Method+" "+r.URL.Path] {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -313,5 +318,30 @@ func TestWhisparrOverviewShowsAndManagesTheRotation(t *testing.T) {
 	}
 	if len(stub.calls) != 0 {
 		t.Fatalf("rotation actions reached Whisparr: %v", stub.calls)
+	}
+}
+
+func TestWhisparrSweepSkipsChecksAWhisparrVersionLacks(t *testing.T) {
+	stub, settings, db := sweepFixture(t)
+	stub.missing = map[string]bool{"GET /api/v3/indexerstatus": true, "GET /api/v3/command": true}
+	summary, err := runWhisparrSweep(db, settings, sweepConfig(2), sweepNow)
+	if err != nil || summary.get("status").asString() != "searched" || len(stub.searches) != 1 {
+		t.Fatalf("summary = %s, %v, searches %v", summary.marshalCompact(), err, stub.searches)
+	}
+	// A required endpoint missing is still an error, and names the endpoint.
+	stub.missing["GET /api/v3/movie"] = true
+	summary, err = taskWhisparrSearch(db, settings)
+	if err != nil || !strings.HasPrefix(summary.get("error").asString(), "GET /movie: Whisparr rejected the request (HTTP 404)") {
+		t.Fatalf("summary = %s, %v", summary.marshalCompact(), err)
+	}
+	// "Try now" lifts the pause so the next tick runs a round.
+	if _, paused, _ := whisparrSweepState(db); paused <= nowMs() {
+		t.Fatalf("no pause after an error: %d", paused)
+	}
+	if err := resumeWhisparrSweep(db); err != nil {
+		t.Fatal(err)
+	}
+	if lastRun, paused, err := whisparrSweepState(db); err != nil || lastRun != 0 || paused != 0 {
+		t.Fatalf("after resume: last run %d, paused %d, %v", lastRun, paused, err)
 	}
 }

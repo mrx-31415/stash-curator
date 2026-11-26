@@ -6577,8 +6577,8 @@
   function whisparrRotationStatus(summary, waiting, now = Date.now()) {
     if (!summary) return null;
     if (!summary.enabled) return waiting ? { tone: "info", text: `Rolling search is off. ${whisparrScenes(waiting)} would still be searched in the background; turn it on in Settings.` } : null;
-    if (summary.last_error) return { tone: "warning", text: `Rolling search couldn't reach Whisparr on its last round (${summary.last_error}). It tries again ${formatTimeUntil(summary.next_sweep_at_ms, now)}.` };
-    if (summary.paused_until_ms) return { tone: "warning", text: `Rolling search is paused: Whisparr reports an indexer in backoff. It resumes ${formatTimeUntil(summary.paused_until_ms, now)}.` };
+    if (summary.last_error) return { tone: "warning", retry: true, text: `Rolling search couldn't reach Whisparr on its last round (${summary.last_error}). It tries again ${formatTimeUntil(summary.next_sweep_at_ms, now)}.` };
+    if (summary.paused_until_ms) return { tone: "warning", retry: true, text: `Rolling search is paused: Whisparr reports an indexer in backoff. It resumes ${formatTimeUntil(summary.paused_until_ms, now)}.` };
     if (!waiting) return null;
     const pace = `${summary.batch_size} every ${Math.round(summary.interval_ms / 60000)} min`;
     const last = summary.last_run_at_ms ? ` · last round ${formatTimeAgo(summary.last_run_at_ms)}` : "";
@@ -6795,6 +6795,21 @@
         setBusy(null);
       }
     }
+    async function resumeRotation() {
+      if (busy) return;
+      setBusy({ action: "resume", ids: new Set() });
+      setNotice("");
+      setError("");
+      try {
+        await operation({ operation: "whisparr_action", action: "resume" }, 60000);
+        setData((current) => current && current.rotation ? { ...current, rotation: { ...current.rotation, paused_until_ms: null, last_error: null, next_sweep_at_ms: Date.now() } } : current);
+        setNotice("The rolling search runs its next round within a minute. Refresh to see the result.");
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(null);
+      }
+    }
     if (error && whisparrNotConfigured(error)) {
       return React.createElement(
         "section",
@@ -6831,7 +6846,8 @@
         status === "missing" && visible.length > 0 && React.createElement(Button, { className: "curator-whisparr-search-all", size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", visible) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), ` Search ${visible.length === 1 ? "it" : `all ${visible.length.toLocaleString()}`}`)
       ),
       statusInfo && React.createElement("p", { className: "curator-whisparr-hint" }, statusInfo.description),
-      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`),
+      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`,
+        rotationStatus.retry && React.createElement(Button, { className: "curator-whisparr-retry", size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: resumeRotation, title: "Run the next rolling-search round within a minute" }, "Try now")),
       data && !data.library_ready && React.createElement("div", { className: "alert alert-info" }, "Curator is still matching your library to StashDB. Scenes you own show as In library once that finishes."),
       notice && React.createElement("div", { className: "alert alert-success", role: "status" }, notice),
       error && React.createElement("div", { className: "alert alert-danger", role: "alert" }, error),

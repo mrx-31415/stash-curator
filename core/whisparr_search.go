@@ -187,10 +187,25 @@ func whisparrTime(value string) (int64, bool) {
 	return 0, false
 }
 
+// sweepCall is api.call with the request named in any error, so the sweep's
+// recorded error says which Whisparr endpoint failed.
+func sweepCall(api whisparrAPI, method, path string, body jVal) (jVal, error) {
+	result, err := api.call(method, path, body)
+	if err != nil {
+		endpoint, _, _ := strings.Cut(path, "?")
+		return jvNull(), fmt.Errorf("%s %s: %w", method, endpoint, err)
+	}
+	return result, nil
+}
+
 // whisparrIndexerBackoffUntil is the latest time any indexer is disabled
 // until (0 when none is), as Whisparr reports after rate limits or failures.
+// A Whisparr without the endpoint skips the check.
 func whisparrIndexerBackoffUntil(api whisparrAPI, now int64) (int64, error) {
-	statuses, err := api.call("GET", "/indexerstatus", jvNull())
+	statuses, err := sweepCall(api, "GET", "/indexerstatus", jvNull())
+	if whisparrNotFound(err) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -204,9 +219,13 @@ func whisparrIndexerBackoffUntil(api whisparrAPI, now int64) (int64, error) {
 }
 
 // whisparrSearchRunning reports whether Whisparr still has a scene search
-// queued or running, so sweeps never stack up behind each other.
+// queued or running, so sweeps never stack up behind each other. A Whisparr
+// without the endpoint skips the check.
 func whisparrSearchRunning(api whisparrAPI) (bool, error) {
-	commands, err := api.call("GET", "/command", jvNull())
+	commands, err := sweepCall(api, "GET", "/command", jvNull())
+	if whisparrNotFound(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -324,7 +343,7 @@ func runWhisparrSweep(db dbx, settings jVal, cfg whisparrSweepConfig, now int64)
 		}
 		return jvObj(jvKey("status", jvStr("search_running"))), nil
 	}
-	movies, err := api.call("GET", "/movie", jvNull())
+	movies, err := sweepCall(api, "GET", "/movie", jvNull())
 	if err != nil {
 		return jvNull(), err
 	}
@@ -339,7 +358,7 @@ func runWhisparrSweep(db dbx, settings jVal, cfg whisparrSweepConfig, now int64)
 	}
 	queue, err := api.queue()
 	if err != nil {
-		return jvNull(), err
+		return jvNull(), fmt.Errorf("GET /queue: %w", err)
 	}
 	library, err := localStashdbSceneIDs(db)
 	if err != nil {
@@ -404,7 +423,7 @@ func runWhisparrSweep(db dbx, settings jVal, cfg whisparrSweepConfig, now int64)
 		for _, row := range due {
 			movieIDs.arr = append(movieIDs.arr, jvInt(row.whisparrID))
 		}
-		if _, err := api.call("POST", "/command", jvObj(jvKey("name", jvStr("MoviesSearch")), jvKey("movieIds", movieIDs))); err != nil {
+		if _, err := sweepCall(api, "POST", "/command", jvObj(jvKey("name", jvStr("MoviesSearch")), jvKey("movieIds", movieIDs))); err != nil {
 			return jvNull(), err
 		}
 		infoLog(fmt.Sprintf("Asked Whisparr to search for %d scene(s)", len(due)))
@@ -571,4 +590,10 @@ func stopWhisparrSearches(db dbx, stashdbIDs []string, now int64) error {
 	}
 	return execImmediate(db, `UPDATE whisparr_search SET state='stopped', updated_at_ms=?
 WHERE state='active' AND external_id IN (SELECT value FROM json_each(?))`, now, encoded.marshalCompact())
+}
+
+// resumeWhisparrSweep is the overview's "try now": drop any pause and let the
+// next daemon tick run a round, keeping the last error until that round.
+func resumeWhisparrSweep(db dbx) error {
+	return execImmediate(db, `UPDATE whisparr_sweep SET paused_until_ms=0, last_run_at_ms=0 WHERE singleton=1`)
 }
