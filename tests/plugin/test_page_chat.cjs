@@ -24,7 +24,7 @@ function load(pick = cycling()) {
     RANKING_TRAIT_NAMES: { redhead: ["redheads", "gingers"] },
     operation: async () => globalThis.profile,
   });
-  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, pageChatSceneQuery, pageChatSceneShelf, pageChatPerformerShelf, pageChatUsualTag, pageChatInsightsShelf, pageChatInsightsNote, pageChatDay, pageChatContentTags, pageChatPitchLog, pageChatFollowUp, pageChatFollowed, pageChatShare, pageChatOf, pageChatLength, PAGE_CHAT_JOINED, PAGE_CHAT_CLAUSES, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
+  vm.runInContext(`${block}; globalThis.chat = { pageChatVisit, pageChatWelcome, pageChatSceneNote, pageChatLine, pageChatLaneIntro, pageChatStudios, pageChatShelf, pageChatTalk, pageChatRef, pageChatShortTitle, pageChatExpandShelf, pageChatHuntShelf, pageChatSimilarShelf, pageChatExternalNote, pageChatReaction, pageChatSceneQuery, pageChatSceneShelf, pageChatPerformerShelf, pageChatUsualTag, pageChatInsightsShelf, pageChatInsightsNote, pageChatDay, pageChatContentTags, pageChatPitchLog, pageChatFollowUp, pageChatFollowed, pageChatShare, pageChatOf, pageChatLength, pageChatRanked, pageChatNewStudio, pageChatFeedbackReaction, pageChatStars, PAGE_CHAT_JOINED, PAGE_CHAT_CLAUSES, PAGE_CHAT_LINES, PAGE_CHAT_MOODS };`, context);
   return context.chat;
 }
 
@@ -75,6 +75,12 @@ test("the welcome greets only with something concrete to follow", () => {
   // Nothing concrete: no greeting at all.
   assert.equal(pageChatWelcome({ previous: now - 4 * DAY, streak: 1 }, { count: 0 }, [], now, first).length, 0);
   assert.equal(pageChatWelcome({ previous: null, streak: 1 }, {}, [], now, first)[0].key, "first");
+  // Half the welcomes say what time of day it is, but never at night.
+  const late = () => 0.7;
+  assert.equal(pageChatWelcome(visit, { count: 12 }, [], now, late)[0].key, "eveningDays");
+  assert.equal(pageChatWelcome(visit, { count: 12 }, [], now, late)[0].fallback.key, "days");
+  assert.equal(pageChatWelcome({ previous: now - DAY, streak: 1 }, { count: 12 }, [], now - 10 * 3600000, late)[0].key, "morning");
+  assert.equal(pageChatWelcome(visit, { count: 12 }, [], now + 4 * 3600000, late)[0].key, "days");
   // Back within hours: no greeting, only news.
   assert.equal(pageChatWelcome({ previous: now - 3600000, streak: 5 }, {}, [word], now, first).length, 0);
   assert.deepEqual(pageChatWelcome({ previous: now - 3600000, streak: 5 }, { count: 2 }, [word], now, first).map((line) => line.key).join(), "newScenes");
@@ -759,4 +765,79 @@ test("numbers come out the way a person says them", () => {
   // Big play counts round down; round ones stay.
   assert.match(pageChatLine({ key: "mostPlayed", values: { r: "Closing", n: 137 } }, () => true).text, /over 130 (plays|times)/);
   assert.match(pageChatLine({ key: "mostPlayed", values: { r: "Closing", n: 120 } }, () => true).text, /\b120 (plays|times)/);
+});
+
+test("a shelf brings back an earlier pick, a ranking's winner, its oldest and its best rated", () => {
+  const { pageChatShelf, pageChatRanked, pageChatStars } = load();
+  const now = new Date(2026, 10, 4, 20).getTime();
+  const ann = { id: 1, name: "Ann" };
+  const scenes = [
+    { id: 1, title: "Opening", date: "2021-05-01", rating100: 60, play_count: 0, performers: [], files: [{ duration: 600 }] },
+    { id: 2, title: "Second", date: "2010-02-01", rating100: 90, play_count: 0, performers: [ann], files: [{ duration: 610 }] },
+    { id: 3, title: "Third", date: "2022-01-01", rating100: 80, play_count: 0, performers: [], files: [{ duration: 620 }] },
+    { id: 4, title: "Fourth", date: "2023-01-01", play_count: 0, performers: [], files: [{ duration: 630 }] },
+  ];
+  const facts = new Map(scenes.map((scene) => [String(scene.id), scene]));
+  const items = scenes.map((scene) => ({ scene_id: scene.id }));
+  const ranked = pageChatRanked({ at: now - 3600000, wins: [{ id: "1", name: "Ann", n: 5 }, { id: "9", name: "Bea", n: 2 }] }, now);
+  assert.deepEqual([...ranked.keys()], ["1"], "two wins aren't worth bringing up");
+  assert.equal(pageChatRanked({ at: now - 3 * DAY, wins: [{ id: "1", name: "Ann", n: 5 }] }, now).size, 0, "an old ranking is forgotten");
+  const shelf = pageChatShelf("best_bets", items, facts, { pitched: new Set(["3"]), ranked }, now, () => 0);
+  const spec = (key) => shelf.find(([, each]) => each.key === key)?.[1];
+  assert.equal(spec("standBy").links.r, "/scenes/3");
+  assert.ok(!spec("standBy").because, "a reminder says no more than the name");
+  assert.equal(spec("rankedOne").links.r, "/scenes/2");
+  assert.deepEqual(plain({ ...spec("rankedOne").values, r: undefined }), { p: "Ann", n: 5, when: "today" });
+  assert.equal(spec("rankedOne").links.p, "/performers/1");
+  assert.equal(spec("oldestOne").links.r, "/scenes/2");
+  assert.equal(spec("oldestOne").values.y, "2010");
+  assert.equal(spec("topRated").links.r, "/scenes/2");
+  assert.equal(spec("topRated").values.k, "4.5 stars");
+  assert.equal(pageChatStars(100), "5 stars");
+  assert.equal(pageChatStars(20), "1 star");
+  // Nothing remembered, nothing to bring back; a tie at the top isn't a best.
+  const plainShelf = pageChatShelf("best_bets", items, new Map([...facts, ["3", { ...scenes[2], rating100: 90 }]]), {}, now, () => 0);
+  assert.ok(!plainShelf.some(([, each]) => ["standBy", "rankedOne", "topRated"].includes(each.key)));
+});
+
+test("a performer page and the welcome have new things to say", () => {
+  const { pageChatPerformerShelf, pageChatNewStudio, pageChatWelcome } = load();
+  const now = new Date(2026, 10, 4, 20).getTime();
+  const performer = { id: 1, name: "Ann Lee" };
+  const theirs = [300, 1500, 1600, 1700].map((seconds, index) => ({ id: index + 1, title: ["Lakeside", "Harbour", "Orchard", "Meadow"][index], play_count: 0, files: [{ duration: seconds }] }));
+  const ranked = new Map([["1", { name: "Ann Lee", n: 6, when: "yesterday" }]]);
+  const shelf = pageChatPerformerShelf(performer, {}, { theirs: { scenes: theirs } }, { ranked, now });
+  const spec = (key) => shelf.find(([, each]) => each.key === key)?.[1];
+  assert.equal(spec("performerRanked").values.n, 6);
+  assert.equal(spec("performerShortest").values.r, "Lakeside");
+  assert.equal(spec("performerShortest").values.m, "5 minutes");
+  assert.equal(spec("performerShortest").links.r, "/scenes/1");
+  const studio = (name) => ({ studio: { name } });
+  assert.deepEqual(plain(pageChatNewStudio([studio("North"), studio("North"), studio("North"), studio("South")])), { name: "North", n: 3 });
+  assert.equal(pageChatNewStudio([studio("North"), studio("North"), studio("South")]), null, "two isn't a run");
+  const visit = { previous: now - 4 * DAY, streak: 1 };
+  assert.equal(pageChatWelcome(visit, { studio: { name: "North", n: "all" } }, [], now, () => 0)[1].key, "newStudio");
+});
+
+test("card feedback gets a word back: the first of each kind, then now and then", () => {
+  const { pageChatFeedbackReaction } = load();
+  const session = {};
+  const up = { kind: "feedback", type: "thumb_up", scene: "1" };
+  assert.equal(pageChatFeedbackReaction(up, session, () => 0.9).key, "feedbackUp");
+  assert.equal(pageChatFeedbackReaction(up, session, () => 0.9), null);
+  assert.equal(pageChatFeedbackReaction(up, session, () => 0.1).key, "feedbackUp");
+  assert.equal(pageChatFeedbackReaction({ ...up, type: "never_show" }, session, () => 0.9).key, "feedbackNever");
+  assert.equal(pageChatFeedbackReaction({ ...up, type: "prune" }, session, () => 0), null, "not every action has a line");
+});
+
+test("a second line doesn't repeat the reason the first one gave", () => {
+  const { pageChatTalk } = load();
+  const why = { key: "whyBoth", values: { p: "Ann", t: "Lace" } };
+  const top = [2, { key: "topPick", scene: 0, values: { r: "Opening" }, because: why }];
+  const gem = [5, { key: "gem", scene: 2, values: { r: "Third" }, because: { ...why } }];
+  const other = [1, { key: "gem", scene: 3, values: { r: "Fourth" }, because: { key: "whyStudio", values: { s: "North" } } }];
+  const said = pageChatTalk([top, gem, other], null, [], { redraw: true, random: () => 0 });
+  assert.deepEqual(plain(said.map((line) => line.values.r)), ["Opening", "Fourth"]);
+  // With only the same reason left, one line is enough.
+  assert.equal(pageChatTalk([top, gem], null, [], { redraw: true, random: () => 0 }).length, 1);
 });

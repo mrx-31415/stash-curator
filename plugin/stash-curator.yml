@@ -31,6 +31,10 @@ settings:
     displayName: Hide Curator's comments
     description: Hide Curator's chat bubbles on its own pages (welcome-backs, lane comments, card notes, Insights) and on Stash's scene and performer pages. Off by default.
     type: BOOLEAN
+  chatVoice:
+    displayName: Curator's voice
+    description: How Curator's comments sound. friend (default), clerk, connoisseur, wit, minimalist, detective, captain, butler, or classic. Choose under Curator → Manage → Settings → Page settings, or enter one here.
+    type: STRING
   hideRankingComments:
     displayName: Hide comments in ranking plugins
     description: Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default; takes effect the next time the ranking plugin opens.

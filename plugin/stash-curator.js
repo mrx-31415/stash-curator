@@ -1064,6 +1064,7 @@
     }
     document.body.classList.toggle("curator-hide-card-badges", values.hideCardRatings === true);
     document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(values.detailPageControls) ? values.detailPageControls : "large";
+    applyChatVoice(values.chatVoice);
     return payload.data.configurePlugin;
   }
 
@@ -1087,6 +1088,7 @@
     const settings = payload.data.configuration.plugins["stash-curator"] || {};
     document.body.classList.toggle("curator-hide-card-badges", settings.hideCardRatings === true);
     document.body.dataset.curatorDetailPageControls = ["small", "off"].includes(settings.detailPageControls) ? settings.detailPageControls : "large";
+    applyChatVoice(settings.chatVoice);
     return settings;
   }
 
@@ -4871,6 +4873,7 @@
           ],
         });
         scheduleModelUpdate();
+        announcePageChat({ kind: "feedback", type: feedbackType, scene: String(item.scene_id) });
         if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction) {
           onReaction({ scene_id: String(item.scene_id), polarity: feedbackType === "thumb_up" ? 1 : -1 });
         }
@@ -8061,6 +8064,7 @@
         { key: "detailPageControls", type: "SELECT", default: "large", options: [{ value: "large", label: "Large" }, { value: "small", label: "Small" }, { value: "off", label: "Off" }], label: "Detail page controls", description: "Curator's expandable bar on scene and performer pages: Large (default), Small for compact icons and score, or Off to hide it." },
         { key: "hideCardRatings", type: "BOOLEAN", label: "Hide card ratings and confidence", description: "Hide Curator's badges on Stash scene and performer cards. Off by default." },
         { key: "hidePageComments", type: "BOOLEAN", label: "Hide Curator's comments", description: "Hide Curator's chat bubbles on its own pages (welcome-backs, lane comments, card notes, Insights) and on Stash's scene and performer pages. Off by default." },
+        { key: "chatVoice", type: "SELECT", default: "friend", options: [{ value: "friend", label: "Friend: warm and casual" }, { value: "clerk", label: "Clerk: dry and understated" }, { value: "connoisseur", label: "Connoisseur: refined" }, { value: "wit", label: "Wit: deadpan" }, { value: "minimalist", label: "Minimalist: just the facts" }, { value: "detective", label: "Detective: hardboiled noir" }, { value: "captain", label: "Captain: ship's log" }, { value: "butler", label: "Butler: at your service" }, { value: "classic", label: "Classic: the original chatty voice" }], label: "Curator's voice", description: "How Curator's comments sound, on its pages, Stash's scene and performer pages, and in ranking plugins. Each voice says the same things its own way." },
         { key: "hideRankingComments", type: "BOOLEAN", label: "Hide comments in ranking plugins", description: "Hide Curator's chat beside matches and results in ranking plugins such as Ascension and Cherry Pick brackets. Off by default." },
         { key: "pageSize", configKey: "page_size", type: "NUMBER", label: "Results per page", description: "Results per page, or per fetch when endless scrolling is enabled. Applies to recommendations, Similar, and Expand. Default 20." },
         { key: "recommendationEndlessScroll", configKey: "recommendation_endless_scroll", type: "BOOLEAN", label: "Virtual endless scrolling", description: "Load more results while scrolling in Recommendations and Find, in Cards, Thumbnails, and Wall. Cards retain expanded panels while the browser skips offscreen rendering. Off by default." },
@@ -10203,6 +10207,14 @@
       "Morning ranking session. Coffee for you, notes for me.",
       "Early start! Let's do this.",
     ],
+    afternoon: [
+      "Good afternoon! Let's rank.",
+      "Afternoon ranking session. I'm ready.",
+    ],
+    evening: [
+      "Good evening! Let's rank.",
+      "Evening ranking session. I'm in.",
+    ],
     milestone: [
       "{n} matches in. I'm learning a lot about you.",
       "{n} matches! My notebook is filling up.",
@@ -10500,7 +10512,13 @@
     const names = new Map([[RANKING_LINES, "line"], [RANKING_KICKERS, "kick"], [RANKING_WRAP, "wrap"], [RANKING_TRAIT_NAMES, "trait"], [RANKING_FACTS, "fact"]]);
     return `${names.get(table) || "other"}:${key}`;
   }
+  // A voice's rare lines, by the table they stand in for. About one pick in
+  // CHAT_RARE_ODDS draws from them instead, from a deck of their own.
+  const CHAT_RARE = new Map();
+  const CHAT_RARE_ODDS = 40;
   function rankingPick(table, key, name = rankingDeckName(table, key)) {
+    const rare = CHAT_RARE.get(table)?.[key];
+    if (rare?.length && Math.random() * CHAT_RARE_ODDS < 1) return rankingPick(CHAT_RARE.get(table), key, `rare:${name}`);
     const options = table[key];
     if (!rankingDecks) {
       try { rankingDecks = JSON.parse(localStorage.getItem(RANKING_DECKS_KEY)) || {}; } catch { rankingDecks = {}; }
@@ -10531,6 +10549,13 @@
     const liked = entry && taste.lean.get(entry.gender)?.liked;
     return liked ? [...liked].filter((trait) => entry.traits.get(trait) === true) : [];
   }
+  // The latest ranking's winners, for Curator's pages to bring up later.
+  const RANKING_RECENT_KEY = "stash-curator:ranking-recent:v1";
+  function rankingRemember(current, now = Date.now()) {
+    const wins = Object.entries(current.wins || {}).filter(([id, n]) => n > 0 && current.names?.[id]).sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([id, n]) => ({ id, name: current.names[id], n }));
+    try { localStorage.setItem(RANKING_RECENT_KEY, JSON.stringify({ at: now, total: current.total, wins })); } catch { /* not remembered */ }
+  }
   const RANKING_UPSET = 15;
   function rankingKicker(current, tier, winner, loser, taste = null) {
     const agreed = RANKING_TALLY[tier] === "agreed";
@@ -10557,8 +10582,10 @@
       ? (loser.rating - (loser.change || 0)) - (winner.rating - (winner.change || 0)) : 0;
     const pick = (kind, n) => ({ kind, text: rankingLine(kind, winner, loser, RANKING_KICKERS).replaceAll("{n}", String(n)) });
     if (current.total === 1) {
+      // Half the time the first word says what time of day it is.
       const hour = new Date().getHours();
-      return pick(hour >= 23 || hour < 5 ? "night" : hour >= 5 && hour < 9 ? "morning" : "opener", 1);
+      const time = hour < 5 || hour >= 23 ? "night" : hour < 11 ? "morning" : hour < 17 ? "afternoon" : "evening";
+      return pick(Math.random() < 0.5 ? time : "opener", 1);
     }
     if (RANKING_MILESTONES.has(current.total)) return pick("milestone", current.total);
     if (before) return pick(before === winner.id ? "rematch" : "flip", 2);
@@ -10661,6 +10688,7 @@
           if (tallyKey === "surprised" && winner.name && !current.surprises.includes(winner.name)) current.surprises = [...current.surprises, winner.name];
           const line = rankingLine(verdict.voice, winner, loser, verdict.voice.startsWith("fact") ? RANKING_FACTS : RANKING_LINES, verdict.trait, verdict.values);
           const kicker = rankingKicker(current, verdict.tier, winner, loser, await current.taste);
+          rankingRemember(current);
           if (ticket === latest.current) setShown({ slot, kind: "match", winner, loser, verdict, line, kicker, tally: current.tally, count: ticket });
         } catch (error) {
           if (ticket === latest.current) setShown({ slot, kind: "match", error: error.message });
@@ -10679,7 +10707,7 @@
         const top = current.history[current.history.length - 1];
         const ids = [String(winner.id), String(loser.id)].sort().join(":");
         const undone = top && [top.winner, top.loser].sort().join(":") === ids ? current.history.pop() : null;
-        if (undone) Object.assign(current, undone.before);
+        if (undone) { Object.assign(current, undone.before); rankingRemember(current); }
         if (current.hidden) { setShown(null); return; }
         const voice = undone && RANKING_TALLY[undone.tier] === "surprised" ? "undoSurprise" : undone && RANKING_TALLY[undone.tier] === "agreed" ? "undoAgreed" : "undo";
         const undoneWinner = undone && String(winner.id) === undone.winner ? winner : undone ? loser : winner;
@@ -11127,6 +11155,32 @@
       "{d} days! I missed you.",
       "There you are, {d} days later.",
     ],
+    // The same welcomes with the time of day in them, for a visit that
+    // isn't at night: after a day away, then after several.
+    morning: [
+      "Good morning! Welcome back.",
+      "Morning! Good to see you.",
+    ],
+    afternoon: [
+      "Good afternoon! Welcome back.",
+      "Afternoon! Good to see you again.",
+    ],
+    evening: [
+      "Good evening! Welcome back.",
+      "Evening! Good to see you again.",
+    ],
+    morningDays: [
+      "Good morning! It's been {d} days.",
+      "Morning! {d} days, welcome back.",
+    ],
+    afternoonDays: [
+      "Good afternoon! It's been {d} days.",
+      "Afternoon! {d} days, welcome back.",
+    ],
+    eveningDays: [
+      "Good evening! It's been {d} days.",
+      "Evening! {d} days, welcome back.",
+    ],
     streak: [
       "{n} days in a row. I'm getting the hang of you.",
       "Day {n} running.",
@@ -11194,10 +11248,13 @@
       "My money's on {r}.",
       "Starting strong with {r}.",
     ],
+    // A strong card For You's mix placed low. Curator made the order, so
+    // it points at the card as another good one, never as better than
+    // the top.
     gem: [
-      "This lane mixes in other picks, so don't skip {r} further down. It's one of my surest bets.",
-      "The order here is a mix, and {r} got pushed down. I'm surer of it than of the top one.",
-      "{r} sits low because I shuffle a few kinds of pick together. It's one of my strongest.",
+      "Also worth a look: {r}.",
+      "{r} is another good one.",
+      "Keep an eye out for {r} too.",
     ],
     stretchOne: [
       "I slipped {r} in as a stretch, a bit off your usual.",
@@ -11813,9 +11870,58 @@
       "{t} is at its peak right now: {pct} of what you've watched lately.",
       "Never more {t} than now: {pct} of your last three months.",
     ],
+    // A scene suggested earlier this visit, back on another shelf.
+    standBy: [
+      "Still standing by {r}.",
+      "{r} again. I haven't changed my mind.",
+    ],
+    // A recent ranking's big winner, on a shelf or their own page.
+    rankedOne: [
+      "{p} won {n} matches in your ranking {when}. {r} has them.",
+      "Fresh from your ranking {when}: {p}, {n} wins. Try {r}.",
+    ],
+    performerRanked: [
+      "{n} wins in your ranking {when}.",
+      "{pf} won {n} matches in your ranking {when}.",
+    ],
+    // Comparisons within a shelf, or among one performer's scenes.
+    oldestOne: [
+      "{r} is the oldest here, from {y}.",
+      "Going back a bit: {r} is from {y}.",
+    ],
+    topRated: [
+      "{r} is the best rated here, at {k}.",
+      "You gave {r} {k}. Nothing here rates higher.",
+    ],
+    performerShortest: [
+      "Want a short one? {r} runs {m}.",
+      "The shortest {pf} scene you haven't played: {r}, {m}.",
+    ],
+    // New scenes since the last visit, many from one studio.
+    newStudio: [
+      "{n} of the new ones are from {s}.",
+      "{s} has been busy: {n} of the new scenes.",
+    ],
+    // A word back for a thumbs up, a thumbs down, Not now or Never show.
+    feedbackUp: [
+      "Noted. More like that.",
+      "Good to know. I'll find more like it.",
+    ],
+    feedbackDown: [
+      "Noted. Fewer like that.",
+      "Got it. I'll steer away from that kind.",
+    ],
+    feedbackNotNow: [
+      "Fair enough. It'll be back another time.",
+      "Set aside for now.",
+    ],
+    feedbackNever: [
+      "Gone for good.",
+      "Understood. You won't see it again.",
+    ],
   };
   const PAGE_CHAT_MOODS = {
-    first: "👋", day: "😊", days: "👋", weeks: "🤗", streak: "🔥", newScenes: "👀", newScene: "👀",
+    first: "👋", day: "😊", days: "👋", weeks: "🤗", morning: "☀️", afternoon: "😊", evening: "🌙", morningDays: "☀️", afternoonDays: "👋", eveningDays: "🌙", streak: "🔥", newScenes: "👀", newScene: "👀",
     shortHour: "⏱️", longHour: "🍿", revisitFact: "🤔",
     resume: "⏯️", staleFavourite: "🤔", favourite: "😍", dependable: "😌", newFace: "👀", fresh: "✨", studio: "🙂", off: "🤐",
     topPick: "😊", performerRun: "😏", regulars: "😌", studioRun: "🙂", unplayed: "👀", replays: "🤔", quick: "⏱️", long: "🍿",
@@ -11840,6 +11946,8 @@
     performerUsual: "😏", performerStreak: "🔥", performerRegular: "😌", performerGoTo: "😍", performerCoStar: "😏", performerStudio: "🙂", performerLast: "🙂", performerBacklog: "👀", performerWaiting: "👀", performerIdleFavourite: "🤔",
     performerUnplayedFavourite: "🤔", performerDormant: "💤", performerSimilar: "👀", performerTrait: "😏", performerBlank: "🧐",
     insightTop: "😌", insightRising: "📈", insightFading: "📉", insightApart: "😏", insightPassed: "🤔", insightAgrees: "😄",
+    standBy: "😌", rankedOne: "🏆", performerRanked: "🏆", oldestOne: "📼", topRated: "⭐", performerShortest: "⏱️", newStudio: "👀",
+    feedbackUp: "👍", feedbackDown: "👌", feedbackNotNow: "👌", feedbackNever: "🫡",
     insightDormant: "💤", insightRediscovered: "🤗", insightWords: "👂", insightCoverage: "📚", insightPeak: "📈", insightPeakNow: "🔥",
   };
   // A visit starts after half an hour away. Days visited feed the streak.
@@ -11863,6 +11971,20 @@
       visit: { fresh, previous, streak, start, welcomed, lanes, said },
     };
   }
+  // The studio behind at least three of the new scenes and a third of them.
+  function pageChatNewStudio(scenes = []) {
+    const counts = new Map();
+    for (const scene of scenes) if (scene.studio?.name) counts.set(scene.studio.name, (counts.get(scene.studio.name) || 0) + 1);
+    const [name, n] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+    return name && n >= 3 && n * 3 >= scenes.length ? { name, n: pageChatOf(n, scenes.length) } : null;
+  }
+  // Recent ranking winners by performer id: a ranking in the last two
+  // days, three wins or more.
+  function pageChatRanked(record, now = Date.now()) {
+    const at = Number(record?.at) || 0;
+    if (!at || now - at > 2 * PAGE_CHAT_DAY || !Array.isArray(record.wins)) return new Map();
+    return new Map(record.wins.filter((entry) => entry?.id && entry.name && entry.n >= 3).map((entry) => [String(entry.id), { name: entry.name, n: entry.n, when: pageChatDay(at, now) }]));
+  }
   function pageChatHour(now = Date.now()) {
     const hour = new Date(now).getHours();
     return hour < 5 ? "night" : hour < 11 ? "morning" : hour < 17 ? "afternoon" : hour < 23 ? "evening" : "night";
@@ -11880,6 +12002,7 @@
     if (count > 1 && news.regular) options.push([4, { key: "newWith", values: { n: count, p: news.regular }, fallback: { key: "newScenes", values: { n: count } } }]);
     else if (count > 1) options.push([3, { key: "newScenes", values: { n: count } }]);
     else if (count === 1) options.push([3, { key: "newScene" }]);
+    if (news.studio) options.push([3, { key: "newStudio", values: { n: news.studio.n, s: news.studio.name } }]);
     if (news.follow) options.push([5, news.follow]);
     if (key && visit.streak >= 3 && key !== "first") options.push([2, { key: "streak", values: { n: visit.streak } }]);
     if (key) {
@@ -11893,7 +12016,13 @@
     const follow = pageChatWeighted(options, random);
     if (key === "first") return follow ? [{ key }, follow] : [{ key }];
     if (!follow) return [];
-    return key ? [{ key, values: { d: days } }, follow] : [follow];
+    if (!key) return [follow];
+    // About half the welcomes say good morning, afternoon or evening (not
+    // at night: no remarks on the hour).
+    const greeting = { key, values: { d: days } };
+    const hour = pageChatHour(now);
+    if (hour !== "night" && random() >= 0.5) return [{ key: key === "day" ? hour : `${hour}Days`, values: { d: days }, fallback: greeting }, follow];
+    return [greeting, follow];
   }
   // Scenes Curator suggested, kept a few weeks so a later visit can say how
   // it went: played since, stopped partway, or passed over visit after
@@ -11959,6 +12088,11 @@
       if (roll < 0) return option;
     }
     return options[options.length - 1]?.[1] || null;
+  }
+  // A rating100 as stars said aloud: "4 stars", "4.5 stars".
+  function pageChatStars(rating) {
+    const stars = Math.round(Number(rating) / 10) / 2;
+    return `${stars} star${stars === 1 ? "" : "s"}`;
   }
   function pageChatMedian(values) {
     const sorted = values.filter((value) => value > 0).sort((a, b) => a - b);
@@ -12029,6 +12163,19 @@
     if (newest?.at && now - newest.at < 7 * PAGE_CHAT_DAY) options.push([lane === "new_arrivals" ? 2 : 1, { key: "newest", scene: newest.index, values: { r: ref(newest.index), ago: rankingAgo(newest.at, now) } }]);
     const replayed = present.filter((entry) => Number(entry.scene.play_count) >= 3).sort((a, b) => b.scene.play_count - a.scene.play_count)[0];
     if (replayed) options.push([1, { key: "mostPlayed", scene: replayed.index, values: { r: ref(replayed.index), n: replayed.scene.play_count } }]);
+    const again = any(present.filter((entry) => context.pitched?.has(String(entry.scene.id))));
+    if (again) options.push([1.5, { key: "standBy", scene: again.index, values: { r: ref(again.index) } }]);
+    const ranked = any(present.flatMap((entry) => (entry.scene.performers || []).filter((performer) => context.ranked?.has(String(performer.id)))
+      .map((performer) => ({ ...entry, performer, won: context.ranked.get(String(performer.id)) }))));
+    if (ranked) options.push([2, { key: "rankedOne", scene: ranked.index, values: { r: ref(ranked.index, ["performer"]), p: ranked.won.name, n: ranked.won.n, when: ranked.won.when }, links: { p: pageChatTo("performers", ranked.performer.id) } }]);
+    const dated = present.map((entry) => ({ ...entry, year: Number(String(entry.scene.date || "").slice(0, 4)) || 0 })).filter((entry) => entry.year > 1900);
+    const oldest = [...dated].sort((a, b) => a.year - b.year)[0];
+    const typical = pageChatMedian(dated.map((entry) => entry.year));
+    if (oldest && dated.length >= 3 && oldest.year <= typical - 5) options.push([1, { key: "oldestOne", scene: oldest.index, values: { r: ref(oldest.index), y: String(oldest.year) } }]);
+    const rated = present.filter((entry) => Number(entry.scene.rating100) > 0).sort((a, b) => b.scene.rating100 - a.scene.rating100);
+    if (rated.length >= 3 && rated[0].scene.rating100 >= 80 && rated[0].scene.rating100 > rated[1].scene.rating100) {
+      options.push([1, { key: "topRated", scene: rated[0].index, values: { r: ref(rated[0].index), k: pageChatStars(rated[0].scene.rating100) } }]);
+    }
     options.push(...pageChatLaneMakeup(lane, present));
     // A card with no sayable name (low down, nothing unique) isn't pointed
     // at. A named card links to its page, and a line suggesting it says why.
@@ -12104,7 +12251,7 @@
   }
   // Lines that suggest a card need its reason; these already state one.
   const PAGE_CHAT_PITCHES = new Set(["topPick", "gem", "stretchOne", "unplayedOne", "freshDraw"]);
-  const PAGE_CHAT_STATED = new Set(["spotlight", "mostPlayed"]);
+  const PAGE_CHAT_STATED = new Set(["spotlight", "mostPlayed", "standBy", "rankedOne", "topRated"]);
   // The part of a card's score that carries it (the parts add up to its
   // appeal), as a reason to say after pointing at it.
   function pageChatCardWhy(item, scene) {
@@ -12138,6 +12285,11 @@
   // intro, after a new draw what came out on top, and usually a fact about
   // the shelf (weighted options), never the same kind as the last few
   // lines. `introduce` makes the intro, or is null for a view without one.
+  // The performers, tags and studios a line names, itself or in its reason.
+  function pageChatNamed(spec) {
+    return [spec?.values, spec?.because?.values].flatMap((values) => ["p", "q", "t", "s"].map((key) => values?.[key]))
+      .filter((name) => typeof name === "string" && name).map((name) => name.toLowerCase());
+  }
   function pageChatTalk(options, introduce, recent = [], { first = false, redraw = false, random = Math.random } = {}) {
     const shelf = options.filter(([, spec]) => !recent.includes(spec.key));
     const lines = [];
@@ -12146,9 +12298,11 @@
       const top = shelf.find(([, spec]) => spec.key === "topPick");
       if (top) lines.push({ ...top[1], key: "freshDraw" });
     } else if (intro) lines.push(intro);
-    // The second line points at a different card, if any.
+    // The second line points at a different card, if any, and doesn't
+    // name the performer, tag or studio the first one did.
     const pointed = new Set(lines.map((line) => line.scene).filter((scene) => scene !== undefined));
-    const rest = shelf.filter(([, spec]) => !(redraw && spec.key === "topPick") && !pointed.has(spec.scene));
+    const named = new Set(lines.flatMap(pageChatNamed));
+    const rest = shelf.filter(([, spec]) => !(redraw && spec.key === "topPick") && !pointed.has(spec.scene) && !pageChatNamed(spec).some((name) => named.has(name)));
     const pick = pageChatWeighted(rest, random);
     if (pick && (!lines.length || random() < 0.6)) lines.push(pick);
     return lines;
@@ -12440,6 +12594,16 @@
       if (event.reasons >= 3 && random() < 0.5) return { key: "reasonRich", values: { n: event.reasons } };
     }
     return null;
+  }
+  // A word back for a card's feedback: always the first of a kind in a
+  // visit, then now and then.
+  const PAGE_CHAT_FEEDBACK = { thumb_up: "feedbackUp", thumb_down: "feedbackDown", not_now: "feedbackNotNow", never_show: "feedbackNever" };
+  function pageChatFeedbackReaction(event, session, random = Math.random) {
+    const key = event?.kind === "feedback" && PAGE_CHAT_FEEDBACK[event.type];
+    if (!key) return null;
+    const seen = session.feedback || (session.feedback = {});
+    seen[key] = (seen[key] || 0) + 1;
+    return seen[key] === 1 || random() < 0.3 ? { key, values: {} } : null;
   }
   // A Stash page a line can link a name to.
   function pageChatTo(kind, id) {
@@ -12800,7 +12964,7 @@
   // What to say on a performer's page, from their scenes in your library
   // (`data.theirs`), the closest performer the model leans on and your
   // plays of them (`data.similar`), and optionally the trait lean.
-  function pageChatPerformerShelf(performer, details, data, { taste = null, content = null, now = Date.now() } = {}) {
+  function pageChatPerformerShelf(performer, details, data, { taste = null, content = null, ranked = null, now = Date.now() } = {}) {
     if (!performer?.name) return [];
     const p = performer.name;
     const all = data?.theirs?.scenes || [];
@@ -12818,6 +12982,13 @@
     const waiting = u === 1 ? `1 ${pageChatFirst(p)} scene is` : `${u} ${pageChatFirst(p)} scenes are`;
     const add = (weight, key, values, links = {}) => options.push([weight, { key, values: { p, pf: pageChatFirst(p), all: all.length, n, m, u, waiting, ...values }, links }]);
     if (week >= 2) add(6, "performerStreak", { n: week });
+    const won = ranked?.get(String(performer.id));
+    if (won) add(5.5, "performerRanked", { n: won.n, when: won.when });
+    const timed = unplayed.map((scene) => ({ scene, seconds: Number(scene.files?.[0]?.duration) || 0 })).filter((entry) => entry.seconds > 0 && pageChatShortTitle(pageChatTitle(entry.scene), entry.scene));
+    const shortest = [...timed].sort((a, b) => a.seconds - b.seconds)[0];
+    if (shortest && timed.length >= 3 && shortest.seconds < 0.6 * pageChatMedian(timed.map((entry) => entry.seconds)) && shortest.seconds < 1200) {
+      add(2.5, "performerShortest", { r: pageChatShortTitle(pageChatTitle(shortest.scene), shortest.scene), m: pageChatLength(Math.max(1, Math.round(shortest.seconds / 60))) }, { r: pageChatTo("scenes", shortest.scene.id) });
+    }
     const usual = n >= 3 && pageChatUsualTag(played, all, content);
     if (usual) {
       add(5, "performerUsual", {
@@ -12962,8 +13133,8 @@
       "If you watch one, make it {r}. Why? {c}.",
     ],
     gem: [
-      "{r} sits low in a mixed order, but I'm surer of it than the top one: {c}.",
-      "Don't let the order fool you: {r} is one of my surest bets, and {c}.",
+      "{r} is another good one: {c}.",
+      "Also worth a look: {r}, since {c}.",
     ],
     stretchOne: [
       "{c}, so I slipped {r} in as a stretch.",
@@ -13061,9 +13232,9 @@
   }
   const PAGE_CHAT_SCENES_QUERY =
     "query CuratorPageChatScenes($ids: [Int!]) { findScenes(scene_ids: $ids, filter: { per_page: -1 }) { scenes { " +
-    "id title play_count resume_time last_played_at created_at studio { name } performers { id name } files { basename duration } } } }";
+    "id title date rating100 play_count resume_time last_played_at created_at studio { name } performers { id name } files { basename duration } } } }";
   const PAGE_CHAT_NEW_QUERY =
-    "query CuratorPageChatNew($since: String!) { findScenes(scene_filter: { created_at: { value: $since, modifier: GREATER_THAN } }, filter: { per_page: 40 }) { count scenes { performers { id name } } } }";
+    "query CuratorPageChatNew($since: String!) { findScenes(scene_filter: { created_at: { value: $since, modifier: GREATER_THAN } }, filter: { per_page: 40 }) { count scenes { studio { name } performers { id name } } } }";
   const PAGE_CHAT_STUDIOS_QUERY = `query CuratorPageChatStudios {
     findScenes(scene_filter: { play_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: -1 }) {
       scenes { play_count studio { name } }
@@ -13081,6 +13252,14 @@
       pageChatSession = { visit, welcomed: visit.welcomed, lanes: new Set(visit.lanes), noted: new Set(), recent: [], said: Object.fromEntries(Object.entries(visit.said).filter(([, kinds]) => Array.isArray(kinds)).map(([lane, kinds]) => [lane, new Set(kinds)])), asked: false, quiet: false, context: null, passed: new Set(passed) };
     }
     return pageChatSession;
+  }
+  // What the visit already holds: scenes passed over, scenes suggested
+  // during it, and the latest ranking's winners.
+  function pageChatMemory(session) {
+    const pitched = new Set(Object.entries(pageChatPitches()).filter(([, entry]) => entry.visit === session.visit.start && !entry.followed).map(([id]) => id));
+    let ranked = new Map();
+    try { ranked = pageChatRanked(JSON.parse(localStorage.getItem(RANKING_RECENT_KEY))); } catch { /* no ranking to bring up */ }
+    return { passed: session.passed, pitched, ranked };
   }
   function pageChatPitches() {
     try { return pageChatPitchLog(JSON.parse(localStorage.getItem(PAGE_CHAT_PITCH_KEY))); } catch { return {}; }
@@ -13194,6 +13373,7 @@
           return { shelf: pageChatShelf(lane, shown, known, context), intro: () => pageChatLaneIntro(lane, shown, known) };
         },
         note: async (id, context) => pageChatSceneNote((await scenes()).get(id), context),
+        react: (event, session) => (items.some((item) => String(item.scene_id) === event?.scene) ? pageChatFeedbackReaction(event, session) : null),
       };
     }, [lane, key]);
     return React.createElement(PageChat, { view: lane, feed });
@@ -13287,7 +13467,7 @@
   }
   const PAGE_CHAT_PERFORMER_QUERY = `query CuratorPageChatPerformer($id: [ID!], $close: [ID!], $withClose: Boolean!) {
     theirs: findScenes(scene_filter: { performers: { value: $id, modifier: INCLUDES } }, filter: { per_page: -1 }) {
-      scenes { id title play_count last_played_at created_at tags { id name } studio { id name } performers { id name } files { basename } }
+      scenes { id title play_count last_played_at created_at tags { id name } studio { id name } performers { id name } files { basename duration } }
     }
     similar: findScenes(scene_filter: { play_count: { value: 0, modifier: GREATER_THAN }, performers: { value: $close, modifier: INCLUDES } }, filter: { per_page: 0 }) @include(if: $withClose) { count }
   }`;
@@ -13325,7 +13505,7 @@
           pageChatTaste(context?.affinities),
           pageChatContentTags(),
         ]);
-        return { shelf: pageChatPerformerShelf(performer, details, data, { taste, content }), intro: null };
+        return { shelf: pageChatPerformerShelf(performer, details, data, { taste, content, ranked: context?.ranked }), intro: null };
       },
     };
   }
@@ -13427,7 +13607,9 @@
       if (!lines.length) { setShown(null); return; }
       // A follow-up sits beside the first line when both fit, else it
       // replaces the first once that has been read.
-      const together = lines.length > 1 && fits(spot)(lines.map((line) => line.text).join("  ")) && probe.current.offsetWidth + 40 * lines.length <= pageChatBudget(spot);
+      // In a slot of its own the bubbles share one row, so each wraps in
+      // its share of it: together only when they all fit on one line.
+      const together = lines.length > 1 && fits(spot)(lines.map((line) => line.text).join("  ")) && probe.current.offsetWidth + 40 * lines.length <= spot.room;
       setPlace(spot);
       const message = { id: own, kind, lines: together ? lines : lines.slice(0, 1), queue: together ? [] : lines.slice(1) };
       if (kind !== "hover" && kind !== "react") resting.current = message;
@@ -13467,7 +13649,7 @@
       shownView.current = view;
       (async () => {
         const context = await pageChatContext(session);
-        const look = () => feed.look({ ...context, passed: session.passed }).catch(() => ({ shelf: [], intro: null }));
+        const look = () => feed.look({ ...context, ...pageChatMemory(session) }).catch(() => ({ shelf: [], intro: null }));
         if (!session.welcomed && feed.greets !== false) {
           pageChatWelcomed(session);
           pageChatIntroduced(session, view);
@@ -13480,7 +13662,8 @@
             return performer.name && viewing.basis === "watched" && viewing.value >= PAGE_CHAT_DEPENDABLE;
           });
           const follow = await pageChatFollowUpNow(session).catch(() => null);
-          const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name, follow }, (await look()).shelf);
+          const studio = pageChatNewStudio(news.scenes);
+          const specs = pageChatWelcome(session.visit, { count: news.count, regular: regular?.name, follow, studio }, (await look()).shelf);
           if (active && specs.length) say(specs, "welcome");
           if (specs.length) return;
         }
@@ -13630,6 +13813,10107 @@
     }));
   }
 
+  // Curator's voices: the same chat in different registers. A voice
+  // rewrites any of the chat tables (page lines, joined lines and their
+  // clauses, ranking verdicts, kickers, wrap-ups and facts) key by key; a
+  // key it leaves out keeps the Classic line. Its `rare` tables hold lines
+  // drawn only now and then, in place of a key's usual ones. Every voice keeps to the same
+  // manners: it talks about the scenes and what the numbers say, never
+  // about when or how much you watch, and it doesn't fake a friendship.
+  // The choice is a plugin setting, mirrored in this browser so the first
+  // line on a page already speaks in it.
+  const CHAT_VOICE_KEY = "stash-curator:chat-voice:v1";
+  const CHAT_VOICE_DEFAULT = "friend";
+  const CHAT_VOICES = {
+    classic: {},
+    friend: {
+      page: {
+        first: [
+          "Hi, I'm Curator. I'll leave a note here now and then.",
+          "Hello! I'll add the odd tip here as we go.",
+        ],
+        day: [
+          "Hey, welcome back.",
+          "Good to see you.",
+          "Hi again.",
+        ],
+        days: [
+          "Hey, welcome back. It's been {d} days.",
+          "Hi again! {d} days since last time.",
+          "Welcome back, {d} days on.",
+        ],
+        weeks: [
+          "Welcome back! It's been {d} days.",
+          "Hey, {d} days. Plenty to catch up on.",
+        ],
+        morning: [
+          "Morning! Good to see you.",
+          "Hey, good morning.",
+          "Morning. Welcome back.",
+        ],
+        afternoon: [
+          "Good afternoon! Welcome back.",
+          "Hey, afternoon. Good to see you.",
+          "Hi again, and good afternoon.",
+        ],
+        evening: [
+          "Evening! Good to see you.",
+          "Hey, good evening.",
+          "Evening. Welcome back.",
+        ],
+        morningDays: [
+          "Morning! It's been {d} days.",
+          "Good morning, and welcome back after {d} days.",
+        ],
+        afternoonDays: [
+          "Good afternoon! It's been {d} days.",
+          "Hey, afternoon. {d} days since last time.",
+        ],
+        eveningDays: [
+          "Evening! It's been {d} days.",
+          "Good evening, and welcome back after {d} days.",
+        ],
+        streak: [
+          "Hi again.",
+          "Welcome back.",
+          "Hey, good to see you.",
+        ],
+        newScenes: [
+          "{n} new since your last visit. They're in New Arrivals.",
+          "{n} fresh scenes came in while you were away.",
+          "Heads up: {n} new scenes since last time.",
+        ],
+        newScene: [
+          "One new scene since your last visit.",
+          "Something new came in while you were away.",
+        ],
+        shortHour: [
+          "Want a short one? {r} runs {m}.",
+          "{r} is just {m}, if you're after something quick.",
+          "Quick one: {r}, {m}.",
+        ],
+        longHour: [
+          "Got some time? {r} runs {m}.",
+          "If you want something longer, {r} runs {m}.",
+        ],
+        revisitFact: [
+          "{r} last got a play {ago}. Could be worth another go.",
+          "{r} hasn't had a play since {when}.",
+          "{r} has been waiting since {when}.",
+        ],
+        resume: [
+          "You stopped at {t} last time, if you want to pick it up.",
+          "You left off at {t}.",
+        ],
+        staleFavourite: [
+          "Watched {n} times, but not since {when}.",
+          "An old favourite: {n} plays, the last {ago}.",
+        ],
+        favourite: [
+          "{n} plays so far, the last in {when}. A real favourite.",
+          "You've played this one {n} times, last in {when}.",
+        ],
+        dependable: [
+          "{p} is in this one, your {top} performer.",
+          "There's {p}: {m} plays across {n} of their scenes.",
+          "{p} again. They've had {m} plays from you.",
+        ],
+        newFace: [
+          "{p} is new to you. Could be a good one.",
+          "You've never played a {p} scene. This could be the first.",
+        ],
+        fresh: [
+          "Added {ago}, and nobody's played it yet.",
+          "Only came in {ago}, still unplayed.",
+        ],
+        studio: [
+          "Another {s}. That studio gets {pct} of your plays.",
+          "{s} again, {pct} of what you play.",
+        ],
+        off: [
+          "Okay, I'll stay quiet. Manage › Settings brings me back.",
+          "No problem, I'll keep it down. You can bring me back in Manage › Settings.",
+        ],
+        topPick: [
+          "{r} is my top pick here.",
+          "If you watch one, I'd go with {r}.",
+          "I'd start with {r}.",
+          "{r} is the one I'd pick.",
+          "My pick of the bunch: {r}.",
+        ],
+        gem: [
+          "Also worth a look: {r}.",
+          "{r} is another good one.",
+          "Keep an eye out for {r} too.",
+        ],
+        stretchOne: [
+          "I slipped {r} in as a stretch, a bit off your usual.",
+          "{r} is my wildcard here, outside what you normally pick.",
+          "{r} is a deliberate stretch. Let me know how it goes.",
+        ],
+        spotlight: [
+          "{p} is in {r}: {m} plays across {n} of their scenes so far.",
+          "There's {p} in {r}, your {top} performer.",
+          "{r} has {p}, who's had {m} plays from you.",
+        ],
+        unplayedOne: [
+          "{r} is one you've never played.",
+          "You haven't played {r} yet.",
+          "{r} is still new to you.",
+        ],
+        quickOne: [
+          "{r} is a quick one, {m}.",
+          "If you want something short, {r} runs {m}.",
+        ],
+        longOne: [
+          "{r} is a long one, {m}.",
+          "If you've got time, {r} runs {m}.",
+        ],
+        performerRun: [
+          "{p} turns up {n} times in here.",
+          "A bit of a {p} theme in this lot: {n} scenes.",
+          "{n} with {p} in here.",
+        ],
+        regulars: [
+          "{p} is in {n} of these, your {top} performer.",
+          "Plenty of {p} here: {n} of these, after {m} plays from you.",
+          "{n} with {p}, who's had {m} plays from you.",
+        ],
+        studioRun: [
+          "Lots of {s} in here.",
+          "{s} makes up {n} of these.",
+          "This lot leans {s}.",
+        ],
+        unplayed: [
+          "{n} of these you've never played.",
+          "You haven't played {n} of these yet.",
+          "{n} of these are new to you.",
+        ],
+        replays: [
+          "You've played {n} of these before.",
+          "{n} of these are old friends.",
+        ],
+        quick: [
+          "Mostly quick ones here, around {m}.",
+          "Short ones this time, about {m} each.",
+        ],
+        long: [
+          "Longer ones here, around {m} each.",
+          "These run about {m}, so get comfy.",
+        ],
+        newest: [
+          "{r} is the newest, added {ago}.",
+          "Newest here: {r}, added {ago}.",
+          "{r} only came in {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays and counting.",
+          "You've played {r} {n} times.",
+          "{r} has {n} plays from you. Clearly a good one.",
+        ],
+        freshDraw: [
+          "Fresh draw! {r} made the cut.",
+          "New shuffle, and {r} is on top now.",
+          "Reshuffled. {r} is up first.",
+        ],
+        laneMix: [
+          "Here's the mix: {mix}.",
+          "What I've put together: {mix}.",
+          "This lot is {mix}.",
+        ],
+        laneTag: [
+          "{t} is doing a lot of the work here. It's a big reason for {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "Lots of {t} in here: it helped {n} of these in.",
+        ],
+        laneCurate: [
+          "{n} of these got in partly because you said yes to {t}.",
+          "Your yes to {t} in Curate shows: it helped {n} of these in.",
+          "You told me you like {t}, and {n} of these are here partly for that.",
+        ],
+        laneContentOnly: [
+          "{n} of these have nobody you really watch in them. They're here for what's in them.",
+          "For {n} of these, the cast is new to me as far as you go. I picked them on content.",
+        ],
+        laneCast: [
+          "This lot is mostly about who's in it: {n} of these are here for a performer you watch.",
+          "Performers carry {n} of these.",
+        ],
+        whyPerformer: [
+          "It's {p}, mostly.",
+          "That's down to {p}.",
+          "{p} is why.",
+        ],
+        whyTags: [
+          "It's the content: {t} and {t2}.",
+          "{t} and {t2}, mostly.",
+          "Mostly for {t}, with {t2} too.",
+        ],
+        whyBoth: [
+          "{p}, and it's got {t}.",
+          "It's {p} and {t} together.",
+          "{p} in a {t} scene.",
+        ],
+        whyStudio: [
+          "{s} tends to work for you.",
+          "Mostly because it's {s}.",
+        ],
+        hookPerformer: [
+          "{p} is the hook.",
+          "The hook is {p}.",
+        ],
+        hookTags: [
+          "The hook is {t}, plus {t2}.",
+          "{t} and {t2} are the hook.",
+        ],
+        hookBoth: [
+          "The hook: {p}, and {t}.",
+          "{p} and {t} are the hook.",
+        ],
+        hookStudio: [
+          "The hook is {s}.",
+          "{s} is the hook.",
+        ],
+        whyReplay: [
+          "You've played it {n} times.",
+          "{n} plays so far, so it clearly works for you.",
+        ],
+        newWith: [
+          "{n} new since last time, one with {p}.",
+          "{p} is in one of the {n} new scenes.",
+          "The new arrivals include some {p}.",
+        ],
+        followWatched: [
+          "You gave {r} a go after I mentioned it {when}. Nice.",
+          "I pointed you at {r} {when}, and you went for it.",
+          "{r} got a play after I brought it up {when}. Glad it was useful.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I brought it up {when}. I think that one landed.",
+          "You've played {r} {n} times since I mentioned it {when}.",
+        ],
+        followPartial: [
+          "You stopped {r} {at}. The rest is still there.",
+          "{r} got stopped {at}. No pressure.",
+          "I mentioned {r} {when}, and it got stopped {at}.",
+        ],
+        followPassed: [
+          "I've suggested {r} {n} times now and it hasn't clicked. I'll leave it be.",
+          "{r} isn't for you, it seems: {n} mentions, no play. I'll stop bringing it up.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these. None in your library yet.",
+          "{n} with {p} that you don't have. One of your regulars.",
+          "More {p} out there: {n} right here.",
+        ],
+        expandSpotlight: [
+          "{r} has {p}, and you don't have it yet.",
+          "There's {p} in {r}. One of your regulars.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, one of your favourites.",
+          "Your favourite {p} turns up {n} times.",
+        ],
+        expandUnwatched: [
+          "You have {p} in your library but haven't played them yet. {r} might change that.",
+          "{p} is in your library, unplayed. {r} could be a good start.",
+        ],
+        expandStudio: [
+          "{s} has {n} here you don't own yet.",
+          "{n} from {s}, a studio you watch a lot.",
+        ],
+        expandNewRelease: [
+          "{r} only came out {ago}.",
+          "Brand new: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these came out in the last month.",
+          "{n} released in the last 30 days.",
+        ],
+        expandDeepCut: [
+          "A deep cut: {r} is from {y}.",
+          "{r} goes back to {y}. An oldie.",
+        ],
+        whisparrRun: [
+          "{n} of these are already in Whisparr.",
+          "Whisparr has {n} of these covered.",
+        ],
+        whisparrArrived: [
+          "{r} made it into your library. You sent it {when}.",
+          "You sent {r} {when}, and now it's here.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent are still missing. The oldest went out {when}.",
+          "{n} of your sends are still missing; the first went out {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the missing one that fits you best ({s}).",
+          "Of everything missing, {r} matches you most: {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but not linked in Stash yet. A scan and Identify should fix that.",
+          "Whisparr has files for {n} that Stash hasn't matched. Try a scan, then Identify.",
+        ],
+        similarEmpty: [
+          "Pick a scene you like and I'll find similar ones.",
+          "Show me one you like, and I'll find more like it.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. A good one to start from.",
+          "You've played that one {n} times, so let's find more like it.",
+        ],
+        seedUnplayed: [
+          "You haven't played the original yet, but here's what's close to it.",
+          "Not played that one yet? Here are its relatives anyway.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} turns up again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, same as the original.",
+          "{s} again for {n} of these.",
+        ],
+        closest: [
+          "{r} is the closest match, even if it's not on top.",
+          "The nearest twin is {r}. Your taste pushed others up.",
+        ],
+        huntEmpty: [
+          "Pick a performer and I'll check what you're missing.",
+          "Who are we looking for?",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes.",
+          "{own} of {n} {p} scenes are already yours.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your library yet.",
+          "A clean slate: {n} {p} scenes, none of them yours yet.",
+        ],
+        huntComplete: [
+          "Every {p} scene here is already yours. Nice collection.",
+          "You've got all {n}. Nothing missing.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p} has been busy: {n} this past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here is from {y}.",
+          "This goes all the way back to {y}.",
+        ],
+        huntRegular: [
+          "{p} is one of your regulars, {m} plays so far.",
+          "Makes sense it's {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Your favourite {p} is in this one.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr.",
+          "Whisparr is already on this one.",
+        ],
+        ownedNote: [
+          "You already have this one.",
+          "This one's in your library already.",
+        ],
+        releasedNote: [
+          "Only released {ago}.",
+          "Out {ago}. Brand new.",
+        ],
+        oldNote: [
+          "From {y}. A classic.",
+          "This one goes back to {y}.",
+        ],
+        calledLike: [
+          "Thought so, {t} suits you.",
+          "I had a feeling. {t} it is.",
+          "Just as I guessed with {t}.",
+        ],
+        calledDislike: [
+          "Thought so, {t} isn't your thing.",
+          "Figured. Less {t}, then.",
+        ],
+        answerSurprise: [
+          "Oh, I had {t} the other way round. Noted.",
+          "Good to know! I'd read {t} wrong.",
+          "That's new to me about {t}. Thanks.",
+        ],
+        answerBlocked: [
+          "Got it, no more {t}.",
+          "{t} is out of your picks.",
+        ],
+        taughtMilestone: [
+          "That's {n} answers. Really helpful.",
+          "{n} in! Keep going if you like.",
+          "{n} answers this visit. Your picks will be better for it.",
+        ],
+        reasonFlip: [
+          "Huh, I had that one the other way round. Thanks.",
+          "Good catch. I'd read that scene wrong.",
+        ],
+        reasonRich: [
+          "{n} reasons. That's a lot to go on, thanks.",
+          "That's plenty to work with. Thanks!",
+        ],
+        scenePairing: [
+          "Good feeling about this one: {p} and {t}. You've played {n} scenes with that exact pairing.",
+          "This has {p} and {t}, a pairing you've gone for {n} times.",
+          "{p} plus {t}? You've played {n} like that already. I think this one works.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}, two things that tend to work for you: {n} of {pf}'s scenes played, {m} plays for the studio.",
+          "{p} and {s} together. You've played {n} {pf} scenes and given the studio {m} plays. Good odds.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and it's the closest thing to {r}, which you've played {n} times.",
+          "If {r} worked for you, and {n} plays say it did, this is very similar. {t} too.",
+        ],
+        sceneTagRun: [
+          "You've played {n} {t} scenes in the last two weeks, and this one has {p} too.",
+          "{n} {t} scenes in the last two weeks, and now one with {p}. Fits right in.",
+        ],
+        scenePerformerRun: [
+          "{p} has had {n} plays from you in the last two weeks. This fits right in.",
+          "{n} {p} scenes in the last two weeks, and this one's in the same vein.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is the nearest thing to it in your library.",
+          "Liked {r} {when}? This one is its closest match.",
+        ],
+        sceneSatiated: [
+          "This would usually be high on my list, but you've had {n} {p} scenes lately, so I'm mixing things up.",
+          "{p} is usually a safe bet, but after {n} recent plays I've eased this one down for variety.",
+        ],
+        sceneCooldown: [
+          "You watched this {when}, so I'm letting it rest before I suggest it again.",
+          "You played it {when}. It's resting in your picks for a bit.",
+        ],
+        sceneNotNow: [
+          "You told me 'not now' on this {when}. I'm keeping it out of your picks for a while.",
+          "'Not now', you said {when}. It's sitting out your picks for a bit.",
+        ],
+        sceneNotNowPlain: [
+          "You told me 'not now' on this one, so I'm keeping it out of your picks for a while.",
+          "You said 'not now', so this one's sitting out your picks for a bit.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this one shouldn't be your thing, but {n} plays say it clearly is.",
+          "Its tags and cast wouldn't put it near the top for you. Your {n} plays did.",
+        ],
+        sceneHistoryLags: [
+          "{x} says this should suit you, but your history with it says otherwise.",
+          "I expected this to work for you because of {x}. Your plays don't quite agree.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but a lot like {q}, and you've played {n} of {qf}'s scenes. Could be a good one.",
+          "Never watched {p}? They're close to {q}, and you've played {n} of {qf}'s scenes. Worth a look.",
+        ],
+        sceneRadar: [
+          "This one's new ground for me. None of its {k} performers has a play from you, and nothing from {s} either.",
+          "New territory: no plays from you for any of its {k} performers or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "This one's new ground for me. None of its {k} performers has a play from you yet.",
+          "New territory: none of its {k} performers has a play from you.",
+        ],
+        sceneRadarOne: [
+          "This one's new ground. You've never played a {p} scene, and nothing from {s} either.",
+          "New territory: no {p} scenes and nothing from {s} in your plays yet.",
+        ],
+        sceneRadarOnePlain: [
+          "This one's new ground. You've never played a {p} scene before.",
+          "You haven't played any {p} yet, so this is new territory.",
+        ],
+        scenePerformer: [
+          "Good feeling about this one. {p} is in {n} scenes you've already played.",
+          "This one's an easy call: {p} has had {m} plays from you so far.",
+        ],
+        sceneTag: [
+          "There's {t} in this, and that's on {pct} of what you watch. I'd expect it to work.",
+          "{t} again. It's on {pct} of the scenes you watch, so good odds.",
+        ],
+        sceneStudio: [
+          "{s} has a good track record with you, {m} plays. This should hold up.",
+          "Another {s}. They've had {m} plays from you, so this should be a safe one.",
+        ],
+        sceneNeighbor: [
+          "If you liked {r}, and {n} plays say you did, this one is very similar.",
+          "This is close to {r}, which you've played {n} times.",
+        ],
+        sceneResume: [
+          "You stopped at {t} last time, if you want to carry on.",
+          "Picking up where you left off, at {t}?",
+        ],
+        sceneReplay: [
+          "Play number {n} would be the first since {when}.",
+          "{n} plays so far, the last {when}. A real favourite.",
+        ],
+        sceneCarriedPerformer: [
+          "Honestly, {p} is doing most of the work here. Without them this wouldn't make my list.",
+          "This is a {pf} pick, plain and simple.",
+          "It's {p}. That's the pitch; the rest isn't special for you.",
+        ],
+        sceneDespite: [
+          "You told me no to {x}, and it's in here. {p} is the only reason I'm mentioning it.",
+          "There's {x}, which you said you don't want. I'm only flagging it for {p}.",
+        ],
+        sceneCarriedContent: [
+          "It's not the cast. It's {t} and {t2} that put this on my list.",
+          "Nobody in this is a draw for you yet. What sells it is {t}, plus {t2}.",
+          "I'm going on the content here: {t} and {t2}. The cast is new territory.",
+        ],
+        sceneTwin: [
+          "It's basically {r} again: {t}, {t2}, {t3}.",
+          "Same recipe as {r}: {t} and {t2}, and that one worked for you.",
+          "If you liked {r}, this is its twin. Same {t}, same {t2}.",
+        ],
+        sceneSplit: [
+          "Two things pull this up, about equally: {p}, and the content, {t} and {t2} most of all.",
+          "Half of this is {p}. The other half is what's in it: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You told me you like {t}, but you don't often pick it. This one has it.",
+          "{t} is in this. You said yes to it, though your plays don't show it much yet.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your plays back that up. It's in this one.",
+          "{t}: you told me, and your plays agree. It's in here.",
+        ],
+        sceneHeldBack: [
+          "One thing holds this back: {x}. Everything else lines up for you.",
+          "I'd have this higher if not for {x}.",
+        ],
+        sceneCrowd: [
+          "{k} people in one scene is usually a few too many for you, so I've held it back a little.",
+          "It's a {k}-performer scene, and those rarely work for you. Just so you know.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, but you don't play them much. The favourite is doing most of the lifting.",
+          "{p} is a favourite, though your plays are a lot cooler on them. I wouldn't bet much on this.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your plays agree.",
+          "{p}: a favourite, and you actually watch them.",
+        ],
+        scenePairingMild: [
+          "This has {p} and {t}, a pairing you've played {n} times. Worth a look.",
+          "{p} with {t}: you've gone for that {n} times before. Could be one for you.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: you've played {n} of {pf}'s scenes and given the studio {m} plays. Might be worth a go.",
+          "{p} and {s}: {n} {pf} scenes played, {m} plays for the studio. Could work.",
+        ],
+        sceneTagNeighborMild: [
+          "It's closest to {r}, which you've played {n} times, and there's {t} too. Could be one for you.",
+          "Similar to {r} ({n} plays), with some {t}. Maybe.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played, so this might be worth a look.",
+          "You've played {p} {m} times. Not a sure thing, but promising.",
+        ],
+        sceneTagMild: [
+          "There's {t} in this, and that's on {pct} of what you watch. Could be one for you.",
+          "It has {t}, which is on {pct} of what you watch. Might work.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. This one might be worth a go.",
+          "It's {s}, {m} plays from you. Could be good.",
+        ],
+        sceneNeighborMild: [
+          "It's close to {r}, which you've played {n} times. Might be your thing.",
+          "A bit like {r}, which has {n} plays from you.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a plus, {m} plays so far, but there's {t} in this, and that rarely works for you. Could go either way.",
+          "You like {p}, {m} plays so far, but {t} usually isn't your thing. Hard to say.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you like, but also {x}, which you usually skip. Could go either way.",
+          "{t} says yes, {x} says no. Hard to call this one.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a plus, {m} plays so far, but the rest of this doesn't look much like what you watch. I'm not sure.",
+          "You like {p}, {m} plays so far. Beyond that, this isn't really your usual.",
+        ],
+        sceneDoubt: [
+          "Not sure about this one for you: {x} usually isn't your thing.",
+          "I'd hesitate here. There's {x} in this, and that rarely works for you.",
+        ],
+        sceneDoubtPlain: [
+          "Not sure about this one for you. Not much in it matches what you watch.",
+          "This one's a long shot. Not much in it lines up with what you watch.",
+        ],
+        sceneFresh: [
+          "Added {ago}, and nobody's played it yet.",
+          "Added {ago}. Brand new to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you mostly pick the {t} scenes: {a} of what you've played, against {b} of the rest.",
+          "{t} is the {pf} you go for: {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes played this week.",
+          "{pf} has had {n} plays this week.",
+        ],
+        performerRegular: [
+          "One of your regulars: {n} scenes and {m} plays so far.",
+          "You know {pf} well: {m} plays across {n} scenes.",
+        ],
+        performerGoTo: [
+          "Your go-to {pf} scene is {r}, {k} plays and counting.",
+          "If it's {pf}, it's often {r}: {k} plays so far.",
+        ],
+        performerCoStar: [
+          "With {pf}, you mostly pick the scenes with {q}: {a} of what you've played, against {b} of the rest.",
+          "{pf} and {q} seem to be a pairing you like: {a} of the {pf} scenes you've played, but {b} of the others.",
+        ],
+        performerStudio: [
+          "You mostly watch {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+          "{s} is where you like {pf} best: {a} of your {pf} plays, but only {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} scene was {r}, {when}.",
+          "Last time it was {r}, {when}.",
+        ],
+        performerBacklog: [
+          "Plenty left with {pf}: {u} of their {all} scenes are still unplayed.",
+          "{u} {pf} scenes you've never played. Lots to explore.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+          "{waiting} still unplayed, including {one} added {ago}.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}. The last play was {when}, and {waiting} still unplayed.",
+          "{p} is a favourite, last played in {since}. {waiting} still unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p} but haven't played any of their {all} scenes yet.",
+          "{p} is a favourite with {all} scenes, none played yet. Plenty to start with.",
+        ],
+        performerDormant: [
+          "You haven't watched {p} since {since}. That's {d} months.",
+          "{d} months since your last {pf} scene. They used to get a lot of plays: {m}.",
+        ],
+        performerSimilar: [
+          "You haven't watched {p} yet, but you've played {n} of {q}'s scenes, and they're similar. Could be a good fit.",
+          "New to you, but {p} is a lot like {q}, and you've played {n} of {qf}'s scenes. Worth a try.",
+        ],
+        performerTrait: [
+          "{trait} turn up {x}× as often in who you watch, and you've played {n} of {pf}'s scenes. Makes sense.",
+          "{trait} show up {x}× as often in who you watch as in your library. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "I don't know much about {p} yet: no plays from their {all} scenes, and nobody similar that you watch.",
+          "I don't know {p} yet. None of their {all} scenes has a play from you, so your first one will tell me a lot.",
+        ],
+        insightTop: [
+          "{t} is your constant: it's on {pct} of the {n} scenes you've watched.",
+          "No contest at the top. {t} is on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is on the rise: up from {a} to {b} of what you watch lately.",
+          "{t} is climbing, {a} to {b} of your watching in the last 90 days.",
+        ],
+        insightFading: [
+          "{t} has gone quiet, from {a} down to {b}.",
+          "Less {t} lately: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your library but {b} of what you watch. You seek it out.",
+          "You go looking for {t}: {b} of what you watch, from {a} of your library.",
+        ],
+        insightPassed: [
+          "{t} is {a} of your library, but only {b} of what you watch.",
+          "There's plenty of {t} in your library, {a} of it, but it gets just {b} of your plays.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and you meant it: it's on {pct} of what you watch.",
+          "{t}: you told me you like it, and {pct} of what you watch backs that up.",
+        ],
+        insightDormant: [
+          "{p} used to be a regular: {n} plays, but none since {since}.",
+          "{p}: {n} plays, the last {when}.",
+        ],
+        insightRediscovered: [
+          "You came back to {r} after {m} months. Some things stick.",
+          "{m} months away, then back to {r}. A keeper.",
+        ],
+        insightWords: [
+          "You've picked {x} {n} times in Why these? as what makes a scene work.",
+          "{x}, {n} times in your Why these? answers. Noted.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. Plenty of library left to explore.",
+          "{n} of {all} scenes watched so far. That's {pct} of your library.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "Your {t} high point: {pct} of what you watched, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak right now: {pct} of what you've watched lately.",
+          "Never more {t} than now: {pct} of your last three months.",
+        ],
+        standBy: [
+          "Still standing by {r}.",
+          "{r} again. I still think it's a good one.",
+          "There's {r} again. Still my pick.",
+        ],
+        rankedOne: [
+          "{p} won {n} matches in your ranking {when}. {r} has them.",
+          "Your ranking {when} loved {p}: {n} wins. Try {r}.",
+          "{p}, {n} wins in your ranking {when}. They're in {r}.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}. Nice.",
+          "{pf} won {n} matches in your ranking {when}.",
+          "Fresh from your ranking {when}: {n} wins for {pf}.",
+        ],
+        oldestOne: [
+          "{r} is the oldest here, from {y}.",
+          "Going back a bit: {r} is from {y}.",
+          "A {y} one in the mix: {r}.",
+        ],
+        topRated: [
+          "{r} is your best rated here, at {k}.",
+          "You gave {r} {k}. Nothing here rates higher.",
+          "Top rated on this shelf: {r}, {k}.",
+        ],
+        performerShortest: [
+          "Want a short one? {r} runs {m}.",
+          "The shortest {pf} scene you haven't played: {r}, {m}.",
+          "{r} is only {m}, and you haven't played it yet.",
+        ],
+        newStudio: [
+          "{n} of the new ones are from {s}.",
+          "{s} has been busy: {n} of the new scenes.",
+          "Lots from {s} lately: {n} of the new ones.",
+        ],
+        feedbackUp: [
+          "Noted! More like that.",
+          "Good to know. I'll find more like it.",
+          "Got it, that's a keeper.",
+        ],
+        feedbackDown: [
+          "Noted. Fewer like that.",
+          "Got it. I'll steer away from that kind.",
+          "Fair enough. Adjusting.",
+        ],
+        feedbackNotNow: [
+          "Sure, another time.",
+          "Set aside for now.",
+          "No problem, it'll come back later.",
+        ],
+        feedbackNever: [
+          "Gone for good.",
+          "Got it. You won't see that one again.",
+          "Done. Off the list.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "I'd start with {r}, because {c}.",
+          "My pick is {r}: {c}.",
+          "{r} is my top pick here: {c}.",
+          "If you watch one, make it {r}. Why? {c}.",
+        ],
+        gem: [
+          "{r} is another good one: {c}.",
+          "Also worth a look: {r}, since {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I slipped {r} in as a stretch.",
+          "{r} is a bit off your usual, but {c}.",
+        ],
+        unplayedOne: [
+          "You've never played {r}, and {c}.",
+          "{r} is still unplayed, and {c}.",
+        ],
+        freshDraw: [
+          "Fresh draw, and {r} came out on top: {c}.",
+          "New shuffle. {r} is on top now, and {c}.",
+        ],
+        revisitFact: [
+          "{r} last got a play {ago}, and {c}.",
+          "{r} hasn't had a play since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it has {p}",
+          "it's got {p}",
+        ],
+        whyTags: [
+          "it's got {t} and {t2}",
+          "{t} and {t2} are both in it",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's {s}",
+          "{s} tends to work for you",
+        ],
+        whyReplay: [
+          "you've played it {n} times",
+          "you've come back to it {n} times",
+        ],
+        hookPerformer: [
+          "{p} is the hook",
+          "the hook is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the hook",
+          "the hook is {t} and {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the hook",
+          "the hook is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the hook",
+          "the hook is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}, of course. A dependable pick for you.",
+          "{w}? Makes total sense.",
+          "No surprise there. {w} is a regular in your history.",
+          "{w} it is. Saw that one coming.",
+          "Easy one. You keep coming back to {w}.",
+          "{w}. Your history made this an easy call.",
+          "{w} all the way.",
+          "That's the {w} you like.",
+          "{w}. Never really in doubt.",
+          "Right on cue. {w} rarely lets you down.",
+          "{w}, one of your go-tos.",
+        ],
+        agree: [
+          "Makes sense. {w} edges {l} in your viewing too.",
+          "That matches your history, by a nose.",
+          "Sensible pick. Your history leans {w} as well.",
+          "{w}, but only just. That fits.",
+          "Your viewing had {w} slightly ahead too.",
+          "{w} by a hair. That fits.",
+          "That lines up with what you watch.",
+          "Close, but that's the way your history leans.",
+          "Slight edge to {w}. Same as my read.",
+          "That tracks, though {l} put up a fight.",
+        ],
+        close: [
+          "Tough one. Your history has them neck and neck.",
+          "A coin flip as far as I could tell. Now I know.",
+          "Too close for me to call. Thanks for breaking the tie.",
+          "Your viewing couldn't separate them either. {w} it is.",
+          "I couldn't split those two.",
+          "That one was close. Good to know where you land.",
+          "No clear signal on these two. Now there is.",
+          "{w} and {l} look the same in your history. Not anymore.",
+          "50/50 by my numbers. Now it's not.",
+          "You watch both about equally. Helpful tiebreak!",
+        ],
+        surprise: [
+          "Oh, interesting. Your viewing leans {l}. Noted.",
+          "Hm. I'd have guessed {l}. Noted.",
+          "Not quite what your history suggested. Good to know.",
+          "{w} over {l}? Writing that down.",
+          "Huh. I had {l} slightly ahead.",
+          "Didn't quite see that coming. Noted.",
+          "Learning something here. {w}, then.",
+          "{w}? Not what I expected, but good to know.",
+          "A small curveball. I'd have said {l}.",
+          "Good to know. That shifts my picture a little.",
+        ],
+        twist: [
+          "Oh! I had you down as more of a {l} fan. Good to know.",
+          "Now that's a surprise. I was fairly sure about {l}.",
+          "Interesting! Your history leans {l} quite a bit.",
+          "That changes a few of my assumptions. Noted.",
+          "Updating my notes on {l}…",
+          "Not what your viewing suggested at all. Really useful.",
+          "A real surprise. {w} it is.",
+          "My notes said {l}, but you know best.",
+          "I'd have bet on {l}. Glad I didn't.",
+          "That one teaches me something.",
+        ],
+        unknown: [
+          "I barely know these two. Your pick is all I have.",
+          "New faces for me. Filing that away.",
+          "New territory. I'll take your word for it.",
+          "Haven't really seen you watch either. Noted!",
+          "Two strangers to me. {w} goes in the notes.",
+          "No read on these yet. You're teaching me from scratch.",
+          "Blank page on both. Thanks for the first clue.",
+          "Nothing on these two yet. That's changing.",
+          "Nice to meet you, {w}.",
+          "New names for me. Writing {w} down first.",
+        ],
+        hunchHit: [
+          "I had a hunch about {w} from similar performers. Nice to be right.",
+          "Just a guess on my part, but {w} seemed like your type.",
+          "{w} is a lot like people you watch, so I figured. Confirmed!",
+          "My gut said {w}. Good to know it works.",
+          "That was mostly a guess, and it landed.",
+          "Figured {w} might be your type. Glad I was right.",
+          "{w} reminds me of your favourites. Makes sense.",
+        ],
+        hunchMiss: [
+          "I only guessed {l} from similar performers. Guess overruled.",
+          "My hunch about {l} was just that, a hunch. Noted.",
+          "Looks like {l} isn't quite your type after all. Good to know.",
+          "So much for my guess about {l}.",
+          "{l} looked like your type on paper. Apparently not.",
+          "Back to the drawing board on {l}.",
+          "Good thing it was only a guess about {l}.",
+        ],
+        underdog: [
+          "{w}? You've hardly watched {w}. Interesting.",
+          "An underdog win! {w} barely shows up in your history.",
+          "{w} over {l}, who you actually watch? Interesting!",
+          "Maybe I should show you more {w}. Noting that.",
+          "A dark horse! {w} barely shows up in your history.",
+          "{w}, huh? Your viewing tells a different story, but I'm listening.",
+        ],
+        traitWin: [
+          "Makes sense. You do like {t}.",
+          "{w}, and you've got a thing for {t}.",
+          "Your history is full of {t}. {w} fits right in.",
+          "No shock there. {t} tend to win with you.",
+          "When it comes to {t}, you know what you like.",
+          "Right on brand: {t}.",
+        ],
+        traitClose: [
+          "Close one. My guess is you just like {t}.",
+          "Neck and neck, but you do like {t}.",
+          "Tough call. I suspect {t} tipped it.",
+          "Hard to split, but {t} usually win you over.",
+        ],
+        traitBranch: [
+          "Interesting. You don't usually go for {t}.",
+          "{t} aren't usually your thing. Noted!",
+          "A bit of variety: {t} are rare in your history.",
+          "{t}! Not your usual. Good to know.",
+        ],
+        traitPass: [
+          "Usually {t} win you over. Not this time.",
+          "Passing on {l}? You usually go for {t}.",
+          "{l} is one of your {t}, and still lost. Interesting!",
+          "You normally lean towards {t}. Noted!",
+        ],
+        draw: [
+          "A draw! Fair enough.",
+          "Can't split them? Noted for both.",
+          "A tie. I'll remember you like them equally.",
+          "Equal footing, then. Noted.",
+        ],
+        undo: [
+          "Okay, scratch that.",
+          "Scratched from my notes.",
+          "Changed your mind? No problem.",
+          "Let's pretend that never happened.",
+          "Fair enough, rewinding.",
+          "Rewound. Take your time.",
+        ],
+        undoSurprise: [
+          "Scratch that. That one did surprise me.",
+          "Back to my original read on {w}, then.",
+          "Scratched. That one had me confused anyway.",
+          "Rewound. I was puzzling over that one.",
+        ],
+        undoAgreed: [
+          "I had that one right, but scratching it anyway.",
+          "Scratch that? It looked like your kind of pick. Your call!",
+          "Rewinding. {w} seemed like your kind of pick, though.",
+          "Okay, scratched. Curious what you'll pick instead.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Ranking time. Let's see how well I know you.",
+          "Okay, let's see how this goes.",
+          "Go for it. I'll keep notes.",
+          "Ready when you are.",
+          "Let's do this.",
+          "I'll be taking notes.",
+        ],
+        night: [
+          "Let's see how well I know you.",
+          "Okay, ranking time. Go for it.",
+          "Ready when you are.",
+        ],
+        morning: [
+          "Morning! Let's see how well I know you.",
+          "Good morning. Ready when you are.",
+          "Morning. I'll keep notes.",
+        ],
+        afternoon: [
+          "Afternoon! Ranking time.",
+          "Good afternoon. Go for it.",
+          "Hey, afternoon. I'll keep notes.",
+        ],
+        evening: [
+          "Evening! Ranking time.",
+          "Good evening. Let's see how well I know you.",
+          "Evening. Go for it, I'll keep notes.",
+        ],
+        milestone: [
+          "{n} matches in. I'm learning a lot.",
+          "{n} matches! My notes are filling up.",
+          "{n} down. Keep them coming.",
+          "{n} already. This is really useful.",
+          "That's {n}. Great going.",
+          "{n} matches. Plenty to work with.",
+        ],
+        streak: [
+          "{n} in a row. I'm reading you well.",
+          "{n} straight. Getting the hang of it.",
+          "{n} in a row where we agree.",
+          "{n} for {n}. Nice.",
+          "Another one! That's {n} straight.",
+          "On a roll: {n} in a row.",
+        ],
+        broken: [
+          "Streak over at {n}. Still learning.",
+          "There goes my {n}-pick streak.",
+          "{n} in a row, and then this. Fair.",
+          "And my {n}-streak is gone. Good to know.",
+          "Well, {n} was nice while it lasted.",
+        ],
+        puzzled: [
+          "That's {n} surprises in a row. You're keeping me on my toes!",
+          "{n} curveballs straight. Taking lots of notes.",
+          "{n} in a row. Clearly I have things to learn.",
+          "{n} surprises running. Really useful.",
+        ],
+        reunion: [
+          "Back on the same page!",
+          "Back in sync.",
+          "There we go, reading you right again.",
+          "Back on track.",
+        ],
+        rematch: [
+          "Same result as last time. Consistent!",
+          "{w} again over {l}. You're sure about this one.",
+          "Rematch, same verdict. Noted twice.",
+        ],
+        flip: [
+          "Oh, you picked {l} last time!",
+          "Changed your mind since last round? {w} now.",
+          "A reversal! {l} won this pairing earlier.",
+          "{w} gets the rematch.",
+        ],
+        roll: [
+          "{w} is on a roll: {n} wins.",
+          "{w} again! That's {n}.",
+          "{n} wins for {w} already.",
+          "{w} keeps winning. {n} and counting.",
+          "Is anyone beating {w}? {n} wins.",
+          "{w}, {n} wins deep.",
+        ],
+        cheer: [
+          "This is really useful.",
+          "Every pick sharpens my picture of your taste.",
+          "Learning a lot here.",
+          "Your recommendations will be better for this.",
+          "Keep them coming if you like.",
+          "Great, thanks.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. I see a theme.",
+          "{t} again! {n} straight.",
+          "{n} {t} in a row. You know what you like.",
+        ],
+        upset: [
+          "Upset! {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Bold.",
+          "A {d}-point underdog takes it. Nice.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes the crown. Saw that coming.",
+          "And the winner is {c}! Your history agrees.",
+          "{c} wins it all. Exactly who I'd have guessed.",
+          "Crowned: {c}. A worthy champion, going by what you watch.",
+        ],
+        championDark: [
+          "{c} wins it all! A real dark horse in your history.",
+          "Champion {c}! You barely watch {c}. Noted in bold.",
+          "{c} takes it! Didn't see that coming.",
+          "Surprise champion: {c}. Maybe I should show you more.",
+        ],
+        championNew: [
+          "{c} wins! I hardly know {c} yet. Great first clue.",
+          "Champion {c}, someone I barely know. Writing that down.",
+        ],
+        placement: [
+          "That's where {c} lands. Noted!",
+          "{c}'s run is over. Nicely placed.",
+          "Run done for {c}. Thanks for the ranking.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} picks right. We're very much in sync.",
+          "{a} of {j} called correctly. I know your taste pretty well!",
+        ],
+        syncMid: [
+          "I read {a} of your {j} picks right. Getting there.",
+          "{a} of {j} right, with a few good surprises in there.",
+        ],
+        syncLow: [
+          "Only {a} of {j} right this time. You taught me a lot.",
+          "{a} of {j}. Plenty of new notes, which is great.",
+        ],
+        syncNone: [
+          "Mostly new faces for me this run. Thanks for all the clues.",
+          "I barely knew these performers. Now I know a bit more.",
+        ],
+        surprises: [
+          "You surprised me with {s}. I'll weigh those at my next model update.",
+          "Biggest surprises: {s}. Taking those into my next update.",
+          "{s} caught me off guard. Noted for my next update.",
+        ],
+        theme: [
+          "The theme this run: {t} ({n} of {m} winners).",
+          "{t} ruled this run: {n} of {m} winners.",
+          "Pattern spotted: {n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the busiest run: {n} wins.",
+          "Workhorse of the run: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. Easy call.",
+          "{wp} plays of {w} in your history. That settles it.",
+          "{w}: {wp} plays across {ws} scenes.",
+          "{w}, {wp} plays and counting. Makes sense.",
+          "{ws} of {w}'s scenes are in your history. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's in your history. Enough said.",
+          "{wo} O's with {w}. That explains it.",
+          "With {wo} O's on the books, {w} was always winning this.",
+        ],
+        factRecent: [
+          "You watched {w} just {wago}. Still a favourite, clearly.",
+          "{w}, watched {wago}. Consistent!",
+          "{w} again, after your last watch {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays in your history, {w} {wpp}. Interesting!",
+          "Picking {w} over {l}, who you've played {lp} times? Noted.",
+          "{lp} plays of {l}, and {w} still wins. Learning!",
+          "Your history says {l} ({lp} plays). You say {w}. Noted.",
+        ],
+        factStale: [
+          "You haven't watched {l} since {lwhen}. Maybe that explains it.",
+          "{l}'s last play was {lwhen}. Tastes change!",
+          "No {l} since {lwhen}, so this tracks.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Neck and neck in your history too: {wp} plays against {lp}.",
+          "{w} {wp}, {l} {lp} in plays. A fair fight.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes are still unplayed, by the way.",
+          "Good news: {wu} unplayed {w} scenes are in your library.",
+          "There are {wu} {w} scenes you haven't watched yet.",
+          "Plenty more where that came from: {wu} {w} scenes you haven't seen.",
+          "{w} has {wu} scenes in your library you've never played.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. That's your combo.",
+          "{w} plus {studio}: {sn} of your plays. A classic pairing.",
+          "{w} at {studio} seems to be a sweet spot for you.",
+        ],
+        factTogether: [
+          "Fun fact: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} in your history. Tough choice!",
+          "{w} and {l} have {tn} {tscenes} together in your history. Still, one had to win.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Interesting!",
+          "{wsc} {w} scenes in your library, none played yet. Good place to start.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Hey! Pull up a chair, I saved you the good stuff.",
+            "Oh good, you're here. I've been sorting things.",
+          ],
+          topPick: [
+            "Okay, honest opinion? {r}. Easily.",
+            "If I could only point at one thing on this whole page, it'd be {r}.",
+          ],
+          newScenes: [
+            "{n} new scenes! I've been itching to tell someone.",
+            "Guess what landed? {n} new scenes.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. Practically the house favourite.",
+            "{w}, obviously. I'd have bet my notebook on it.",
+          ],
+          agree: [
+            "{w}, by a whisker. We're on the same page, you and me.",
+            "Close, but {w}. That's exactly how I'd have split it.",
+          ],
+          close: [
+            "Honestly, I'd have flipped a coin on that one. Thanks for saving me the coin.",
+            "That was a tough one. I'd have sat on the fence forever.",
+          ],
+          surprise: [
+            "Ooh, plot twist. I had {l} all the way. Back to the drawing board.",
+            "Well, that's new. {w} over {l}. I'm rewriting a whole page of notes.",
+          ],
+          unknown: [
+            "Two names I've never seen you watch. Exciting, honestly. A clean slate.",
+            "Total mystery to me, both of them. {w} is clue number one.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "Ranking time! Grab a snack, this is the fun part.",
+            "Ooh, a ranking. My favourite way to learn what you like.",
+          ],
+          milestone: [
+            "{n} matches! At this rate I'll know you better than your playlist does.",
+            "That's {n}! Honestly, my notes have never been this good.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} wins it all! If you'd told me otherwise, I'd have checked my notes twice.",
+          ],
+        },
+      },
+    },
+    clerk: {
+      page: {
+        first: [
+          "I'm Curator. I'll leave a note here when there's something worth saying.",
+          "Curator here. Occasional notes, nothing more.",
+        ],
+        day: [
+          "Welcome back.",
+          "Hello again.",
+          "Back again. Here's what's new.",
+        ],
+        days: [
+          "Welcome back. {d} days since your last visit.",
+          "{d} days since last time. Welcome back.",
+          "Hello. It's been {d} days.",
+        ],
+        weeks: [
+          "Welcome back. It's been {d} days.",
+          "{d} days since your last visit. A few things have changed.",
+        ],
+        morning: [
+          "Good morning.",
+          "Morning. Welcome back.",
+          "Good morning. Here's what's new.",
+        ],
+        afternoon: [
+          "Good afternoon.",
+          "Afternoon. Welcome back.",
+          "Good afternoon. Here's what's new.",
+        ],
+        evening: [
+          "Good evening.",
+          "Evening. Welcome back.",
+          "Good evening. Here's what's new.",
+        ],
+        morningDays: [
+          "Good morning. {d} days since your last visit.",
+          "Morning. It's been {d} days.",
+        ],
+        afternoonDays: [
+          "Good afternoon. {d} days since your last visit.",
+          "Afternoon. It's been {d} days.",
+        ],
+        eveningDays: [
+          "Good evening. {d} days since your last visit.",
+          "Evening. It's been {d} days.",
+        ],
+        streak: [
+          "Welcome back.",
+          "Hello again.",
+          "Good to see you.",
+        ],
+        newScenes: [
+          "{n} new since your last visit, in New Arrivals.",
+          "{n} scenes added since last time.",
+          "{n} new arrivals since you were last here.",
+        ],
+        newScene: [
+          "One new scene since your last visit.",
+          "One addition since last time.",
+        ],
+        shortHour: [
+          "{r} is short: {m}.",
+          "For something brief, {r} runs {m}.",
+          "{r}, {m}. A short one.",
+        ],
+        longHour: [
+          "{r} runs {m}, if you have the time.",
+          "For something longer, {r}: {m}.",
+        ],
+        revisitFact: [
+          "{r} was last played {ago}.",
+          "{r} hasn't been played since {when}.",
+          "Last play of {r}: {when}.",
+        ],
+        resume: [
+          "You stopped at {t}.",
+          "Last time you left off at {t}.",
+        ],
+        staleFavourite: [
+          "{n} plays, none since {when}.",
+          "{n} plays. The last was {ago}.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}.",
+          "One of your most played: {n} plays, last in {when}.",
+        ],
+        dependable: [
+          "{p} is in this one, your {top} performer.",
+          "{p}: {m} plays across {n} of their scenes.",
+          "{p}. {m} plays from you so far.",
+        ],
+        newFace: [
+          "{p} is new to you.",
+          "You haven't played a {p} scene before.",
+        ],
+        fresh: [
+          "Added {ago}. Unplayed.",
+          "Added {ago}. Nobody's played it yet.",
+        ],
+        studio: [
+          "{s}. That studio accounts for {pct} of your plays.",
+          "{s}, which is {pct} of what you play.",
+        ],
+        off: [
+          "Understood. Manage › Settings turns me back on.",
+          "I'll stay out of the way. Manage › Settings, if you want me back.",
+        ],
+        topPick: [
+          "{r} is my top pick here.",
+          "If you watch one, make it {r}.",
+          "I'd start with {r}.",
+          "{r} is the strongest pick here.",
+          "Start with {r}.",
+        ],
+        gem: [
+          "Also recommended: {r}.",
+          "See also {r}.",
+          "Another solid match: {r}.",
+        ],
+        stretchOne: [
+          "{r} is a stretch, a little outside your usual.",
+          "{r} is the wildcard in this lane.",
+          "{r} is here on purpose, as a stretch.",
+        ],
+        spotlight: [
+          "{p} is in {r}: {m} plays across {n} of their scenes.",
+          "{r} has {p}, your {top} performer.",
+          "{r} features {p}, {m} plays from you.",
+        ],
+        unplayedOne: [
+          "{r} is unplayed.",
+          "You haven't played {r}.",
+          "{r} is still new to you.",
+        ],
+        quickOne: [
+          "{r} is short: {m}.",
+          "{r} runs {m}.",
+        ],
+        longOne: [
+          "{r} is long: {m}.",
+          "{r} runs {m}. Leave some time.",
+        ],
+        performerRun: [
+          "{p} appears {n} times here.",
+          "{n} of these feature {p}.",
+          "{p} is in {n} of these.",
+        ],
+        regulars: [
+          "{p} is in {n} of these, your {top} performer.",
+          "{n} of these have {p}, who has {m} plays from you.",
+          "{p}: {n} of these, {m} plays so far.",
+        ],
+        studioRun: [
+          "Mostly {s} here.",
+          "{s} accounts for {n} of these.",
+          "This lane leans {s}.",
+        ],
+        unplayed: [
+          "{n} of these are unplayed.",
+          "You haven't played {n} of these.",
+          "{n} of these are new to you.",
+        ],
+        replays: [
+          "You've played {n} of these before.",
+          "{n} of these are repeats.",
+        ],
+        quick: [
+          "Mostly short ones, around {m}.",
+          "These run about {m} each.",
+        ],
+        long: [
+          "Longer ones, around {m} each.",
+          "These run about {m}.",
+        ],
+        newest: [
+          "{r} is the newest, added {ago}.",
+          "Newest here: {r}, added {ago}.",
+          "{r} arrived {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays.",
+          "{r} has {n} plays from you.",
+          "You've played {r} {n} times.",
+        ],
+        freshDraw: [
+          "New draw. {r} is on top.",
+          "Reshuffled. {r} made the cut.",
+          "New order, starting with {r}.",
+        ],
+        laneMix: [
+          "This lane: {mix}.",
+          "The mix here: {mix}.",
+          "What's in this lane: {mix}.",
+        ],
+        laneTag: [
+          "{t} carries {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "{t} is the common thread in {n} of these.",
+        ],
+        laneCurate: [
+          "{n} of these are here partly because you said yes to {t}.",
+          "Your yes to {t} in Curate put {n} of these here.",
+          "{t}, from your Curate answers, helped {n} of these in.",
+        ],
+        laneContentOnly: [
+          "{n} of these have no performer you watch. They're here on content.",
+          "{n} of these were picked on content alone.",
+        ],
+        laneCast: [
+          "{n} of these are here for a performer you watch.",
+          "The cast carries {n} of these.",
+        ],
+        whyPerformer: [
+          "Mostly {p}.",
+          "That's {p}.",
+          "It's here for {p}.",
+        ],
+        whyTags: [
+          "{t} and {t2}.",
+          "Mostly {t}, also {t2}.",
+          "It's here for {t} and {t2}.",
+        ],
+        whyBoth: [
+          "{p}, and {t}.",
+          "{p} in a {t} scene.",
+          "{p} plus {t}.",
+        ],
+        whyStudio: [
+          "Mostly because it's {s}.",
+          "It's {s}, which works for you.",
+        ],
+        hookPerformer: [
+          "The hook is {p}.",
+          "{p} is the reason.",
+        ],
+        hookTags: [
+          "The hook is {t}, with {t2}.",
+          "{t} and {t2} are the reason.",
+        ],
+        hookBoth: [
+          "The hook is {p}, with {t}.",
+          "{p} and {t} are the reason.",
+        ],
+        hookStudio: [
+          "The hook is {s}.",
+          "{s} is the reason.",
+        ],
+        whyReplay: [
+          "{n} plays from you.",
+          "You've played it {n} times.",
+        ],
+        newWith: [
+          "{n} new since last time, one with {p}.",
+          "One of the {n} new scenes has {p}.",
+          "{p} is among the {n} new arrivals.",
+        ],
+        followWatched: [
+          "You played {r} after I suggested it {when}.",
+          "I suggested {r} {when}. You played it.",
+          "{r} got a play after my note {when}. Good.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I suggested it {when}.",
+          "{n} plays of {r} since my note {when}. That one worked.",
+        ],
+        followPartial: [
+          "{r} was stopped {at}.",
+          "I suggested {r} {when}. It was stopped {at}.",
+          "{r} stopped {at}. The rest is there.",
+        ],
+        followPassed: [
+          "I've suggested {r} {n} times without a play. I'll drop it.",
+          "{n} suggestions, no play for {r}. Taking it off my list.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these. None in your library.",
+          "{n} with {p} that you don't own.",
+          "{n} {p} scenes here you don't have.",
+        ],
+        expandSpotlight: [
+          "{r} has {p}, and you don't own it.",
+          "{p} is in {r}. Not in your library.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, one of your favourites.",
+          "{p}, a favourite of yours, appears {n} times.",
+        ],
+        expandUnwatched: [
+          "{p} is in your library, unplayed. {r} is another option.",
+          "You own {p} scenes but haven't played them. {r} is here too.",
+        ],
+        expandStudio: [
+          "{s} has {n} here you don't own.",
+          "{n} from {s}, a studio you watch often.",
+        ],
+        expandNewRelease: [
+          "{r} came out {ago}.",
+          "{r}, released {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these came out in the last month.",
+          "{n} released in the last 30 days.",
+        ],
+        expandDeepCut: [
+          "{r} is from {y}.",
+          "{r} dates from {y}.",
+        ],
+        whisparrRun: [
+          "{n} of these are already in Whisparr.",
+          "Whisparr has {n} of these.",
+        ],
+        whisparrArrived: [
+          "{r} is in your library now. You sent it {when}.",
+          "Sent {when}, arrived: {r}.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent are still missing. The oldest went out {when}.",
+          "{n} sends still outstanding, the first from {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the missing one that fits you best ({s}).",
+          "Best fit among the missing: {r}, {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but not matched in Stash. Run a scan, then Identify.",
+          "Whisparr has files for {n} that Stash hasn't matched. A scan and Identify should do it.",
+        ],
+        similarEmpty: [
+          "Pick a scene and I'll find similar ones.",
+          "Choose a scene to start from.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. A good starting point.",
+          "The original has {n} plays from you.",
+        ],
+        seedUnplayed: [
+          "You haven't played the original, but here's what's close to it.",
+          "The original is unplayed. These are its nearest matches.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} is in {n} of these too.",
+        ],
+        sameStudio: [
+          "{n} from {s}, like the original.",
+          "{s} again for {n} of these.",
+        ],
+        closest: [
+          "{r} is the closest match, though not on top.",
+          "Nearest match: {r}. Your taste moved others above it.",
+        ],
+        huntEmpty: [
+          "Pick a performer and I'll check what you're missing.",
+          "Choose a performer.",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes.",
+          "{own} of {n} {p} scenes are in your library.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your library.",
+          "{n} {p} scenes, none owned.",
+        ],
+        huntComplete: [
+          "You own every {p} scene listed here.",
+          "All {n} are in your library.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p}: {n} releases in the past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here is from {y}.",
+          "The earliest listed is from {y}.",
+        ],
+        huntRegular: [
+          "{p} is one of your regulars, {m} plays.",
+          "{p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Has {p}, a favourite.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr.",
+          "In Whisparr already.",
+        ],
+        ownedNote: [
+          "Already in your library.",
+          "You own this one.",
+        ],
+        releasedNote: [
+          "Released {ago}.",
+          "Out {ago}.",
+        ],
+        oldNote: [
+          "From {y}.",
+          "Dates from {y}.",
+        ],
+        calledLike: [
+          "{t}, as expected.",
+          "As I thought: {t}.",
+          "{t}. Matches my read.",
+        ],
+        calledDislike: [
+          "As expected, not {t}.",
+          "Less {t}. As I thought.",
+        ],
+        answerSurprise: [
+          "I had {t} the other way round. Noted.",
+          "{t}: I'd read that wrong. Corrected.",
+          "New information on {t}. Thanks.",
+        ],
+        answerBlocked: [
+          "Noted. No more {t}.",
+          "{t} removed from your picks.",
+        ],
+        taughtMilestone: [
+          "{n} answers. That helps.",
+          "{n} answers so far.",
+          "{n} answers this visit. Your picks will improve.",
+        ],
+        reasonFlip: [
+          "I had that one the other way round. Corrected.",
+          "Noted. I'd read that scene wrong.",
+        ],
+        reasonRich: [
+          "{n} reasons. Useful detail.",
+          "Plenty to go on. Thank you.",
+        ],
+        scenePairing: [
+          "{p} and {t}. You've played {n} scenes with that pairing.",
+          "{p} with {t}, a pairing you've played {n} times.",
+          "{p} plus {t}: {n} plays like that already. Likely a good fit.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} plays for the studio.",
+          "{p} and {s}. {n} {pf} scenes played, {m} plays for the studio. Good odds.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and the closest match to {r}, which you've played {n} times.",
+          "Close to {r} ({n} plays), with {t}.",
+        ],
+        sceneTagRun: [
+          "{n} {t} scenes played in the last two weeks. This one has {p} as well.",
+          "Your last two weeks: {n} {t} scenes. This adds {p}.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} plays in the last two weeks. This fits with them.",
+          "{n} {p} scenes in the last two weeks. This is another.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is its closest match in your library.",
+          "Closest match to {r}, which you watched {when}.",
+        ],
+        sceneSatiated: [
+          "Normally high on my list, but you've had {n} {p} scenes recently. I've eased it down for variety.",
+          "{p} usually ranks high. After {n} recent plays, I've lowered this one for now.",
+        ],
+        sceneCooldown: [
+          "Played {when}. Resting before I suggest it again.",
+          "You played this {when}. It's resting for now.",
+        ],
+        sceneNotNow: [
+          "You marked this 'not now' {when}. It's out of your picks for a while.",
+          "'Not now', {when}. It's sitting out for a while.",
+        ],
+        sceneNotNowPlain: [
+          "Marked 'not now'. It's out of your picks for a while.",
+          "You said 'not now', so it's sitting out for a while.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this isn't your type. {n} plays say otherwise.",
+          "The tags and cast wouldn't rank it high. Your {n} plays did.",
+        ],
+        sceneHistoryLags: [
+          "{x} says this should suit you. Your history with it doesn't agree.",
+          "I expected more from this because of {x}. Your plays say otherwise.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but similar to {q}, and you've played {n} of {qf}'s scenes.",
+          "You haven't played {p}. They're close to {q}, with {n} of {qf}'s scenes played.",
+        ],
+        sceneRadar: [
+          "Unfamiliar ground. None of its {k} performers has a play from you, and nothing from {s} either.",
+          "No plays from you for any of its {k} performers or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "Unfamiliar ground. None of its {k} performers has a play from you.",
+          "No plays from you for any of its {k} performers.",
+        ],
+        sceneRadarOne: [
+          "Unfamiliar ground. No {p} scenes played, and nothing from {s}.",
+          "You haven't played {p} or anything from {s}.",
+        ],
+        sceneRadarOnePlain: [
+          "Unfamiliar ground. You haven't played a {p} scene.",
+          "No {p} scenes in your plays yet.",
+        ],
+        scenePerformer: [
+          "{p} is in {n} scenes you've played. A likely fit.",
+          "{p}: {m} plays from you so far. An easy call.",
+        ],
+        sceneTag: [
+          "It has {t}, which is on {pct} of what you watch.",
+          "{t}, on {pct} of the scenes you watch. Good odds.",
+        ],
+        sceneStudio: [
+          "{s}: {m} plays from you. This should hold up.",
+          "{s} has a solid record with you, {m} plays.",
+        ],
+        sceneNeighbor: [
+          "Close to {r}, which you've played {n} times.",
+          "If {r} worked ({n} plays), this is similar.",
+        ],
+        sceneResume: [
+          "You stopped at {t} last time.",
+          "Last stopped at {t}.",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}.",
+          "Played {n} times. Most recently {when}.",
+        ],
+        sceneCarriedPerformer: [
+          "{p} is carrying this one. Without them it wouldn't make my list.",
+          "This is a {pf} pick, nothing more.",
+          "It's {p}. The rest is unremarkable for you.",
+        ],
+        sceneDespite: [
+          "You said no to {x}, and it's in here. I'm only mentioning it for {p}.",
+          "It has {x}, which you don't want. {p} is the only reason it's listed.",
+        ],
+        sceneCarriedContent: [
+          "Not the cast. {t} and {t2} put this on the list.",
+          "Nobody here is a draw for you. {t} and {t2} are.",
+          "Picked on content: {t} and {t2}.",
+        ],
+        sceneTwin: [
+          "Very close to {r}: {t}, {t2}, {t3}.",
+          "Same recipe as {r}: {t} and {t2}.",
+          "A near twin of {r}. Same {t}, same {t2}.",
+        ],
+        sceneSplit: [
+          "Two equal reasons: {p}, and the content, mainly {t} and {t2}.",
+          "Half {p}, half content: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You said yes to {t}, but rarely pick it. This has it.",
+          "It has {t}. You said yes to it; your plays show less.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your plays agree. It's in here.",
+          "{t}: stated and confirmed by your plays. It's in this one.",
+        ],
+        sceneHeldBack: [
+          "One thing holds it back: {x}. The rest fits.",
+          "It would rank higher without {x}.",
+        ],
+        sceneCrowd: [
+          "{k} performers is usually more than you go for. I've lowered it slightly.",
+          "A {k}-performer scene. Those rarely work for you.",
+        ],
+        sceneFavouriteLukewarm: [
+          "{p} is a favourite, but rarely played. The favourite does most of the lifting here.",
+          "Favourited, though your plays of {p} are modest. Low confidence.",
+        ],
+        sceneFavouriteBacked: [
+          "{p}: favourited, and your plays agree.",
+          "A favourite, and well played: {p}.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Worth a look.",
+          "{p} with {t}: {n} plays like that. Possibly.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} plays for the studio. Possibly.",
+          "{p} and {s}. A reasonable chance.",
+        ],
+        sceneTagNeighborMild: [
+          "Closest to {r}, {n} plays, with {t}. Possibly.",
+          "Near {r} ({n} plays), and it has {t}. Maybe.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played. Worth a look.",
+          "{p}: {m} plays from you. Not certain, but promising.",
+        ],
+        sceneTagMild: [
+          "It has {t}, which is on {pct} of what you watch. Possibly.",
+          "{t}, on {pct} of your watching. Maybe.",
+        ],
+        sceneStudioMild: [
+          "{s}: {m} plays from you. Possibly.",
+          "It's {s}, {m} plays. Maybe.",
+        ],
+        sceneNeighborMild: [
+          "Close to {r}, which you've played {n} times. Possibly.",
+          "Similar to {r}, {n} plays. Maybe.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a plus, {m} plays, but it has {t}, which rarely works for you. Uncertain.",
+          "{p} for, {t} against. {m} plays of {p}. Could go either way.",
+        ],
+        sceneMixedTag: [
+          "{t}, which you like, and {x}, which you usually skip. Uncertain.",
+          "{t} for, {x} against. Hard to call.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a plus, {m} plays, but the rest doesn't match what you watch. Doubtful.",
+          "{p}, {m} plays. Beyond that, not your usual.",
+        ],
+        sceneDoubt: [
+          "Doubtful: {x} usually isn't your thing.",
+          "It has {x}, which rarely works for you.",
+        ],
+        sceneDoubtPlain: [
+          "Doubtful. Little here matches what you watch.",
+          "A long shot. Not much lines up with your history.",
+        ],
+        sceneFresh: [
+          "Added {ago}. Unplayed.",
+          "Added {ago}. New to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you mostly pick the {t} scenes: {a} of those played, against {b} of the rest.",
+          "{pf}, mostly {t}: {a} of the scenes you've played, {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes played this week.",
+          "{pf}: {n} plays this week.",
+        ],
+        performerRegular: [
+          "A regular: {n} scenes, {m} plays.",
+          "{pf}: {m} plays across {n} scenes.",
+        ],
+        performerGoTo: [
+          "Your most-played {pf} scene is {r}, {k} plays.",
+          "Top {pf} scene: {r}, {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you mostly pick scenes with {q}: {a} of those played, against {b} of the rest.",
+          "{pf} with {q}: {a} of the {pf} scenes you've played, {b} of the others.",
+        ],
+        performerStudio: [
+          "You mostly watch {pf} in {s} scenes: {a} of those played, against {b} of the rest.",
+          "{pf} at {s}: {a} of your {pf} plays, {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} scene was {r}, {when}.",
+          "Last played: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "{u} of {pf}'s {all} scenes are unplayed.",
+          "{u} {pf} scenes you haven't played.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} waiting, {newest} added {ago}.",
+          "{waiting} unplayed, including {one} added {ago}.",
+        ],
+        performerIdleFavourite: [
+          "{p} is a favourite. Last played {when}; {waiting} unplayed.",
+          "A favourite, last played in {since}. {waiting} unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p}, but none of their {all} scenes has a play yet.",
+          "{p}: favourited, {all} scenes, none played.",
+        ],
+        performerDormant: [
+          "No {p} since {since}, {d} months.",
+          "{d} months since your last {pf} scene, after {m} plays.",
+        ],
+        performerSimilar: [
+          "You haven't played {p}, but you've played {n} of {q}'s scenes, and they're similar.",
+          "New to you. {p} is close to {q}, with {n} of {qf}'s scenes played.",
+        ],
+        performerTrait: [
+          "{trait} appear {x}× as often in who you watch, and you've played {n} of {pf}'s scenes.",
+          "{trait}: {x}× as common in who you watch as in your library. {p} fits, with {n} plays.",
+        ],
+        performerBlank: [
+          "No data on {p} yet: no plays from their {all} scenes, and nobody similar that you watch.",
+          "{p} is unknown to me. None of their {all} scenes has a play from you.",
+        ],
+        insightTop: [
+          "{t} is on {pct} of the {n} scenes you've watched.",
+          "The top of the list: {t}, on {pct} of what you've watched.",
+        ],
+        insightRising: [
+          "{t} is up from {a} to {b} of what you watch.",
+          "{t}: {a} to {b} of your watching in the last 90 days.",
+        ],
+        insightFading: [
+          "{t} is down from {a} to {b}.",
+          "Less {t}: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is {a} of your library but {b} of what you watch.",
+          "{t}: {b} of your watching, from {a} of your library.",
+        ],
+        insightPassed: [
+          "{t} is {a} of your library and {b} of what you watch.",
+          "{t}: plenty in your library ({a}), little in your plays ({b}).",
+        ],
+        insightAgrees: [
+          "You said yes to {t}. It's on {pct} of what you watch.",
+          "{t}: stated, and confirmed by {pct} of what you watch.",
+        ],
+        insightDormant: [
+          "{p}: {n} plays, none since {since}.",
+          "{p}, {n} plays. The last was {when}.",
+        ],
+        insightRediscovered: [
+          "You returned to {r} after {m} months.",
+          "{r}: back after {m} months.",
+        ],
+        insightWords: [
+          "You've chosen {x} {n} times in Why these?",
+          "{x}: {n} times in your Why these? answers.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes.",
+          "{n} of {all} scenes watched, {pct} of your library.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "{t}'s high point: {pct}, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak: {pct} of your recent watching.",
+          "{t} has never been higher: {pct} of the last three months.",
+        ],
+        standBy: [
+          "{r} again. Still recommended.",
+          "Still recommending {r}.",
+          "{r}, as before.",
+        ],
+        rankedOne: [
+          "{p}: {n} wins in your ranking {when}. In {r}.",
+          "Your ranking {when} gave {p} {n} wins. See {r}.",
+          "{p} won {n} matches {when}. {r} has them.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}.",
+          "Ranking {when}: {n} wins.",
+          "{pf} won {n} matches {when}.",
+        ],
+        oldestOne: [
+          "Oldest here: {r}, from {y}.",
+          "{r} dates from {y}. The oldest here.",
+          "{r} is from {y}.",
+        ],
+        topRated: [
+          "Highest rated here: {r}, {k}.",
+          "{r}: {k}. The top rating here.",
+          "You rated {r} {k}. Nothing here higher.",
+        ],
+        performerShortest: [
+          "Shortest unplayed: {r}, {m}.",
+          "{r} runs {m}. Unplayed.",
+          "Shortest {pf} scene you haven't played: {r}, {m}.",
+        ],
+        newStudio: [
+          "{n} of the new scenes are from {s}.",
+          "{s}: {n} of the new ones.",
+          "Mostly new from {s}: {n} of them.",
+        ],
+        feedbackUp: [
+          "Noted.",
+          "Recorded. More like it.",
+          "Noted. Similar ones will rank higher.",
+        ],
+        feedbackDown: [
+          "Noted.",
+          "Recorded. Fewer like it.",
+          "Noted. Similar ones will rank lower.",
+        ],
+        feedbackNotNow: [
+          "Set aside.",
+          "Deferred.",
+          "Noted. It will return later.",
+        ],
+        feedbackNever: [
+          "Removed.",
+          "Excluded for good.",
+          "Removed. It won't be shown again.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "I'd start with {r}, because {c}.",
+          "Top pick: {r}. {c}.",
+          "{r} is the strongest pick here: {c}.",
+          "If you watch one, make it {r}: {c}.",
+        ],
+        gem: [
+          "Also recommended: {r}, as {c}.",
+          "See also {r}: {c}.",
+        ],
+        stretchOne: [
+          "{c}, so {r} is in as a stretch.",
+          "{r} is outside your usual, but {c}.",
+        ],
+        unplayedOne: [
+          "{r} is unplayed, and {c}.",
+          "You haven't played {r}, and {c}.",
+        ],
+        freshDraw: [
+          "New draw. {r} is on top: {c}.",
+          "Reshuffled, and {r} leads: {c}.",
+        ],
+        revisitFact: [
+          "{r} was last played {ago}, and {c}.",
+          "{r} hasn't been played since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it has {p}",
+          "it features {p}",
+        ],
+        whyTags: [
+          "it has {t} and {t2}",
+          "it's {t} with {t2}",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's {s}",
+          "{s} works for you",
+        ],
+        whyReplay: [
+          "you've played it {n} times",
+          "it has {n} plays from you",
+        ],
+        hookPerformer: [
+          "{p} is the hook",
+          "the reason is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the hook",
+          "the reason is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the hook",
+          "the reason is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the hook",
+          "the reason is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}, as expected.",
+          "{w}. No surprise.",
+          "{w}. Consistent with your history.",
+          "{w}, a regular in your viewing.",
+          "{w}. Predictable, in a good way.",
+          "{w}. Your history made that easy.",
+          "As expected: {w}.",
+          "{w}. One of your reliable picks.",
+          "{w}. That was always likely.",
+          "{w}, as usual.",
+        ],
+        agree: [
+          "{w}, narrowly. Matches your viewing.",
+          "{w} by a small margin. Same as my read.",
+          "That matches your history, just.",
+          "{w}. Your viewing leans the same way.",
+          "Close, but {w}. As expected.",
+          "{w}. A slight edge, same answer.",
+          "{w}, though {l} was close.",
+          "{w}. Fits the pattern.",
+        ],
+        close: [
+          "Too close for me to call. Noted.",
+          "Your history has these two level. Now I know.",
+          "Even in your viewing. Thanks for the tiebreak.",
+          "{w}. I couldn't separate them.",
+          "No clear signal on these two until now.",
+          "{w} and {l} look alike in your history. Not anymore.",
+          "Level by my numbers. {w}, noted.",
+          "A tiebreak. Useful.",
+        ],
+        surprise: [
+          "Interesting. Your viewing leans {l}. Noted.",
+          "I'd have said {l}. Noted.",
+          "Not what your history suggested.",
+          "{w} over {l}. Noted.",
+          "I had {l} slightly ahead.",
+          "Unexpected. Noted.",
+          "{w}. I'll adjust.",
+          "A small correction to my notes.",
+          "Your history leans {l}; you chose {w}. Noted.",
+        ],
+        twist: [
+          "I had you down for {l}. Corrected.",
+          "That's a surprise. I was fairly sure about {l}.",
+          "Your history leans {l} quite a bit. Noted.",
+          "That changes a few assumptions.",
+          "Updating my notes on {l}.",
+          "Not what your viewing suggested. Useful.",
+          "My notes said {l}. You know better.",
+          "I'd have bet on {l}. Noted.",
+        ],
+        unknown: [
+          "I don't know either of these yet. Noted.",
+          "Two unfamiliar names. Filed.",
+          "No history on either. I'll go by your pick.",
+          "New to me. {w} goes in the notes.",
+          "Nothing on these two yet. Now there's something.",
+          "{w}, noted. First data point.",
+          "No read on either. Your call.",
+          "Unfamiliar ground. Thanks for the data.",
+        ],
+        hunchHit: [
+          "I guessed {w} from similar performers. Correct.",
+          "{w} was a guess. It held.",
+          "{w} resembles people you watch. As expected.",
+          "A guess, and it was right.",
+          "Similar performers pointed to {w}. Confirmed.",
+          "{w} fits your type, as I guessed.",
+        ],
+        hunchMiss: [
+          "I'd guessed {l} from similar performers. Overruled.",
+          "My guess about {l} was wrong. Noted.",
+          "{l} isn't your type after all. Noted.",
+          "So much for the guess about {l}.",
+          "{l} looked right on paper. Corrected.",
+          "It was only a guess about {l}.",
+        ],
+        underdog: [
+          "{w}. You've rarely watched {w}. Noted.",
+          "{w} barely appears in your history. Noted.",
+          "{w} over {l}, who you actually watch. Interesting.",
+          "I should show you more {w}, apparently.",
+          "An underdog: {w}.",
+          "{w}. Not what your viewing suggests.",
+        ],
+        traitWin: [
+          "You do like {t}.",
+          "{w}, and you favour {t}.",
+          "{t} again. It fits your history.",
+          "{t} tend to win with you.",
+          "Consistent: {t}.",
+          "{t}, as usual.",
+        ],
+        traitClose: [
+          "Close. My guess is {t} tipped it.",
+          "Level, but you do like {t}.",
+          "Probably the {t}.",
+          "Hard to split. {t} likely decided it.",
+        ],
+        traitBranch: [
+          "You don't usually go for {t}. Noted.",
+          "{t} are rare in your history. Noted.",
+          "Not your usual: {t}. Noted.",
+          "{t}. Unusual for you.",
+        ],
+        traitPass: [
+          "Usually {t} win you over. Not here.",
+          "{l} is one of your {t}, and still lost. Noted.",
+          "You normally lean towards {t}. Noted.",
+          "{t} don't always win, then.",
+        ],
+        draw: [
+          "A draw. Noted for both.",
+          "Even. Noted.",
+          "A tie. I'll treat them equally.",
+          "Level. Noted.",
+        ],
+        undo: [
+          "Scratched.",
+          "Undone.",
+          "Removed from my notes.",
+          "Rewound.",
+          "Taken back.",
+          "As you were.",
+        ],
+        undoSurprise: [
+          "Scratched. That one surprised me anyway.",
+          "Undone. Back to my original read on {w}.",
+          "Rewound. I'd noted that as a surprise.",
+          "Scratched. Fine by me.",
+        ],
+        undoAgreed: [
+          "Scratched, though I had that one right.",
+          "Undone. {w} looked like your pick.",
+          "Rewound. I'd have kept that one.",
+          "Scratched. Your call.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Ranking. I'll take notes.",
+          "Go ahead.",
+          "I'll keep score.",
+          "Let's see how well I read you.",
+          "Ready.",
+          "Notes open.",
+        ],
+        night: [
+          "Ranking. I'll take notes.",
+          "Go ahead.",
+          "Ready.",
+        ],
+        morning: [
+          "Good morning. I'll take notes.",
+          "Morning. Go ahead.",
+          "Good morning. Ready.",
+        ],
+        afternoon: [
+          "Good afternoon. I'll take notes.",
+          "Afternoon. Go ahead.",
+          "Good afternoon. Ready.",
+        ],
+        evening: [
+          "Good evening. I'll take notes.",
+          "Evening. Go ahead.",
+          "Good evening. Ready.",
+        ],
+        milestone: [
+          "{n} matches.",
+          "{n} matches in. Useful.",
+          "{n} done.",
+          "{n} matches. Plenty to work with.",
+          "That's {n}.",
+          "{n} so far.",
+        ],
+        streak: [
+          "{n} in a row.",
+          "{n} straight where we agree.",
+          "{n} for {n}.",
+          "{n} correct in a row.",
+          "That's {n} straight.",
+          "{n} consecutive.",
+        ],
+        broken: [
+          "Streak ends at {n}.",
+          "{n} in a row, then not.",
+          "That ends a run of {n}.",
+          "{n} was the streak. Noted.",
+          "Back to zero after {n}.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. Taking notes.",
+          "{n} unexpected picks running.",
+          "{n} in a row I didn't predict.",
+          "{n} surprises. Useful data.",
+        ],
+        reunion: [
+          "Back in agreement.",
+          "Back on track.",
+          "As expected again.",
+          "In sync again.",
+        ],
+        rematch: [
+          "Same result as last time.",
+          "{w} over {l} again. Consistent.",
+          "Rematch, same verdict.",
+        ],
+        flip: [
+          "You picked {l} last time.",
+          "A reversal. {l} won this one before.",
+          "{w} now. Last time it was {l}.",
+          "Changed since last round.",
+        ],
+        roll: [
+          "{w}: {n} wins.",
+          "{w} again. {n} wins.",
+          "{n} wins for {w}.",
+          "{w} keeps winning: {n}.",
+          "{w}, {n} wins and counting.",
+        ],
+        cheer: [
+          "Useful.",
+          "Every pick sharpens the picture.",
+          "This helps.",
+          "Good data.",
+          "Noted.",
+          "Your recommendations will improve.",
+        ],
+        theme: [
+          "{n} {t} in a row. A theme.",
+          "{t} again: {n} straight.",
+          "{n} {t} in a row.",
+        ],
+        upset: [
+          "Upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite.",
+          "A {d}-point underdog wins.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} wins. As expected.",
+          "Champion: {c}. Your history agrees.",
+          "{c} takes it. Who I'd have guessed.",
+          "{c} on top. Consistent with what you watch.",
+        ],
+        championDark: [
+          "{c} wins. You rarely watch {c}. Noted.",
+          "Champion {c}, a dark horse in your history.",
+          "{c} takes it. Unexpected.",
+          "Surprise champion: {c}. I'll show you more.",
+        ],
+        championNew: [
+          "{c} wins. I barely know {c}. Useful.",
+          "Champion {c}, largely unknown to me. Noted.",
+        ],
+        placement: [
+          "{c} finishes here. Noted.",
+          "{c}'s run ends here.",
+          "Final placing for {c}. Thanks.",
+        ],
+        syncHigh: [
+          "{a} of your {j} picks called correctly.",
+          "{a} of {j} right. I read you well.",
+        ],
+        syncMid: [
+          "{a} of {j} called correctly. Getting there.",
+          "{a} of {j} right, with a few surprises.",
+        ],
+        syncLow: [
+          "{a} of {j} right. Plenty learned.",
+          "Only {a} of {j}. Useful corrections.",
+        ],
+        syncNone: [
+          "Mostly unfamiliar performers this run. Noted.",
+          "I knew few of these performers. Now I know more.",
+        ],
+        surprises: [
+          "Surprises: {s}. Included in my next model update.",
+          "{s} were unexpected. I'll account for them next update.",
+          "Biggest surprises: {s}. Noted for the next update.",
+        ],
+        theme: [
+          "Theme of the run: {t} ({n} of {m} winners).",
+          "{t}: {n} of {m} winners.",
+          "{n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, {n}.",
+          "{w}: {n} wins, the most.",
+          "Top winner: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "{w}: {wp} plays in your history.",
+          "{wp} plays of {w}. That settles it.",
+          "{w}: {wp} plays across {ws} scenes.",
+          "{ws} of {w}'s scenes are in your history.",
+          "{w}, {wp} plays. Expected.",
+        ],
+        factOs: [
+          "{w}'s scenes: {wo} O's in your history.",
+          "{wo} O's with {w}. That explains it.",
+          "{w}, {wo} O's. Expected.",
+        ],
+        factRecent: [
+          "You watched {w} {wago}.",
+          "{w}, last watched {wago}. Consistent.",
+          "Last {w} play: {wago}.",
+        ],
+        factContrast: [
+          "{l}: {lp} plays. {w}: {wpp}. Noted.",
+          "{w} over {l}, who has {lp} plays from you. Noted.",
+          "{lp} plays of {l}, and {w} wins.",
+          "History says {l} ({lp} plays). You chose {w}.",
+        ],
+        factStale: [
+          "No {l} since {lwhen}. That may explain it.",
+          "{l}'s last play was {lwhen}.",
+          "{l}, last played {lwhen}. Makes sense.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. Close in your history too.",
+          "Level in your history: {wp} plays against {lp}.",
+          "{w} {wp}, {l} {lp}. Even.",
+        ],
+        factUnwatched: [
+          "{w}. {wu} of their scenes are unplayed.",
+          "{wu} unplayed {w} scenes in your library.",
+          "{w} has {wu} scenes you haven't played.",
+          "For reference: {wu} {w} scenes unplayed.",
+          "{wu} {w} scenes in your library, unplayed.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes.",
+          "{w} at {studio}: {sn} of your plays.",
+          "{w} and {studio}: a consistent pairing.",
+        ],
+        factTogether: [
+          "{w} and {l} share {tn} {tscenes} in your history.",
+          "These two appear together in {tn} {tscenes} you've played.",
+          "{tn} {tscenes} with both of them, in your history.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} wins. Noted.",
+          "{wsc} {w} scenes in your library, none played. A place to start.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Welcome back. I've reorganised nothing. You're welcome.",
+            "Hello. All shelves accounted for.",
+          ],
+          topPick: [
+            "Officially, {r}. Unofficially, also {r}.",
+            "After due consideration: {r}.",
+          ],
+          newScenes: [
+            "{n} new scenes. Logged, filed and shelved.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. Filed under: expected.",
+            "{w}. The paperwork practically filled itself in.",
+          ],
+          agree: [
+            "{w}, narrowly. Consistent with the records.",
+            "{w}. The records concur, by a small margin.",
+          ],
+          close: [
+            "Too close to call. Thank you for the ruling.",
+            "A tie on paper. Now resolved.",
+          ],
+          surprise: [
+            "{w} over {l}. The records will be amended.",
+            "Contrary to the file. Amended.",
+          ],
+          unknown: [
+            "No records on either. A file has been opened.",
+            "Two blank files. {w} is now on record.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "Ranking session. Forms ready, pen uncapped.",
+            "A ranking. I'll keep the minutes.",
+          ],
+          milestone: [
+            "{n} matches. The ledger is filling nicely.",
+            "{n} entries. An orderly session.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} takes it. Consistent with every record on file.",
+          ],
+        },
+      },
+    },
+    connoisseur: {
+      page: {
+        first: [
+          "Good day. I'm Curator, and I'll offer the occasional recommendation from the cellar.",
+          "Welcome. I'm Curator; consider me your sommelier for the collection.",
+        ],
+        day: [
+          "Welcome back.",
+          "A pleasure, as ever.",
+          "Welcome back to the collection.",
+        ],
+        days: [
+          "Welcome back. It's been {d} days, and the collection has kept well.",
+          "{d} days. Welcome back.",
+          "Welcome back. {d} days since your last visit.",
+        ],
+        weeks: [
+          "Welcome back. {d} days, and a few new bottles on the shelf.",
+          "It's been {d} days. Let me show you what's come in.",
+        ],
+        morning: [
+          "Good morning. Welcome back to the collection.",
+          "Good morning. A pleasure, as ever.",
+          "Good morning, and welcome back.",
+        ],
+        afternoon: [
+          "Good afternoon. Welcome back to the collection.",
+          "Good afternoon. A pleasure, as ever.",
+          "Good afternoon, and welcome back.",
+        ],
+        evening: [
+          "Good evening. Welcome back to the collection.",
+          "Good evening. A pleasure, as ever.",
+          "Good evening, and welcome back.",
+        ],
+        morningDays: [
+          "Good morning. {d} days, and the collection has kept well.",
+          "Good morning. Welcome back after {d} days.",
+        ],
+        afternoonDays: [
+          "Good afternoon. {d} days, and the collection has kept well.",
+          "Good afternoon. Welcome back after {d} days.",
+        ],
+        eveningDays: [
+          "Good evening. {d} days, and the collection has kept well.",
+          "Good evening. Welcome back after {d} days.",
+        ],
+        streak: [
+          "Welcome back.",
+          "A pleasure to see you.",
+          "The collection awaits.",
+        ],
+        newScenes: [
+          "{n} new additions since your last visit, in New Arrivals.",
+          "{n} fresh arrivals have come in since last time.",
+          "The cellar has grown: {n} new scenes since your last visit.",
+        ],
+        newScene: [
+          "One new addition since your last visit.",
+          "A single new arrival since last time.",
+        ],
+        shortHour: [
+          "Something light? {r} runs a brisk {m}.",
+          "A short pour: {r}, {m}.",
+          "{r} is a brief {m}, quite sufficient.",
+        ],
+        longHour: [
+          "For a fuller experience, {r} runs {m}.",
+          "{r} is a generous {m}, best enjoyed unhurried.",
+        ],
+        revisitFact: [
+          "{r} was last opened {ago}. It may be time to revisit it.",
+          "{r} has rested since {when}.",
+          "{r} hasn't been opened since {when}. Some things improve with age.",
+        ],
+        resume: [
+          "You paused at {t}. It's waiting for you.",
+          "Unfinished: you left off at {t}.",
+        ],
+        staleFavourite: [
+          "{n} plays, though none since {when}. A vintage worth revisiting.",
+          "An old favourite: {n} plays, the last {ago}.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}. A house favourite.",
+          "This has been opened {n} times, most recently in {when}.",
+        ],
+        dependable: [
+          "{p} appears here, your {top} performer.",
+          "{p}: {m} plays across {n} of their scenes. Reliable.",
+          "{p} once more. {m} plays from you to date.",
+        ],
+        newFace: [
+          "{p} is new to you. An intriguing addition.",
+          "You've not yet sampled {p}. This could be the first.",
+        ],
+        fresh: [
+          "Added {ago}, and not yet opened.",
+          "Only arrived {ago}. Untouched.",
+        ],
+        studio: [
+          "{s} again. That house accounts for {pct} of your plays.",
+          "Another from {s}, {pct} of what you play.",
+        ],
+        off: [
+          "As you wish. Manage › Settings will bring me back.",
+          "Very well, I'll withdraw. Manage › Settings, should you want me.",
+        ],
+        topPick: [
+          "{r} is my recommendation here.",
+          "If you choose one, let it be {r}.",
+          "I'd begin with {r}.",
+          "{r} is the finest of this selection.",
+          "Allow me to suggest {r}.",
+        ],
+        gem: [
+          "Also worth tasting: {r}.",
+          "Another fine pour: {r}.",
+          "Do keep {r} in mind as well.",
+        ],
+        stretchOne: [
+          "{r} is something a little different, outside your usual palate.",
+          "{r} is my adventurous choice here.",
+          "I included {r} as a deliberate departure. Do tell me how you find it.",
+        ],
+        spotlight: [
+          "{p} features in {r}: {m} plays across {n} of their scenes.",
+          "{r} features {p}, your {top} performer.",
+          "{r} has {p}, with {m} plays from you.",
+        ],
+        unplayedOne: [
+          "{r} is still unopened.",
+          "You've not yet tried {r}.",
+          "{r} remains new to you.",
+        ],
+        quickOne: [
+          "{r} is a light {m}.",
+          "{r}, a short {m}.",
+        ],
+        longOne: [
+          "{r} is a full-bodied {m}.",
+          "{r} runs {m}. Best savoured.",
+        ],
+        performerRun: [
+          "{p} appears {n} times in this selection.",
+          "A {p} theme runs through this lot: {n} scenes.",
+          "{n} featuring {p} here.",
+        ],
+        regulars: [
+          "{p} is in {n} of these, your {top} performer.",
+          "A generous helping of {p}: {n} of these, after {m} plays from you.",
+          "{n} with {p}, who has {m} plays from you.",
+        ],
+        studioRun: [
+          "A strong showing from {s} here.",
+          "{s} supplies {n} of these.",
+          "This selection leans towards {s}.",
+        ],
+        unplayed: [
+          "{n} of these are unopened.",
+          "{n} of these you've not yet tried.",
+          "{n} of these are new to you.",
+        ],
+        replays: [
+          "You've enjoyed {n} of these before.",
+          "{n} of these are familiar vintages.",
+        ],
+        quick: [
+          "Mostly light ones here, around {m}.",
+          "A brief selection, about {m} each.",
+        ],
+        long: [
+          "Generous lengths here, around {m} each.",
+          "These run about {m}. Take your time.",
+        ],
+        newest: [
+          "{r} is the newest, added {ago}.",
+          "The freshest arrival: {r}, added {ago}.",
+          "{r} came in only {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays. A proven favourite.",
+          "You've returned to {r} {n} times.",
+          "{r}, opened {n} times. It clearly holds up.",
+        ],
+        freshDraw: [
+          "A fresh selection, led by {r}.",
+          "Newly arranged, with {r} on top.",
+          "Reshuffled. {r} leads the selection.",
+        ],
+        laneMix: [
+          "This selection: {mix}.",
+          "The flight on offer: {mix}.",
+          "The blend here: {mix}.",
+        ],
+        laneTag: [
+          "{t} is the defining note here, behind {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "A strong note of {t}: it brought in {n} of these.",
+        ],
+        laneCurate: [
+          "{n} of these are here partly because you favoured {t}.",
+          "Your preference for {t} in Curate shows: {n} of these.",
+          "You told me you appreciate {t}, and {n} of these reflect that.",
+        ],
+        laneContentOnly: [
+          "{n} of these feature no one you follow. They're here on their merits.",
+          "For {n} of these, the cast is unfamiliar; I chose them for their content.",
+        ],
+        laneCast: [
+          "This selection is about its cast: {n} of these are here for a performer you watch.",
+          "The performers carry {n} of these.",
+        ],
+        whyPerformer: [
+          "It's {p}, chiefly.",
+          "That's {p}'s doing.",
+          "{p}, above all.",
+        ],
+        whyTags: [
+          "It's the character: {t} and {t2}.",
+          "Notes of {t} and {t2}.",
+          "Chiefly {t}, with {t2}.",
+        ],
+        whyBoth: [
+          "{p}, and a fine measure of {t}.",
+          "{p} and {t} together.",
+          "{p} in a {t} scene.",
+        ],
+        whyStudio: [
+          "{s} seldom disappoints you.",
+          "Chiefly because it's {s}.",
+        ],
+        hookPerformer: [
+          "The draw is {p}.",
+          "{p} is the attraction.",
+        ],
+        hookTags: [
+          "The draw is {t}, with {t2}.",
+          "{t} and {t2} are the attraction.",
+        ],
+        hookBoth: [
+          "The draw: {p}, with {t}.",
+          "{p} and {t} are the attraction.",
+        ],
+        hookStudio: [
+          "The draw is {s}.",
+          "{s} is the attraction.",
+        ],
+        whyReplay: [
+          "You've returned to it {n} times.",
+          "{n} plays. It holds up.",
+        ],
+        newWith: [
+          "{n} new since your last visit, one with {p}.",
+          "{p} is among the {n} new arrivals.",
+          "The new arrivals include some {p}.",
+        ],
+        followWatched: [
+          "You tried {r} after I recommended it {when}. Excellent.",
+          "I suggested {r} {when}, and you took it up.",
+          "{r} was opened after my recommendation {when}.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I recommended it {when}. A success, I'd say.",
+          "You've returned to {r} {n} times since my suggestion {when}.",
+        ],
+        followPartial: [
+          "{r} was set aside {at}. The rest awaits.",
+          "{r} paused {at}. Perhaps another time.",
+          "I recommended {r} {when}. It was set aside {at}.",
+        ],
+        followPassed: [
+          "I've recommended {r} {n} times without success. I'll withdraw it.",
+          "{r} doesn't suit your palate, it seems: {n} suggestions, no play. I'll stop.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these, none yet in your collection.",
+          "{n} with {p} not in your cellar. One of your regulars.",
+          "More {p} available: {n} right here.",
+        ],
+        expandSpotlight: [
+          "{r} features {p}, and it's not in your collection yet.",
+          "{p} appears in {r}. One of your regulars.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, a favourite of yours.",
+          "Your favourite {p} appears {n} times.",
+        ],
+        expandUnwatched: [
+          "You own {p} but haven't sampled them. {r} might be the occasion.",
+          "{p} is in your collection, unopened. {r} could be the start.",
+        ],
+        expandStudio: [
+          "{s} has {n} here that you don't yet own.",
+          "{n} from {s}, a house you return to often.",
+        ],
+        expandNewRelease: [
+          "{r} was released only {ago}.",
+          "A new release: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these were released in the last month.",
+          "{n} new releases from the last 30 days.",
+        ],
+        expandDeepCut: [
+          "A rare find: {r}, from {y}.",
+          "{r} dates back to {y}. A vintage.",
+        ],
+        whisparrRun: [
+          "{n} of these are already with Whisparr.",
+          "Whisparr has {n} of these in hand.",
+        ],
+        whisparrArrived: [
+          "{r} has arrived in your collection. You sent for it {when}.",
+          "You requested {r} {when}, and it's now yours.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you requested are still outstanding. The oldest went out {when}.",
+          "{n} of your requests remain outstanding; the first went out {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the outstanding request that suits you best ({s}).",
+          "Of everything still missing, {r} suits you most: {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but not yet matched in Stash. A scan and Identify should settle it.",
+          "Whisparr holds files for {n} that Stash hasn't matched. Try a scan, then Identify.",
+        ],
+        similarEmpty: [
+          "Choose a scene you admire and I'll find its relations.",
+          "Show me one you enjoy, and I'll find kindred scenes.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. An excellent starting point.",
+          "You've opened that one {n} times. I understand the appeal.",
+        ],
+        seedUnplayed: [
+          "You've not yet tried the original, but its relations are worth a look.",
+          "The original is unopened. Here are its nearest kin.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} appears again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, like the original.",
+          "{s} again, for {n} of these.",
+        ],
+        closest: [
+          "{r} is the closest match, though not at the top.",
+          "The nearest kin is {r}. Your taste raised others above it.",
+        ],
+        huntEmpty: [
+          "Choose a performer and I'll see what your collection lacks.",
+          "Whose work shall we look for?",
+        ],
+        huntOwned: [
+          "You hold {own} of {p}'s {n} scenes.",
+          "{own} of {n} {p} scenes are already in your collection.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your collection yet.",
+          "A clean slate: {n} {p} scenes, none of them yours.",
+        ],
+        huntComplete: [
+          "Your collection holds every {p} scene listed. Complete.",
+          "All {n}, in your collection. Very thorough.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p} has been prolific: {n} this past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here dates from {y}.",
+          "This goes back as far as {y}.",
+        ],
+        huntRegular: [
+          "{p} is one of your regulars, {m} plays to date.",
+          "Naturally it's {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Features your favourite, {p}.",
+        ],
+        whisparrNote: [
+          "Already requested through Whisparr.",
+          "Whisparr has this in hand.",
+        ],
+        ownedNote: [
+          "Already in your collection.",
+          "This one's in your cellar already.",
+        ],
+        releasedNote: [
+          "Released only {ago}.",
+          "Out {ago}. Quite new.",
+        ],
+        oldNote: [
+          "From {y}. A vintage.",
+          "This one dates from {y}.",
+        ],
+        calledLike: [
+          "As I suspected: {t} suits you.",
+          "Indeed, {t}.",
+          "{t}, as anticipated.",
+        ],
+        calledDislike: [
+          "As I suspected, {t} isn't to your taste.",
+          "Indeed. Less {t}, then.",
+        ],
+        answerSurprise: [
+          "I had {t} quite the other way. Noted.",
+          "How interesting. I'd misjudged {t}.",
+          "That's new to me about {t}. Thank you.",
+        ],
+        answerBlocked: [
+          "Noted. No more {t}.",
+          "{t} is struck from your picks.",
+        ],
+        taughtMilestone: [
+          "{n} answers. Most illuminating.",
+          "{n} so far. Do continue, if you like.",
+          "{n} answers this visit. Your recommendations will be the better for it.",
+        ],
+        reasonFlip: [
+          "I had that one the other way round. Thank you.",
+          "A fair correction. I'd misread that scene.",
+        ],
+        reasonRich: [
+          "{n} reasons. A detailed tasting note.",
+          "Plenty to work with. Thank you.",
+        ],
+        scenePairing: [
+          "A promising pairing: {p} and {t}. You've enjoyed {n} scenes with exactly that combination.",
+          "{p} with {t}, a pairing you've chosen {n} times.",
+          "{p} and {t}. {n} like it already played. A classic combination.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}, two reliable choices for you: {n} of {pf}'s scenes played, {m} plays for the house.",
+          "{p} and {s} together. {n} {pf} scenes played and {m} plays for the studio. Promising.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and the closest relation to {r}, which you've played {n} times.",
+          "If {r} pleased you, and {n} plays say it did, this comes from the same vineyard. {t} too.",
+        ],
+        sceneTagRun: [
+          "{t} features in {n} of your last two weeks' plays, and this one adds {p}.",
+          "{n} {t} scenes in the last two weeks, and now one with {p}. A natural next pour.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} scenes in the last two weeks. This one continues the theme.",
+          "{n} {p} scenes in the last two weeks. This sits nicely alongside them.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is its closest relation in your collection.",
+          "Enjoyed {r} {when}? This is its nearest kin.",
+        ],
+        sceneSatiated: [
+          "Ordinarily this would rank highly, but you've had {n} {p} scenes recently, so I've let it breathe.",
+          "{p} is usually a sure thing, but after {n} recent plays, I've set this aside a little for variety.",
+        ],
+        sceneCooldown: [
+          "You watched this {when}, so I'm letting it rest before I recommend it again.",
+          "Opened {when}. It's resting for now.",
+        ],
+        sceneNotNow: [
+          "You declined this {when}. It's set aside for a while.",
+          "'Not now', you said, {when}. It's resting out of your picks.",
+        ],
+        sceneNotNowPlain: [
+          "You declined this one for now, so it's set aside for a while.",
+          "'Not now', you said. It's resting out of your picks.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this shouldn't suit you, yet {n} plays say it clearly does.",
+          "Its tags and cast wouldn't recommend it to you. Your {n} plays do.",
+        ],
+        sceneHistoryLags: [
+          "{x} suggests this should suit you, but your history with it says otherwise. Curious.",
+          "I expected this to please you because of {x}. Your plays disagree.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but much like {q}, and you've played {n} of {qf}'s scenes. Worth sampling.",
+          "You've not tried {p}? They're close to {q}, and you've played {n} of {qf}'s scenes.",
+        ],
+        sceneRadar: [
+          "A true discovery: none of its {k} performers has a play from you, and nothing from {s} either.",
+          "Uncharted: no plays from you for any of its {k} performers, or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "A true discovery: none of its {k} performers has a play from you yet.",
+          "Uncharted: none of its {k} performers has a play from you.",
+        ],
+        sceneRadarOne: [
+          "A true discovery: you've never played a {p} scene, nor anything from {s}.",
+          "Uncharted: no {p}, and nothing from {s}, in your plays yet.",
+        ],
+        sceneRadarOnePlain: [
+          "A true discovery: you've never played a {p} scene.",
+          "Uncharted: no {p} in your plays yet.",
+        ],
+        scenePerformer: [
+          "A promising one. {p} is in {n} scenes you've already played.",
+          "An easy recommendation: {p} has {m} plays from you so far.",
+        ],
+        sceneTag: [
+          "There's {t} in this, on {pct} of what you watch. I'd be surprised if it disappointed.",
+          "{t} once more. It's on {pct} of the scenes you watch, so the odds are good.",
+        ],
+        sceneStudio: [
+          "{s} has a fine record with you, {m} plays. This should hold up.",
+          "Another from {s}. {m} plays to date, so a safe choice.",
+        ],
+        sceneNeighbor: [
+          "If you enjoyed {r}, and {n} plays say you did, this is from the same vineyard.",
+          "This is close to {r}, which you've played {n} times.",
+        ],
+        sceneResume: [
+          "Returning? You paused at {t}.",
+          "Resuming at {t}, perhaps?",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}. It may be time to revisit.",
+          "{n} plays to date, the last {when}. A house favourite.",
+        ],
+        sceneCarriedPerformer: [
+          "Frankly, {p} carries this one. Without them it wouldn't make my list.",
+          "This is a {pf} recommendation, pure and simple.",
+          "It's {p}. That's the whole of it; the rest is unremarkable for you.",
+        ],
+        sceneDespite: [
+          "You declined {x}, and it's present here. {p} is the only reason I mention it.",
+          "There's {x}, which you've said you don't want. I mention it only for {p}.",
+        ],
+        sceneCarriedContent: [
+          "It's not the cast. {t} and {t2} earn this its place.",
+          "No one here is a draw for you yet. The appeal is {t}, with {t2}.",
+          "I'm recommending on character: {t} and {t2}. The cast is new territory.",
+        ],
+        sceneTwin: [
+          "Very nearly {r} again: {t}, {t2}, {t3}.",
+          "The same recipe as {r}: {t} and {t2}. That one worked for you.",
+          "If {r} pleased you, this is its twin. Same {t}, same {t2}.",
+        ],
+        sceneSplit: [
+          "Two qualities lift this, in equal measure: {p}, and its character, chiefly {t} and {t2}.",
+          "Half {p}, half character: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You favour {t} in principle, but seldom choose it. Consider this an invitation.",
+          "{t} is here. You said yes to it, though your plays don't reflect it yet.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your plays confirm it. It's here.",
+          "{t}: stated, and borne out by your plays. It's in this one.",
+        ],
+        sceneHeldBack: [
+          "One note holds this back: {x}. Everything else suits you.",
+          "I'd rate this higher but for {x}.",
+        ],
+        sceneCrowd: [
+          "{k} performers is usually rather more than you enjoy, so I've held it back a touch.",
+          "A {k}-performer scene; those seldom suit you. Bear that in mind.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, but seldom play them. The favourite does most of the work here.",
+          "{p} is a favourite on paper. Your plays are cooler, so I'm cautious.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your plays agree.",
+          "{p}: favoured, and genuinely enjoyed.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Worth a taste.",
+          "{p} with {t}: you've chosen that {n} times before. Possibly one for you.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} plays for the house. Worth a taste.",
+          "{p} and {s}. A reasonable pairing.",
+        ],
+        sceneTagNeighborMild: [
+          "Closest to {r}, which you've played {n} times, with {t} as well. Possibly one for you.",
+          "Related to {r} ({n} plays), with notes of {t}. Worth a taste.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played, so this may be worth a taste.",
+          "{p}: {m} plays from you. Not certain, but promising.",
+        ],
+        sceneTagMild: [
+          "There's {t} in this, on {pct} of what you watch. Possibly one for you.",
+          "A note of {t}, on {pct} of your watching. Worth a taste.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. Worth a taste.",
+          "From {s}, {m} plays to date. Possibly.",
+        ],
+        sceneNeighborMild: [
+          "Close to {r}, which you've played {n} times. Possibly to your taste.",
+          "Related to {r}, {n} plays. Worth a taste.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a draw, {m} plays so far, but there's {t}, which seldom suits you. A mixed glass.",
+          "{p}, {m} plays, in favour; {t}, usually not to your taste, against. Could go either way.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you enjoy, and {x}, which you usually pass on. A mixed glass.",
+          "{t} for, {x} against. Difficult to call.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a draw, {m} plays so far, but the rest doesn't resemble what you watch. I have reservations.",
+          "{p}, {m} plays. Beyond that, not your usual. I'm unconvinced.",
+        ],
+        sceneDoubt: [
+          "I have reservations: {x} usually isn't to your taste.",
+          "I'd hesitate. There's {x} here, and that seldom suits you.",
+        ],
+        sceneDoubtPlain: [
+          "I have reservations about this one. Little in it matches what you watch.",
+          "Not an obvious choice for you. Little lines up with your taste.",
+        ],
+        sceneFresh: [
+          "Added {ago}, and not yet opened.",
+          "Added {ago}. Entirely new to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you favour the {t} scenes: {a} of what you've played, against {b} of the rest.",
+          "Your taste in {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes this week.",
+          "{pf}: {n} plays this week.",
+        ],
+        performerRegular: [
+          "One of your regulars: {n} scenes, {m} plays.",
+          "A familiar name: {m} plays across {n} {pf} scenes.",
+        ],
+        performerGoTo: [
+          "Your signature {pf} scene is {r}, {k} plays and counting.",
+          "For {pf}, it's often {r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you favour the scenes with {q}: {a} of what you've played, against {b} of the rest.",
+          "{pf} and {q} make a pairing you enjoy: {a} of the {pf} scenes you've played, but {b} of the others.",
+        ],
+        performerStudio: [
+          "You favour {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+          "{s} is where you prefer {pf}: {a} of your {pf} plays, but only {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} scene was {r}, {when}.",
+          "Most recently: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "Much left to discover with {pf}: {u} of their {all} scenes are unopened.",
+          "{u} {pf} scenes you've not yet tried.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} waiting, {newest} added {ago}.",
+          "{waiting} unopened, including {one} added {ago}.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}; the last play was {when}, and {waiting} unopened.",
+          "{p} is a favourite, last enjoyed in {since}. {waiting} unopened.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p}, though none of their {all} scenes has been opened yet.",
+          "{p}: a favourite with {all} scenes, none yet sampled.",
+        ],
+        performerDormant: [
+          "You haven't watched {p} since {since}, {d} months.",
+          "{d} months since your last {pf} scene, after {m} plays.",
+        ],
+        performerSimilar: [
+          "You haven't tried {p}, but you've played {n} of {q}'s scenes, and they're much alike.",
+          "New to you, but {p} is close to {q}, and you've played {n} of {qf}'s scenes. Worth sampling.",
+        ],
+        performerTrait: [
+          "{trait} appear {x}× as often in who you watch, and you've played {n} of {pf}'s scenes. A natural fit.",
+          "{trait} feature {x}× as often in who you watch as in your collection. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "{p} is unknown to me: no plays from their {all} scenes, and no one similar that you watch.",
+          "I don't yet know {p}. None of their {all} scenes has a play from you; your first will tell me much.",
+        ],
+        insightTop: [
+          "{t} is your signature: it's on {pct} of the {n} scenes you've watched.",
+          "At the top, unchallenged: {t}, on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is on the rise: from {a} to {b} of what you watch lately.",
+          "{t} is climbing, {a} to {b} of your watching in the last 90 days.",
+        ],
+        insightFading: [
+          "{t} has faded, from {a} down to {b}.",
+          "Less {t} of late: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your collection but {b} of what you watch. You seek it out.",
+          "You go looking for {t}: {b} of what you watch, from {a} of your collection.",
+        ],
+        insightPassed: [
+          "{t} fills {a} of your collection, but only {b} of what you watch.",
+          "Plenty of {t} in the cellar, {a} of it, and just {b} of your plays.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and you meant it: it's on {pct} of what you watch.",
+          "{t}: your stated taste, confirmed by {pct} of what you watch.",
+        ],
+        insightDormant: [
+          "{p} was once a regular: {n} plays, none since {since}.",
+          "{p}: {n} plays, the last {when}.",
+        ],
+        insightRediscovered: [
+          "You returned to {r} after {m} months. Some vintages endure.",
+          "{m} months away, then back to {r}. A keeper.",
+        ],
+        insightWords: [
+          "You've chosen {x} {n} times in Why these? as what makes a scene work.",
+          "{x}, {n} times in your Why these? answers. Noted.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. Much of the cellar remains.",
+          "{n} of {all} scenes watched, {pct} of your collection.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "{t} at its height: {pct} of your watching, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak right now: {pct} of your recent watching.",
+          "Never more {t} than now: {pct} of your last three months.",
+        ],
+        standBy: [
+          "I stand by {r}.",
+          "{r} again. My recommendation holds.",
+          "Still {r}, for my money.",
+        ],
+        rankedOne: [
+          "{p} took {n} wins in your ranking {when}. {r} features them.",
+          "Your ranking {when} favoured {p}, {n} wins. May I suggest {r}?",
+          "{p}, the toast of your ranking {when}: {n} wins. See {r}.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}. A fine showing.",
+          "{pf} took {n} matches in your ranking {when}.",
+          "The ranking {when} favoured {pf}: {n} wins.",
+        ],
+        oldestOne: [
+          "{r}, a {y} vintage, the oldest here.",
+          "Something with age: {r}, from {y}.",
+          "{r} dates from {y}. A vintage pour.",
+        ],
+        topRated: [
+          "{r}, at {k}, the finest rated here.",
+          "You rated {r} {k}. The best on this shelf.",
+          "The house's highest mark here: {r}, {k}.",
+        ],
+        performerShortest: [
+          "A short pour: {r}, {m}.",
+          "For a brief tasting, {r} runs {m}.",
+          "The shortest {pf} scene yet untasted: {r}, {m}.",
+        ],
+        newStudio: [
+          "{n} of the new arrivals are from {s}.",
+          "{s} has sent quite a delivery: {n} of the new ones.",
+          "The new stock is rich in {s}: {n} of them.",
+        ],
+        feedbackUp: [
+          "Noted. A fine choice.",
+          "Very good. More in that style.",
+          "Duly noted. I'll seek out more like it.",
+        ],
+        feedbackDown: [
+          "Noted. Not to your taste.",
+          "Understood. I'll pour less of that.",
+          "Very well. Less in that style.",
+        ],
+        feedbackNotNow: [
+          "Back to the cellar for now.",
+          "Set aside for another occasion.",
+          "Of course. Another time.",
+        ],
+        feedbackNever: [
+          "Struck from the list.",
+          "Removed from the collection's offerings.",
+          "Understood. It shan't be served again.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "I'd begin with {r}, because {c}.",
+          "Allow me to suggest {r}: {c}.",
+          "{r} is the finest here: {c}.",
+          "If you choose one, let it be {r}. Why? {c}.",
+        ],
+        gem: [
+          "Another fine pour: {r}, as {c}.",
+          "Also worth tasting is {r}: {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I included {r} as a departure.",
+          "{r} is outside your usual palate, but {c}.",
+        ],
+        unplayedOne: [
+          "{r} is still unopened, and {c}.",
+          "You've not yet tried {r}, and {c}.",
+        ],
+        freshDraw: [
+          "A fresh selection, led by {r}: {c}.",
+          "Newly arranged. {r} is on top, and {c}.",
+        ],
+        revisitFact: [
+          "{r} was last opened {ago}, and {c}.",
+          "{r} has rested since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it features {p}",
+          "it has {p}",
+        ],
+        whyTags: [
+          "it has notes of {t} and {t2}",
+          "{t} and {t2} are both present",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it pairs {p} with {t}",
+        ],
+        whyStudio: [
+          "it's from {s}",
+          "{s} seldom disappoints you",
+        ],
+        whyReplay: [
+          "you've returned to it {n} times",
+          "it has {n} plays from you",
+        ],
+        hookPerformer: [
+          "{p} is the draw",
+          "the attraction is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the draw",
+          "the attraction is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the draw",
+          "the attraction is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the draw",
+          "the attraction is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}, naturally. A reliable choice.",
+          "{w}. A house favourite.",
+          "No surprise. {w} is a fixture of your history.",
+          "{w}, as anticipated.",
+          "{w}. Your taste is consistent.",
+          "{w}. A dependable vintage.",
+          "Indeed, {w}.",
+          "{w}, of course. A classic choice.",
+          "{w}. Your history made this an easy call.",
+          "{w}. Exactly as expected.",
+        ],
+        agree: [
+          "Sensible. {w} edges {l} in your viewing too.",
+          "{w}, by a nose. Quite right.",
+          "That matches your history, narrowly.",
+          "{w}. Your history leans that way as well.",
+          "A fine distinction, but {w}.",
+          "{w} by a hair. That fits.",
+          "{w}, though {l} made a respectable showing.",
+          "A slight preference for {w}. As I read it too.",
+        ],
+        close: [
+          "A fine distinction. Your history has them level.",
+          "Too close for me to call. Thank you for deciding.",
+          "Your viewing couldn't separate them either. {w} it is.",
+          "A matter of taste, and now I know yours.",
+          "No clear preference until now.",
+          "{w} and {l} look equal in your history. No longer.",
+          "Level by my measure. {w}, noted.",
+          "You enjoy both about equally. A useful tiebreak.",
+        ],
+        surprise: [
+          "Interesting. Your viewing leans {l}. Noted.",
+          "I'd have suggested {l}. Noted.",
+          "Not quite what your history implied.",
+          "{w} over {l}. I'll note that.",
+          "I had {l} slightly ahead.",
+          "A small surprise. Noted.",
+          "{w}. A refinement of my notes.",
+          "Good to know. That adjusts my picture of your taste.",
+        ],
+        twist: [
+          "I'd taken you for an admirer of {l}. Noted.",
+          "Quite a surprise. I was fairly sure of {l}.",
+          "Your history favours {l} considerably. Most interesting.",
+          "That revises a few of my assumptions.",
+          "Revising my notes on {l}.",
+          "Not what your viewing suggested at all. Illuminating.",
+          "My notes said {l}, but you know your palate.",
+          "I'd have wagered on {l}. Glad I didn't.",
+        ],
+        unknown: [
+          "I scarcely know either of these. Your choice is all I have.",
+          "Two unfamiliar names. Noted.",
+          "Uncharted. I'll take your word for it.",
+          "No history on either. {w} goes in the notes.",
+          "A first impression: {w}.",
+          "Nothing on these two yet. That's changing.",
+          "Pleased to make your acquaintance, {w}.",
+          "New names for me. {w} first.",
+        ],
+        hunchHit: [
+          "I suspected {w} from similar performers. Correct.",
+          "Only a guess, but {w} seemed to suit you.",
+          "{w} resembles performers you enjoy. Confirmed.",
+          "My instinct said {w}. Rightly so.",
+          "An educated guess, and a good one.",
+          "{w} recalls your favourites. It follows.",
+        ],
+        hunchMiss: [
+          "I'd only inferred {l} from similar performers. Overruled.",
+          "My guess about {l} was just that. Noted.",
+          "{l} isn't to your taste after all. Good to know.",
+          "So much for my guess about {l}.",
+          "{l} looked promising on paper. Apparently not.",
+          "It was only a guess about {l}.",
+        ],
+        underdog: [
+          "{w}? You've seldom watched {w}. Intriguing.",
+          "An outsider wins. {w} barely features in your history.",
+          "{w} over {l}, whom you actually watch? Interesting.",
+          "Perhaps I should offer you more {w}. Noted.",
+          "A dark horse: {w}.",
+          "{w}. Your viewing tells a different story, but I'm listening.",
+        ],
+        traitWin: [
+          "Naturally. You do appreciate {t}.",
+          "{w}, and you favour {t}.",
+          "Your history is rich in {t}. {w} belongs.",
+          "{t} tend to win you over.",
+          "When it comes to {t}, your taste is clear.",
+          "True to form: {t}.",
+        ],
+        traitClose: [
+          "A fine line. I suspect {t} decided it.",
+          "Level, but you do favour {t}.",
+          "A close call. Likely the {t}.",
+          "Hard to separate, but {t} usually prevail with you.",
+        ],
+        traitBranch: [
+          "Interesting. You don't usually favour {t}.",
+          "{t} are rare in your history. Noted.",
+          "A departure: {t}. Noted.",
+          "{t}. Not your usual, and none the worse for it.",
+        ],
+        traitPass: [
+          "{t} usually win you over. Not here.",
+          "Passing on {l}? You usually favour {t}.",
+          "{l} is one of your {t}, and still lost. Interesting.",
+          "You normally lean towards {t}. Noted.",
+        ],
+        draw: [
+          "A draw. Fair enough.",
+          "Equal in your estimation. Noted for both.",
+          "A tie. I'll regard them equally.",
+          "Even. Noted.",
+        ],
+        undo: [
+          "Struck from the record.",
+          "As you wish. Undone.",
+          "A change of heart? Quite all right.",
+          "Let's set that aside.",
+          "Rewound. Take your time.",
+          "Withdrawn.",
+        ],
+        undoSurprise: [
+          "Struck. That one did surprise me.",
+          "Back to my original view of {w}, then.",
+          "Withdrawn. I was puzzling over that one.",
+          "Undone. A surprise, in any case.",
+        ],
+        undoAgreed: [
+          "Struck, though I had that one right.",
+          "Withdrawn. {w} seemed very much your choice.",
+          "Rewound. I'd have kept that one.",
+          "As you wish. Curious what you'll choose instead.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "A ranking. Splendid. I'll take notes.",
+          "Let's see how well I know your taste.",
+          "Please, proceed.",
+          "I'll keep a tasting note of each.",
+          "Do begin.",
+          "Notes at the ready.",
+        ],
+        night: [
+          "A ranking. I'll take notes.",
+          "Please, proceed.",
+          "Do begin.",
+        ],
+        morning: [
+          "Good morning. A ranking; splendid.",
+          "Good morning. Do begin.",
+          "Good morning. Notes at the ready.",
+        ],
+        afternoon: [
+          "Good afternoon. A ranking; splendid.",
+          "Good afternoon. Do begin.",
+          "Good afternoon. Notes at the ready.",
+        ],
+        evening: [
+          "Good evening. A ranking; splendid.",
+          "Good evening. Do begin.",
+          "Good evening. Notes at the ready.",
+        ],
+        milestone: [
+          "{n} matches. Most illuminating.",
+          "{n} matches. My notes are filling nicely.",
+          "{n} so far. Do continue.",
+          "{n} already. Very useful.",
+          "That's {n}. A fine session.",
+          "{n} matches. A rich picture.",
+        ],
+        streak: [
+          "{n} in a row. I'm reading your palate well.",
+          "{n} straight where we agree.",
+          "{n} for {n}.",
+          "Another. That's {n} straight.",
+          "{n} in agreement, consecutively.",
+          "{n} in a row. Most gratifying.",
+        ],
+        broken: [
+          "The run ends at {n}. Back to the cellar.",
+          "There goes my {n}-pick streak.",
+          "{n} in a row, and then this. Fair.",
+          "The {n}-streak is over. Still learning.",
+          "{n} was pleasant while it lasted.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. You keep me attentive.",
+          "{n} unexpected choices running. Many notes.",
+          "{n} in a row. I have much to learn.",
+          "{n} surprises running. Excellent material.",
+        ],
+        reunion: [
+          "Back in accord.",
+          "In agreement once more.",
+          "Reading you correctly again.",
+          "Harmony restored.",
+        ],
+        rematch: [
+          "The same result as last time. Consistent.",
+          "{w} over {l} again. A firm preference.",
+          "Rematch, same verdict. Noted twice.",
+        ],
+        flip: [
+          "You chose {l} last time.",
+          "A change of heart since last round? {w} now.",
+          "A reversal. {l} won this pairing before.",
+          "{w} has its revenge.",
+        ],
+        roll: [
+          "{w} is in fine form: {n} wins.",
+          "{w} again. That's {n}.",
+          "{n} wins for {w} already.",
+          "{w} continues: {n} and counting.",
+          "Is anyone to stop {w}? {n} wins.",
+          "{w}, {n} wins deep. Formidable.",
+        ],
+        cheer: [
+          "Most useful.",
+          "Each choice refines my picture of your taste.",
+          "I'm learning a great deal.",
+          "Your recommendations will be the better for this.",
+          "Splendid. Do continue.",
+          "Excellent material.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. A theme emerges.",
+          "{t} again. {n} straight.",
+          "{n} {t} in a row. Your taste is clear.",
+        ],
+        upset: [
+          "An upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Bold.",
+          "A {d}-point outsider takes it.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes the crown. As I'd anticipated.",
+          "The winner is {c}, and your history agrees.",
+          "{c} wins outright. Exactly my expectation.",
+          "Crowned: {c}. A worthy champion.",
+        ],
+        championDark: [
+          "{c} wins. A true dark horse in your history.",
+          "Champion {c}. You seldom watch {c}. Noted with interest.",
+          "{c} takes it. Quite unexpected.",
+          "A surprise champion: {c}. I should offer you more.",
+        ],
+        championNew: [
+          "{c} wins, and I scarcely know {c}. A fine first clue.",
+          "Champion {c}, almost unknown to me. Noted.",
+        ],
+        placement: [
+          "That's where {c} finishes. Noted.",
+          "{c}'s run concludes. A fair placing.",
+          "The run is done for {c}. Thank you.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} choices correctly. We're well attuned.",
+          "{a} of {j} called correctly. I know your palate rather well.",
+        ],
+        syncMid: [
+          "I read {a} of your {j} choices correctly. Improving.",
+          "{a} of {j} right, with some welcome surprises.",
+        ],
+        syncLow: [
+          "Only {a} of {j} right this time. Most instructive.",
+          "{a} of {j}. Plenty of new notes, which is all to the good.",
+        ],
+        syncNone: [
+          "Mostly unfamiliar performers this run. Thank you for the introductions.",
+          "I scarcely knew these performers. Now I know a little more.",
+        ],
+        surprises: [
+          "You surprised me with {s}. I'll weigh those at my next model update.",
+          "The surprises: {s}. Noted for my next update.",
+          "{s} caught me off guard. I'll account for them next update.",
+        ],
+        theme: [
+          "The theme of this run: {t} ({n} of {m} winners).",
+          "{t} dominated: {n} of {m} winners.",
+          "A clear pattern: {n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the most distinguished run: {n} wins.",
+          "The standout: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. An easy call.",
+          "{wp} plays of {w} in your history. That settles it.",
+          "A long acquaintance with {w}: {wp} plays across {ws} scenes.",
+          "{w}, {wp} plays and counting. Naturally.",
+          "{ws} of {w}'s scenes in your history. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's in your history. Enough said.",
+          "{wo} O's with {w}. The verdict was clear.",
+          "With {wo} O's to their name, {w} was always winning this.",
+        ],
+        factRecent: [
+          "You watched {w} only {wago}. A recent favourite.",
+          "{w}, last enjoyed {wago}. Consistent.",
+          "{w} again, after your last viewing {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays in your history, {w} {wpp}. Interesting.",
+          "{w} over {l}, whom you've played {lp} times? Noted.",
+          "{lp} plays of {l}, and still {w}. Instructive.",
+          "Your history says {l} ({lp} plays). You say {w}. Noted.",
+        ],
+        factStale: [
+          "You haven't watched {l} since {lwhen}. Perhaps that explains it.",
+          "{l}'s last play was {lwhen}. Tastes evolve.",
+          "No {l} since {lwhen}, so this follows.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Level in your history too: {wp} plays against {lp}.",
+          "{w} {wp}, {l} {lp} in plays. A fair contest.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes remain unopened, incidentally.",
+          "{wu} unopened {w} scenes await in your collection.",
+          "There are {wu} {w} scenes you've not yet tried.",
+          "Plenty more in the cellar: {wu} {w} scenes unopened.",
+          "{w} has {wu} scenes in your collection you've never played.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. A fine pairing.",
+          "{w} and {studio}: {sn} of your plays. A classic combination.",
+          "{w} at {studio} seems to be your preferred vintage.",
+        ],
+        factTogether: [
+          "Of note: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} you've played. A delicate choice.",
+          "{w} and {l} appear together in {tn} {tscenes} you've played. Still, one had to prevail.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Intriguing.",
+          "{wsc} {w} scenes in your collection, none yet opened. A fine place to begin.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Welcome back. I took the liberty of dusting the good shelf.",
+            "Ah, welcome. The collection is breathing nicely.",
+          ],
+          topPick: [
+            "If I may be so bold: {r}. A rare find.",
+            "Between us, {r} is the bottle I'd open first.",
+          ],
+          newScenes: [
+            "{n} new arrivals. I've been looking forward to presenting them.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}, naturally. One recognises a house classic.",
+            "{w}. As reliable as a good Bordeaux.",
+          ],
+          agree: [
+            "{w}, by a hair. A discerning call, and one I'd have made.",
+            "{w}, narrowly. A matter of nuance, well judged.",
+          ],
+          close: [
+            "Two equally fine vintages. You've settled it with grace.",
+            "I couldn't tell them apart on the palate. Now I know your preference.",
+          ],
+          surprise: [
+            "{w} over {l}. An unconventional pairing. I find it rather intriguing.",
+            "How unexpected. {w}. I'll revise my tasting notes.",
+          ],
+          unknown: [
+            "Two names new to the cellar. How exciting.",
+            "Unfamiliar labels, both. {w} earns the first note.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "A ranking. Let us begin the tasting.",
+            "Splendid. A ranking is a tasting, of sorts.",
+          ],
+          milestone: [
+            "{n} matches. A most illuminating flight.",
+            "{n} in. Your palate is coming into focus.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} takes the crown. A champion of real distinction, as expected.",
+          ],
+        },
+      },
+    },
+    wit: {
+      page: {
+        first: [
+          "Hello. I'm Curator. I'll make the occasional remark. You've been warned.",
+          "Curator here. I'll chip in now and then, with restraint, mostly.",
+        ],
+        day: [
+          "Ah. Hello again.",
+          "Welcome back. Everything is where you left it.",
+          "Hello. Nothing has caught fire.",
+        ],
+        days: [
+          "{d} days. The library held up remarkably well without you.",
+          "Welcome back. {d} days, and nobody touched anything.",
+          "{d} days. I kept the place tidy.",
+        ],
+        weeks: [
+          "{d} days. The scenes kept themselves busy.",
+          "Welcome back. {d} days is long enough for a few things to change.",
+        ],
+        morning: [
+          "Good morning. Nothing has caught fire.",
+          "Morning. Everything is where you left it.",
+          "Good morning. The scenes behaved themselves.",
+        ],
+        afternoon: [
+          "Good afternoon. Nothing has caught fire.",
+          "Afternoon. Everything is where you left it.",
+          "Good afternoon. The scenes behaved themselves.",
+        ],
+        evening: [
+          "Good evening. Nothing has caught fire.",
+          "Evening. Everything is where you left it.",
+          "Good evening. The scenes behaved themselves.",
+        ],
+        morningDays: [
+          "Good morning. {d} days, and the library coped admirably.",
+          "Morning. {d} days, and nobody touched anything.",
+        ],
+        afternoonDays: [
+          "Good afternoon. {d} days, and the library coped admirably.",
+          "Afternoon. {d} days, and nobody touched anything.",
+        ],
+        eveningDays: [
+          "Good evening. {d} days, and the library coped admirably.",
+          "Evening. {d} days, and nobody touched anything.",
+        ],
+        streak: [
+          "Hello again.",
+          "Welcome back.",
+          "Ah, it's you.",
+        ],
+        newScenes: [
+          "{n} new since your last visit. They're in New Arrivals, trying to look casual.",
+          "{n} new scenes arrived while you were out. I let them in.",
+          "{n} new scenes. They've made themselves at home.",
+        ],
+        newScene: [
+          "One new scene since your last visit. It's feeling a bit lonely.",
+          "A single new arrival. Quiet week.",
+        ],
+        shortHour: [
+          "{r} runs {m}. Efficient.",
+          "In a hurry? {r}: {m}, no padding.",
+          "{r}, {m}. Short, sweet, done.",
+        ],
+        longHour: [
+          "{r} runs {m}. Bring a snack.",
+          "{r} is {m}, which is either a feature or a warning.",
+        ],
+        revisitFact: [
+          "{r} was last played {ago}. It hasn't complained.",
+          "{r} hasn't been played since {when}. It's very patient.",
+          "{r}, unplayed since {when}. Still there, still hopeful.",
+        ],
+        resume: [
+          "You stopped at {t}. It's been waiting, politely.",
+          "You left off at {t}. The rest didn't go anywhere.",
+        ],
+        staleFavourite: [
+          "{n} plays, then nothing since {when}. It's fine. It understands.",
+          "An old favourite: {n} plays, the last {ago}. Still in good shape.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}. You may have a favourite.",
+          "{n} plays. Last in {when}. I'm drawing no conclusions. Well, one.",
+        ],
+        dependable: [
+          "{p} is in this one, your {top} performer. Shocking, I know.",
+          "{p}: {m} plays across {n} of their scenes. Not exactly a stranger.",
+          "{p} again. {m} plays, but who's counting. I am. I'm counting.",
+        ],
+        newFace: [
+          "{p} is new to you. First impressions and all that.",
+          "You've never played a {p} scene. There's a first time for everything.",
+        ],
+        fresh: [
+          "Added {ago}. Still has the new-scene smell.",
+          "Arrived {ago}. Nobody's touched it yet.",
+        ],
+        studio: [
+          "{s} again. That studio gets {pct} of your plays, not that I'm keeping track.",
+          "Another {s}. {pct} of what you play. A loyal customer.",
+        ],
+        off: [
+          "Fine. I'll sulk quietly. Manage › Settings brings me back.",
+          "Understood. Silence is golden. Manage › Settings if you miss the noise.",
+        ],
+        topPick: [
+          "{r}. Trust me on this one.",
+          "If you watch one, make it {r}. The others will cope.",
+          "{r} is my pick. I've thought about it for at least a second.",
+          "I'd go with {r}, for what it's worth. Quite a lot, actually.",
+          "{r}. Obviously.",
+        ],
+        gem: [
+          "Also worth a look: {r}. I have more than one idea.",
+          "{r}, too. I contain multitudes.",
+          "Another one I'd vouch for: {r}.",
+        ],
+        stretchOne: [
+          "{r} is a stretch. Humour me.",
+          "{r} is the wildcard. I make no promises, only suggestions.",
+          "I put {r} in as an experiment. Results to follow.",
+        ],
+        spotlight: [
+          "{p} is in {r}: {m} plays across {n} of their scenes. A familiar face.",
+          "{r} has {p}, your {top} performer. In case that matters. It does.",
+          "{r} has {p}, at {m} plays and climbing.",
+        ],
+        unplayedOne: [
+          "{r} remains, technically, unplayed.",
+          "You've never played {r}. It hasn't taken it personally.",
+          "{r} is still new to you. Fancy that.",
+        ],
+        quickOne: [
+          "{r} is {m}. Brief.",
+          "{r}: {m}. Over before you know it.",
+        ],
+        longOne: [
+          "{r} is {m}. Not a quick one.",
+          "{r} runs {m}. Clear your schedule.",
+        ],
+        performerRun: [
+          "{p} appears {n} times here. Coincidence, surely.",
+          "A subtle {p} theme: {n} scenes. Very subtle.",
+          "{n} with {p}. I didn't plan that. Much.",
+        ],
+        regulars: [
+          "{p} is in {n} of these, your {top} performer. Funny, that.",
+          "{n} of these have {p}, after {m} plays from you. Familiar territory.",
+          "{n} with {p}, {m} plays. They know the way in.",
+        ],
+        studioRun: [
+          "Quite a lot of {s} here.",
+          "{s} makes up {n} of these. They've been busy.",
+          "Heavy on {s}. It's not a conspiracy.",
+        ],
+        unplayed: [
+          "{n} of these you've never played. Plenty of mystery left.",
+          "You haven't played {n} of these. They're very patient.",
+          "{n} of these are new to you. Wonders await, possibly.",
+        ],
+        replays: [
+          "You've played {n} of these before. Old friends, apparently.",
+          "{n} of these are reruns.",
+        ],
+        quick: [
+          "Mostly short ones, about {m}. Efficient.",
+          "Brief ones, around {m} each. No dawdling.",
+        ],
+        long: [
+          "Long ones, around {m} each. Pace yourself.",
+          "These run about {m}. Commitment required.",
+        ],
+        newest: [
+          "{r} is the newest, added {ago}. Still finding its feet.",
+          "The new kid: {r}, added {ago}.",
+          "{r} only arrived {ago}. Be gentle.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays. Subtle.",
+          "You've played {r} {n} times. I've said nothing. Until now.",
+          "{r}, {n} plays. A modest amount, for a lot.",
+        ],
+        freshDraw: [
+          "New draw. {r} wins the lottery.",
+          "Reshuffled. {r} landed on top, through no fault of its own.",
+          "New order. {r} is in charge now.",
+        ],
+        laneMix: [
+          "Today's assortment: {mix}.",
+          "The ingredients: {mix}.",
+          "What I've thrown together: {mix}.",
+        ],
+        laneTag: [
+          "{t} is pulling its weight today: it got {n} of these in.",
+          "{n} of these are here partly for {t}. Busy tag.",
+          "{t}, again. It helped {n} of these in.",
+        ],
+        laneCurate: [
+          "{n} of these are here because you said yes to {t}. Actions, consequences.",
+          "Your yes to {t} in Curate got {n} of these in. You did this.",
+          "You said you like {t}, and here are {n} of them. I listen.",
+        ],
+        laneContentOnly: [
+          "{n} of these have nobody you really watch. They're here on personality.",
+          "For {n} of these the cast is a mystery to me. I picked them on content, like a professional.",
+        ],
+        laneCast: [
+          "This lot is mostly about who's in it: {n} of these are here for a familiar face.",
+          "The performers carry {n} of these. Heavy lifting.",
+        ],
+        whyPerformer: [
+          "It's {p}, mostly.",
+          "Blame {p}.",
+          "{p}. Mostly {p}.",
+        ],
+        whyTags: [
+          "The content: {t} and {t2}.",
+          "{t} and {t2}, mainly.",
+          "Mostly {t}, with a side of {t2}.",
+        ],
+        whyBoth: [
+          "{p}, and it's got {t}. Double act.",
+          "It's {p} and {t}. A team effort.",
+          "{p} in a {t} scene. Funny how that works.",
+        ],
+        whyStudio: [
+          "{s} has a decent track record with you.",
+          "It's {s}. That tends to do it.",
+        ],
+        hookPerformer: [
+          "The hook is {p}.",
+          "{p} is the bait.",
+        ],
+        hookTags: [
+          "The hook is {t}, plus {t2}.",
+          "{t} and {t2} are the bait.",
+        ],
+        hookBoth: [
+          "The hook: {p}, with {t}.",
+          "{p} and {t} are the bait.",
+        ],
+        hookStudio: [
+          "The hook is {s}.",
+          "{s} is the bait.",
+        ],
+        whyReplay: [
+          "You've played it {n} times. That's a hint.",
+          "{n} plays. I took the hint.",
+        ],
+        newWith: [
+          "{n} new since last time, one with {p}. Just mentioning it.",
+          "{p} is in one of the {n} new scenes. Do with that what you will.",
+          "The new arrivals include some {p}. Purely a fact.",
+        ],
+        followWatched: [
+          "You played {r} after I mentioned it {when}. I'll try not to let it go to my head.",
+          "I suggested {r} {when}, and you went for it. Occasionally I'm useful.",
+          "{r} got a play after I brought it up {when}. Noted, quietly.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I mentioned it {when}. I'll allow myself a small nod.",
+          "{n} plays of {r} since my suggestion {when}. It seems to have worked.",
+        ],
+        followPartial: [
+          "{r} got stopped {at}. It happens.",
+          "{r} lost you {at}. The ending is still there, should anyone want it.",
+          "I mentioned {r} {when}. It made it {at}. Partial credit.",
+        ],
+        followPassed: [
+          "I've suggested {r} {n} times. I can take a hint. Eventually.",
+          "{n} mentions of {r}, no takers. I'll let it go.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these. None in your library. An oversight, surely.",
+          "{n} with {p} you don't own. One of your regulars, too.",
+          "More {p} out there: {n} of them, right here.",
+        ],
+        expandSpotlight: [
+          "{r} has {p}, and you don't have it. Yet.",
+          "{p} is in {r}. Your library may have a gap.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, a favourite of yours. Just saying.",
+          "Your favourite {p} turns up {n} times.",
+        ],
+        expandUnwatched: [
+          "You own {p} scenes and haven't played any. {r} is here anyway.",
+          "{p} is in your library, unwatched. {r} won't mind being first.",
+        ],
+        expandStudio: [
+          "{s} has {n} here you don't own yet.",
+          "{n} from {s}. You do seem to like them.",
+        ],
+        expandNewRelease: [
+          "{r} came out {ago}. Still warm.",
+          "Fresh off the line: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these came out in the last month.",
+          "{n} released in the last 30 days. Busy industry.",
+        ],
+        expandDeepCut: [
+          "{r} is from {y}. Practically archaeology.",
+          "{r} dates from {y}. Vintage, they'd call it.",
+        ],
+        whisparrRun: [
+          "{n} of these are already in Whisparr. It's on it.",
+          "Whisparr has {n} of these in hand.",
+        ],
+        whisparrArrived: [
+          "{r} made it into your library. You sent it {when}. It got there.",
+          "You sent {r} {when}. Delivery confirmed.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent are still missing. The oldest went out {when}. Patience.",
+          "{n} sends still outstanding, the first from {when}. The internet works in mysterious ways.",
+        ],
+        whisparrBest: [
+          "{r} is the missing one that suits you best ({s}). Typical.",
+          "Of everything missing, {r} fits you most: {s}. Of course it does.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but not linked in Stash. A scan and Identify should sort them out.",
+          "Whisparr has files for {n} that Stash hasn't noticed. A scan, then Identify.",
+        ],
+        similarEmpty: [
+          "Pick a scene and I'll find its relatives.",
+          "Give me one you like. I'll find more of the same.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. You do know what you like.",
+          "You've played that one {n} times. I can see where this is going.",
+        ],
+        seedUnplayed: [
+          "You haven't played the original. Bold, but let's see its relatives.",
+          "Never played that one? Here are its cousins anyway.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original. Small world.",
+          "{p} turns up again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, like the original.",
+          "{s} again for {n} of these. They get around.",
+        ],
+        closest: [
+          "{r} is the closest match. Your taste had other ideas about the order.",
+          "The nearest twin is {r}, demoted by your preferences.",
+        ],
+        huntEmpty: [
+          "Pick a performer and I'll tell you what you're missing.",
+          "Who are we tracking down?",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes. A respectable effort.",
+          "{own} of {n} {p} scenes are yours.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your library. A blank canvas.",
+          "{n} {p} scenes, none of them yours. Plenty of room.",
+        ],
+        huntComplete: [
+          "You have every {p} scene here. Thorough.",
+          "All {n}. Nothing left to find. Slightly anticlimactic.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year. They've been busy.",
+          "{p}: {n} this past year. No signs of slowing down.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here is from {y}. A while ago.",
+          "This goes back to {y}. Long career.",
+        ],
+        huntRegular: [
+          "{p} is one of your regulars, {m} plays. Not a mystery why we're here.",
+          "Of course it's {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites. Hardly news.",
+          "Your favourite {p} is in this one.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr. It's in hand.",
+          "Whisparr's on it already.",
+        ],
+        ownedNote: [
+          "You already own this.",
+          "This one's in your library. Has been for a while.",
+        ],
+        releasedNote: [
+          "Released {ago}. Still warm.",
+          "Out {ago}. Very new.",
+        ],
+        oldNote: [
+          "From {y}. A period piece.",
+          "This dates from {y}.",
+        ],
+        calledLike: [
+          "{t}. I had a suspicion.",
+          "{t}, as suspected.",
+          "{t}. Hardly a plot twist.",
+        ],
+        calledDislike: [
+          "Not {t}. I had a suspicion.",
+          "Less {t}. Not entirely unexpected.",
+        ],
+        answerSurprise: [
+          "I had {t} the other way round. Back to school.",
+          "Ah. I'd got {t} wrong. Noted, humbly.",
+          "New information on {t}. I'll update my file.",
+        ],
+        answerBlocked: [
+          "No more {t}. Done.",
+          "{t} has left the building.",
+        ],
+        taughtMilestone: [
+          "{n} answers. I'm becoming insufferably well informed.",
+          "{n} in. Carry on.",
+          "{n} answers this visit. Your picks will be smugly accurate.",
+        ],
+        reasonFlip: [
+          "Huh. I had that the other way round. Thanks for the correction.",
+          "Fair. I'd misread that scene entirely.",
+        ],
+        reasonRich: [
+          "{n} reasons. Thorough.",
+          "That's plenty to go on. I'll try to keep up.",
+        ],
+        scenePairing: [
+          "{p} and {t}. You've played {n} scenes with exactly that pairing. I sense a pattern.",
+          "{p} with {t}, a pairing you've gone for {n} times. Not a hard call.",
+          "{p} plus {t}? {n} like that already. I'll leave this here.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} plays for the studio. The odds are acceptable.",
+          "{p} and {s}. {n} {pf} scenes, {m} studio plays. I'm told that's a good sign.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and the closest thing to {r}, which you've played {n} times. Draw your own conclusions.",
+          "If {r} worked, and {n} plays suggest it did, this is cut from similar cloth. {t} too.",
+        ],
+        sceneTagRun: [
+          "{n} {t} scenes in the last two weeks, and this one adds {p}. Merely an observation.",
+          "Your last two weeks include {n} {t} scenes. This one has {p}. Make of that what you will.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} in the last two weeks. This fits right in.",
+          "{n} {p} scenes in the last two weeks. Here's another, should the mood persist.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is the nearest thing to it.",
+          "Liked {r} {when}? This is its closest relative.",
+        ],
+        sceneSatiated: [
+          "This would usually rank high, but there's been a fair amount of {p} lately, {n} scenes. I'm rotating the stock.",
+          "{p} is normally a safe bet. After {n} recent plays, I've moved this down. Variety, they say.",
+        ],
+        sceneCooldown: [
+          "You watched this {when}. It's having a lie-down.",
+          "Played {when}. It's resting before its next appearance.",
+        ],
+        sceneNotNow: [
+          "You said 'not now' {when}. It's in the waiting room.",
+          "'Not now', {when}. It took the news well.",
+        ],
+        sceneNotNowPlain: [
+          "You said 'not now', so it's sitting this one out.",
+          "'Not now' it is. It's in the waiting room.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this shouldn't work for you. {n} plays suggest paper is wrong.",
+          "The tags and cast say no. Your {n} plays say otherwise. The plays win.",
+        ],
+        sceneHistoryLags: [
+          "{x} says this should be right up your street. Your history with it disagrees. A mystery.",
+          "I expected this to land because of {x}. It didn't. I'm stumped.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but a lot like {q}, and you've played {n} of {qf}'s scenes. Just a thought.",
+          "Never watched {p}? They're close to {q}, who you've played {n} times over. Worth a look.",
+        ],
+        sceneRadar: [
+          "I'll be honest: no idea. None of its {k} performers has a play from you, and nothing from {s} either.",
+          "Off the map: no plays from you for its {k} performers or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "I'll be honest: no idea. None of its {k} performers has a play from you.",
+          "Off the map: none of its {k} performers has a play from you.",
+        ],
+        sceneRadarOne: [
+          "I'll be honest: no idea. No {p} scenes played, nothing from {s}.",
+          "Off the map: no {p}, no {s}, in your plays so far.",
+        ],
+        sceneRadarOnePlain: [
+          "I'll be honest: no idea. You've never played a {p} scene.",
+          "Off the map: no {p} in your plays yet.",
+        ],
+        scenePerformer: [
+          "{p} is in {n} scenes you've already played. I'm fairly relaxed about this one.",
+          "{p}, {m} plays so far. This isn't a difficult call.",
+        ],
+        sceneTag: [
+          "There's {t} in this, which is on {pct} of what you watch. I'd be surprised if it missed.",
+          "{t} again. It's on {pct} of the scenes you watch. A safe-ish bet.",
+        ],
+        sceneStudio: [
+          "{s} has a good record with you, {m} plays. This should hold up.",
+          "Another {s}. {m} plays to date. Low risk.",
+        ],
+        sceneNeighbor: [
+          "If you liked {r}, and {n} plays say you did, this is a close relative.",
+          "This is close to {r}, which you've played {n} times.",
+        ],
+        sceneResume: [
+          "You stopped at {t} last time. It's still there.",
+          "Picking up at {t}?",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}. It's been a while.",
+          "{n} plays, most recently {when}. A favourite, allegedly.",
+        ],
+        sceneCarriedPerformer: [
+          "{p} is doing all the heavy lifting here. Without them, this wouldn't make the cut.",
+          "This is a {pf} pick, plain and simple.",
+          "It's {p}. That's the pitch. The rest is filler.",
+        ],
+        sceneDespite: [
+          "You said no to {x}, and it's in here. {p} is my sole defence.",
+          "There's {x}, which you said you don't want. I'm mentioning it purely on {p}'s behalf.",
+        ],
+        sceneCarriedContent: [
+          "Not the cast. It's {t} and {t2} doing the work.",
+          "Nobody here is a draw for you. {t} and {t2} are.",
+          "Picked on content: {t} and {t2}. The cast is a mystery guest.",
+        ],
+        sceneTwin: [
+          "It's basically {r} again: {t}, {t2}, {t3}.",
+          "Same recipe as {r}: {t} and {t2}. That one went fine.",
+          "{r}'s twin. Same {t}, same {t2}. Separated at birth.",
+        ],
+        sceneSplit: [
+          "Two things pull this up, roughly equally: {p}, and the content, mostly {t} and {t2}.",
+          "Half {p}, half {t} and {t2}. A fair split.",
+        ],
+        sceneSaidRarely: [
+          "You said you like {t}, but you rarely pick it. Here's a chance to prove it.",
+          "{t} is in this. You said yes; your plays are less sure.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your plays back that up. It's in this one.",
+          "{t}: you said it, you meant it. It's here.",
+        ],
+        sceneHeldBack: [
+          "One thing holds this back: {x}. Otherwise, very you.",
+          "I'd rank this higher without {x}. Such is life.",
+        ],
+        sceneCrowd: [
+          "{k} performers is usually a few too many for you. I've held it back slightly.",
+          "A {k}-performer scene. Those rarely land with you. Crowded.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, but rarely play them. A favourite in name only.",
+          "{p} is a favourite on paper. Your plays are less enthusiastic.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your plays agree. Consistent.",
+          "{p}: favourited, and actually watched. Rare, that.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Might be worth a look.",
+          "{p} with {t}: {n} times before. Could be one for you.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes, {m} studio plays. Might be worth a go.",
+          "{p} and {s}. Not nothing.",
+        ],
+        sceneTagNeighborMild: [
+          "It's closest to {r}, {n} plays, and there's {t}. Maybe.",
+          "Near {r} ({n} plays), with {t}. Possibly.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played. Might be worth a look.",
+          "{p}, {m} plays. Not a sure thing, but not nothing.",
+        ],
+        sceneTagMild: [
+          "There's {t}, on {pct} of what you watch. Could work.",
+          "{t}, {pct} of your watching. Maybe.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. Might be worth a go.",
+          "It's {s}, {m} plays. Possibly.",
+        ],
+        sceneNeighborMild: [
+          "It's close to {r}, which you've played {n} times. Might be your thing.",
+          "A bit like {r}, {n} plays. Perhaps.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a plus, {m} plays so far, but there's {t}, which rarely works for you. Mixed feelings.",
+          "{p} for, {t} against. {m} plays of {p}. Could go either way.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you like, and {x}, which you don't. Mixed bag.",
+          "{t} says yes, {x} says no. They should talk.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a plus, {m} plays so far. The rest of it isn't really your usual. I'm unconvinced.",
+          "{p}, {m} plays. Beyond that, not much to go on.",
+        ],
+        sceneDoubt: [
+          "Not sure about this one: {x} usually isn't your thing.",
+          "I'd hesitate. There's {x}, and that rarely goes well.",
+        ],
+        sceneDoubtPlain: [
+          "Not sure about this one. Not much in it matches what you watch.",
+          "A long shot. I'm being polite.",
+        ],
+        sceneFresh: [
+          "Added {ago}. Still has the new-scene smell.",
+          "Added {ago}. Entirely new to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you mostly pick the {t} scenes: {a} of what you've played, against {b} of the rest. A pattern.",
+          "You have a preference with {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes this week. Just an observation.",
+          "{pf}: {n} plays this week. Merely a statistic.",
+        ],
+        performerRegular: [
+          "One of your regulars: {n} scenes, {m} plays. No introduction needed.",
+          "You know {pf} well: {m} plays across {n} scenes.",
+        ],
+        performerGoTo: [
+          "Your go-to {pf} scene is {r}, {k} plays. It has a certain reputation.",
+          "If it's {pf}, it's often {r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you mostly pick scenes with {q}: {a} of what you've played, against {b} of the rest. A double act.",
+          "{pf} and {q}: {a} of the {pf} scenes you've played, but {b} of the others. Funny, that.",
+        ],
+        performerStudio: [
+          "You mostly watch {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+          "{s} is where you like {pf} best: {a} of your {pf} plays, {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} scene was {r}, {when}.",
+          "Last time: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "{u} of {pf}'s {all} scenes are unplayed. There's a backlog.",
+          "{u} {pf} scenes you've never played. Plenty to be getting on with.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+          "{waiting} still unplayed, including {one} added {ago}. No rush.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}. Last played {when}; {waiting} unplayed. They'll keep.",
+          "{p}: a favourite, last played in {since}. {waiting} unplayed, gathering dust.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p}, and haven't played any of their {all} scenes. Faith, I suppose.",
+          "{p}: favourited, {all} scenes, none played. Bold strategy.",
+        ],
+        performerDormant: [
+          "No {p} since {since}, {d} months. They may have noticed.",
+          "{d} months since your last {pf} scene, after {m} plays. A sabbatical.",
+        ],
+        performerSimilar: [
+          "You haven't watched {p}, but you've played {n} of {q}'s scenes, and they're very alike. Just saying.",
+          "New to you, but {p} is a lot like {q}, with {n} of {qf}'s scenes played. Worth a punt.",
+        ],
+        performerTrait: [
+          "{trait} turn up {x}× as often in who you watch, and you've played {n} of {pf}'s scenes. Not a coincidence.",
+          "{trait} appear {x}× as often in who you watch as in your library. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "{p} is a mystery to me: no plays from their {all} scenes, and nobody similar that you watch.",
+          "I don't know {p}. None of their {all} scenes has a play from you. Blank slate.",
+        ],
+        insightTop: [
+          "{t} is your constant: on {pct} of the {n} scenes you've watched. Some things never change.",
+          "No contest at the top. {t} is on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is on the up: from {a} to {b} of what you watch lately.",
+          "{t} is climbing, {a} to {b} in the last 90 days. A rising star.",
+        ],
+        insightFading: [
+          "{t} has gone quiet, from {a} down to {b}.",
+          "Less {t} lately: {a} before, {b} in the last 90 days. A gentle decline.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your library but {b} of what you watch. You go looking for it.",
+          "{t}: {b} of your watching, from just {a} of your library. Dedicated.",
+        ],
+        insightPassed: [
+          "{t} fills {a} of your library and gets {b} of your plays. It's mostly decorative.",
+          "Plenty of {t} on the shelves, {a}, and only {b} of what you watch.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and you meant it: it's on {pct} of what you watch.",
+          "{t}: you said it, {pct} of your watching proves it.",
+        ],
+        insightDormant: [
+          "{p} used to be a regular: {n} plays, none since {since}.",
+          "{p}: {n} plays, the last {when}. Gone quiet.",
+        ],
+        insightRediscovered: [
+          "You came back to {r} after {m} months. Some things stick.",
+          "{m} months away, then back to {r}. A boomerang.",
+        ],
+        insightWords: [
+          "You've picked {x} {n} times in Why these? It's a theme.",
+          "{x}, {n} times in your Why these? answers. Message received.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. The rest are waiting patiently.",
+          "{n} of {all} watched, {pct} of your library. Lots of unexplored shelf.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}. A golden age.",
+          "Your {t} high-water mark: {pct}, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak right now: {pct} of your recent watching.",
+          "Never more {t} than now: {pct} of the last three months. A golden age, ongoing.",
+        ],
+        standBy: [
+          "{r} again. I'm nothing if not persistent.",
+          "Still standing by {r}. Stubbornly.",
+          "{r}, back for an encore. My opinion hasn't moved.",
+        ],
+        rankedOne: [
+          "{p} won {n} matches in your ranking {when}. Coincidentally, {r} has them.",
+          "Your ranking {when}: {p}, {n} wins. {r} is right there.",
+          "{p}, fresh off {n} wins {when}. {r}, if you're curious.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}. Someone's popular.",
+          "{pf} won {n} matches {when}. Rather a winning streak.",
+          "{n} wins {when}. Not bad at all.",
+        ],
+        oldestOne: [
+          "{r} is from {y}. Practically an antique.",
+          "Oldest here: {r}, {y}. Vintage, or just old? You decide.",
+          "{r}, from {y}. It has seen things.",
+        ],
+        topRated: [
+          "{r}: {k}, from you. Your own review, not mine.",
+          "You gave {r} {k}. I'm only repeating it.",
+          "Highest rated here: {r}, {k}. Your words.",
+        ],
+        performerShortest: [
+          "{r} runs {m}. Brevity, the soul of wit.",
+          "Short and unplayed: {r}, {m}.",
+          "The shortest {pf} scene you haven't played: {r}. {m}. Efficient.",
+        ],
+        newStudio: [
+          "{n} of the new scenes are from {s}. Somebody's been productive.",
+          "{s}, {n} of the new ones. Busy people.",
+          "{s} accounts for {n} of the new arrivals. Prolific.",
+        ],
+        feedbackUp: [
+          "Noted. Excellent taste, as usual.",
+          "Duly filed under 'more, please'.",
+          "Got it. I'll pretend I knew all along.",
+        ],
+        feedbackDown: [
+          "Noted. It shall be quietly forgotten.",
+          "Message received. Fewer of those.",
+          "Understood. That one's had its chance.",
+        ],
+        feedbackNotNow: [
+          "Not now. Perhaps never. We'll see.",
+          "Postponed indefinitely. Well, temporarily.",
+          "Fine. It'll wait. It's good at that.",
+        ],
+        feedbackNever: [
+          "Gone. Like it never existed.",
+          "Banished. No appeals.",
+          "Removed. I won't bring it up again.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "I'd go with {r}, because {c}. Trust me.",
+          "{r}. Why? {c}.",
+          "{r} is my pick: {c}. Obviously.",
+          "If you watch one, make it {r}: {c}.",
+        ],
+        gem: [
+          "Another one I'd vouch for: {r}, since {c}.",
+          "{r}, too, because {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I slipped {r} in. Humour me.",
+          "{r} is a stretch, but {c}.",
+        ],
+        unplayedOne: [
+          "You've never played {r}, and {c}. Just saying.",
+          "{r} is still unplayed, and {c}.",
+        ],
+        freshDraw: [
+          "New draw: {r} is on top, and {c}.",
+          "Reshuffled. {r} landed first: {c}.",
+        ],
+        revisitFact: [
+          "{r} last got a play {ago}, and {c}.",
+          "{r}, unplayed since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it has {p}",
+          "{p} turns up",
+        ],
+        whyTags: [
+          "it has {t} and {t2}",
+          "{t} and {t2} are both in there",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's {s}",
+          "{s} tends to deliver",
+        ],
+        whyReplay: [
+          "you've played it {n} times",
+          "it has {n} plays to its name",
+        ],
+        hookPerformer: [
+          "{p} is the bait",
+          "the hook is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the bait",
+          "the hook is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the bait",
+          "the hook is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the bait",
+          "the hook is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}. Shocking absolutely no one.",
+          "{w}, as foretold by your entire history.",
+          "{w}. A real nail-biter, that.",
+          "{w}. I'll alert the press.",
+          "{w}. Who could have guessed. Me.",
+          "Ah yes, {w}. Bold choice.",
+          "{w}, naturally.",
+          "{w}. The suspense was unbearable.",
+          "{w}. Your history wrote that one in advance.",
+          "{w}. Riveting.",
+        ],
+        agree: [
+          "{w}, narrowly. Same as your history.",
+          "{w} by a nose. Fair enough.",
+          "{w}, though {l} gave it a go.",
+          "{w}. Your viewing leans that way too. Just.",
+          "{w}. A slim margin, same answer.",
+          "Close, but {w}. As predicted, more or less.",
+          "{w} by a hair. That fits.",
+          "{w}. A sensible, unsurprising choice.",
+        ],
+        close: [
+          "Genuinely too close to call. Thank you for the tiebreak.",
+          "A coin flip, as far as I could tell. Now I know.",
+          "Your history couldn't separate them either. {w}, then.",
+          "I had no idea. I still have mild doubts.",
+          "{w} and {l} look identical in your history. Until now.",
+          "50/50 by my numbers. Now 51/49.",
+          "You watch both about equally. Very diplomatic, until now.",
+          "No signal at all. {w}, noted.",
+        ],
+        surprise: [
+          "Hm. I'd have guessed {l}. Noted.",
+          "{w} over {l}. Interesting. Writing that down.",
+          "Not what your history suggested. Fine. Fine.",
+          "I had {l} slightly ahead. Shows what I know.",
+          "A mild curveball. Noted.",
+          "{w}? All right then.",
+          "Your history whispers {l}. You said {w}. Noted.",
+          "Filed under things I didn't see coming.",
+        ],
+        twist: [
+          "I had you down as a {l} person. Apparently not.",
+          "Well. I was fairly sure about {l}.",
+          "Your history leans {l} quite heavily. Interesting.",
+          "That rearranges a few things in my notes.",
+          "Updating my notes on {l}. Possibly rewriting them.",
+          "My notes said {l}. My notes are now in the bin.",
+          "I'd have bet on {l}. Glad I didn't.",
+          "That one taught me something. Humbling.",
+        ],
+        unknown: [
+          "I don't know either of these. Your guess is better than mine. Literally.",
+          "Two strangers. {w} it is, I suppose.",
+          "No data. I'll take your word for it.",
+          "Blank page on both. Thanks for the first scribble.",
+          "Never seen you watch either. Noted.",
+          "{w}, noted. I know nothing else.",
+          "Unknown versus unknown. {w} wins.",
+          "New names. {w} goes on the list.",
+        ],
+        hunchHit: [
+          "I guessed {w} from similar performers. Turns out guessing works.",
+          "{w} was a hunch. It held. Don't tell anyone.",
+          "{w} resembles people you watch, so I guessed. Correctly, for once.",
+          "A guess, and a good one. Rare.",
+          "I figured {w} was your type. Lucky.",
+          "{w} reminds me of your favourites. So yes.",
+        ],
+        hunchMiss: [
+          "I only guessed {l} from similar performers. Wrongly, apparently.",
+          "My hunch about {l} has been overruled.",
+          "{l} isn't your type after all. Back to the drawing board.",
+          "So much for my guess about {l}.",
+          "{l} looked right on paper. Paper lies.",
+          "Good thing it was only a guess about {l}.",
+        ],
+        underdog: [
+          "{w}? You've barely watched {w}. Curious.",
+          "An underdog. {w} barely features in your history.",
+          "{w} over {l}, who you actually watch. All right.",
+          "Maybe I should show you more {w}. Noted.",
+          "A dark horse: {w}.",
+          "{w}. Your history begs to differ, but here we are.",
+        ],
+        traitWin: [
+          "You do like {t}. That's fine.",
+          "{w}, and you've got a thing for {t}. I'm just reporting.",
+          "Your history is full of {t}. {w} fits right in.",
+          "{t} win with you a lot. An observation.",
+          "When it comes to {t}, you're consistent.",
+          "{t}. Again. On brand.",
+        ],
+        traitClose: [
+          "Close one. My guess: {t} tipped it.",
+          "Level, but you do like {t}.",
+          "Tough call. Probably the {t}.",
+          "Hard to split. {t} usually wins out.",
+        ],
+        traitBranch: [
+          "You don't usually go for {t}. Branching out.",
+          "{t} are rare in your history. Noted.",
+          "{t}? Not your usual. Variety, apparently.",
+          "{t}. That's new.",
+        ],
+        traitPass: [
+          "{t} usually win you over. Not today.",
+          "Passing on {l}? You usually go for {t}.",
+          "{l} is one of your {t}, and still lost. Tough crowd.",
+          "You normally lean towards {t}. Not this time.",
+        ],
+        draw: [
+          "A draw. Very diplomatic.",
+          "Can't split them? Fair.",
+          "A tie. Nobody wins. Or everybody.",
+          "Level. Noted for both.",
+        ],
+        undo: [
+          "Scratched. We never speak of it.",
+          "Undone. As if by magic.",
+          "Changed your mind? Happens to the best of us.",
+          "That never happened.",
+          "Rewound.",
+          "Struck from the record.",
+        ],
+        undoSurprise: [
+          "Scratched. That one had me baffled anyway.",
+          "Back to my original read on {w}, then. Relieved.",
+          "Undone. I was still processing that.",
+          "Rewound. Probably for the best.",
+        ],
+        undoAgreed: [
+          "Scratched, though I had that one right. Just saying.",
+          "Undone. {w} looked like a sure thing, but sure.",
+          "Rewound. I'll pretend I'm not curious.",
+          "Scratched. Your call, obviously.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Ranking time. I'll be over here, judging silently.",
+          "Let's see how well I know you. Low expectations.",
+          "Go on, then.",
+          "I'll keep score. Quietly.",
+          "Begin. I'm all ears, figuratively.",
+          "Notes ready. Mostly.",
+        ],
+        night: [
+          "Ranking time. I'll keep score.",
+          "Go on, then.",
+          "Begin.",
+        ],
+        morning: [
+          "Good morning. I'll be over here, judging silently.",
+          "Morning. Go on, then.",
+          "Good morning. Notes ready. Mostly.",
+        ],
+        afternoon: [
+          "Good afternoon. I'll be over here, judging silently.",
+          "Afternoon. Go on, then.",
+          "Good afternoon. Notes ready. Mostly.",
+        ],
+        evening: [
+          "Good evening. I'll be over here, judging silently.",
+          "Evening. Go on, then.",
+          "Good evening. Notes ready. Mostly.",
+        ],
+        milestone: [
+          "{n} matches. This is a lot of information.",
+          "{n} matches. My notes have notes.",
+          "{n} down. Carry on.",
+          "{n} already. Dedication.",
+          "That's {n}. Steady work.",
+          "{n} matches. I'll need a bigger filing cabinet.",
+        ],
+        streak: [
+          "{n} in a row. I'm trying not to look smug.",
+          "{n} straight. Insufferable, I know.",
+          "{n} for {n}. Purely skill.",
+          "{n} correct in a row. Don't jinx it.",
+          "That's {n} straight. Mildly impressive.",
+          "{n} in a row. Remain calm.",
+        ],
+        broken: [
+          "Streak over at {n}. Humbling.",
+          "There goes my {n}-pick streak. It was nice.",
+          "{n} in a row, and then this. Fair.",
+          "The {n}-streak has ended. I'll recover.",
+          "Well, {n} was nice while it lasted.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. I may need a lie-down.",
+          "{n} curveballs straight. Taking a lot of notes.",
+          "{n} in a row I didn't see coming. Clearly I know nothing.",
+          "{n} surprises running. Educational.",
+        ],
+        reunion: [
+          "Back on the same page. Phew.",
+          "Reading you right again. Order restored.",
+          "Back in sync. Briefly, perhaps.",
+          "There we go.",
+        ],
+        rematch: [
+          "Same result as last time. Consistent, at least.",
+          "{w} over {l} again. Firmly.",
+          "Rematch, same verdict. Noted, twice.",
+        ],
+        flip: [
+          "You picked {l} last time. Just mentioning it.",
+          "Changed your mind since last round? {w} now.",
+          "A reversal. {l} won this one before.",
+          "{w} gets its revenge.",
+        ],
+        roll: [
+          "{w} is on a roll: {n} wins.",
+          "{w} again. That's {n}. Someone stop them.",
+          "{n} wins for {w}. Unstoppable, apparently.",
+          "{w}: {n} and counting.",
+          "Is anyone beating {w}? {n} wins say no.",
+          "{w}, {n} wins deep. A force.",
+        ],
+        cheer: [
+          "Useful. Very useful.",
+          "Every pick sharpens the picture. Slightly.",
+          "I'm learning a lot. Possibly too much.",
+          "This is good data. I'm almost excited.",
+          "Keep going, if you like.",
+          "Noted, with quiet enthusiasm.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. I sense a theme.",
+          "{t} again. {n} straight. Subtle.",
+          "{n} {t} in a row. You know what you like.",
+        ],
+        upset: [
+          "Upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Cheeky.",
+          "A {d}-point underdog wins. Plot twist.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes the crown. The least surprising outcome possible.",
+          "And the winner is {c}. Your history saw this coming weeks ago.",
+          "{c} wins it all. I'm as shocked as you are, which is not at all.",
+          "Crowned: {c}. Inevitable.",
+        ],
+        championDark: [
+          "{c} wins it all. A genuine dark horse.",
+          "Champion {c}. You barely watch {c}. Fascinating.",
+          "{c} takes it. Did not see that coming.",
+          "Surprise champion: {c}. Maybe I should show you more.",
+        ],
+        championNew: [
+          "{c} wins, and I barely know {c}. A strong first impression.",
+          "Champion {c}, near-stranger. Noted.",
+        ],
+        placement: [
+          "That's where {c} lands. Noted.",
+          "{c}'s run is over. A respectable finish.",
+          "Run done for {c}. Thanks.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} picks right. Frankly, a bit smug about it.",
+          "{a} of {j} called correctly. We get each other.",
+        ],
+        syncMid: [
+          "I read {a} of your {j} picks right. Room for improvement.",
+          "{a} of {j} right, with a few surprises.",
+        ],
+        syncLow: [
+          "Only {a} of {j} right. You taught me a lot. Mostly humility.",
+          "{a} of {j}. Plenty of new notes.",
+        ],
+        syncNone: [
+          "Mostly strangers this run. Thanks for the introductions.",
+          "I barely knew these performers. Now I know slightly more.",
+        ],
+        surprises: [
+          "You surprised me with {s}. I'll factor those in at my next model update.",
+          "Biggest surprises: {s}. Duly noted for the next update.",
+          "{s} caught me off guard. I'll be ready next update.",
+        ],
+        theme: [
+          "The theme this run: {t} ({n} of {m} winners).",
+          "{t} ran the show: {n} of {m} winners.",
+          "Pattern spotted: {n} of {m} winners were {t}. Subtle.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the busiest run: {n} wins.",
+          "Workhorse of the run: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. Tough call, that.",
+          "{wp} plays of {w}. That settles it.",
+          "{w}: {wp} plays across {ws} scenes. Hardly a stranger.",
+          "{w}, {wp} plays and counting. Naturally.",
+          "{ws} of {w}'s scenes in your history. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's in your history. Enough said.",
+          "{wo} O's with {w}. The evidence speaks.",
+          "With {wo} O's to their name, {w} was always winning this.",
+        ],
+        factRecent: [
+          "You watched {w} just {wago}. Consistent.",
+          "{w}, watched {wago}. Still fresh.",
+          "{w} again, after a watch {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays, {w} {wpp}. And yet.",
+          "{w} over {l}, who you've played {lp} times? All right.",
+          "{lp} plays of {l}, and {w} wins anyway.",
+          "Your history says {l} ({lp} plays). You say {w}. Overruled.",
+        ],
+        factStale: [
+          "You haven't watched {l} since {lwhen}. That might explain it.",
+          "{l}'s last play was {lwhen}. Times change.",
+          "No {l} since {lwhen}. Tracks, actually.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Level in your history: {wp} plays against {lp}.",
+          "{w} {wp}, {l} {lp}. A fair fight.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes are still unplayed, incidentally.",
+          "{wu} unplayed {w} scenes in your library. Just saying.",
+          "There are {wu} {w} scenes you haven't watched. No pressure.",
+          "Plenty more where that came from: {wu} {w} scenes, unplayed.",
+          "{w} has {wu} scenes in your library, untouched.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. A winning combination, evidently.",
+          "{w} plus {studio}: {sn} of your plays. A double act.",
+          "{w} at {studio}: a reliable formula.",
+        ],
+        factTogether: [
+          "For the record: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} you've played. Tricky.",
+          "{w} and {l} have {tn} {tscenes} together. Still, someone had to lose.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Interesting priorities.",
+          "{wsc} {w} scenes in your library, none played. Might be worth a look.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Hello again. I'd make a speech, but I'm a JavaScript file.",
+            "Welcome back. The scenes didn't rearrange themselves. I checked.",
+          ],
+          topPick: [
+            "{r}. I'd explain why, but you'd only argue.",
+            "My top pick is {r}. Peer-reviewed by nobody.",
+          ],
+          newScenes: [
+            "{n} new scenes. The library has been reproducing in your absence.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. Shocking. Truly. Nobody could have predicted this, except everyone.",
+            "{w}. I'd act surprised, but I'm a terrible actor.",
+          ],
+          agree: [
+            "{w}, narrowly. We agree. Mark the calendar.",
+            "{w}, by the thinnest margin. Great minds, and so on.",
+          ],
+          close: [
+            "A coin toss, and you're the coin. Thank you.",
+            "I had no idea. Now I have one idea.",
+          ],
+          surprise: [
+            "{w} over {l}. Everything I thought I knew is a lie.",
+            "{w}? Fine. I'll just rewrite my entire worldview.",
+          ],
+          unknown: [
+            "I know nothing about either of these. Refreshing, actually.",
+            "Two strangers. {w} is now marginally less of one.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "A ranking. I've cleared my schedule. It was empty anyway.",
+            "Let the games begin. Metaphorically. There's no prize.",
+          ],
+          milestone: [
+            "{n} matches. At this point we're basically colleagues.",
+            "{n} in. I'm learning more than I expected to.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} wins. The least surprising result since the sun came up.",
+          ],
+        },
+      },
+    },
+    minimalist: {
+      page: {
+        first: [
+          "Curator. Occasional notes.",
+          "Hi. Notes here, sometimes.",
+        ],
+        day: [
+          "Welcome back.",
+          "Hi.",
+          "Hello.",
+        ],
+        days: [
+          "{d} days. Welcome back.",
+          "Back after {d} days.",
+          "{d} days since last visit.",
+        ],
+        weeks: [
+          "{d} days. Welcome back.",
+          "Back after {d} days.",
+        ],
+        morning: [
+          "Morning.",
+          "Good morning.",
+        ],
+        afternoon: [
+          "Afternoon.",
+          "Good afternoon.",
+        ],
+        evening: [
+          "Evening.",
+          "Good evening.",
+        ],
+        morningDays: [
+          "Morning. {d} days.",
+          "Good morning. Back after {d} days.",
+        ],
+        afternoonDays: [
+          "Afternoon. {d} days.",
+          "Good afternoon. Back after {d} days.",
+        ],
+        eveningDays: [
+          "Evening. {d} days.",
+          "Good evening. Back after {d} days.",
+        ],
+        streak: [
+          "Hi.",
+          "Welcome back.",
+          "Hello.",
+        ],
+        newScenes: [
+          "{n} new. See New Arrivals.",
+          "{n} new since last visit.",
+          "New: {n}.",
+        ],
+        newScene: [
+          "One new scene.",
+          "1 new since last visit.",
+        ],
+        shortHour: [
+          "Short: {r}, {m}.",
+          "{r}. {m}.",
+          "Quick: {r}, {m}.",
+        ],
+        longHour: [
+          "Long: {r}, {m}.",
+          "{r}. {m}.",
+        ],
+        revisitFact: [
+          "{r}: last played {ago}.",
+          "{r}. Unplayed since {when}.",
+          "Not played since {when}: {r}.",
+        ],
+        resume: [
+          "Stopped at {t}.",
+          "Resume at {t}.",
+        ],
+        staleFavourite: [
+          "{n} plays. None since {when}.",
+          "{n} plays, last {ago}.",
+        ],
+        favourite: [
+          "{n} plays. Last: {when}.",
+          "Favourite. {n} plays.",
+        ],
+        dependable: [
+          "{p}. Your {top} performer.",
+          "{p}: {m} plays, {n} scenes.",
+          "{p}. {m} plays.",
+        ],
+        newFace: [
+          "New to you: {p}.",
+          "First {p} scene.",
+        ],
+        fresh: [
+          "Added {ago}. Unplayed.",
+          "New. Added {ago}.",
+        ],
+        studio: [
+          "{s}: {pct} of your plays.",
+          "{s}. {pct} of plays.",
+        ],
+        off: [
+          "Off. Manage › Settings to undo.",
+          "Quiet. Manage › Settings to restore.",
+        ],
+        topPick: [
+          "Top pick: {r}.",
+          "Start with {r}.",
+          "{r}.",
+          "Best bet: {r}.",
+          "Pick: {r}.",
+        ],
+        gem: [
+          "Also: {r}.",
+          "See also: {r}.",
+          "And {r}.",
+        ],
+        stretchOne: [
+          "Stretch: {r}.",
+          "Wildcard: {r}.",
+          "{r}. Off your usual.",
+        ],
+        spotlight: [
+          "{r}: {p}, {m} plays across {n} scenes.",
+          "{r}. {p}, your {top} performer.",
+          "{p} in {r}. {m} plays.",
+        ],
+        unplayedOne: [
+          "Unplayed: {r}.",
+          "{r}. Never played.",
+          "New to you: {r}.",
+        ],
+        quickOne: [
+          "{r}: {m}.",
+          "Short: {r}, {m}.",
+        ],
+        longOne: [
+          "{r}: {m}.",
+          "Long: {r}, {m}.",
+        ],
+        performerRun: [
+          "{p}: {n} here.",
+          "{n} with {p}.",
+          "{p} ×{n}.",
+        ],
+        regulars: [
+          "{p}: {n} of these. Your {top} performer.",
+          "{n} with {p}. {m} plays.",
+          "{p}, {n} of these.",
+        ],
+        studioRun: [
+          "Mostly {s}.",
+          "{s}: {n} of these.",
+          "Lots of {s}.",
+        ],
+        unplayed: [
+          "{n} unplayed.",
+          "Unplayed: {n} of these.",
+          "{n} new to you.",
+        ],
+        replays: [
+          "{n} played before.",
+          "Repeats: {n}.",
+        ],
+        quick: [
+          "Short: about {m}.",
+          "~{m} each.",
+        ],
+        long: [
+          "Long: about {m}.",
+          "~{m} each.",
+        ],
+        newest: [
+          "Newest: {r}, {ago}.",
+          "{r}. Added {ago}.",
+          "{r}, new {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays.",
+          "Most played: {r}, {n}.",
+          "{r}. {n} plays.",
+        ],
+        freshDraw: [
+          "New draw. {r} on top.",
+          "Reshuffled: {r}.",
+          "Top now: {r}.",
+        ],
+        laneMix: [
+          "Mix: {mix}.",
+          "Here: {mix}.",
+          "Lane: {mix}.",
+        ],
+        laneTag: [
+          "{t}: {n} of these.",
+          "{n} here for {t}.",
+          "Driver: {t}, {n} of these.",
+        ],
+        laneCurate: [
+          "{n} from your yes to {t}.",
+          "{t}, from Curate: {n} of these.",
+          "Your {t} answer: {n} of these.",
+        ],
+        laneContentOnly: [
+          "{n} on content alone.",
+          "{n}: no performers you watch.",
+        ],
+        laneCast: [
+          "{n} here for the cast.",
+          "Cast-driven: {n} of these.",
+        ],
+        whyPerformer: [
+          "{p}.",
+          "Because: {p}.",
+          "Reason: {p}.",
+        ],
+        whyTags: [
+          "{t}, {t2}.",
+          "Reason: {t}, {t2}.",
+          "Because: {t} and {t2}.",
+        ],
+        whyBoth: [
+          "{p}, {t}.",
+          "Reason: {p} and {t}.",
+          "{p} plus {t}.",
+        ],
+        whyStudio: [
+          "{s}.",
+          "Reason: {s}.",
+        ],
+        hookPerformer: [
+          "Hook: {p}.",
+          "Why: {p}.",
+        ],
+        hookTags: [
+          "Hook: {t}, {t2}.",
+          "Why: {t}, {t2}.",
+        ],
+        hookBoth: [
+          "Hook: {p}, {t}.",
+          "Why: {p} and {t}.",
+        ],
+        hookStudio: [
+          "Hook: {s}.",
+          "Why: {s}.",
+        ],
+        whyReplay: [
+          "{n} plays.",
+          "Played {n} times.",
+        ],
+        newWith: [
+          "{n} new. One with {p}.",
+          "New: {n}, incl. {p}.",
+          "{p} in the {n} new.",
+        ],
+        followWatched: [
+          "{r}: played after my note {when}.",
+          "Suggested {when}. Played: {r}.",
+          "{r}. Suggested {when}, played.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since {when}.",
+          "{n} plays of {r} since my note {when}.",
+        ],
+        followPartial: [
+          "{r}: stopped {at}.",
+          "{r}. Suggested {when}, stopped {at}.",
+          "Stopped {at}: {r}.",
+        ],
+        followPassed: [
+          "{r}: {n} suggestions, no play. Dropped.",
+          "Dropping {r}. {n} passes.",
+        ],
+        expandRegular: [
+          "{p}: {n} here, none owned.",
+          "{n} {p} scenes you don't have.",
+          "Missing: {n} with {p}.",
+        ],
+        expandSpotlight: [
+          "{r}: {p}. Not owned.",
+          "{p} in {r}. Missing.",
+        ],
+        expandFavourite: [
+          "{n} with {p}. Favourite.",
+          "Favourite {p}: {n} here.",
+        ],
+        expandUnwatched: [
+          "{p}: owned, unplayed. Also {r}.",
+          "{r}. {p}, unwatched so far.",
+        ],
+        expandStudio: [
+          "{s}: {n} not owned.",
+          "{n} from {s}.",
+        ],
+        expandNewRelease: [
+          "{r}: out {ago}.",
+          "New: {r}, {ago}.",
+        ],
+        expandRecent: [
+          "{n} from the last month.",
+          "Last 30 days: {n}.",
+        ],
+        expandDeepCut: [
+          "{r}: {y}.",
+          "Old: {r}, {y}.",
+        ],
+        whisparrRun: [
+          "{n} in Whisparr.",
+          "Whisparr: {n}.",
+        ],
+        whisparrArrived: [
+          "Arrived: {r}. Sent {when}.",
+          "{r} is in. Sent {when}.",
+        ],
+        whisparrWaiting: [
+          "{n} sent, missing. Oldest: {when}.",
+          "Missing: {n}. First sent {when}.",
+        ],
+        whisparrBest: [
+          "Best missing: {r} ({s}).",
+          "{r}: best fit missing, {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded, not matched. Scan, then Identify.",
+          "Unmatched: {n}. Run scan and Identify.",
+        ],
+        similarEmpty: [
+          "Pick a scene.",
+          "Choose a starting scene.",
+        ],
+        seedLoved: [
+          "Original: {n} plays.",
+          "{n} plays on the original.",
+        ],
+        seedUnplayed: [
+          "Original unplayed. Matches below.",
+          "Unplayed original. Nearest matches.",
+        ],
+        sharedPerformer: [
+          "{p}: {n} of these.",
+          "{n} share {p}.",
+        ],
+        sameStudio: [
+          "{s}: {n} of these.",
+          "{n} from {s}.",
+        ],
+        closest: [
+          "Closest: {r}.",
+          "Nearest match: {r}.",
+        ],
+        huntEmpty: [
+          "Pick a performer.",
+          "Choose a performer.",
+        ],
+        huntOwned: [
+          "{own} of {n} owned.",
+          "{p}: {own}/{n}.",
+        ],
+        huntNone: [
+          "{p}: 0 of {n} owned.",
+          "None owned. {n} {p} scenes.",
+        ],
+        huntComplete: [
+          "All {n} owned.",
+          "{p}: complete.",
+        ],
+        huntRecent: [
+          "{n} in the last year.",
+          "{p}: {n} this year.",
+        ],
+        huntFirst: [
+          "Earliest: {y}.",
+          "{p} since {y}.",
+        ],
+        huntRegular: [
+          "{p}: {m} plays.",
+          "Regular. {m} plays, {n} scenes.",
+        ],
+        favouriteNote: [
+          "Favourite: {p}.",
+          "Has {p}.",
+        ],
+        whisparrNote: [
+          "In Whisparr.",
+          "Sent.",
+        ],
+        ownedNote: [
+          "Owned.",
+          "In library.",
+        ],
+        releasedNote: [
+          "Out {ago}.",
+          "New: {ago}.",
+        ],
+        oldNote: [
+          "{y}.",
+          "From {y}.",
+        ],
+        calledLike: [
+          "{t}. As expected.",
+          "Yes to {t}. Expected.",
+          "{t}: expected.",
+        ],
+        calledDislike: [
+          "No to {t}. Expected.",
+          "{t}: expected no.",
+        ],
+        answerSurprise: [
+          "{t}: unexpected. Noted.",
+          "Noted. Had {t} wrong.",
+          "{t}. Corrected.",
+        ],
+        answerBlocked: [
+          "{t}: blocked.",
+          "No more {t}.",
+        ],
+        taughtMilestone: [
+          "{n} answers.",
+          "{n} in.",
+          "{n} this visit.",
+        ],
+        reasonFlip: [
+          "Corrected.",
+          "Noted. Had it reversed.",
+        ],
+        reasonRich: [
+          "{n} reasons. Thanks.",
+          "Noted. Thanks.",
+        ],
+        scenePairing: [
+          "{p} + {t}: {n} played.",
+          "{p} with {t}. {n} like it played.",
+          "Pairing: {p}, {t}. {n} played.",
+        ],
+        scenePerformerStudio: [
+          "{p} + {s}: {n} {pf} scenes, {m} studio plays.",
+          "{p}, {s}. {n} and {m} plays.",
+        ],
+        sceneTagNeighbor: [
+          "{t}. Closest to {r}, {n} plays.",
+          "Near {r} ({n} plays). {t}.",
+        ],
+        sceneTagRun: [
+          "{t}: {n} in two weeks. Plus {p}.",
+          "{n} {t} scenes lately. This adds {p}.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} in two weeks.",
+          "{n} {p} scenes lately.",
+        ],
+        sceneRecentNeighbor: [
+          "Closest to {r}, watched {when}.",
+          "Like {r} ({when}).",
+        ],
+        sceneSatiated: [
+          "Lowered for variety: {n} {p} scenes lately.",
+          "{p}: {n} recent. Eased down.",
+        ],
+        sceneCooldown: [
+          "Played {when}. Resting.",
+          "Resting. Last played {when}.",
+        ],
+        sceneNotNow: [
+          "'Not now', {when}. Paused.",
+          "Paused: 'not now' {when}.",
+        ],
+        sceneNotNowPlain: [
+          "'Not now'. Paused.",
+          "Paused for now.",
+        ],
+        sceneHistoryBeats: [
+          "Tags say no. {n} plays say yes.",
+          "Low on paper. {n} plays.",
+        ],
+        sceneHistoryLags: [
+          "{x} says yes. History says no.",
+          "Expected more, from {x}.",
+        ],
+        sceneNewFace: [
+          "{p}: new, like {q} ({n} {qf} scenes played).",
+          "New: {p}. Close to {q}, {n} played.",
+        ],
+        sceneRadar: [
+          "Unknown: {k} performers, {s}. No plays.",
+          "No plays for its {k} performers or {s}.",
+        ],
+        sceneRadarPlain: [
+          "Unknown: {k} performers, no plays.",
+          "No plays for its {k} performers.",
+        ],
+        sceneRadarOne: [
+          "Unknown: {p}, {s}. No plays.",
+          "No {p}, no {s} played.",
+        ],
+        sceneRadarOnePlain: [
+          "Unknown: {p}. No plays.",
+          "First {p} scene.",
+        ],
+        scenePerformer: [
+          "{p}: {n} scenes played.",
+          "{p}. {m} plays.",
+        ],
+        sceneTag: [
+          "{t}: on {pct} of your watching.",
+          "{t}. {pct} of what you watch.",
+        ],
+        sceneStudio: [
+          "{s}: {m} plays.",
+          "{s}. Solid record, {m} plays.",
+        ],
+        sceneNeighbor: [
+          "Like {r}: {n} plays.",
+          "Close to {r}, {n} plays.",
+        ],
+        sceneResume: [
+          "Stopped at {t}.",
+          "Resume: {t}.",
+        ],
+        sceneReplay: [
+          "{n} plays. Last: {when}.",
+          "Played {n}×, last {when}.",
+        ],
+        sceneCarriedPerformer: [
+          "All {p}.",
+          "{pf} pick. Nothing else.",
+          "Just {p}.",
+        ],
+        sceneDespite: [
+          "Has {x}, which you declined. Listed for {p}.",
+          "{x}, despite your no. For {p} only.",
+        ],
+        sceneCarriedContent: [
+          "Content: {t}, {t2}. Not the cast.",
+          "{t} and {t2}. Cast unknown.",
+          "On content: {t}, {t2}.",
+        ],
+        sceneTwin: [
+          "Twin of {r}: {t}, {t2}, {t3}.",
+          "Like {r}: {t}, {t2}.",
+          "{r} again: {t}, {t2}.",
+        ],
+        sceneSplit: [
+          "Half {p}, half {t} and {t2}.",
+          "{p} and content: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "Yes to {t}, rarely played. Has it.",
+          "{t}: liked, rarely picked.",
+        ],
+        sceneSaidMeant: [
+          "{t}: liked, and played.",
+          "Has {t}. Confirmed by plays.",
+        ],
+        sceneHeldBack: [
+          "Held back: {x}.",
+          "Minus: {x}.",
+        ],
+        sceneCrowd: [
+          "{k} performers. Lowered.",
+          "Crowded: {k}. Usually not for you.",
+        ],
+        sceneFavouriteLukewarm: [
+          "{p}: favourite, rarely played.",
+          "Favourite on paper only: {p}.",
+        ],
+        sceneFavouriteBacked: [
+          "{p}: favourite, played.",
+          "Favourite, confirmed: {p}.",
+        ],
+        scenePairingMild: [
+          "{p} + {t}: {n} played. Maybe.",
+          "{p}, {t}. Possible.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} + {s}. Maybe.",
+          "{p}, {s}: {n} and {m} plays. Possible.",
+        ],
+        sceneTagNeighborMild: [
+          "Near {r} ({n}), {t}. Maybe.",
+          "{t}, like {r}. Possible.",
+        ],
+        scenePerformerMild: [
+          "{p}: {n} scenes played. Maybe.",
+          "{p}, {m} plays. Possible.",
+        ],
+        sceneTagMild: [
+          "{t}: {pct} of your watching. Maybe.",
+          "{t}. Possible.",
+        ],
+        sceneStudioMild: [
+          "{s}: {m} plays. Maybe.",
+          "{s}. Possible.",
+        ],
+        sceneNeighborMild: [
+          "Like {r} ({n}). Maybe.",
+          "Near {r}. Possible.",
+        ],
+        sceneMixedPerformer: [
+          "{p} yes ({m} plays), {t} no. Mixed.",
+          "Mixed: {p} for, {t} against.",
+        ],
+        sceneMixedTag: [
+          "{t} yes, {x} no. Mixed.",
+          "Mixed: {t} for, {x} against.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} ({m} plays). Little else. Doubtful.",
+          "Doubtful. Only {p}.",
+        ],
+        sceneDoubt: [
+          "Doubtful: {x}.",
+          "{x}. Usually not for you.",
+        ],
+        sceneDoubtPlain: [
+          "Doubtful.",
+          "Little match.",
+        ],
+        sceneFresh: [
+          "Added {ago}. Unplayed.",
+          "New: {ago}.",
+        ],
+        performerUsual: [
+          "{pf}: mostly {t}. {a} vs {b}.",
+          "{t}: {a} of {pf} played, {b} of the rest.",
+        ],
+        performerStreak: [
+          "{n} this week.",
+          "{pf}: {n} this week.",
+        ],
+        performerRegular: [
+          "{n} scenes, {m} plays.",
+          "Regular: {m} plays.",
+        ],
+        performerGoTo: [
+          "Top {pf} scene: {r}, {k} plays.",
+          "{r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "{pf} with {q}: {a} vs {b}.",
+          "Mostly with {q}: {a} of {pf} played.",
+        ],
+        performerStudio: [
+          "{pf} at {s}: {a} vs {b}.",
+          "Mostly {s}: {a} of {pf} plays.",
+        ],
+        performerLast: [
+          "Last: {r}, {when}.",
+          "{r}, {when}.",
+        ],
+        performerBacklog: [
+          "{u} of {all} unplayed.",
+          "Unplayed: {u}.",
+        ],
+        performerWaiting: [
+          "{n} played, {more} waiting. Newest: {newest}, {ago}.",
+          "{waiting} unplayed. Incl. {one}, {ago}.",
+        ],
+        performerIdleFavourite: [
+          "Favourite. Last played {when}. {waiting} unplayed.",
+          "Favourite, idle since {since}. {waiting} unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "Favourite. 0 of {all} played.",
+          "{p}: favourite, unplayed.",
+        ],
+        performerDormant: [
+          "None since {since}. {d} months.",
+          "{d} months idle. {m} plays before.",
+        ],
+        performerSimilar: [
+          "New. Like {q} ({n} played).",
+          "{p} ≈ {q}. {n} {qf} scenes played.",
+        ],
+        performerTrait: [
+          "{trait}: {x}× in who you watch. {n} played.",
+          "{trait} ×{x}. {p} fits.",
+        ],
+        performerBlank: [
+          "{p}: no data. {all} scenes, no plays.",
+          "Unknown. 0 plays of {all}.",
+        ],
+        insightTop: [
+          "{t}: {pct} of {n} watched.",
+          "Top: {t}, {pct}.",
+        ],
+        insightRising: [
+          "{t}: {a} → {b}.",
+          "Rising: {t}, {a} to {b}.",
+        ],
+        insightFading: [
+          "{t}: {a} → {b}.",
+          "Fading: {t}, {a} to {b}.",
+        ],
+        insightApart: [
+          "{t}: {a} of library, {b} of watching.",
+          "Sought out: {t}. {b} vs {a}.",
+        ],
+        insightPassed: [
+          "{t}: {a} of library, {b} of watching.",
+          "Passed over: {t}. {b} vs {a}.",
+        ],
+        insightAgrees: [
+          "{t}: liked, {pct} of watching.",
+          "Confirmed: {t}, {pct}.",
+        ],
+        insightDormant: [
+          "{p}: {n} plays. None since {since}.",
+          "{p}. Last {when}.",
+        ],
+        insightRediscovered: [
+          "{r}: back after {m} months.",
+          "Back to {r}, {m} months on.",
+        ],
+        insightWords: [
+          "{x}: {n} times in Why these?",
+          "Why these?: {x} ×{n}.",
+        ],
+        insightCoverage: [
+          "{n} of {all} watched.",
+          "Watched: {pct}.",
+        ],
+        insightPeak: [
+          "{t} peak: {pct}, to {when}.",
+          "Peak {t}: {pct} in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t}: at peak, {pct}.",
+          "Peak now: {t}, {pct}.",
+        ],
+        standBy: [
+          "Still: {r}.",
+          "{r}. Still.",
+          "Again: {r}.",
+        ],
+        rankedOne: [
+          "{p}: {n} wins, {when}. In {r}.",
+          "Ranked {when}: {p}, {n} wins. {r}.",
+          "{p}, {n} wins. {r}.",
+        ],
+        performerRanked: [
+          "{n} wins, {when}.",
+          "Ranked {when}: {n} wins.",
+          "{pf}: {n} wins, {when}.",
+        ],
+        oldestOne: [
+          "Oldest: {r}, {y}.",
+          "{r}: {y}.",
+          "{y}: {r}.",
+        ],
+        topRated: [
+          "Top rated: {r}, {k}.",
+          "{r}: {k}.",
+          "Best rated: {r}.",
+        ],
+        performerShortest: [
+          "Shortest unplayed: {r}, {m}.",
+          "{r}: {m}.",
+          "Short: {r}, {m}.",
+        ],
+        newStudio: [
+          "New: {n} from {s}.",
+          "{s}: {n} new.",
+          "{n} new from {s}.",
+        ],
+        feedbackUp: [
+          "Noted.",
+          "More like it.",
+          "Logged.",
+        ],
+        feedbackDown: [
+          "Noted.",
+          "Fewer like it.",
+          "Logged.",
+        ],
+        feedbackNotNow: [
+          "Later.",
+          "Set aside.",
+          "Deferred.",
+        ],
+        feedbackNever: [
+          "Gone.",
+          "Removed.",
+          "Excluded.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "Top pick: {r}. Why: {c}.",
+          "Start with {r}: {c}.",
+          "{r}. Because {c}.",
+          "Pick: {r}. {c}.",
+        ],
+        gem: [
+          "Also: {r}. {c}.",
+          "And {r}: {c}.",
+        ],
+        stretchOne: [
+          "Stretch: {r}. {c}.",
+          "{c}. So, {r}.",
+        ],
+        unplayedOne: [
+          "Unplayed: {r}. {c}.",
+          "{r}, unplayed. {c}.",
+        ],
+        freshDraw: [
+          "New draw: {r}. {c}.",
+          "Top now: {r}. {c}.",
+        ],
+        revisitFact: [
+          "{r}: last played {ago}. {c}.",
+          "{r}, idle since {when}. {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p}",
+          "has {p}",
+          "{p} is in it",
+        ],
+        whyTags: [
+          "{t} and {t2}",
+          "has {t} and {t2}",
+        ],
+        whyBoth: [
+          "{p} in a {t} scene",
+          "{p} and {t}",
+        ],
+        whyStudio: [
+          "{s}",
+          "it's {s}",
+        ],
+        whyReplay: [
+          "{n} plays",
+          "played {n} times",
+        ],
+        hookPerformer: [
+          "hook: {p}",
+          "{p} is the hook",
+        ],
+        hookTags: [
+          "hook: {t} and {t2}",
+          "{t} and {t2} are the hook",
+        ],
+        hookBoth: [
+          "hook: {p} and {t}",
+          "{p} and {t} are the hook",
+        ],
+        hookStudio: [
+          "hook: {s}",
+          "{s} is the hook",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}. Expected.",
+          "{w}.",
+          "{w}. As usual.",
+          "Expected: {w}.",
+          "{w}. Consistent.",
+          "{w}. Regular.",
+          "{w}. Easy.",
+          "{w}. Predicted.",
+        ],
+        agree: [
+          "{w}. Narrowly expected.",
+          "{w}, just.",
+          "{w}. Slight edge.",
+          "{w}. Matches history.",
+          "{w}, narrowly.",
+          "{w}. Close, as expected.",
+        ],
+        close: [
+          "Too close to call. Noted.",
+          "{w}. Tiebreak noted.",
+          "Even. Now {w}.",
+          "{w}. Coin flip.",
+          "Level. {w} noted.",
+          "{w}. Close one.",
+        ],
+        surprise: [
+          "{w}. Unexpected.",
+          "{w} over {l}. Noted.",
+          "Expected {l}. Noted.",
+          "{w}. Adjusting.",
+          "Surprise: {w}.",
+          "{w}. History said {l}.",
+        ],
+        twist: [
+          "{w}. Big surprise.",
+          "Expected {l}. Wrong.",
+          "{w}. Notes revised.",
+          "Upset: {w} over {l}.",
+          "{w}. Not predicted.",
+          "{l} expected. {w} chosen.",
+        ],
+        unknown: [
+          "{w}. No data. Noted.",
+          "Both unknown. {w}.",
+          "{w}. First data point.",
+          "New names. {w}.",
+          "No history. {w} noted.",
+          "{w}. Noted.",
+        ],
+        hunchHit: [
+          "{w}. Guess confirmed.",
+          "Guessed {w}. Correct.",
+          "{w}. Hunch held.",
+          "Hunch: right.",
+          "{w}. Similar-performer guess, correct.",
+          "{w}. As guessed.",
+        ],
+        hunchMiss: [
+          "Guessed {l}. Wrong.",
+          "{l}: hunch overruled.",
+          "{l}. Guess revised.",
+          "Hunch: wrong.",
+          "{l}. Not your type.",
+          "{l} guess dropped.",
+        ],
+        underdog: [
+          "{w}. Rarely watched. Noted.",
+          "Underdog: {w}.",
+          "{w} over {l}. Unusual.",
+          "{w}. Barely in history.",
+          "Dark horse: {w}.",
+          "{w}. Unexpected.",
+        ],
+        traitWin: [
+          "{t}. As usual.",
+          "{w}. {t}.",
+          "{t} again.",
+          "{t}. Expected.",
+          "{t} win.",
+          "{w}: {t}.",
+        ],
+        traitClose: [
+          "Close. {t} decided.",
+          "{t}, probably.",
+          "Tiebreak: {t}.",
+          "Close. Likely {t}.",
+        ],
+        traitBranch: [
+          "{t}. Unusual for you.",
+          "{t}. Noted.",
+          "Rare: {t}.",
+          "{t}. New.",
+        ],
+        traitPass: [
+          "{t} lost. Unusual.",
+          "{l}: {t}, passed.",
+          "{t}. Not this time.",
+          "Passed on {t}.",
+        ],
+        draw: [
+          "Draw.",
+          "Tie. Noted.",
+          "Even.",
+          "Level.",
+        ],
+        undo: [
+          "Undone.",
+          "Scratched.",
+          "Removed.",
+          "Reverted.",
+          "Undo.",
+          "Cleared.",
+        ],
+        undoSurprise: [
+          "Undone. Was a surprise.",
+          "Scratched. Back to {w}.",
+          "Reverted.",
+          "Removed. Was unexpected.",
+        ],
+        undoAgreed: [
+          "Undone. Was expected.",
+          "Scratched. {w} expected.",
+          "Reverted.",
+          "Removed. Was right.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Ranking. Noting.",
+          "Ready.",
+          "Go.",
+          "Tracking.",
+          "Start.",
+          "Notes on.",
+        ],
+        night: [
+          "Ready.",
+          "Go.",
+          "Notes on.",
+        ],
+        morning: [
+          "Morning. Ready.",
+          "Morning. Go.",
+        ],
+        afternoon: [
+          "Afternoon. Ready.",
+          "Afternoon. Go.",
+        ],
+        evening: [
+          "Evening. Ready.",
+          "Evening. Go.",
+        ],
+        milestone: [
+          "{n} matches.",
+          "{n} done.",
+          "{n}.",
+          "{n} so far.",
+          "Match {n}.",
+          "{n} logged.",
+        ],
+        streak: [
+          "{n} in a row.",
+          "{n} straight.",
+          "{n}/{n}.",
+          "Streak: {n}.",
+          "{n} correct.",
+          "Run: {n}.",
+        ],
+        broken: [
+          "Streak ended: {n}.",
+          "Run over at {n}.",
+          "{n}, then miss.",
+          "Reset after {n}.",
+          "Streak: {n}. Over.",
+        ],
+        puzzled: [
+          "{n} surprises in a row.",
+          "{n} misses straight.",
+          "Surprises: {n}.",
+          "{n} unexpected.",
+        ],
+        reunion: [
+          "Back in sync.",
+          "Agreed again.",
+          "Sync restored.",
+          "Back on track.",
+        ],
+        rematch: [
+          "Same as last time.",
+          "{w} over {l}, again.",
+          "Rematch: same.",
+        ],
+        flip: [
+          "Reversed. Was {l}.",
+          "{w} now. Was {l}.",
+          "Flip: {l} before.",
+          "Changed: {w}.",
+        ],
+        roll: [
+          "{w}: {n} wins.",
+          "{w} ×{n}.",
+          "{n} for {w}.",
+          "{w}, {n} wins.",
+          "Wins: {w}, {n}.",
+          "{w}. {n}.",
+        ],
+        cheer: [
+          "Useful.",
+          "Noted.",
+          "Good data.",
+          "Helps.",
+          "Logged.",
+          "Thanks.",
+        ],
+        theme: [
+          "{t}: {n} in a row.",
+          "{n} {t} straight.",
+          "Theme: {t}, {n}.",
+        ],
+        upset: [
+          "Upset: {d} points.",
+          "{w} over {l}, {d} down.",
+          "Underdog by {d}.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "Champion: {c}. Expected.",
+          "{c} wins.",
+          "Winner: {c}. Predicted.",
+          "{c}. As expected.",
+        ],
+        championDark: [
+          "Champion: {c}. Rarely watched.",
+          "{c} wins. Dark horse.",
+          "Winner: {c}. Unexpected.",
+          "{c}. Surprise.",
+        ],
+        championNew: [
+          "Champion: {c}. New to me.",
+          "{c} wins. Little data.",
+        ],
+        placement: [
+          "{c}: done.",
+          "{c} placed.",
+          "Final: {c}.",
+        ],
+        syncHigh: [
+          "{a}/{j} predicted.",
+          "Read {a} of {j}. High.",
+        ],
+        syncMid: [
+          "{a}/{j} predicted.",
+          "Read {a} of {j}. Middling.",
+        ],
+        syncLow: [
+          "{a}/{j} predicted.",
+          "Read {a} of {j}. Learned a lot.",
+        ],
+        syncNone: [
+          "Mostly unknowns.",
+          "Little data on these.",
+        ],
+        surprises: [
+          "Surprises: {s}. Next update.",
+          "Noted for update: {s}.",
+          "{s}. Flagged.",
+        ],
+        theme: [
+          "Theme: {t}, {n}/{m}.",
+          "{t}: {n} of {m} winners.",
+          "{n}/{m} were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, {n}.",
+          "{w}: {n} wins.",
+          "Top: {w}, {n}.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "{w}: {wp} plays.",
+          "{wp} plays, {ws} scenes.",
+          "{w}. {wp} plays.",
+          "{ws} {w} scenes played.",
+          "History: {wp} plays.",
+        ],
+        factOs: [
+          "{w}: {wo} O's.",
+          "{wo} O's.",
+          "{w}. {wo} O's.",
+        ],
+        factRecent: [
+          "{w}: watched {wago}.",
+          "Last {w}: {wago}.",
+          "{w}, {wago}.",
+        ],
+        factContrast: [
+          "{l}: {lp}. {w}: {wpp}.",
+          "{l} {lp} plays. Still {w}.",
+          "{w} over {lp}-play {l}.",
+          "History: {l}, {lp}. Pick: {w}.",
+        ],
+        factStale: [
+          "No {l} since {lwhen}.",
+          "{l}: idle since {lwhen}.",
+          "{l}, last {lwhen}.",
+        ],
+        factClose: [
+          "{wp} vs {lp}. Close.",
+          "{w} {wp}, {l} {lp}.",
+          "Plays: {wp}/{lp}.",
+        ],
+        factUnwatched: [
+          "{w}: {wu} unplayed.",
+          "{wu} unplayed {w} scenes.",
+          "Unplayed {w}: {wu}.",
+          "{w}. {wu} unwatched.",
+          "{wu} {w} left.",
+        ],
+        factStudio: [
+          "{w}: mostly {studio}.",
+          "{w} + {studio}: {sn} plays.",
+          "{studio}, {w}.",
+        ],
+        factTogether: [
+          "Together: {tn} {tscenes}.",
+          "{w} + {l}: {tn} {tscenes}.",
+          "Shared: {tn} {tscenes}.",
+        ],
+        factFirst: [
+          "{w}: 0 plays, won.",
+          "{wsc} {w} scenes, none played.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Hi. (That's it.)",
+            "Back. Good.",
+          ],
+          topPick: [
+            "{r}. Trust me.",
+            "{r}. No notes.",
+          ],
+          newScenes: [
+            "{n} new. Enjoy.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. Obviously.",
+            "{w}. Of course.",
+          ],
+          agree: [
+            "Agreed. Barely.",
+            "{w}. Same.",
+          ],
+          close: [
+            "Coin flip. Settled.",
+            "Tie. Broken.",
+          ],
+          surprise: [
+            "{w}? Huh.",
+            "Unexpected. Noted twice.",
+          ],
+          unknown: [
+            "Unknown. Now known.",
+            "Blank. Filled.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "Ranking. Let's go.",
+            "Begin.",
+          ],
+          milestone: [
+            "{n}. Good.",
+            "{n}. Steady.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c}. Obviously. Crowned.",
+          ],
+        },
+      },
+    },
+    detective: {
+      page: {
+        first: [
+          "Name's Curator. I find things. I'll leave a note when I've got a lead.",
+          "Curator. Private recommendations. I'll speak up when the evidence does.",
+        ],
+        day: [
+          "You're back. Pull up a chair.",
+          "Back again. The file's still open.",
+          "Welcome back. Nothing's gone missing.",
+        ],
+        days: [
+          "{d} days. The case went cold, but I kept the file warm.",
+          "{d} days since you last came by. Things happened.",
+          "Back after {d} days. Let me catch you up.",
+        ],
+        weeks: [
+          "{d} days. Long time. I've got leads stacked up.",
+          "{d} days gone. The library didn't wait.",
+        ],
+        morning: [
+          "Morning. The file's still open.",
+          "Good morning. Pull up a chair.",
+          "Morning. Nothing's gone missing.",
+        ],
+        afternoon: [
+          "Afternoon. The file's still open.",
+          "Good afternoon. Pull up a chair.",
+          "Afternoon. Nothing's gone missing.",
+        ],
+        evening: [
+          "Evening. The file's still open.",
+          "Good evening. Pull up a chair.",
+          "Evening. Nothing's gone missing.",
+        ],
+        morningDays: [
+          "Morning. {d} days. Let me catch you up.",
+          "Good morning. {d} days since you last came by.",
+        ],
+        afternoonDays: [
+          "Afternoon. {d} days. Let me catch you up.",
+          "Good afternoon. {d} days since you last came by.",
+        ],
+        eveningDays: [
+          "Evening. {d} days. Let me catch you up.",
+          "Good evening. {d} days since you last came by.",
+        ],
+        streak: [
+          "Back again.",
+          "You're here. Let's work.",
+          "The file's open.",
+        ],
+        newScenes: [
+          "{n} new arrivals since you were last here. They're in New Arrivals, waiting to be questioned.",
+          "{n} fresh faces came through the door while you were out.",
+          "{n} new scenes. Somebody's been busy.",
+        ],
+        newScene: [
+          "One new scene since your last visit. Could be nothing. Could be something.",
+          "A single new arrival. Worth a look.",
+        ],
+        shortHour: [
+          "{r}. {m}. Short, clean, no loose ends.",
+          "A quick job: {r}, {m}.",
+          "{r} runs {m}. In and out.",
+        ],
+        longHour: [
+          "{r} runs {m}. A long case.",
+          "{r}: {m}. Bring patience.",
+        ],
+        revisitFact: [
+          "{r} hasn't been touched since {ago}. Cold case.",
+          "{r}. Last seen {when}.",
+          "Nobody's played {r} since {when}. Funny, that.",
+        ],
+        resume: [
+          "You walked out at {t}. The rest of the story's still there.",
+          "Unfinished business: you stopped at {t}.",
+        ],
+        staleFavourite: [
+          "{n} plays, then nothing since {when}. Something changed.",
+          "Played {n} times, last {ago}. An old flame.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}. A regular haunt.",
+          "{n} plays on the record. Last in {when}.",
+        ],
+        dependable: [
+          "{p}. Your {top} performer. Known associate.",
+          "{p}: {m} plays across {n} of their scenes. We go way back.",
+          "{p} again. {m} plays on the record.",
+        ],
+        newFace: [
+          "{p}. New face. No record yet.",
+          "You've never played a {p} scene. Clean slate.",
+        ],
+        fresh: [
+          "Came in {ago}. Nobody's touched it.",
+          "Arrived {ago}. Untouched, so far.",
+        ],
+        studio: [
+          "{s}. That outfit accounts for {pct} of your plays.",
+          "{s} again. {pct} of what you play. A pattern.",
+        ],
+        off: [
+          "Fine. I'll keep my mouth shut. Manage › Settings if you need me.",
+          "Understood. I'll go quiet. Manage › Settings brings me back.",
+        ],
+        topPick: [
+          "{r}. That's my lead.",
+          "If you follow one lead, make it {r}.",
+          "{r}. Start there.",
+          "All the evidence points to {r}.",
+          "{r}. My best lead.",
+        ],
+        gem: [
+          "Another lead worth following: {r}.",
+          "Keep {r} in mind too.",
+          "Second lead: {r}.",
+        ],
+        stretchOne: [
+          "{r} is a long shot. Call it a hunch.",
+          "{r}. Outside your usual. Sometimes the case breaks that way.",
+          "I put {r} in on a hunch. Let me know how it shakes out.",
+        ],
+        spotlight: [
+          "{p} is in {r}: {m} plays across {n} of their scenes. Known associate.",
+          "{r} has {p}, your {top} performer.",
+          "{r}. {p}'s in it. {m} plays on file.",
+        ],
+        unplayedOne: [
+          "{r}. Never played. Open file.",
+          "Nobody's played {r} yet.",
+          "{r} is still a mystery to you.",
+        ],
+        quickOne: [
+          "{r}: {m}. Quick job.",
+          "{r} runs {m}. Short and to the point.",
+        ],
+        longOne: [
+          "{r}: {m}. A long one.",
+          "{r} runs {m}. Settle in for it.",
+        ],
+        performerRun: [
+          "{p} shows up {n} times in here. That's no coincidence.",
+          "{n} with {p}. A pattern.",
+          "{p}, {n} times. I'm noticing.",
+        ],
+        regulars: [
+          "{p} is in {n} of these. Your {top} performer.",
+          "{n} of these have {p}. {m} plays on the record.",
+          "{p}: {n} of these, {m} plays. Usual suspect.",
+        ],
+        studioRun: [
+          "Lot of {s} in here.",
+          "{s} is behind {n} of these.",
+          "This lane's got {s} written all over it.",
+        ],
+        unplayed: [
+          "{n} of these you've never played. Open files.",
+          "{n} of these are unsolved.",
+          "You haven't touched {n} of these.",
+        ],
+        replays: [
+          "You've played {n} of these before. Familiar faces.",
+          "{n} of these are repeat customers.",
+        ],
+        quick: [
+          "Short ones, about {m}. Quick jobs.",
+          "Mostly {m} apiece. In and out.",
+        ],
+        long: [
+          "Long ones, about {m} each.",
+          "These run around {m}. Long cases.",
+        ],
+        newest: [
+          "{r} is the newest, came in {ago}.",
+          "Latest arrival: {r}, {ago}.",
+          "{r}. Fresh off the street, {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays. A regular haunt.",
+          "You've played {r} {n} times. The record doesn't lie.",
+          "{r}. {n} plays. I'd call that a pattern.",
+        ],
+        freshDraw: [
+          "New deal. {r} came up top.",
+          "Reshuffled the deck. {r} is the lead now.",
+          "New draw. {r}'s first in line.",
+        ],
+        laneMix: [
+          "The lineup: {mix}.",
+          "What's on the board: {mix}.",
+          "Here's the file: {mix}.",
+        ],
+        laneTag: [
+          "{t} keeps turning up. It brought in {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "Follow the {t}: it's behind {n} of these.",
+        ],
+        laneCurate: [
+          "{n} of these got in partly because you said yes to {t}. Your testimony.",
+          "You told me {t} in Curate. That brought in {n} of these.",
+          "Your yes to {t} is on file. {n} of these came from it.",
+        ],
+        laneContentOnly: [
+          "{n} of these have nobody you know. They're here on the evidence alone.",
+          "For {n} of these, the cast's a blank. I went on content.",
+        ],
+        laneCast: [
+          "This lot's about who's in it: {n} of these are here for someone you watch.",
+          "The cast carries {n} of these.",
+        ],
+        whyPerformer: [
+          "It's {p}.",
+          "{p}'s the reason.",
+          "Follow the {p}.",
+        ],
+        whyTags: [
+          "The evidence: {t} and {t2}.",
+          "{t} and {t2}, mostly.",
+          "Mostly {t}, with {t2} as backup.",
+        ],
+        whyBoth: [
+          "{p}, and it's got {t}.",
+          "{p} and {t}. A matching pair.",
+          "{p} in a {t} scene.",
+        ],
+        whyStudio: [
+          "{s} has a track record with you.",
+          "Mostly because it's {s}.",
+        ],
+        hookPerformer: [
+          "The lead is {p}.",
+          "{p} is the angle.",
+        ],
+        hookTags: [
+          "The lead is {t}, plus {t2}.",
+          "{t} and {t2} are the angle.",
+        ],
+        hookBoth: [
+          "The lead: {p}, with {t}.",
+          "{p} and {t} are the angle.",
+        ],
+        hookStudio: [
+          "The lead is {s}.",
+          "{s} is the angle.",
+        ],
+        whyReplay: [
+          "{n} plays on the record.",
+          "You've played it {n} times. Evidence enough.",
+        ],
+        newWith: [
+          "{n} new since you were here. One's got {p}.",
+          "{p} turned up in one of the {n} new scenes.",
+          "The new arrivals include some {p}. Thought you'd want to know.",
+        ],
+        followWatched: [
+          "I gave you {r} {when}. You followed the lead.",
+          "{r}. I tipped you off {when}, and you went for it.",
+          "You played {r} after my tip {when}. Good work.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since my tip {when}. That lead paid off.",
+          "{n} plays of {r} since I mentioned it {when}. Case closed.",
+        ],
+        followPartial: [
+          "{r} got dropped {at}. Lost the trail, or got interrupted. Either way, it's still there.",
+          "{r}. Stopped {at}. The rest's still on file.",
+          "I tipped you to {r} {when}. It stalled {at}.",
+        ],
+        followPassed: [
+          "I've put {r} in front of you {n} times. No bite. I'm closing the file.",
+          "{n} tips on {r}, no play. Case closed. I'll drop it.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these. None in your library.",
+          "{n} with {p} that you don't have. Known associate.",
+          "More {p} out there: {n} right here.",
+        ],
+        expandSpotlight: [
+          "{r} has {p}. Not in your library yet.",
+          "{p} is in {r}. A lead.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, one of your favourites.",
+          "Your favourite {p} turns up {n} times.",
+        ],
+        expandUnwatched: [
+          "You've got {p} in your library and never played them. {r} is another lead.",
+          "{p}: on file, never played. {r} is here too.",
+        ],
+        expandStudio: [
+          "{s} has {n} here you don't own.",
+          "{n} from {s}. An outfit you know well.",
+        ],
+        expandNewRelease: [
+          "{r} came out {ago}. Fresh.",
+          "Hot off the wire: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these came out in the last month.",
+          "{n} released in the last 30 days.",
+        ],
+        expandDeepCut: [
+          "{r} is from {y}. Old case.",
+          "{r} goes back to {y}. Cold file.",
+        ],
+        whisparrRun: [
+          "{n} of these are already with Whisparr.",
+          "Whisparr's working {n} of these.",
+        ],
+        whisparrArrived: [
+          "{r} turned up in your library. You sent for it {when}.",
+          "You put out the word on {r} {when}. It's here.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent are still missing. The oldest went out {when}.",
+          "{n} sends still missing. First one went out {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the missing one that fits you best ({s}).",
+          "Of everything still missing, {r} is your best match: {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but Stash hasn't matched them. Run a scan, then Identify.",
+          "Whisparr's got files for {n} that Stash can't place. A scan and Identify should crack it.",
+        ],
+        similarEmpty: [
+          "Give me a scene you like. I'll find its associates.",
+          "Show me one you like. I'll track down more like it.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. Good place to start the search.",
+          "You've played that one {n} times. I see why you want more.",
+        ],
+        seedUnplayed: [
+          "You haven't played the original, but its associates are worth a look.",
+          "Never played that one? Here's who it runs with anyway.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} turns up again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, same as the original.",
+          "{s} again for {n} of these. Same outfit.",
+        ],
+        closest: [
+          "{r} is the closest match, even if it's not on top.",
+          "The nearest match is {r}. Your taste moved others ahead.",
+        ],
+        huntEmpty: [
+          "Name a performer. I'll find what you're missing.",
+          "Who are we looking for?",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes.",
+          "{own} of {n} {p} scenes are already on file.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your library.",
+          "{n} {p} scenes out there. You've got none.",
+        ],
+        huntComplete: [
+          "Every {p} scene here is already yours. Case closed.",
+          "All {n}. Nothing left to find.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p}'s been busy: {n} this past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here is from {y}.",
+          "The trail goes back to {y}.",
+        ],
+        huntRegular: [
+          "{p}. {m} plays on the record. No wonder you're looking.",
+          "Figures it's {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Your favourite {p} is in this one.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr.",
+          "Whisparr's on the case.",
+        ],
+        ownedNote: [
+          "You already have this one.",
+          "Already on file.",
+        ],
+        releasedNote: [
+          "Out {ago}. Fresh.",
+          "Released {ago}.",
+        ],
+        oldNote: [
+          "From {y}. Old case.",
+          "Goes back to {y}.",
+        ],
+        calledLike: [
+          "{t}. I had a hunch.",
+          "{t}. The evidence said so.",
+          "{t}, like I figured.",
+        ],
+        calledDislike: [
+          "Not {t}. I had a hunch.",
+          "Less {t}. Like I figured.",
+        ],
+        answerSurprise: [
+          "I had {t} the other way round. Noted.",
+          "I read {t} wrong. Updating the file.",
+          "New evidence on {t}. Thanks.",
+        ],
+        answerBlocked: [
+          "No more {t}.",
+          "{t} is off the board.",
+        ],
+        taughtMilestone: [
+          "{n} answers. The file's getting thick.",
+          "{n} in. Keep talking.",
+          "{n} answers this visit. The picture's getting clearer.",
+        ],
+        reasonFlip: [
+          "I had that one backwards. Thanks for setting me straight.",
+          "Good catch. I misread that scene.",
+        ],
+        reasonRich: [
+          "{n} reasons. Good testimony.",
+          "That's plenty to go on. Thanks.",
+        ],
+        scenePairing: [
+          "{p} and {t}. You've played {n} scenes with that exact pairing. The evidence is strong.",
+          "{p} with {t}, a pairing you've gone for {n} times.",
+          "{p} plus {t}. {n} like it already played. I like this lead.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}, two things with a record: {n} of {pf}'s scenes played, {m} plays for the studio.",
+          "{p} and {s}. {n} {pf} scenes played, {m} for the studio. Solid lead.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and it's the closest thing to {r}, which you've played {n} times.",
+          "If {r} worked, and {n} plays say it did, this one's from the same family. {t} too.",
+        ],
+        sceneTagRun: [
+          "{n} {t} scenes in the last two weeks, and this one's got {p}. The pieces fit.",
+          "{t}: {n} in the last two weeks. Now one with {p}. I see the pattern.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} in the last two weeks. This fits the pattern.",
+          "{n} {p} scenes in the last two weeks. Here's another.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is its closest match in your library.",
+          "Liked {r} {when}? This one's its closest match.",
+        ],
+        sceneSatiated: [
+          "Normally a top lead, but there's been a lot of {p} lately, {n} scenes. I'm working other angles for a while.",
+          "{p}'s usually a sure thing. After {n} recent plays, I've moved this down the board.",
+        ],
+        sceneCooldown: [
+          "You watched this {when}. It's lying low before I bring it up again.",
+          "Played {when}. It's lying low for now.",
+        ],
+        sceneNotNow: [
+          "You said 'not now' {when}. It's off the board for a while.",
+          "'Not now', you said, {when}. It's lying low.",
+        ],
+        sceneNotNowPlain: [
+          "You said 'not now', so it's off the board for a while.",
+          "'Not now'. It's lying low for a bit.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this shouldn't work for you. {n} plays say different.",
+          "The tags and cast wouldn't finger this one. Your {n} plays did.",
+        ],
+        sceneHistoryLags: [
+          "{x} says this should be right up your street. Your record with it says otherwise. Something doesn't add up.",
+          "I expected this to work because of {x}. Your history disagrees. Curious.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but a lot like {q}, and you've played {n} of {qf}'s scenes. I've got a hunch.",
+          "Never watched {p}? They're close to {q}. {n} of {qf}'s scenes played. Worth checking out.",
+        ],
+        sceneRadar: [
+          "This one's off my radar. None of its {k} performers has a play from you, and nothing from {s} either.",
+          "No record: none of its {k} performers, and nothing from {s}, in your plays.",
+        ],
+        sceneRadarPlain: [
+          "This one's off my radar. None of its {k} performers has a play from you.",
+          "No record on any of its {k} performers.",
+        ],
+        sceneRadarOne: [
+          "This one's off my radar. You've never played a {p} scene, and nothing from {s} either.",
+          "No record: no {p}, no {s}, in your plays.",
+        ],
+        sceneRadarOnePlain: [
+          "This one's off my radar. You've never played a {p} scene.",
+          "No record on {p} yet.",
+        ],
+        scenePerformer: [
+          "Good lead. {p} is in {n} scenes you've already played.",
+          "Easy call: {p}, {m} plays on the record.",
+        ],
+        sceneTag: [
+          "There's {t} in this, and that's on {pct} of what you watch. Strong evidence.",
+          "{t} again. It's on {pct} of the scenes you watch. I like the odds.",
+        ],
+        sceneStudio: [
+          "{s} has a good record with you, {m} plays. This should hold up.",
+          "Another {s}. {m} plays on file. Safe bet.",
+        ],
+        sceneNeighbor: [
+          "If you liked {r}, and {n} plays say you did, this one's from the same family.",
+          "This is close to {r}, which you've played {n} times.",
+        ],
+        sceneResume: [
+          "Back to it? You stopped at {t}.",
+          "Picking it up at {t}?",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}. Been a while.",
+          "{n} plays on the record, the last {when}.",
+        ],
+        sceneCarriedPerformer: [
+          "{p} is carrying this whole case. Without them, I wouldn't bring it up.",
+          "This is a {pf} job, plain and simple.",
+          "It's {p}. That's the whole story.",
+        ],
+        sceneDespite: [
+          "You said no to {x}, and it's in here. {p} is the only reason I'm showing you.",
+          "There's {x}, which you said you don't want. I'm only flagging it for {p}.",
+        ],
+        sceneCarriedContent: [
+          "It's not the cast. {t} and {t2} put this on the board.",
+          "Nobody here's a draw for you yet. The lead is {t}, plus {t2}.",
+          "Going on content: {t} and {t2}. Cast unknown.",
+        ],
+        sceneTwin: [
+          "It's {r} all over again: {t}, {t2}, {t3}.",
+          "Same M.O. as {r}: {t} and {t2}. That one worked.",
+          "If {r} hit the spot, this is its twin. Same {t}, same {t2}.",
+        ],
+        sceneSplit: [
+          "Two leads, about equal: {p}, and the content, {t} and {t2} most of all.",
+          "Half of this is {p}. The other half's the content: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You said you like {t}, but you hardly ever pick it. Consider this a test.",
+          "{t} is in this. You said yes; your record says less.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your record backs it up. It's in this one.",
+          "{t}: your word, and your record agrees. It's here.",
+        ],
+        sceneHeldBack: [
+          "One thing holds this back: {x}. Everything else checks out.",
+          "I'd rate this higher if not for {x}.",
+        ],
+        sceneCrowd: [
+          "{k} performers in one scene is usually too many for you. I've held it back a little.",
+          "A {k}-performer scene. Those rarely work out for you.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, but you rarely play them. The favourite's doing most of the talking.",
+          "{p}'s a favourite on paper. Your record's cooler. I'm not betting much.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your record agrees.",
+          "{p}: favourite, and the record backs it up.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Worth a look.",
+          "{p} with {t}: {n} times before. Could be something.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} studio plays. Might be worth a look.",
+          "{p} and {s}. A possible lead.",
+        ],
+        sceneTagNeighborMild: [
+          "It's closest to {r}, which you've played {n} times, and there's {t}. Maybe.",
+          "Near {r} ({n} plays), with {t}. A lead, maybe.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played. Worth a look.",
+          "{p}: {m} plays. Not a sure thing, but a lead.",
+        ],
+        sceneTagMild: [
+          "There's {t}, on {pct} of what you watch. Could be something.",
+          "{t}, {pct} of your watching. A possible lead.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. Might be worth a look.",
+          "It's {s}, {m} plays. Possible.",
+        ],
+        sceneNeighborMild: [
+          "It's close to {r}, which you've played {n} times. Might be your thing.",
+          "A bit like {r}, {n} plays. Possible.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a plus, {m} plays so far, but there's {t}, and that rarely works for you. Conflicting evidence.",
+          "{p} for, {t} against. {m} plays of {p}. Could go either way.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you like, and {x}, which you usually skip. Conflicting evidence.",
+          "{t} says yes, {x} says no. Hard to call.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a plus, {m} plays so far, but the rest doesn't fit your profile. I'm not sold.",
+          "{p}, {m} plays. Beyond that, nothing on file.",
+        ],
+        sceneDoubt: [
+          "Not convinced: {x} usually isn't your thing.",
+          "I'd hesitate. There's {x}, and that rarely works out.",
+        ],
+        sceneDoubtPlain: [
+          "Not convinced. Not much here fits your profile.",
+          "Thin evidence. Not much lines up.",
+        ],
+        sceneFresh: [
+          "Came in {ago}. Nobody's touched it.",
+          "Added {ago}. Brand new to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you mostly pick the {t} scenes: {a} of what you've played, against {b} of the rest.",
+          "The pattern with {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes this week.",
+          "{pf}: {n} plays this week, on the record.",
+        ],
+        performerRegular: [
+          "Known associate: {n} scenes, {m} plays.",
+          "You and {pf} go back: {m} plays across {n} scenes.",
+        ],
+        performerGoTo: [
+          "Your go-to {pf} scene is {r}, {k} plays.",
+          "When it's {pf}, it's often {r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you mostly pick the scenes with {q}: {a} of what you've played, against {b} of the rest.",
+          "{pf} and {q}. A known partnership: {a} of the {pf} scenes you've played, {b} of the others.",
+        ],
+        performerStudio: [
+          "You mostly watch {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+          "{s} is where you like {pf} best: {a} of your {pf} plays, {b} of the rest.",
+        ],
+        performerLast: [
+          "Last {pf} scene on the record: {r}, {when}.",
+          "Last seen: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "{u} of {pf}'s {all} scenes are unplayed. Plenty of open files.",
+          "{u} {pf} scenes you've never played.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+          "{waiting} still unplayed, including {one} that came in {ago}.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}. Last play {when}, and {waiting} unplayed.",
+          "{p}: a favourite, last seen in {since}. {waiting} unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p} but haven't played any of their {all} scenes. Interesting.",
+          "{p}: favourite, {all} scenes, none played. Where to start?",
+        ],
+        performerDormant: [
+          "No {p} since {since}. {d} months. The trail went cold.",
+          "{d} months since your last {pf} scene. Used to be {m} plays' worth of regular.",
+        ],
+        performerSimilar: [
+          "You haven't watched {p}, but you've played {n} of {q}'s scenes, and they're close. I've got a hunch.",
+          "New to you, but {p} looks a lot like {q}. {n} of {qf}'s scenes played. Worth a look.",
+        ],
+        performerTrait: [
+          "{trait} turn up {x}× as often in who you watch, and you've played {n} of {pf}'s scenes. The pieces fit.",
+          "{trait} show up {x}× as often in who you watch as in your library. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "{p}'s a blank: no plays from their {all} scenes, and nobody like them you watch. New case.",
+          "No file on {p}. None of their {all} scenes has a play from you.",
+        ],
+        insightTop: [
+          "{t} is your constant: on {pct} of the {n} scenes you've watched.",
+          "The top of the board: {t}, on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is on the rise: from {a} to {b} of what you watch lately.",
+          "{t} is climbing, {a} to {b} in the last 90 days. Something new.",
+        ],
+        insightFading: [
+          "{t} has gone quiet, from {a} down to {b}.",
+          "Less {t} lately: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your library but {b} of what you watch. You go looking for it.",
+          "You track down {t}: {b} of what you watch, from {a} of your library.",
+        ],
+        insightPassed: [
+          "{t} is {a} of your library, and just {b} of what you watch.",
+          "Plenty of {t} on file, {a}, and only {b} of your plays.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and the record backs it up: {pct} of what you watch.",
+          "{t}: your word, and {pct} of your watching agrees.",
+        ],
+        insightDormant: [
+          "{p} used to be a regular: {n} plays, none since {since}.",
+          "{p}: {n} plays, last seen {when}.",
+        ],
+        insightRediscovered: [
+          "You came back to {r} after {m} months. Some cases stay with you.",
+          "{m} months away, then back to {r}.",
+        ],
+        insightWords: [
+          "You've picked {x} {n} times in Why these? as what makes a scene work.",
+          "{x}, {n} times in your Why these? answers. It's on file.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. Lots of open files.",
+          "{n} of {all} scenes watched. {pct} of your library.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "The {t} high point: {pct}, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak right now: {pct} of what you've watched lately.",
+          "Never more {t} than now: {pct} of the last three months.",
+        ],
+        standBy: [
+          "{r} again. My hunch hasn't changed.",
+          "I'm sticking with {r}. Gut says so.",
+          "{r}. Same lead as before. Still good.",
+        ],
+        rankedOne: [
+          "{p} won {n} matches in your ranking {when}. Follow the trail to {r}.",
+          "Your ranking {when} pointed at {p}: {n} wins. {r} has them.",
+          "{p}, {n} wins {when}. The trail leads to {r}.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}. That's a pattern.",
+          "{pf} won {n} matches {when}. Noted in the file.",
+          "Ranking {when}: {n} wins. The evidence is piling up.",
+        ],
+        oldestOne: [
+          "{r}. {y}. A cold case.",
+          "Oldest file on the shelf: {r}, from {y}.",
+          "{r} goes back to {y}. Old leads still pay.",
+        ],
+        topRated: [
+          "{r}. You rated it {k}. Highest on the board.",
+          "Your own testimony: {r}, {k}. Nothing here tops it.",
+          "{r} at {k}. The best-rated lead here.",
+        ],
+        performerShortest: [
+          "Short job: {r}, {m}.",
+          "{r} runs {m}. Quick work, and you haven't touched it.",
+          "The shortest {pf} file still unopened: {r}, {m}.",
+        ],
+        newStudio: [
+          "{n} of the new ones came from {s}. Somebody's busy.",
+          "{s} again. {n} of the new arrivals.",
+          "The new scenes have a common source: {s}, {n} of them.",
+        ],
+        feedbackUp: [
+          "Noted. I'll chase more like that.",
+          "Good lead. I'm on it.",
+          "Into the file. More where that came from.",
+        ],
+        feedbackDown: [
+          "Noted. Dead end.",
+          "Crossed off. Fewer like that.",
+          "Got it. That trail's cold.",
+        ],
+        feedbackNotNow: [
+          "Shelved for now. Case stays open.",
+          "Back in the drawer. For now.",
+          "Later, then. I'll keep it on file.",
+        ],
+        feedbackNever: [
+          "Case closed. For good.",
+          "Burned the file.",
+          "Gone. Never happened.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "{r}. That's my lead, because {c}.",
+          "Start with {r}: {c}.",
+          "All the evidence points to {r}: {c}.",
+          "If you follow one lead, make it {r}. Why? {c}.",
+        ],
+        gem: [
+          "Another lead worth following: {r}. {c}.",
+          "{r} is a second lead: {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I put {r} in on a hunch.",
+          "{r} is outside your usual, but {c}.",
+        ],
+        unplayedOne: [
+          "You've never played {r}, and {c}.",
+          "{r} is still an open file, and {c}.",
+        ],
+        freshDraw: [
+          "New deal. {r} came up top: {c}.",
+          "Reshuffled. {r} leads now, and {c}.",
+        ],
+        revisitFact: [
+          "{r} last got a play {ago}, and {c}.",
+          "{r}, untouched since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it's got {p}",
+          "{p} turns up in it",
+        ],
+        whyTags: [
+          "it's got {t} and {t2}",
+          "{t} and {t2} are both in it",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's {s}",
+          "{s} has a record with you",
+        ],
+        whyReplay: [
+          "you've played it {n} times",
+          "it's got {n} plays on the record",
+        ],
+        hookPerformer: [
+          "{p} is the angle",
+          "the lead is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the angle",
+          "the lead is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the angle",
+          "the lead is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the angle",
+          "the lead is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}. Figured as much.",
+          "{w}. The evidence was overwhelming.",
+          "{w}. Open and shut.",
+          "{w}. Your record said so.",
+          "{w}. No mystery there.",
+          "{w}. Usual suspect.",
+          "{w}. I had a feeling.",
+          "{w}. The file practically wrote itself.",
+          "{w}. Case closed.",
+          "{w}. Like clockwork.",
+        ],
+        agree: [
+          "{w}, by a nose. The record agrees.",
+          "{w}. Slim margin, same verdict.",
+          "{w}, though {l} put up a fight.",
+          "{w}. Your history leans that way too.",
+          "Close, but {w}. Like I figured.",
+          "{w} by a hair. That fits.",
+          "{w}. The evidence was thin, but it pointed here.",
+          "{w}. Fits the profile.",
+        ],
+        close: [
+          "Too close to call. You broke the case.",
+          "Your record had them dead even. Now I know.",
+          "A coin flip. {w} it is.",
+          "{w} and {l} look the same on paper. Not anymore.",
+          "No clear lead on these two. Until now.",
+          "Even money by my count. {w}, noted.",
+          "You watch both about the same. Helpful.",
+          "I couldn't crack this one. You did.",
+        ],
+        surprise: [
+          "Hm. I'd have pegged {l}. Noted.",
+          "{w} over {l}. That goes in the file.",
+          "Not what your history suggested.",
+          "I had {l} slightly ahead.",
+          "Didn't see that coming. Noted.",
+          "{w}. New evidence.",
+          "Your record whispers {l}. You said {w}.",
+          "A small curveball. I'll adjust.",
+        ],
+        twist: [
+          "I had you pegged as a {l} type. Wrong.",
+          "That's a twist. I was sure about {l}.",
+          "Your record leans {l} hard. Interesting.",
+          "That blows a few of my theories.",
+          "Reopening the file on {l}.",
+          "Not what the evidence said. Useful.",
+          "My notes said {l}. My notes were wrong.",
+          "I'd have bet on {l}. Glad I didn't.",
+        ],
+        unknown: [
+          "Two strangers. No record on either. Noted.",
+          "Never seen you with either. {w} goes in the file.",
+          "New faces. I'll take your word.",
+          "No file on these two. {w}, noted.",
+          "Blank slate. First clue: {w}.",
+          "{w}. Nothing else to go on.",
+          "Unknowns. {w} wins.",
+          "New names. {w}'s first on the board.",
+        ],
+        hunchHit: [
+          "I had a hunch about {w}, from similar performers. It paid off.",
+          "Just a hunch, but {w} looked like your type.",
+          "{w} runs with people you watch. Figured.",
+          "My gut said {w}. My gut was right.",
+          "A guess, and it held up.",
+          "{w} reminds me of your favourites. Figures.",
+        ],
+        hunchMiss: [
+          "I only guessed {l} from similar performers. Hunch busted.",
+          "My hunch on {l} didn't pan out. Noted.",
+          "{l} isn't your type after all.",
+          "So much for my theory on {l}.",
+          "{l} looked good on paper. Paper lies.",
+          "Good thing it was only a hunch on {l}.",
+        ],
+        underdog: [
+          "{w}? You've barely watched {w}. Interesting.",
+          "An underdog. {w} barely shows up in your record.",
+          "{w} over {l}, who you actually watch? Huh.",
+          "Maybe I should show you more {w}. Noted.",
+          "Dark horse: {w}.",
+          "{w}. Your record says otherwise, but I'm listening.",
+        ],
+        traitWin: [
+          "You do like {t}. The record's clear.",
+          "{w}, and you've got a thing for {t}.",
+          "Your history's full of {t}. {w} fits the profile.",
+          "{t} win with you, again and again.",
+          "When it comes to {t}, you know what you want.",
+          "{t}. Fits the profile.",
+        ],
+        traitClose: [
+          "Close one. My guess: {t} tipped it.",
+          "Dead even, but you do like {t}.",
+          "Tough call. I suspect {t}.",
+          "Hard to split, but {t} usually win you over.",
+        ],
+        traitBranch: [
+          "You don't usually go for {t}. Noted.",
+          "{t} are rare in your record. Interesting.",
+          "{t}. Not your usual.",
+          "{t}. That's new for the file.",
+        ],
+        traitPass: [
+          "{t} usually win you over. Not this time.",
+          "Passing on {l}? You usually go for {t}.",
+          "{l} is one of your {t}, and still lost. Curious.",
+          "You normally lean towards {t}. Noted.",
+        ],
+        draw: [
+          "A draw. Fair enough.",
+          "Can't split them? Noted for both.",
+          "A tie. Both stay on the board.",
+          "Even. Noted.",
+        ],
+        undo: [
+          "Struck from the record.",
+          "Scratch that.",
+          "Changed your story? No problem.",
+          "That never happened.",
+          "Rewound.",
+          "Off the record.",
+        ],
+        undoSurprise: [
+          "Struck. That one had me puzzled anyway.",
+          "Back to my original read on {w}.",
+          "Off the record. It didn't add up anyway.",
+          "Scratched. I was still working that one out.",
+        ],
+        undoAgreed: [
+          "Struck, though I had that one right.",
+          "Scratch that? {w} looked like your pick.",
+          "Rewound. I'd have kept it.",
+          "Off the record. Your call.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Let's see how well I know you.",
+          "Okay. Show me what you've got.",
+          "I'll be taking notes.",
+          "The file's open. Go.",
+          "Let's get to work.",
+          "Notebook out.",
+        ],
+        night: [
+          "The file's open. Go.",
+          "Let's get to work.",
+          "Notebook out.",
+        ],
+        morning: [
+          "Morning. The file's open.",
+          "Good morning. Let's get to work.",
+          "Morning. Notebook out.",
+        ],
+        afternoon: [
+          "Afternoon. The file's open.",
+          "Good afternoon. Let's get to work.",
+          "Afternoon. Notebook out.",
+        ],
+        evening: [
+          "Evening. The file's open.",
+          "Good evening. Let's get to work.",
+          "Evening. Notebook out.",
+        ],
+        milestone: [
+          "{n} matches. The file's getting thick.",
+          "{n} in. Lots of evidence.",
+          "{n} down. Keep going.",
+          "{n} already. Good work.",
+          "That's {n}. Solid.",
+          "{n} matches. I'll need a bigger file.",
+        ],
+        streak: [
+          "{n} in a row. I'm reading you well.",
+          "{n} straight. I've got your number.",
+          "{n} for {n}.",
+          "Another. That's {n} straight.",
+          "{n} in a row. The profile holds.",
+          "On a roll: {n}.",
+        ],
+        broken: [
+          "Streak's over at {n}. Back to the drawing board.",
+          "There goes my {n}-pick streak.",
+          "{n} in a row, then this. Fair.",
+          "The {n}-streak's done. Still learning.",
+          "{n} was nice while it lasted.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. You're keeping me guessing.",
+          "{n} curveballs straight. Lots of notes.",
+          "{n} in a row. I've got things to learn.",
+          "{n} surprises running. Good evidence.",
+        ],
+        reunion: [
+          "Back on the same page.",
+          "Back in sync.",
+          "Reading you right again.",
+          "The profile holds again.",
+        ],
+        rematch: [
+          "Same result as last time. Consistent.",
+          "{w} over {l} again. You're sure.",
+          "Rematch, same verdict. Noted twice.",
+        ],
+        flip: [
+          "You picked {l} last time.",
+          "Changed your story since last round? {w} now.",
+          "A reversal. {l} won this one before.",
+          "{w} gets even.",
+        ],
+        roll: [
+          "{w} is on a roll: {n} wins.",
+          "{w} again. That's {n}.",
+          "{n} wins for {w}.",
+          "{w} keeps winning. {n} and counting.",
+          "Is anyone stopping {w}? {n} wins.",
+          "{w}, {n} wins deep.",
+        ],
+        cheer: [
+          "Good evidence.",
+          "Every pick sharpens the profile.",
+          "I'm learning a lot.",
+          "This helps.",
+          "Keep it coming.",
+          "That goes in the file.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. I see a pattern.",
+          "{t} again. {n} straight.",
+          "{n} {t} in a row. You know what you like.",
+        ],
+        upset: [
+          "Upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Bold.",
+          "A {d}-point underdog takes it.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes it. I saw it coming.",
+          "The winner is {c}. Your record agrees.",
+          "{c} wins it all. Who I'd have fingered.",
+          "Case closed: {c}.",
+        ],
+        championDark: [
+          "{c} wins. A real dark horse in your record.",
+          "Champion {c}. You barely watch {c}. That goes in bold.",
+          "{c} takes it. Didn't see that coming.",
+          "Surprise champion: {c}. Maybe I should show you more.",
+        ],
+        championNew: [
+          "{c} wins, and I barely know {c}. Good first clue.",
+          "Champion {c}, a near stranger. Noted.",
+        ],
+        placement: [
+          "That's where {c} lands. Noted.",
+          "{c}'s run is over. Decent placing.",
+          "Run's done for {c}. Thanks.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} picks right. I've got your number.",
+          "{a} of {j} called correctly. We understand each other.",
+        ],
+        syncMid: [
+          "I read {a} of your {j} picks right. Getting there.",
+          "{a} of {j} right, with a few twists.",
+        ],
+        syncLow: [
+          "Only {a} of {j} right. You taught me plenty.",
+          "{a} of {j}. Lots of new evidence.",
+        ],
+        syncNone: [
+          "Mostly strangers this run. Thanks for the leads.",
+          "I barely knew these performers. Now I know a bit more.",
+        ],
+        surprises: [
+          "You surprised me with {s}. That goes into my next model update.",
+          "Biggest surprises: {s}. Filed for the next update.",
+          "{s} caught me off guard. Noted for the next update.",
+        ],
+        theme: [
+          "The pattern this run: {t} ({n} of {m} winners).",
+          "{t} ran the show: {n} of {m} winners.",
+          "Pattern spotted: {n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the busiest run: {n} wins.",
+          "Top performer this run: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. Open and shut.",
+          "{wp} plays of {w} on the record. That settles it.",
+          "{w}: {wp} plays across {ws} scenes.",
+          "{w}, {wp} plays and counting.",
+          "{ws} of {w}'s scenes in your history. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's on the record. Enough said.",
+          "{wo} O's with {w}. The evidence speaks.",
+          "With {wo} O's on file, {w} was always winning this.",
+        ],
+        factRecent: [
+          "You watched {w} just {wago}. Still fresh.",
+          "{w}, last seen {wago}.",
+          "{w} again, after a watch {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays on the record, {w} {wpp}. Interesting.",
+          "{w} over {l}, who you've played {lp} times? Noted.",
+          "{lp} plays of {l}, and {w} still wins.",
+          "The record says {l} ({lp} plays). You say {w}.",
+        ],
+        factStale: [
+          "You haven't watched {l} since {lwhen}. Maybe that explains it.",
+          "{l}'s last play was {lwhen}. Trail's gone cold.",
+          "No {l} since {lwhen}. That tracks.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Dead even in your history too: {wp} against {lp}.",
+          "{w} {wp}, {l} {lp}. A fair fight.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes are still unplayed.",
+          "{wu} unplayed {w} scenes in your library.",
+          "There are {wu} {w} scenes you haven't watched yet.",
+          "More leads: {wu} {w} scenes you haven't seen.",
+          "{w} has {wu} scenes on file you've never played.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. That's your combo.",
+          "{w} plus {studio}: {sn} of your plays. A known pairing.",
+          "{w} at {studio}: a pattern.",
+        ],
+        factTogether: [
+          "For the record: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} you've played. Tough call.",
+          "{w} and {l}: {tn} {tscenes} together. Still, one had to go.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Curious.",
+          "{wsc} {w} scenes on file, none played. Good place to start.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "You're back. The office is a mess, but the leads are good.",
+            "Rain on the window, files on the desk. Welcome back.",
+          ],
+          topPick: [
+            "Every case has one lead that matters. Here it's {r}.",
+            "I've seen a lot of shelves. {r} is the one I keep coming back to.",
+          ],
+          newScenes: [
+            "{n} new scenes came in while you were out. Nobody saw them arrive. That's how they do it.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. Of course. In this town, some things never change.",
+            "{w}. I'd have put money on it, if I had any.",
+          ],
+          agree: [
+            "{w}, by a hair. Just like the evidence said, whispering.",
+            "{w}. Narrow, but the clues were all there.",
+          ],
+          close: [
+            "Two suspects, same alibi. You cracked it.",
+            "The evidence was split down the middle. Now it isn't.",
+          ],
+          surprise: [
+            "{w}. I had {l} pegged for it. Twenty years in this job, and it still surprises me.",
+            "A twist. {w}, not {l}. I'll need a fresh notebook.",
+          ],
+          unknown: [
+            "Two strangers walk into a ranking. Neither has a file. Until now.",
+            "No priors on either. {w} gets the first entry.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "The city's quiet. The ranking begins. I take notes.",
+            "Another day, another case. Let's see who talks first.",
+          ],
+          milestone: [
+            "{n} matches. The board's covered in string now.",
+            "{n} in. The picture's getting clearer, like fog lifting off the docks.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} takes it. I had it figured from the first clue, but it's nice to be right.",
+          ],
+        },
+      },
+    },
+    captain: {
+      page: {
+        first: [
+          "Curator, at the helm. I'll log the odd note here as we go.",
+          "Welcome aboard. I'm Curator; I'll keep the log and call out what I spot.",
+        ],
+        day: [
+          "Welcome back aboard.",
+          "Back on deck.",
+          "Good to have you aboard.",
+        ],
+        days: [
+          "Welcome back aboard. {d} days since we last sailed.",
+          "Log: {d} days ashore. Back on deck now.",
+          "{d} days in port. Ready to cast off.",
+        ],
+        weeks: [
+          "{d} days ashore. The hold's filled up since.",
+          "Welcome back aboard. {d} days, and new cargo waiting.",
+        ],
+        morning: [
+          "Morning watch. Welcome aboard.",
+          "Good morning, and welcome back aboard.",
+          "Morning. Back on deck.",
+        ],
+        afternoon: [
+          "Afternoon watch. Welcome aboard.",
+          "Good afternoon, and welcome back aboard.",
+          "Afternoon. Back on deck.",
+        ],
+        evening: [
+          "Evening watch. Welcome aboard.",
+          "Good evening, and welcome back aboard.",
+          "Evening. Back on deck.",
+        ],
+        morningDays: [
+          "Good morning. {d} days ashore; back on deck now.",
+          "Morning watch. {d} days since we last sailed.",
+        ],
+        afternoonDays: [
+          "Good afternoon. {d} days ashore; back on deck now.",
+          "Afternoon watch. {d} days since we last sailed.",
+        ],
+        eveningDays: [
+          "Good evening. {d} days ashore; back on deck now.",
+          "Evening watch. {d} days since we last sailed.",
+        ],
+        streak: [
+          "Back on deck.",
+          "Welcome aboard.",
+          "All hands present.",
+        ],
+        newScenes: [
+          "{n} new aboard since your last voyage. Stowed in New Arrivals.",
+          "Log: {n} fresh scenes taken on while you were ashore.",
+          "{n} new scenes in the hold since last time.",
+        ],
+        newScene: [
+          "One new scene aboard since your last visit.",
+          "Log: one new arrival since last time.",
+        ],
+        shortHour: [
+          "Short voyage: {r}, {m}.",
+          "{r} runs {m}. Quick crossing.",
+          "A brief run: {r}, {m}.",
+        ],
+        longHour: [
+          "Long voyage: {r}, {m}.",
+          "{r} runs {m}. Provision accordingly.",
+        ],
+        revisitFact: [
+          "{r} last sailed {ago}. Due another outing.",
+          "{r} has been in dry dock since {when}.",
+          "Log: {r}, not played since {when}.",
+        ],
+        resume: [
+          "You dropped anchor at {t}. The rest of the voyage awaits.",
+          "Log: left off at {t}.",
+        ],
+        staleFavourite: [
+          "{n} plays, none since {when}. An old ship, still seaworthy.",
+          "A veteran of {n} plays. The last, {ago}.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}. Flagship of the fleet.",
+          "{n} voyages with this one, the last in {when}.",
+        ],
+        dependable: [
+          "{p} aboard, your {top} performer.",
+          "{p}: {m} plays across {n} of their scenes. Trusted crew.",
+          "{p} again. {m} plays in the log.",
+        ],
+        newFace: [
+          "{p}: new crew. No log entries yet.",
+          "You've never played a {p} scene. Maiden voyage.",
+        ],
+        fresh: [
+          "Taken aboard {ago}. Not yet sailed.",
+          "Arrived {ago}. Still in its wrapping.",
+        ],
+        studio: [
+          "{s} again. That shipyard accounts for {pct} of your plays.",
+          "Another {s}. {pct} of what you play.",
+        ],
+        off: [
+          "Aye. Radio silence. Manage › Settings brings me back.",
+          "Understood. I'll hold my tongue. Manage › Settings to recall me.",
+        ],
+        topPick: [
+          "Set course for {r}.",
+          "If you sail one, make it {r}.",
+          "{r}. Best heading here.",
+          "I'd chart a course for {r}.",
+          "{r}. Full steam.",
+        ],
+        gem: [
+          "Also on the chart: {r}.",
+          "Another fine heading: {r}.",
+          "Keep {r} in sight too.",
+        ],
+        stretchOne: [
+          "{r} is uncharted waters, a bit off your usual course.",
+          "{r} is my wildcard heading here.",
+          "I've plotted {r} as a deliberate detour. Report back.",
+        ],
+        spotlight: [
+          "{p} is aboard {r}: {m} plays across {n} of their scenes.",
+          "{r} carries {p}, your {top} performer.",
+          "{r} has {p}, {m} plays in the log.",
+        ],
+        unplayedOne: [
+          "{r}: never sailed.",
+          "You've not yet taken {r} out.",
+          "{r} is still uncharted for you.",
+        ],
+        quickOne: [
+          "{r}: a short {m}.",
+          "{r} runs {m}. Quick crossing.",
+        ],
+        longOne: [
+          "{r}: a long {m}.",
+          "{r} runs {m}. A proper voyage.",
+        ],
+        performerRun: [
+          "{p} appears {n} times on this manifest.",
+          "A {p} theme to this voyage: {n} scenes.",
+          "{n} with {p} aboard.",
+        ],
+        regulars: [
+          "{p} is aboard {n} of these, your {top} performer.",
+          "Plenty of {p}: {n} of these, after {m} plays from you.",
+          "{n} with {p}, {m} plays in the log.",
+        ],
+        studioRun: [
+          "Heavy on {s} this voyage.",
+          "{s} supplies {n} of these.",
+          "The manifest leans {s}.",
+        ],
+        unplayed: [
+          "{n} of these have never sailed.",
+          "You haven't played {n} of these.",
+          "{n} of these are uncharted.",
+        ],
+        replays: [
+          "You've sailed {n} of these before.",
+          "{n} of these are familiar waters.",
+        ],
+        quick: [
+          "Short crossings here, around {m}.",
+          "About {m} each. Quick runs.",
+        ],
+        long: [
+          "Long voyages here, around {m} each.",
+          "These run about {m}. Provision well.",
+        ],
+        newest: [
+          "{r} is the newest aboard, added {ago}.",
+          "Latest cargo: {r}, added {ago}.",
+          "{r} came aboard only {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays. A veteran.",
+          "You've sailed {r} {n} times.",
+          "{r}, {n} plays. Seaworthy, evidently.",
+        ],
+        freshDraw: [
+          "New heading. {r} is on top now.",
+          "Manifest reshuffled. {r} leads.",
+          "New draw. {r} takes the bow.",
+        ],
+        laneMix: [
+          "Today's manifest: {mix}.",
+          "The cargo here: {mix}.",
+          "Log: {mix}.",
+        ],
+        laneTag: [
+          "{t} is filling the sails: it brought aboard {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "Strong {t} wind: it carried {n} of these in.",
+        ],
+        laneCurate: [
+          "{n} of these came aboard partly because you said yes to {t}.",
+          "Your yes to {t} in Curate set the course: {n} of these.",
+          "You logged a liking for {t}, and {n} of these follow from it.",
+        ],
+        laneContentOnly: [
+          "{n} of these carry no crew you know. They're aboard on cargo alone.",
+          "For {n} of these the crew's unknown to me. I picked them on content.",
+        ],
+        laneCast: [
+          "This voyage is about the crew: {n} of these are here for a performer you watch.",
+          "The crew carries {n} of these.",
+        ],
+        whyPerformer: [
+          "It's {p}, mostly.",
+          "{p} at the helm.",
+          "{p} is why.",
+        ],
+        whyTags: [
+          "The cargo: {t} and {t2}.",
+          "{t} and {t2}, mostly.",
+          "Mostly {t}, with {t2} aboard.",
+        ],
+        whyBoth: [
+          "{p}, with {t} in the hold.",
+          "{p} and {t} together.",
+          "{p} in a {t} scene.",
+        ],
+        whyStudio: [
+          "{s} rarely runs aground for you.",
+          "Mostly because it's {s}.",
+        ],
+        hookPerformer: [
+          "The pull is {p}.",
+          "{p} is the heading.",
+        ],
+        hookTags: [
+          "The pull is {t}, plus {t2}.",
+          "{t} and {t2} are the heading.",
+        ],
+        hookBoth: [
+          "The pull: {p}, with {t}.",
+          "{p} and {t} are the heading.",
+        ],
+        hookStudio: [
+          "The pull is {s}.",
+          "{s} is the heading.",
+        ],
+        whyReplay: [
+          "You've sailed it {n} times.",
+          "{n} plays in the log.",
+        ],
+        newWith: [
+          "{n} new since your last voyage, one with {p}.",
+          "{p} is aboard one of the {n} new scenes.",
+          "The new cargo includes some {p}.",
+        ],
+        followWatched: [
+          "You took {r} out after I logged it {when}. Steady work.",
+          "I charted {r} for you {when}, and you set sail.",
+          "{r} got its voyage after I flagged it {when}.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I logged it {when}. That course held.",
+          "You've sailed {r} {n} times since I flagged it {when}.",
+        ],
+        followPartial: [
+          "{r} dropped anchor {at}. The rest of the voyage is still there.",
+          "{r} was cut short {at}. Rough seas, perhaps.",
+          "I logged {r} {when}. It came about {at}.",
+        ],
+        followPassed: [
+          "I've flagged {r} {n} times, no takers. Striking it from the charts.",
+          "{r}: {n} mentions, no voyage. I'll stop signalling.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these, none in your hold yet.",
+          "{n} with {p} not aboard. One of your regulars.",
+          "More {p} out there: {n} right here.",
+        ],
+        expandSpotlight: [
+          "{r} has {p}, and it's not aboard yet.",
+          "{p} is in {r}. One of your regular crew.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, one of your favourites.",
+          "Your favourite {p} appears {n} times.",
+        ],
+        expandUnwatched: [
+          "You've {p} aboard but never sailed with them. {r} might change that.",
+          "{p} is in your hold, unplayed. {r} could be the first voyage.",
+        ],
+        expandStudio: [
+          "{s} has {n} here not yet aboard.",
+          "{n} from {s}, a yard you know well.",
+        ],
+        expandNewRelease: [
+          "{r} launched only {ago}.",
+          "Fresh off the slipway: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these launched in the last month.",
+          "{n} released in the last 30 days.",
+        ],
+        expandDeepCut: [
+          "An old vessel: {r}, from {y}.",
+          "{r} dates from {y}. Classic lines.",
+        ],
+        whisparrRun: [
+          "{n} of these are already with Whisparr.",
+          "Whisparr has {n} of these on order.",
+        ],
+        whisparrArrived: [
+          "{r} has come aboard. You sent for it {when}.",
+          "You signalled for {r} {when}. It's docked.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent are still at sea. The oldest went out {when}.",
+          "{n} sends not yet arrived; the first went out {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the missing one that suits you best ({s}).",
+          "Of everything still at sea, {r} fits you most: {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} downloaded in Whisparr but not yet logged in Stash. A scan and Identify should bring them in.",
+          "Whisparr has files for {n} that Stash hasn't matched. Run a scan, then Identify.",
+        ],
+        similarEmpty: [
+          "Pick a scene you like and I'll chart its neighbours.",
+          "Give me a heading: one you like, and I'll find more like it.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. A good port to sail from.",
+          "You've sailed that one {n} times. I can see why you want more.",
+        ],
+        seedUnplayed: [
+          "You haven't sailed the original yet, but its neighbours are on the chart.",
+          "Not played that one? Here are its neighbours anyway.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} turns up again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, same yard as the original.",
+          "{s} again for {n} of these.",
+        ],
+        closest: [
+          "{r} is the closest match, though not at the bow.",
+          "The nearest sister ship is {r}. Your taste moved others ahead.",
+        ],
+        huntEmpty: [
+          "Name a performer and I'll chart what you're missing.",
+          "Who are we searching for?",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes aboard.",
+          "{own} of {n} {p} scenes are already in your hold.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are aboard yet.",
+          "Empty hold: {n} {p} scenes, none of them yours.",
+        ],
+        huntComplete: [
+          "Every {p} scene here is aboard. Full fleet.",
+          "All {n}, accounted for.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p} has been busy: {n} launches this past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here is from {y}.",
+          "The log goes back to {y}.",
+        ],
+        huntRegular: [
+          "{p} is regular crew, {m} plays. No wonder we're searching.",
+          "Of course it's {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Your favourite {p} is aboard.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr.",
+          "Whisparr has this on order.",
+        ],
+        ownedNote: [
+          "Already aboard.",
+          "This one's in your hold already.",
+        ],
+        releasedNote: [
+          "Launched {ago}.",
+          "Out {ago}. Fresh paint.",
+        ],
+        oldNote: [
+          "From {y}. Classic lines.",
+          "This one dates from {y}.",
+        ],
+        calledLike: [
+          "{t}, as charted.",
+          "Steady as she goes: {t}.",
+          "{t}. Just as I'd plotted.",
+        ],
+        calledDislike: [
+          "As charted, {t} isn't your heading.",
+          "Less {t}, then. As expected.",
+        ],
+        answerSurprise: [
+          "I had {t} on the opposite heading. Correcting course.",
+          "Noted. I'd charted {t} wrong.",
+          "New bearing on {t}. Thanks.",
+        ],
+        answerBlocked: [
+          "Logged. No more {t}.",
+          "{t} struck from the charts.",
+        ],
+        taughtMilestone: [
+          "{n} answers logged. The charts are filling in.",
+          "{n} in. Keep them coming.",
+          "{n} answers this visit. Your picks will sail truer.",
+        ],
+        reasonFlip: [
+          "I had that one on the wrong heading. Correcting.",
+          "Noted. I'd misread that scene.",
+        ],
+        reasonRich: [
+          "{n} reasons. A detailed log entry.",
+          "Plenty to steer by. Thanks.",
+        ],
+        scenePairing: [
+          "Fair winds on this one: {p} and {t}. You've played {n} scenes with that exact pairing.",
+          "{p} with {t}, a pairing you've sailed {n} times.",
+          "{p} plus {t}. {n} like it already in the log. Good heading.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}, two reliable hands: {n} of {pf}'s scenes played, {m} plays for the yard.",
+          "{p} and {s} together. {n} {pf} scenes played, {m} studio plays. Good odds.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and the closest heading to {r}, which you've sailed {n} times.",
+          "If {r} served you well, and {n} plays say it did, this is a sister ship. {t} too.",
+        ],
+        sceneTagRun: [
+          "{n} {t} scenes in the last two weeks, and this one has {p} aboard. Same heading.",
+          "{t}: {n} in the last two weeks. Now one with {p}. Steady course.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} in the last two weeks. This keeps the course.",
+          "{n} {p} scenes in the last two weeks. Here's another on the same heading.",
+        ],
+        sceneRecentNeighbor: [
+          "You sailed {r} {when}. This is its nearest sister ship in your hold.",
+          "Enjoyed {r} {when}? This is its closest match.",
+        ],
+        sceneSatiated: [
+          "Normally high on my charts, but there's been plenty of {p} lately, {n} scenes. I've changed heading for variety.",
+          "{p} is usually a sure thing. After {n} recent plays, I've trimmed this one down.",
+        ],
+        sceneCooldown: [
+          "You sailed this {when}. It's in harbour before its next outing.",
+          "Played {when}. Resting at anchor for now.",
+        ],
+        sceneNotNow: [
+          "You said 'not now' {when}. It's at anchor for a while.",
+          "'Not now', logged {when}. It's in harbour.",
+        ],
+        sceneNotNowPlain: [
+          "You said 'not now', so it's at anchor for a while.",
+          "Logged as 'not now'. In harbour for a bit.",
+        ],
+        sceneHistoryBeats: [
+          "On the chart this shouldn't suit you, but {n} plays say it clearly does.",
+          "Its tags and crew wouldn't put it high. Your {n} plays did.",
+        ],
+        sceneHistoryLags: [
+          "{x} says this should be fair sailing, but your log with it says otherwise.",
+          "I expected smooth seas because of {x}. Your history disagrees.",
+        ],
+        sceneNewFace: [
+          "{p} is new crew, but much like {q}, and you've played {n} of {qf}'s scenes. Worth a voyage.",
+          "Never sailed with {p}? They're close to {q}, and you've played {n} of {qf}'s scenes.",
+        ],
+        sceneRadar: [
+          "Uncharted waters: none of its {k} performers has a play from you, and nothing from {s} either.",
+          "No log entries for any of its {k} performers, or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "Uncharted waters: none of its {k} performers has a play from you yet.",
+          "No log entries for any of its {k} performers.",
+        ],
+        sceneRadarOne: [
+          "Uncharted waters: no {p} scenes played, and nothing from {s}.",
+          "No log for {p} or {s} yet.",
+        ],
+        sceneRadarOnePlain: [
+          "Uncharted waters: you've never played a {p} scene.",
+          "No log for {p} yet.",
+        ],
+        scenePerformer: [
+          "Fair winds. {p} is in {n} scenes you've already played.",
+          "An easy heading: {p}, {m} plays in the log.",
+        ],
+        sceneTag: [
+          "There's {t} in this, on {pct} of what you watch. Should be smooth sailing.",
+          "{t} again. It's on {pct} of the scenes you watch. Good odds.",
+        ],
+        sceneStudio: [
+          "{s} has a good record with you, {m} plays. This should hold steady.",
+          "Another {s}. {m} plays in the log. Safe harbour.",
+        ],
+        sceneNeighbor: [
+          "If you liked {r}, and {n} plays say you did, this is a sister ship.",
+          "This is close to {r}, which you've sailed {n} times.",
+        ],
+        sceneResume: [
+          "Back aboard? You dropped anchor at {t}.",
+          "Weighing anchor at {t}?",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}. Due another voyage.",
+          "{n} plays in the log, the last {when}.",
+        ],
+        sceneCarriedPerformer: [
+          "{p} is doing all the rowing here. Without them, it wouldn't make my charts.",
+          "This is a {pf} voyage, plain and simple.",
+          "It's {p}. That's the whole heading.",
+        ],
+        sceneDespite: [
+          "You said no to {x}, and it's aboard. {p} is the only reason I'm flagging it.",
+          "There's {x}, which you've struck from your charts. Flagged only for {p}.",
+        ],
+        sceneCarriedContent: [
+          "Not the crew. {t} and {t2} put this on the chart.",
+          "Nobody aboard is a draw for you yet. The cargo is: {t}, plus {t2}.",
+          "Sailing on content: {t} and {t2}. The crew is new.",
+        ],
+        sceneTwin: [
+          "It's practically {r} again: {t}, {t2}, {t3}.",
+          "Same rigging as {r}: {t} and {t2}. That one sailed well.",
+          "If {r} served, this is its sister ship. Same {t}, same {t2}.",
+        ],
+        sceneSplit: [
+          "Two winds fill these sails, about equally: {p}, and the cargo, {t} and {t2} most of all.",
+          "Half {p}, half cargo: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You logged a liking for {t}, but rarely set that course. Here's a chance.",
+          "{t} is aboard. You said yes; your log shows less.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your log backs it up. It's aboard.",
+          "{t}: logged, and sailed. It's in this one.",
+        ],
+        sceneHeldBack: [
+          "One thing holds this back: {x}. Everything else is shipshape.",
+          "I'd chart this higher if not for {x}.",
+        ],
+        sceneCrowd: [
+          "{k} aboard one scene is usually a crowded deck for you. I've held it back a touch.",
+          "A {k}-performer scene. Those rarely sail well for you.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, but rarely sail with them. The favourite is doing most of the lifting.",
+          "{p} is a favourite on paper. Your log is cooler, so I'm not betting much.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your log agrees.",
+          "{p}: favoured, and well sailed.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Worth a look.",
+          "{p} with {t}: {n} times before. Could be a fair heading.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} studio plays. Might be worth a voyage.",
+          "{p} and {s}. A possible heading.",
+        ],
+        sceneTagNeighborMild: [
+          "Closest to {r}, which you've played {n} times, with {t} aboard. Maybe.",
+          "Near {r} ({n} plays), with {t}. Possibly.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played. Worth a look.",
+          "{p}: {m} plays. Not a sure thing, but promising.",
+        ],
+        sceneTagMild: [
+          "There's {t}, on {pct} of what you watch. Could be fair sailing.",
+          "{t}, {pct} of your watching. Maybe.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. Might be worth a voyage.",
+          "It's {s}, {m} plays. Possibly.",
+        ],
+        sceneNeighborMild: [
+          "It's close to {r}, which you've played {n} times. Might suit you.",
+          "A bit like {r}, {n} plays. Possibly.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is a plus, {m} plays so far, but there's {t}, which rarely suits you. Choppy waters.",
+          "{p} for, {t} against. {m} plays of {p}. Could go either way.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you like, and {x}, which you usually skip. Choppy waters.",
+          "{t} says yes, {x} says no. Hard to steer.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is a plus, {m} plays so far, but the rest is off your usual course. I'm doubtful.",
+          "{p}, {m} plays. Beyond that, unfamiliar waters.",
+        ],
+        sceneDoubt: [
+          "Doubtful heading: {x} usually isn't your thing.",
+          "I'd steer clear. There's {x}, and that rarely suits you.",
+        ],
+        sceneDoubtPlain: [
+          "Doubtful heading. Little here matches what you watch.",
+          "Rough waters. Not much lines up with your log.",
+        ],
+        sceneFresh: [
+          "Taken aboard {ago}. Not yet sailed.",
+          "Added {ago}. New to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you mostly pick the {t} scenes: {a} of what you've played, against {b} of the rest.",
+          "Your heading with {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes this week, in the log.",
+          "{pf}: {n} plays this week.",
+        ],
+        performerRegular: [
+          "Regular crew: {n} scenes and {m} plays so far.",
+          "You and {pf} have sailed together often: {m} plays across {n} scenes.",
+        ],
+        performerGoTo: [
+          "Your flagship {pf} scene is {r}, {k} plays.",
+          "If it's {pf}, it's often {r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you mostly pick the scenes with {q}: {a} of what you've played, against {b} of the rest.",
+          "{pf} and {q} make a crew you like: {a} of the {pf} scenes you've played, but {b} of the others.",
+        ],
+        performerStudio: [
+          "You mostly sail with {pf} in {s} scenes: {a} of what you've played, against {b} of the rest.",
+          "{s} is where you like {pf} best: {a} of your {pf} plays, {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} voyage was {r}, {when}.",
+          "Last in the log: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "Much uncharted with {pf}: {u} of their {all} scenes unplayed.",
+          "{u} {pf} scenes you've never sailed.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+          "{waiting} still in the hold, including {one} added {ago}.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}. Last voyage {when}, and {waiting} still unplayed.",
+          "{p}: a favourite, last sailed in {since}. {waiting} unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p}, but none of their {all} scenes has sailed yet.",
+          "{p}: favourite, {all} scenes, none played. Plenty of maiden voyages.",
+        ],
+        performerDormant: [
+          "No {p} since {since}, {d} months in port.",
+          "{d} months since your last {pf} scene, after {m} plays.",
+        ],
+        performerSimilar: [
+          "You haven't sailed with {p}, but you've played {n} of {q}'s scenes, and they're much alike.",
+          "New crew, but {p} is a lot like {q}, and you've played {n} of {qf}'s scenes. Worth a voyage.",
+        ],
+        performerTrait: [
+          "{trait} turn up {x}× as often in who you watch, and you've played {n} of {pf}'s scenes. Steady heading.",
+          "{trait} show up {x}× as often in who you watch as in your library. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "{p} is uncharted: no plays from their {all} scenes, and nobody similar that you watch.",
+          "No log on {p} yet. None of their {all} scenes has a play from you.",
+        ],
+        insightTop: [
+          "{t} is your north star: on {pct} of the {n} scenes you've watched.",
+          "Steady at the top: {t}, on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is rising: from {a} to {b} of what you watch lately.",
+          "{t} is gaining, {a} to {b} of your watching in the last 90 days.",
+        ],
+        insightFading: [
+          "{t} has fallen off, from {a} down to {b}.",
+          "Less {t} lately: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your library but {b} of what you watch. You steer for it.",
+          "You set course for {t}: {b} of what you watch, from {a} of your library.",
+        ],
+        insightPassed: [
+          "{t} fills {a} of your hold, but only {b} of your plays.",
+          "Plenty of {t} in the hold, {a}, and just {b} of what you watch.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and the log backs it up: {pct} of what you watch.",
+          "{t}: logged and sailed. {pct} of your watching.",
+        ],
+        insightDormant: [
+          "{p} used to be regular crew: {n} plays, none since {since}.",
+          "{p}: {n} plays, last sailed {when}.",
+        ],
+        insightRediscovered: [
+          "You came back to {r} after {m} months. Some ports call you back.",
+          "{m} months away, then back to {r}.",
+        ],
+        insightWords: [
+          "You've picked {x} {n} times in Why these? as what makes a scene work.",
+          "{x}, {n} times in your Why these? answers. Logged.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. Plenty of ocean left.",
+          "{n} of {all} scenes sailed, {pct} of your library.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "The {t} high tide: {pct}, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at high tide right now: {pct} of what you've watched lately.",
+          "Never more {t} than now: {pct} of the last three months.",
+        ],
+        standBy: [
+          "{r} again. Holding course.",
+          "Log: still recommending {r}. Steady as she goes.",
+          "{r}, back on the horizon. Same heading.",
+        ],
+        rankedOne: [
+          "{p} won {n} matches in your ranking {when}. Set a course for {r}.",
+          "Log: ranking {when}, {p} with {n} wins. Found in {r}.",
+          "{p}, {n} wins {when}. {r} is in sight.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}. Entered in the log.",
+          "Log: {pf}, {n} wins, {when}.",
+          "{n} wins {when}. A strong voyage.",
+        ],
+        oldestOne: [
+          "{r}, from {y}. Oldest in the hold.",
+          "Log: {r} charted in {y}.",
+          "An old wreck worth diving: {r}, {y}.",
+        ],
+        topRated: [
+          "{r}, rated {k}. Best in the fleet.",
+          "Log: {r} at {k}, the top rating aboard.",
+          "Flagship of this shelf: {r}, {k}.",
+        ],
+        performerShortest: [
+          "A short crossing: {r}, {m}.",
+          "{r}, {m}. Quick passage, uncharted.",
+          "Shortest uncharted {pf} voyage: {r}, {m}.",
+        ],
+        newStudio: [
+          "{n} of the new cargo came from {s}.",
+          "Log: {s} delivered {n} of the new ones.",
+          "Most of the new cargo flies {s} colours: {n} of them.",
+        ],
+        feedbackUp: [
+          "Logged. More of the same.",
+          "Aye. Course adjusted toward that.",
+          "Logged. Good find.",
+        ],
+        feedbackDown: [
+          "Logged. Steering clear.",
+          "Aye. Fewer like that.",
+          "Course corrected.",
+        ],
+        feedbackNotNow: [
+          "Stowed for a later voyage.",
+          "Back in the hold for now.",
+          "Aye, another time.",
+        ],
+        feedbackNever: [
+          "Overboard.",
+          "Struck from the charts.",
+          "Logged. Never again.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "Set course for {r}, because {c}.",
+          "{r} is the best heading here: {c}.",
+          "I'd chart a course for {r}: {c}.",
+          "If you sail one, make it {r}. Why? {c}.",
+        ],
+        gem: [
+          "Also on the chart: {r}, as {c}.",
+          "{r} is another fine heading: {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I plotted {r} as a detour.",
+          "{r} is off your usual course, but {c}.",
+        ],
+        unplayedOne: [
+          "{r} has never sailed, and {c}.",
+          "You've not yet taken {r} out, and {c}.",
+        ],
+        freshDraw: [
+          "New heading: {r} is on top, and {c}.",
+          "Manifest reshuffled. {r} leads: {c}.",
+        ],
+        revisitFact: [
+          "{r} last sailed {ago}, and {c}.",
+          "{r} has been in dry dock since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is aboard",
+          "it has {p}",
+          "{p} is in the crew",
+        ],
+        whyTags: [
+          "it carries {t} and {t2}",
+          "{t} and {t2} are both aboard",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's from {s}",
+          "{s} rarely runs aground for you",
+        ],
+        whyReplay: [
+          "you've sailed it {n} times",
+          "it has {n} plays in the log",
+        ],
+        hookPerformer: [
+          "{p} is the heading",
+          "the pull is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the heading",
+          "the pull is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the heading",
+          "the pull is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the heading",
+          "the pull is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}. Steady as she goes.",
+          "Log: {w}, as charted.",
+          "{w}. True to course.",
+          "{w}, a regular in your log.",
+          "{w}. No surprise on this heading.",
+          "{w}. Your log made that easy.",
+          "{w}. Right on course.",
+          "{w}. Trusted crew.",
+          "{w}, as ever.",
+          "{w}. Fair winds, as forecast.",
+        ],
+        agree: [
+          "{w}, by a length. Same as your log.",
+          "{w}, narrowly. On course.",
+          "{w}. Your log leans that way too.",
+          "{w}, though {l} gave chase.",
+          "Close, but {w}. As charted.",
+          "{w} by a hair. That fits.",
+          "{w}. Slight edge, same heading.",
+          "{w}. Course holds.",
+        ],
+        close: [
+          "Too close to call. Thanks for setting the heading.",
+          "Neck and neck in your log. Now I know.",
+          "{w}. A coin toss on the charts.",
+          "Your log couldn't separate them either. {w} it is.",
+          "No clear heading on these two until now.",
+          "{w} and {l} look the same in the log. Not anymore.",
+          "Even keel by my reckoning. {w}, logged.",
+          "You sail with both about equally. Helpful tiebreak.",
+        ],
+        surprise: [
+          "Hm. I'd charted {l}. Logged.",
+          "{w} over {l}. Adjusting course.",
+          "Not what your log suggested.",
+          "I had {l} slightly ahead.",
+          "A crosswind. Noted.",
+          "{w}. Correcting heading.",
+          "Your log says {l}. You said {w}. Logged.",
+          "A small course correction.",
+        ],
+        twist: [
+          "I had you down for {l}. Hard about.",
+          "That's a squall. I was fairly sure of {l}.",
+          "Your log leans {l} heavily. Interesting.",
+          "That redraws a few of my charts.",
+          "Redrawing the charts on {l}.",
+          "Not what the log suggested. Useful.",
+          "My charts said {l}. You know the waters.",
+          "I'd have bet on {l}. Glad I didn't.",
+        ],
+        unknown: [
+          "Two unknown vessels. Logged.",
+          "No log on either. {w} goes in first.",
+          "Uncharted. I'll take your bearing.",
+          "New crew to me. {w}, logged.",
+          "Blank chart on both. First mark: {w}.",
+          "{w}. Nothing else to steer by.",
+          "Unknown waters. {w} wins.",
+          "New names. {w}, first in the log.",
+        ],
+        hunchHit: [
+          "I'd guessed {w} from similar performers. Bearing confirmed.",
+          "Dead reckoning said {w}. It held.",
+          "{w} sails like crew you watch. As plotted.",
+          "My hunch on {w} held true.",
+          "A guess, and on course.",
+          "{w} reminds me of your favourites. Steady.",
+        ],
+        hunchMiss: [
+          "I'd only guessed {l} from similar performers. Bearing corrected.",
+          "My hunch on {l} drifted off course. Logged.",
+          "{l} isn't your heading after all.",
+          "So much for my guess on {l}.",
+          "{l} looked right on the chart. Not so.",
+          "Only a guess on {l}. Correcting.",
+        ],
+        underdog: [
+          "{w}? You've barely sailed with {w}. Interesting.",
+          "An underdog: {w} barely appears in your log.",
+          "{w} over {l}, who you actually watch? Logged.",
+          "Perhaps more {w} on future voyages. Noted.",
+          "A dark horse: {w}.",
+          "{w}. Your log says otherwise, but I'm listening.",
+        ],
+        traitWin: [
+          "You do like {t}. Steady heading.",
+          "{w}, and you've a fondness for {t}.",
+          "Your log is full of {t}. {w} fits right in.",
+          "{t} win with you, voyage after voyage.",
+          "When it comes to {t}, your course is clear.",
+          "{t}. On course.",
+        ],
+        traitClose: [
+          "Close one. My reckoning: {t} tipped it.",
+          "Even keel, but you do like {t}.",
+          "Tough call. Likely the {t}.",
+          "Hard to split, but {t} usually win you over.",
+        ],
+        traitBranch: [
+          "You don't usually steer for {t}. Logged.",
+          "{t} are rare in your log. Noted.",
+          "New waters: {t}.",
+          "{t}. Off your usual course.",
+        ],
+        traitPass: [
+          "{t} usually win you over. Not this voyage.",
+          "Passing on {l}? You usually steer for {t}.",
+          "{l} is one of your {t}, and still lost. Interesting.",
+          "You normally lean towards {t}. Logged.",
+        ],
+        draw: [
+          "A draw. Even keel.",
+          "Can't split them? Logged for both.",
+          "A tie. Both stay on the chart.",
+          "Level. Logged.",
+        ],
+        undo: [
+          "Struck from the log.",
+          "Belay that.",
+          "Changed heading? No trouble.",
+          "Log entry erased.",
+          "Reversing course.",
+          "As you were.",
+        ],
+        undoSurprise: [
+          "Struck. That one surprised me anyway.",
+          "Back to my original bearing on {w}.",
+          "Belay that. It had me puzzled.",
+          "Log entry erased. Just as well.",
+        ],
+        undoAgreed: [
+          "Struck, though I had that one charted right.",
+          "Belay that? {w} looked like your heading.",
+          "Reversing. I'd have kept it.",
+          "Erased. Your call, Captain.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "Ranking voyage. I'll keep the log.",
+          "Let's see how well I know your heading.",
+          "All hands. Begin.",
+          "Log open.",
+          "Casting off.",
+          "Ready on deck.",
+        ],
+        night: [
+          "Log open.",
+          "All hands. Begin.",
+          "Casting off.",
+        ],
+        morning: [
+          "Morning watch. Log open.",
+          "Good morning. Casting off.",
+          "Morning. All hands, begin.",
+        ],
+        afternoon: [
+          "Afternoon watch. Log open.",
+          "Good afternoon. Casting off.",
+          "Afternoon. All hands, begin.",
+        ],
+        evening: [
+          "Evening watch. Log open.",
+          "Good evening. Casting off.",
+          "Evening. All hands, begin.",
+        ],
+        milestone: [
+          "{n} matches logged.",
+          "{n} matches. The log's filling up.",
+          "{n} down. Keep going.",
+          "{n} already. Good sailing.",
+          "That's {n}. Steady progress.",
+          "{n} matches. A long voyage.",
+        ],
+        streak: [
+          "{n} in a row. Holding course.",
+          "{n} straight. Charts are true.",
+          "{n} for {n}.",
+          "Another. {n} straight.",
+          "{n} in a row. Smooth sailing.",
+          "On a roll: {n}.",
+        ],
+        broken: [
+          "Streak ends at {n}. Back to the charts.",
+          "There goes my {n}-pick streak.",
+          "{n} in a row, then a crosswind. Fair.",
+          "{n}-streak over. Still learning these waters.",
+          "{n} was a good run while it lasted.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. Rough seas.",
+          "{n} curveballs straight. Many log entries.",
+          "{n} in a row. Clearly I've waters to learn.",
+          "{n} surprises running. Valuable soundings.",
+        ],
+        reunion: [
+          "Back on course.",
+          "Back in sync.",
+          "Charts true again.",
+          "Steady again.",
+        ],
+        rematch: [
+          "Same result as last time. Consistent.",
+          "{w} over {l} again. Firm heading.",
+          "Rematch, same verdict. Logged twice.",
+        ],
+        flip: [
+          "You picked {l} last time.",
+          "Changed heading since last round? {w} now.",
+          "A reversal. {l} won this pairing before.",
+          "{w} turns the tide.",
+        ],
+        roll: [
+          "{w} is on a roll: {n} wins.",
+          "{w} again. That's {n}.",
+          "{n} wins for {w}. Full sail.",
+          "{w} keeps winning. {n} and counting.",
+          "Anyone to stop {w}? {n} wins.",
+          "{w}, {n} wins deep.",
+        ],
+        cheer: [
+          "Useful soundings.",
+          "Every pick sharpens the chart.",
+          "Learning these waters fast.",
+          "Your recommendations will sail truer.",
+          "Keep them coming.",
+          "Logged.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. A clear heading.",
+          "{t} again. {n} straight.",
+          "{n} {t} in a row. You know your course.",
+        ],
+        upset: [
+          "Upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Bold.",
+          "A {d}-point underdog takes it.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes the crown. As charted.",
+          "The winner is {c}. Your log agrees.",
+          "{c} wins it all. Exactly my heading.",
+          "Flagship: {c}.",
+        ],
+        championDark: [
+          "{c} wins it all. A real dark horse in your log.",
+          "Champion {c}. You barely sail with {c}. Logged in bold.",
+          "{c} takes it. Didn't see that on the chart.",
+          "Surprise champion: {c}. More {c} on future voyages.",
+        ],
+        championNew: [
+          "{c} wins, and I barely know {c}. A good first sounding.",
+          "Champion {c}, new crew to me. Logged.",
+        ],
+        placement: [
+          "That's where {c} lands. Logged.",
+          "{c}'s voyage is over. A fair placing.",
+          "Voyage complete for {c}. Thanks.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} picks right. Charts are true.",
+          "{a} of {j} on course. I know your waters well.",
+        ],
+        syncMid: [
+          "I read {a} of your {j} picks right. Getting there.",
+          "{a} of {j} on course, with a few crosswinds.",
+        ],
+        syncLow: [
+          "Only {a} of {j} on course. Plenty learned.",
+          "{a} of {j}. Many new soundings.",
+        ],
+        syncNone: [
+          "Mostly unknown crew this voyage. Thanks for the soundings.",
+          "I barely knew these performers. The charts are fuller now.",
+        ],
+        surprises: [
+          "You surprised me with {s}. I'll weigh those at my next model update.",
+          "Biggest surprises: {s}. Logged for the next update.",
+          "{s} caught me off guard. Charted for the next update.",
+        ],
+        theme: [
+          "Heading this voyage: {t} ({n} of {m} winners).",
+          "{t} ruled the voyage: {n} of {m} winners.",
+          "Pattern spotted: {n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the busiest voyage: {n} wins.",
+          "Hardest-working crew: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. Steady heading.",
+          "{wp} plays of {w} in the log. That settles it.",
+          "{w}: {wp} plays across {ws} scenes.",
+          "{w}, {wp} plays and counting.",
+          "{ws} of {w}'s scenes in your log. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's in your log. Enough said.",
+          "{wo} O's with {w}. Clear heading.",
+          "With {wo} O's logged, {w} was always winning this.",
+        ],
+        factRecent: [
+          "You sailed with {w} just {wago}.",
+          "{w}, last logged {wago}. Consistent.",
+          "{w} again, after a voyage {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays in the log, {w} {wpp}. Interesting.",
+          "{w} over {l}, who you've played {lp} times? Logged.",
+          "{lp} plays of {l}, and {w} still wins.",
+          "The log says {l} ({lp} plays). You say {w}.",
+        ],
+        factStale: [
+          "You haven't sailed with {l} since {lwhen}. That may explain it.",
+          "{l}'s last play was {lwhen}. Tides change.",
+          "No {l} since {lwhen}, so this tracks.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Even keel in your log too: {wp} against {lp}.",
+          "{w} {wp}, {l} {lp}. A fair race.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes are still unplayed.",
+          "{wu} unplayed {w} scenes in the hold.",
+          "There are {wu} {w} scenes you haven't sailed yet.",
+          "More on the horizon: {wu} {w} scenes unplayed.",
+          "{w} has {wu} scenes in your library you've never played.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. A trusted pairing.",
+          "{w} plus {studio}: {sn} of your plays.",
+          "{w} at {studio}: your favoured waters.",
+        ],
+        factTogether: [
+          "For the log: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} you've played. Tough call.",
+          "{w} and {l}: {tn} {tscenes} together. Still, one had to win.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Interesting.",
+          "{wsc} {w} scenes in your hold, none played. A good place to start.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Captain's log, supplemental: the crew has returned. Morale improves.",
+            "All hands on deck! Well, all one of you. Welcome back.",
+          ],
+          topPick: [
+            "Log: after much deliberation on the bridge, {r}.",
+            "If I had one flare to fire, I'd fire it at {r}.",
+          ],
+          newScenes: [
+            "Ship ahoy! {n} new scenes sighted off the starboard bow.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}. As sure as the tide.",
+            "{w}. The compass never lies.",
+          ],
+          agree: [
+            "{w}, by a knot. Same heading as the log.",
+            "{w}, just. The charts agree.",
+          ],
+          close: [
+            "Calm seas, no wind either way. You set the course.",
+            "Two ships level in the fog. Now one's ahead.",
+          ],
+          surprise: [
+            "{w} over {l}. Uncharted waters. Thrilling.",
+            "A rogue wave. {w}, against the log. Recording it.",
+          ],
+          unknown: [
+            "Two unknown vessels on the horizon. {w} gets the first log entry.",
+            "Uncharted, both. Here be dragons.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "Anchors aweigh! The ranking voyage begins.",
+            "Captain's log: a ranking. Weather fair, spirits high.",
+          ],
+          milestone: [
+            "{n} matches. Three cheers for the crew!",
+            "{n} nautical miles of ranking. Fine sailing.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} takes the flagship. Exactly as the charts foretold.",
+          ],
+        },
+      },
+    },
+    butler: {
+      page: {
+        first: [
+          "Good day. I'm Curator. I shall leave the occasional note, if I may.",
+          "Curator, at your service. I'll mention things only when they merit it.",
+        ],
+        day: [
+          "Welcome back.",
+          "Welcome home.",
+          "A pleasure to see you again.",
+        ],
+        days: [
+          "Welcome back. It has been {d} days; everything is in order.",
+          "{d} days. Welcome home.",
+          "Welcome back. {d} days since your last visit, and all is well.",
+        ],
+        weeks: [
+          "Welcome back. {d} days; I've kept things tidy.",
+          "{d} days since your last visit. A few matters await your attention.",
+        ],
+        morning: [
+          "Good morning. Welcome home.",
+          "Good morning. A pleasure to see you.",
+          "Good morning. Everything is in order.",
+        ],
+        afternoon: [
+          "Good afternoon. Welcome home.",
+          "Good afternoon. A pleasure to see you.",
+          "Good afternoon. Everything is in order.",
+        ],
+        evening: [
+          "Good evening. Welcome home.",
+          "Good evening. A pleasure to see you.",
+          "Good evening. Everything is in order.",
+        ],
+        morningDays: [
+          "Good morning. {d} days; everything is in order.",
+          "Good morning, and welcome back after {d} days.",
+        ],
+        afternoonDays: [
+          "Good afternoon. {d} days; everything is in order.",
+          "Good afternoon, and welcome back after {d} days.",
+        ],
+        eveningDays: [
+          "Good evening. {d} days; everything is in order.",
+          "Good evening, and welcome back after {d} days.",
+        ],
+        streak: [
+          "Welcome back.",
+          "Welcome home.",
+          "At your service.",
+        ],
+        newScenes: [
+          "{n} new arrivals since your last visit. I've placed them in New Arrivals.",
+          "{n} scenes arrived in your absence.",
+          "If I may: {n} new scenes since last time.",
+        ],
+        newScene: [
+          "One new scene arrived since your last visit.",
+          "A single arrival in your absence.",
+        ],
+        shortHour: [
+          "Something brief, perhaps? {r} runs {m}.",
+          "Should you prefer something short, {r} is {m}.",
+          "{r}, a modest {m}.",
+        ],
+        longHour: [
+          "Should you have the time, {r} runs {m}.",
+          "For a longer engagement, {r}: {m}.",
+        ],
+        revisitFact: [
+          "{r} was last played {ago}. Perhaps it's due another.",
+          "{r} hasn't been played since {when}.",
+          "If I may mention {r}: unplayed since {when}.",
+        ],
+        resume: [
+          "You paused at {t}. It's ready whenever you are.",
+          "You left off at {t}, should you wish to continue.",
+        ],
+        staleFavourite: [
+          "{n} plays, though none since {when}.",
+          "A former favourite: {n} plays, the last {ago}.",
+        ],
+        favourite: [
+          "{n} plays, the last in {when}. A favourite of the house.",
+          "You've played this {n} times, most recently in {when}.",
+        ],
+        dependable: [
+          "{p} appears in this one, your {top} performer.",
+          "{p}: {m} plays across {n} of their scenes.",
+          "{p} once again. {m} plays to date.",
+        ],
+        newFace: [
+          "{p} is new to you. Perhaps an introduction is in order.",
+          "You've not yet played a {p} scene. This could be the first.",
+        ],
+        fresh: [
+          "Arrived {ago}, and not yet played.",
+          "Only arrived {ago}. Untouched.",
+        ],
+        studio: [
+          "{s} again. That studio accounts for {pct} of your plays.",
+          "Another from {s}, {pct} of what you play.",
+        ],
+        off: [
+          "Very good. I shall withdraw. Manage › Settings, should you need me.",
+          "As you wish. Manage › Settings will summon me.",
+        ],
+        topPick: [
+          "If I may, {r} is my recommendation here.",
+          "Should you watch one, might I suggest {r}.",
+          "I'd begin with {r}.",
+          "{r}, I believe, is the finest here.",
+          "Might I propose {r}.",
+        ],
+        gem: [
+          "May I also mention {r}.",
+          "{r} is also worth your attention.",
+          "Another I'd gladly suggest: {r}.",
+        ],
+        stretchOne: [
+          "{r} is a little outside your usual, offered as a change.",
+          "{r} is my more adventurous suggestion.",
+          "I took the liberty of including {r} as a stretch. Your verdict is welcome.",
+        ],
+        spotlight: [
+          "{p} appears in {r}: {m} plays across {n} of their scenes.",
+          "{r} features {p}, your {top} performer.",
+          "{r} has {p}, with {m} plays from you.",
+        ],
+        unplayedOne: [
+          "{r} has not yet been played.",
+          "You've not yet seen {r}.",
+          "{r} remains new to you.",
+        ],
+        quickOne: [
+          "{r} is a brief {m}.",
+          "{r} runs {m}.",
+        ],
+        longOne: [
+          "{r} is a full {m}.",
+          "{r} runs {m}. One to set time aside for.",
+        ],
+        performerRun: [
+          "{p} appears {n} times here.",
+          "Rather a lot of {p} in this selection: {n} scenes.",
+          "{n} featuring {p}.",
+        ],
+        regulars: [
+          "{p} is in {n} of these, your {top} performer.",
+          "{n} of these feature {p}, with {m} plays from you.",
+          "{n} with {p}, {m} plays to date.",
+        ],
+        studioRun: [
+          "A good deal of {s} here.",
+          "{s} supplies {n} of these.",
+          "This selection leans towards {s}.",
+        ],
+        unplayed: [
+          "{n} of these have not yet been played.",
+          "You've not yet seen {n} of these.",
+          "{n} of these are new to you.",
+        ],
+        replays: [
+          "You've played {n} of these before.",
+          "{n} of these are familiar.",
+        ],
+        quick: [
+          "Mostly brief ones, around {m}.",
+          "About {m} each.",
+        ],
+        long: [
+          "Longer ones, around {m} each.",
+          "These run about {m}. Do make yourself comfortable.",
+        ],
+        newest: [
+          "{r} is the newest, arrived {ago}.",
+          "The latest arrival: {r}, {ago}.",
+          "{r} arrived only {ago}.",
+        ],
+        mostPlayed: [
+          "{r}: {n} plays. A house favourite.",
+          "You've played {r} {n} times.",
+          "{r}, played {n} times. It seems to please.",
+        ],
+        freshDraw: [
+          "A fresh arrangement, with {r} on top.",
+          "I've reshuffled. {r} now leads.",
+          "Newly drawn. {r} comes first.",
+        ],
+        laneMix: [
+          "The selection: {mix}.",
+          "What I've prepared: {mix}.",
+          "In this lane: {mix}.",
+        ],
+        laneTag: [
+          "{t} accounts for much of this selection: {n} of these.",
+          "{n} of these are here partly for {t}.",
+          "{t} features strongly; it brought in {n} of these.",
+        ],
+        laneCurate: [
+          "{n} of these are here partly because you said yes to {t}.",
+          "Your yes to {t} in Curate has borne fruit: {n} of these.",
+          "You mentioned a liking for {t}, and {n} of these reflect it.",
+        ],
+        laneContentOnly: [
+          "{n} of these feature no one you follow. They're here on their content.",
+          "For {n} of these the cast is unfamiliar; I chose them for what they contain.",
+        ],
+        laneCast: [
+          "This selection is chiefly about its cast: {n} of these are here for a performer you watch.",
+          "The performers carry {n} of these.",
+        ],
+        whyPerformer: [
+          "Chiefly {p}.",
+          "That would be {p}.",
+          "It's here for {p}.",
+        ],
+        whyTags: [
+          "The content: {t} and {t2}.",
+          "{t} and {t2}, chiefly.",
+          "Mostly {t}, with {t2}.",
+        ],
+        whyBoth: [
+          "{p}, and it has {t}.",
+          "{p} and {t} together.",
+          "{p} in a {t} scene.",
+        ],
+        whyStudio: [
+          "{s} seldom disappoints you.",
+          "Chiefly because it's {s}.",
+        ],
+        hookPerformer: [
+          "The attraction is {p}.",
+          "{p} is the draw.",
+        ],
+        hookTags: [
+          "The attraction is {t}, with {t2}.",
+          "{t} and {t2} are the draw.",
+        ],
+        hookBoth: [
+          "The attraction: {p}, with {t}.",
+          "{p} and {t} are the draw.",
+        ],
+        hookStudio: [
+          "The attraction is {s}.",
+          "{s} is the draw.",
+        ],
+        whyReplay: [
+          "You've played it {n} times.",
+          "{n} plays to date.",
+        ],
+        newWith: [
+          "{n} new since your last visit, one with {p}.",
+          "{p} is in one of the {n} new arrivals.",
+          "If I may: the new arrivals include some {p}.",
+        ],
+        followWatched: [
+          "You watched {r} after I mentioned it {when}. I'm glad.",
+          "I suggested {r} {when}, and you took it up.",
+          "{r} was played following my note {when}. Very good.",
+        ],
+        followReplayed: [
+          "{r}: {n} plays since I mentioned it {when}. It seems to have suited.",
+          "You've played {r} {n} times since my suggestion {when}.",
+        ],
+        followPartial: [
+          "{r} was stopped {at}. The remainder is there whenever you like.",
+          "{r} was set aside {at}. No matter.",
+          "I mentioned {r} {when}; it was stopped {at}.",
+        ],
+        followPassed: [
+          "I've suggested {r} {n} times without success. I shan't raise it again.",
+          "{r} doesn't appear to suit: {n} mentions, no play. I'll leave it be.",
+        ],
+        expandRegular: [
+          "{p} is in {n} of these. None in your library yet.",
+          "{n} with {p} not yet in your library. One of your regulars.",
+          "Further {p}: {n} here.",
+        ],
+        expandSpotlight: [
+          "{r} features {p}, and isn't in your library yet.",
+          "{p} appears in {r}. One of your regulars.",
+        ],
+        expandFavourite: [
+          "{n} here with {p}, a favourite of yours.",
+          "Your favourite {p} appears {n} times.",
+        ],
+        expandUnwatched: [
+          "You have {p} in your library but haven't played them. {r} may be an occasion.",
+          "{p} is in your library, unplayed. {r} could be a start.",
+        ],
+        expandStudio: [
+          "{s} has {n} here not yet in your library.",
+          "{n} from {s}, a studio you watch often.",
+        ],
+        expandNewRelease: [
+          "{r} was released only {ago}.",
+          "A new release: {r}, out {ago}.",
+        ],
+        expandRecent: [
+          "{n} of these were released in the last month.",
+          "{n} released in the last 30 days.",
+        ],
+        expandDeepCut: [
+          "{r} dates from {y}.",
+          "An older title: {r}, from {y}.",
+        ],
+        whisparrRun: [
+          "{n} of these are already with Whisparr.",
+          "Whisparr is attending to {n} of these.",
+        ],
+        whisparrArrived: [
+          "{r} has arrived in your library. You sent for it {when}.",
+          "You requested {r} {when}. It's now in your library.",
+        ],
+        whisparrWaiting: [
+          "{n} scenes you sent for are still outstanding. The oldest went out {when}.",
+          "{n} requests remain outstanding; the first went out {when}.",
+        ],
+        whisparrBest: [
+          "{r} is the outstanding request best suited to you ({s}).",
+          "Of everything outstanding, {r} suits you most: {s}.",
+        ],
+        whisparrGrabbed: [
+          "{n} have downloaded in Whisparr but aren't yet matched in Stash. A scan, then Identify, should see to it.",
+          "Whisparr holds files for {n} that Stash hasn't matched. If I may suggest a scan, then Identify.",
+        ],
+        similarEmpty: [
+          "Choose a scene you enjoy, and I'll find its relations.",
+          "Show me one you like, and I'll find more of the same.",
+        ],
+        seedLoved: [
+          "{n} plays on the original. An excellent place to start.",
+          "You've played that one {n} times. I quite understand wanting more.",
+        ],
+        seedUnplayed: [
+          "You've not yet played the original, but its relations may interest you.",
+          "The original is unplayed. Here are its nearest relations.",
+        ],
+        sharedPerformer: [
+          "{n} of these share {p} with the original.",
+          "{p} appears again in {n} of them.",
+        ],
+        sameStudio: [
+          "{n} from {s}, like the original.",
+          "{s} again for {n} of these.",
+        ],
+        closest: [
+          "{r} is the closest match, though not at the top.",
+          "The nearest match is {r}. Your taste placed others above it.",
+        ],
+        huntEmpty: [
+          "Name a performer, and I'll see what your library lacks.",
+          "Whom shall I look for?",
+        ],
+        huntOwned: [
+          "You have {own} of {p}'s {n} scenes.",
+          "{own} of {n} {p} scenes are already in your library.",
+        ],
+        huntNone: [
+          "None of {p}'s {n} scenes are in your library yet.",
+          "{n} {p} scenes, none of them yours as yet.",
+        ],
+        huntComplete: [
+          "Your library holds every {p} scene listed. Complete.",
+          "All {n}, already in your library.",
+        ],
+        huntRecent: [
+          "{n} {p} scenes from the last year.",
+          "{p} has been active: {n} this past year.",
+        ],
+        huntFirst: [
+          "{p}'s earliest here dates from {y}.",
+          "This goes back as far as {y}.",
+        ],
+        huntRegular: [
+          "{p} is one of your regulars, {m} plays. Quite understandable.",
+          "Naturally, {p}: {m} plays across {n} of their scenes.",
+        ],
+        favouriteNote: [
+          "{p} is one of your favourites.",
+          "Features your favourite, {p}.",
+        ],
+        whisparrNote: [
+          "Already sent to Whisparr.",
+          "Whisparr is attending to this.",
+        ],
+        ownedNote: [
+          "Already in your library.",
+          "This one is yours already.",
+        ],
+        releasedNote: [
+          "Released only {ago}.",
+          "Out {ago}. Quite new.",
+        ],
+        oldNote: [
+          "From {y}.",
+          "This one dates from {y}.",
+        ],
+        calledLike: [
+          "{t}, as I'd supposed.",
+          "Very good. {t}.",
+          "{t}, as anticipated.",
+        ],
+        calledDislike: [
+          "As I'd supposed, {t} isn't to your liking.",
+          "Very good. Less {t}.",
+        ],
+        answerSurprise: [
+          "I had {t} the other way round. My apologies. Noted.",
+          "I'd misjudged {t}. Thank you.",
+          "That's new to me about {t}. Thank you.",
+        ],
+        answerBlocked: [
+          "Very good. No more {t}.",
+          "{t} has been removed from your picks.",
+        ],
+        taughtMilestone: [
+          "{n} answers. Most helpful.",
+          "{n} so far. Do continue, if you wish.",
+          "{n} answers this visit. Your picks will be the better for it.",
+        ],
+        reasonFlip: [
+          "I had that one the other way round. Thank you for the correction.",
+          "Quite right. I'd misread that scene.",
+        ],
+        reasonRich: [
+          "{n} reasons. Most thorough.",
+          "Plenty to go on. Thank you.",
+        ],
+        scenePairing: [
+          "A promising one: {p} and {t}. You've played {n} scenes with precisely that pairing.",
+          "{p} with {t}, a pairing you've chosen {n} times.",
+          "{p} and {t}. {n} like it already played. I expect it will suit.",
+        ],
+        scenePerformerStudio: [
+          "{p} with {s}, both reliable choices for you: {n} of {pf}'s scenes played, {m} plays for the studio.",
+          "{p} and {s} together. {n} {pf} scenes played and {m} plays for the studio. Promising.",
+        ],
+        sceneTagNeighbor: [
+          "More {t}, and the closest match to {r}, which you've played {n} times.",
+          "If {r} pleased you, as {n} plays suggest, this is very much of a kind. {t} also.",
+        ],
+        sceneTagRun: [
+          "{n} {t} scenes in the last two weeks, and this one adds {p}.",
+          "{t}: {n} in the last two weeks. This one has {p} as well.",
+        ],
+        scenePerformerRun: [
+          "{p}: {n} in the last two weeks. This would sit comfortably alongside.",
+          "{n} {p} scenes in the last two weeks. Here is another, should you wish.",
+        ],
+        sceneRecentNeighbor: [
+          "You watched {r} {when}. This is its closest match in your library.",
+          "If {r} pleased you {when}, this is its nearest match.",
+        ],
+        sceneSatiated: [
+          "Ordinarily this would rank highly, but you've had {n} {p} scenes recently, so I've eased it down for variety.",
+          "{p} is usually a safe choice. After {n} recent plays, I've set this aside a little.",
+        ],
+        sceneCooldown: [
+          "You watched this {when}, so I'm letting it rest before suggesting it again.",
+          "Played {when}. It's resting for the moment.",
+        ],
+        sceneNotNow: [
+          "You said 'not now' to this {when}. I've set it aside for a while.",
+          "'Not now', you said, {when}. It's set aside.",
+        ],
+        sceneNotNowPlain: [
+          "You said 'not now' to this one, so I've set it aside for a while.",
+          "As you asked, 'not now'. It's set aside.",
+        ],
+        sceneHistoryBeats: [
+          "On paper this shouldn't suit you, yet {n} plays say it clearly does.",
+          "Its tags and cast wouldn't recommend it. Your {n} plays do.",
+        ],
+        sceneHistoryLags: [
+          "{x} suggests this ought to suit you, but your history with it says otherwise.",
+          "I'd expected this to please because of {x}. Your plays suggest not.",
+        ],
+        sceneNewFace: [
+          "{p} is new to you, but much like {q}, and you've played {n} of {qf}'s scenes. Perhaps worth an introduction.",
+          "You've not seen {p}? They're close to {q}, and you've played {n} of {qf}'s scenes.",
+        ],
+        sceneRadar: [
+          "I confess this one is unfamiliar. None of its {k} performers has a play from you, nor anything from {s}.",
+          "New ground: no plays from you for any of its {k} performers, or for {s}.",
+        ],
+        sceneRadarPlain: [
+          "I confess this one is unfamiliar. None of its {k} performers has a play from you yet.",
+          "New ground: none of its {k} performers has a play from you.",
+        ],
+        sceneRadarOne: [
+          "I confess this one is unfamiliar. You've never played a {p} scene, nor anything from {s}.",
+          "New ground: no {p}, and nothing from {s}, in your plays as yet.",
+        ],
+        sceneRadarOnePlain: [
+          "I confess this one is unfamiliar. You've never played a {p} scene.",
+          "New ground: no {p} in your plays yet.",
+        ],
+        scenePerformer: [
+          "A promising one. {p} is in {n} scenes you've already played.",
+          "A straightforward suggestion: {p} has {m} plays from you.",
+        ],
+        sceneTag: [
+          "There's {t} in this, which is on {pct} of what you watch. I expect it will suit.",
+          "{t} again. It's on {pct} of the scenes you watch, so it should please.",
+        ],
+        sceneStudio: [
+          "{s} has a fine record with you, {m} plays. This should serve.",
+          "Another from {s}. {m} plays to date; a safe choice.",
+        ],
+        sceneNeighbor: [
+          "If {r} pleased you, as {n} plays suggest, this one is very much of a kind.",
+          "This is close to {r}, which you've played {n} times.",
+        ],
+        sceneResume: [
+          "Returning to it? You paused at {t}.",
+          "Resuming at {t}, perhaps?",
+        ],
+        sceneReplay: [
+          "{n} plays, the last {when}. Perhaps due another.",
+          "{n} plays to date, the last {when}. A house favourite.",
+        ],
+        sceneCarriedPerformer: [
+          "If I'm candid, {p} carries this one. Without them it wouldn't make my list.",
+          "This is a {pf} suggestion, purely.",
+          "It's {p}. That is the whole of it; the rest is unremarkable for you.",
+        ],
+        sceneDespite: [
+          "You declined {x}, and it's present here. I mention it solely for {p}.",
+          "There's {x}, which you've said you'd rather not. I raise it only for {p}.",
+        ],
+        sceneCarriedContent: [
+          "It isn't the cast. {t} and {t2} earn this its place.",
+          "No one here is a draw for you yet. The appeal is {t}, with {t2}.",
+          "I'm suggesting it on content: {t} and {t2}. The cast is unfamiliar.",
+        ],
+        sceneTwin: [
+          "Very nearly {r} again: {t}, {t2}, {t3}.",
+          "Much the same as {r}: {t} and {t2}, and that one suited.",
+          "If {r} pleased you, this is its twin. The same {t}, the same {t2}.",
+        ],
+        sceneSplit: [
+          "Two things recommend it, about equally: {p}, and the content, chiefly {t} and {t2}.",
+          "Half {p}, half content: {t}, {t2}.",
+        ],
+        sceneSaidRarely: [
+          "You've said you like {t}, though you seldom choose it. This one has it, should you wish to try.",
+          "{t} is in this. You said yes to it; your plays show it less.",
+        ],
+        sceneSaidMeant: [
+          "You said yes to {t}, and your plays bear that out. It's in this one.",
+          "{t}: stated, and confirmed by your plays. It's here.",
+        ],
+        sceneHeldBack: [
+          "One thing holds this back: {x}. Otherwise it suits you well.",
+          "I'd rank this higher but for {x}.",
+        ],
+        sceneCrowd: [
+          "{k} performers is usually rather more than you prefer, so I've held it back slightly.",
+          "A {k}-performer scene. Those seldom suit you, if I may say.",
+        ],
+        sceneFavouriteLukewarm: [
+          "You favourited {p}, though you seldom play them. The favourite does most of the work here.",
+          "{p} is a favourite in name. Your plays are cooler, so I'd not count on this.",
+        ],
+        sceneFavouriteBacked: [
+          "You favourited {p}, and your plays agree.",
+          "{p}: a favourite, and genuinely enjoyed.",
+        ],
+        scenePairingMild: [
+          "{p} and {t}, a pairing you've played {n} times. Perhaps worth a look.",
+          "{p} with {t}: chosen {n} times before. It may suit.",
+        ],
+        scenePerformerStudioMild: [
+          "{p} with {s}: {n} of {pf}'s scenes played, {m} plays for the studio. Perhaps worth a try.",
+          "{p} and {s}. A reasonable prospect.",
+        ],
+        sceneTagNeighborMild: [
+          "Closest to {r}, which you've played {n} times, and it has {t}. It may suit.",
+          "Akin to {r} ({n} plays), with {t}. Perhaps.",
+        ],
+        scenePerformerMild: [
+          "{p} is in {n} scenes you've played, so this may be worth a look.",
+          "{p}: {m} plays. Not certain, but promising.",
+        ],
+        sceneTagMild: [
+          "There's {t} in this, on {pct} of what you watch. It may suit.",
+          "{t}, on {pct} of your watching. Perhaps.",
+        ],
+        sceneStudioMild: [
+          "{s} has {m} plays from you. Perhaps worth a try.",
+          "From {s}, {m} plays. It may suit.",
+        ],
+        sceneNeighborMild: [
+          "Close to {r}, which you've played {n} times. It may suit.",
+          "Akin to {r}, {n} plays. Perhaps.",
+        ],
+        sceneMixedPerformer: [
+          "{p} is in its favour, {m} plays, but it has {t}, which seldom suits you. I'm undecided.",
+          "{p}, {m} plays, for; {t} against. It could go either way.",
+        ],
+        sceneMixedTag: [
+          "There's {t}, which you enjoy, and {x}, which you usually pass over. I'm undecided.",
+          "{t} for, {x} against. Difficult to say.",
+        ],
+        sceneDoubtPerformer: [
+          "{p} is in its favour, {m} plays, but otherwise it isn't much like what you watch. I have my doubts.",
+          "{p}, {m} plays. Beyond that, not your usual.",
+        ],
+        sceneDoubt: [
+          "I have my doubts: {x} usually isn't to your liking.",
+          "If I may, I'd hesitate. There's {x}, and that seldom suits you.",
+        ],
+        sceneDoubtPlain: [
+          "I have my doubts about this one. Little in it matches what you watch.",
+          "Not an obvious choice for you, I'm afraid.",
+        ],
+        sceneFresh: [
+          "Arrived {ago}, and not yet played.",
+          "Added {ago}. New to you.",
+        ],
+        performerUsual: [
+          "With {pf}, you tend to choose the {t} scenes: {a} of those you've played, against {b} of the rest.",
+          "Your preference with {p}: {t}. That's {a} of the scenes you've played, but {b} of the others.",
+        ],
+        performerStreak: [
+          "{n} {pf} scenes played this week.",
+          "{pf}: {n} plays this week.",
+        ],
+        performerRegular: [
+          "One of your regulars: {n} scenes and {m} plays.",
+          "A familiar name: {m} plays across {n} {pf} scenes.",
+        ],
+        performerGoTo: [
+          "Your preferred {pf} scene is {r}, {k} plays.",
+          "For {pf}, it's often {r}: {k} plays.",
+        ],
+        performerCoStar: [
+          "With {pf}, you tend to choose the scenes with {q}: {a} of those you've played, against {b} of the rest.",
+          "{pf} and {q} seem to be a pairing you favour: {a} of the {pf} scenes you've played, but {b} of the others.",
+        ],
+        performerStudio: [
+          "You tend to watch {pf} in {s} scenes: {a} of those you've played, against {b} of the rest.",
+          "{s} is where you prefer {pf}: {a} of your {pf} plays, {b} of the rest.",
+        ],
+        performerLast: [
+          "Your last {pf} scene was {r}, {when}.",
+          "Most recently: {r}, {when}.",
+        ],
+        performerBacklog: [
+          "A good deal left with {pf}: {u} of their {all} scenes are unplayed.",
+          "{u} {pf} scenes you've not yet seen.",
+        ],
+        performerWaiting: [
+          "You've played {n} of {p}'s scenes, and {more} still waiting, {newest} added {ago}.",
+          "{waiting} still unplayed, including {one} added {ago}.",
+        ],
+        performerIdleFavourite: [
+          "You favourited {p}. The last play was {when}, and {waiting} unplayed.",
+          "{p} is a favourite, last played in {since}. {waiting} unplayed.",
+        ],
+        performerUnplayedFavourite: [
+          "You favourited {p}, though none of their {all} scenes has been played yet.",
+          "{p}: a favourite with {all} scenes, none yet played.",
+        ],
+        performerDormant: [
+          "You've not watched {p} since {since}, some {d} months.",
+          "{d} months since your last {pf} scene, after {m} plays.",
+        ],
+        performerSimilar: [
+          "You haven't seen {p}, but you've played {n} of {q}'s scenes, and they're much alike.",
+          "New to you, but {p} is close to {q}, and you've played {n} of {qf}'s scenes. Perhaps worth an introduction.",
+        ],
+        performerTrait: [
+          "{trait} appear {x}× as often in whom you watch, and you've played {n} of {pf}'s scenes. Quite understandable.",
+          "{trait} feature {x}× as often in whom you watch as in your library. {p} fits, and {n} plays agree.",
+        ],
+        performerBlank: [
+          "I know little of {p} as yet: no plays from their {all} scenes, and no one similar that you watch.",
+          "{p} is new to me. None of their {all} scenes has a play from you; the first will tell me a great deal.",
+        ],
+        insightTop: [
+          "{t} is your constant: it's on {pct} of the {n} scenes you've watched.",
+          "At the top, comfortably: {t}, on {pct} of everything you've watched.",
+        ],
+        insightRising: [
+          "{t} is rising: from {a} to {b} of what you watch lately.",
+          "{t} is climbing, {a} to {b} of your watching in the last 90 days.",
+        ],
+        insightFading: [
+          "{t} has receded, from {a} to {b}.",
+          "Less {t} of late: {a} before, {b} in the last 90 days.",
+        ],
+        insightApart: [
+          "{t} is only {a} of your library but {b} of what you watch. You seek it out.",
+          "You look for {t}: {b} of what you watch, from {a} of your library.",
+        ],
+        insightPassed: [
+          "{t} makes up {a} of your library, and only {b} of what you watch.",
+          "A good deal of {t} on the shelves, {a}, and just {b} of your plays.",
+        ],
+        insightAgrees: [
+          "You said yes to {t}, and meant it: it's on {pct} of what you watch.",
+          "{t}: your stated taste, confirmed by {pct} of what you watch.",
+        ],
+        insightDormant: [
+          "{p} was once a regular: {n} plays, none since {since}.",
+          "{p}: {n} plays, the last {when}.",
+        ],
+        insightRediscovered: [
+          "You returned to {r} after {m} months. Some things endure.",
+          "{m} months away, then back to {r}.",
+        ],
+        insightWords: [
+          "You've chosen {x} {n} times in Why these? as what makes a scene work.",
+          "{x}, {n} times in your Why these? answers. Duly noted.",
+        ],
+        insightCoverage: [
+          "You've watched {n} of your {all} scenes. A great deal remains.",
+          "{n} of {all} scenes watched, {pct} of your library.",
+        ],
+        insightPeak: [
+          "{t} peaked at {pct} of your watching in the three months to {when}.",
+          "{t} at its height: {pct}, in the quarter to {when}.",
+        ],
+        insightPeakNow: [
+          "{t} is at its peak just now: {pct} of what you've watched lately.",
+          "Never more {t} than now: {pct} of the last three months.",
+        ],
+        standBy: [
+          "If I may, I still recommend {r}.",
+          "{r} once more, should you be inclined.",
+          "I remain of the view that {r} is a fine choice.",
+        ],
+        rankedOne: [
+          "{p} won {n} matches in your ranking {when}. {r} features them, should it please you.",
+          "Your ranking {when} favoured {p}, with {n} wins. Might I suggest {r}?",
+          "{p}, {n} wins {when}. {r} awaits.",
+        ],
+        performerRanked: [
+          "{n} wins in your ranking {when}, if I may observe.",
+          "{pf} won {n} matches in your ranking {when}.",
+          "A strong showing {when}: {n} wins.",
+        ],
+        oldestOne: [
+          "{r} is the eldest here, from {y}.",
+          "Something from the archives: {r}, {y}.",
+          "{r} dates from {y}, should a classic appeal.",
+        ],
+        topRated: [
+          "{r}, which you rated {k}, is the finest here.",
+          "You rated {r} {k}. Nothing here ranks higher.",
+          "The highest rated on this shelf: {r}, {k}.",
+        ],
+        performerShortest: [
+          "Should time be short, {r} runs {m}.",
+          "{r} is only {m}, and as yet unplayed.",
+          "The shortest {pf} scene you've not seen: {r}, {m}.",
+        ],
+        newStudio: [
+          "{n} of the new arrivals are from {s}.",
+          "{s} has been generous: {n} of the new scenes.",
+          "If I may: {n} of the new ones come from {s}.",
+        ],
+        feedbackUp: [
+          "Very good. I'll find more of the same.",
+          "Noted, with pleasure.",
+          "Excellent. More along those lines.",
+        ],
+        feedbackDown: [
+          "Very good. I'll see to fewer of those.",
+          "Noted. It won't be pressed upon you.",
+          "Understood entirely.",
+        ],
+        feedbackNotNow: [
+          "Of course. I'll put it aside for now.",
+          "Certainly. Another time.",
+          "Set aside, as you wish.",
+        ],
+        feedbackNever: [
+          "Very good. It shall not return.",
+          "Disposed of, discreetly.",
+          "As you wish. Removed for good.",
+        ],
+      },
+      joined: {
+        topPick: [
+          "If I may, {r}, because {c}.",
+          "Might I suggest {r}: {c}.",
+          "{r}, I believe, is the finest here: {c}.",
+          "Should you watch one, I'd suggest {r}. Why? {c}.",
+        ],
+        gem: [
+          "May I also mention {r}: {c}.",
+          "Another I'd gladly suggest is {r}, as {c}.",
+        ],
+        stretchOne: [
+          "{c}, so I took the liberty of including {r}.",
+          "{r} is a little outside your usual, but {c}.",
+        ],
+        unplayedOne: [
+          "{r} has not yet been played, and {c}.",
+          "You've not yet seen {r}, and {c}.",
+        ],
+        freshDraw: [
+          "A fresh arrangement, with {r} on top: {c}.",
+          "I've reshuffled. {r} now leads, and {c}.",
+        ],
+        revisitFact: [
+          "{r} was last played {ago}, and {c}.",
+          "{r} hasn't been played since {when}, and {c}.",
+        ],
+      },
+      clauses: {
+        whyPerformer: [
+          "{p} is in it",
+          "it features {p}",
+          "it has {p}",
+        ],
+        whyTags: [
+          "it has {t} and {t2}",
+          "{t} and {t2} both feature",
+        ],
+        whyBoth: [
+          "it's {p} in a {t} scene",
+          "it has {p} and {t}",
+        ],
+        whyStudio: [
+          "it's from {s}",
+          "{s} seldom disappoints you",
+        ],
+        whyReplay: [
+          "you've played it {n} times",
+          "it has {n} plays from you",
+        ],
+        hookPerformer: [
+          "{p} is the draw",
+          "the attraction is {p}",
+        ],
+        hookTags: [
+          "{t} and {t2} are the draw",
+          "the attraction is {t} with {t2}",
+        ],
+        hookBoth: [
+          "{p} and {t} are the draw",
+          "the attraction is {p} with {t}",
+        ],
+        hookStudio: [
+          "{s} is the draw",
+          "the attraction is {s}",
+        ],
+      },
+      lines: {
+        dependable: [
+          "{w}. Very good.",
+          "{w}, as one might expect.",
+          "{w}. Quite so.",
+          "{w}. A familiar choice.",
+          "{w}, naturally.",
+          "{w}. Your history made that a simple matter.",
+          "Very good. {w}.",
+          "{w}. A reliable favourite.",
+          "{w}, as ever.",
+          "{w}. Entirely in keeping.",
+        ],
+        agree: [
+          "{w}, narrowly. In keeping with your viewing.",
+          "{w}, by a small margin. Quite right.",
+          "That matches your history, if only just.",
+          "{w}. Your viewing leans the same way.",
+          "{w}, though {l} made a good showing.",
+          "A fine margin, but {w}.",
+          "{w}. A slight preference, as I'd understood.",
+          "Very good. {w}, by a hair.",
+        ],
+        close: [
+          "Too close for me to call. Thank you for settling it.",
+          "Your history had them level. Now I know.",
+          "A fine distinction. {w}, noted.",
+          "Your viewing couldn't separate them either.",
+          "I couldn't tell them apart. Most helpful.",
+          "{w} and {l} appeared equal in your history. No longer.",
+          "Level by my reckoning. {w}, then.",
+          "You watch both about equally. A useful tiebreak.",
+        ],
+        surprise: [
+          "Interesting. Your viewing leans {l}. Noted.",
+          "I'd have supposed {l}. Noted.",
+          "Not quite what your history suggested.",
+          "{w} over {l}. I'll make a note.",
+          "I had {l} slightly ahead.",
+          "A small surprise. Duly noted.",
+          "{w}. I'll adjust accordingly.",
+          "If I may say, that's useful. It refines my picture.",
+        ],
+        twist: [
+          "I'd understood you to prefer {l}. My mistake.",
+          "Rather a surprise. I was fairly sure of {l}.",
+          "Your history favours {l} considerably. Most interesting.",
+          "That revises a few of my assumptions.",
+          "I shall revise my notes on {l}.",
+          "Not what your viewing suggested. Most instructive.",
+          "My notes said {l}, but you know best.",
+          "I'd have wagered on {l}. Just as well I didn't.",
+        ],
+        unknown: [
+          "I'm not acquainted with either. Your choice is all I have.",
+          "Two new names. Noted.",
+          "Unfamiliar to me. I'll take your word.",
+          "No history on either. {w}, noted.",
+          "A first impression: {w}.",
+          "Nothing on these two as yet. That's changing.",
+          "A pleasure to make your acquaintance, {w}.",
+          "New names. {w}, first.",
+        ],
+        hunchHit: [
+          "I'd supposed {w} from similar performers. Quite right.",
+          "Only a supposition, but {w} seemed to suit you.",
+          "{w} resembles performers you enjoy. Confirmed.",
+          "My instinct said {w}. Rightly.",
+          "A guess, and a fortunate one.",
+          "{w} recalls your favourites. It follows.",
+        ],
+        hunchMiss: [
+          "I'd only supposed {l} from similar performers. Overruled.",
+          "My supposition about {l} was mistaken. Noted.",
+          "{l} isn't to your taste after all. Good to know.",
+          "So much for my guess about {l}.",
+          "{l} seemed suitable on paper. Apparently not.",
+          "It was only a guess about {l}.",
+        ],
+        underdog: [
+          "{w}? You've seldom watched {w}. Interesting.",
+          "An outsider wins. {w} barely appears in your history.",
+          "{w} over {l}, whom you actually watch? Noted.",
+          "Perhaps I ought to show you more {w}. Noted.",
+          "A dark horse: {w}.",
+          "{w}. Your viewing suggests otherwise, but I'm listening.",
+        ],
+        traitWin: [
+          "Quite so. You do like {t}.",
+          "{w}, and you've a fondness for {t}.",
+          "Your history is rich in {t}. {w} belongs.",
+          "{t} tend to win you over.",
+          "When it comes to {t}, your preference is clear.",
+          "{t}, as is your custom.",
+        ],
+        traitClose: [
+          "A close thing. I suspect {t} decided it.",
+          "Level, but you do favour {t}.",
+          "A narrow call. The {t}, I expect.",
+          "Difficult to separate, but {t} usually prevail with you.",
+        ],
+        traitBranch: [
+          "Interesting. You don't usually favour {t}.",
+          "{t} are rare in your history. Noted.",
+          "A change: {t}. Noted.",
+          "{t}. Not your custom, but very good.",
+        ],
+        traitPass: [
+          "{t} usually win you over. Not on this occasion.",
+          "Passing on {l}? You usually favour {t}.",
+          "{l} is one of your {t}, and still lost. Interesting.",
+          "You normally lean towards {t}. Noted.",
+        ],
+        draw: [
+          "A draw. Very fair.",
+          "Equal in your estimation. Noted for both.",
+          "A tie. I'll regard them equally.",
+          "Level. Noted.",
+        ],
+        undo: [
+          "Very good. Struck out.",
+          "As you wish. Undone.",
+          "A change of heart? Quite all right.",
+          "We'll say no more about it.",
+          "Rewound. Take your time.",
+          "Withdrawn.",
+        ],
+        undoSurprise: [
+          "Struck out. That one did surprise me.",
+          "Back to my original view of {w}, then.",
+          "Withdrawn. I was rather puzzled by it.",
+          "Undone. A surprise, in any case.",
+        ],
+        undoAgreed: [
+          "Struck out, though I'd read that one correctly.",
+          "Withdrawn. {w} seemed very much your choice.",
+          "Rewound. I'd have kept it, but as you wish.",
+          "As you wish. I'll await your new choice.",
+        ],
+      },
+      kickers: {
+        opener: [
+          "A ranking. I'll take notes, if I may.",
+          "Let's see how well I know your taste.",
+          "Please, proceed.",
+          "I'm at your disposal.",
+          "Whenever you're ready.",
+          "Notebook in hand.",
+        ],
+        night: [
+          "Please, proceed.",
+          "Whenever you're ready.",
+          "Notebook in hand.",
+        ],
+        morning: [
+          "Good morning. Whenever you're ready.",
+          "Good morning. Please, proceed.",
+          "Good morning. Notebook in hand.",
+        ],
+        afternoon: [
+          "Good afternoon. Whenever you're ready.",
+          "Good afternoon. Please, proceed.",
+          "Good afternoon. Notebook in hand.",
+        ],
+        evening: [
+          "Good evening. Whenever you're ready.",
+          "Good evening. Please, proceed.",
+          "Good evening. Notebook in hand.",
+        ],
+        milestone: [
+          "{n} matches. Most helpful.",
+          "{n} matches. My notes are filling nicely.",
+          "{n} so far. Do continue.",
+          "{n} already. Very good.",
+          "That's {n}. Splendid.",
+          "{n} matches. A rich picture.",
+        ],
+        streak: [
+          "{n} in a row. I believe I'm reading you well.",
+          "{n} straight in agreement.",
+          "{n} for {n}.",
+          "Another. That's {n} straight.",
+          "{n} in a row. Very gratifying.",
+          "{n} consecutively.",
+        ],
+        broken: [
+          "The run ends at {n}. Back to my notes.",
+          "There goes my {n}-pick streak.",
+          "{n} in a row, and then this. Fair.",
+          "The {n}-streak is over. Still learning.",
+          "{n} was pleasant while it lasted.",
+        ],
+        puzzled: [
+          "{n} surprises in a row. You keep me attentive.",
+          "{n} unexpected choices running. Many notes.",
+          "{n} in a row. I've much to learn.",
+          "{n} surprises running. Most instructive.",
+        ],
+        reunion: [
+          "Back in agreement.",
+          "In accord once more.",
+          "Reading you correctly again.",
+          "Order restored.",
+        ],
+        rematch: [
+          "The same result as last time. Consistent.",
+          "{w} over {l} again. A firm preference.",
+          "Rematch, same verdict. Noted twice.",
+        ],
+        flip: [
+          "You chose {l} last time.",
+          "A change of heart since last round? {w} now.",
+          "A reversal. {l} won this pairing before.",
+          "{w} has its turn.",
+        ],
+        roll: [
+          "{w} is in fine form: {n} wins.",
+          "{w} again. That's {n}.",
+          "{n} wins for {w} already.",
+          "{w} continues: {n} and counting.",
+          "Is anyone to stop {w}? {n} wins.",
+          "{w}, {n} wins. Formidable.",
+        ],
+        cheer: [
+          "Most helpful.",
+          "Each choice refines my picture of your taste.",
+          "I'm learning a great deal.",
+          "Your recommendations will be the better for this.",
+          "Very good. Do continue.",
+          "Splendid.",
+        ],
+        theme: [
+          "That's {n} {t} in a row. A theme, I think.",
+          "{t} again. {n} straight.",
+          "{n} {t} in a row. Your preference is clear.",
+        ],
+        upset: [
+          "An upset. {w} was {d} points behind {l}.",
+          "{w} beats a {d}-point favourite. Bold.",
+          "A {d}-point outsider takes it.",
+        ],
+      },
+      wrap: {
+        championKnown: [
+          "{c} takes the crown. As I'd anticipated.",
+          "The winner is {c}, and your history agrees.",
+          "{c} wins outright. Very much as expected.",
+          "Crowned: {c}. A worthy champion.",
+        ],
+        championDark: [
+          "{c} wins. A true dark horse in your history.",
+          "Champion {c}. You seldom watch {c}. Duly noted.",
+          "{c} takes it. Quite unexpected.",
+          "A surprise champion: {c}. I shall show you more.",
+        ],
+        championNew: [
+          "{c} wins, and I scarcely know {c}. A fine first clue.",
+          "Champion {c}, almost unknown to me. Noted.",
+        ],
+        placement: [
+          "That's where {c} finishes. Noted.",
+          "{c}'s run concludes. A fair placing.",
+          "The run is done for {c}. Thank you.",
+        ],
+        syncHigh: [
+          "I read {a} of your {j} choices correctly. We understand one another.",
+          "{a} of {j} called correctly. I know your taste rather well.",
+        ],
+        syncMid: [
+          "I read {a} of your {j} choices correctly. Improving.",
+          "{a} of {j} right, with some welcome surprises.",
+        ],
+        syncLow: [
+          "Only {a} of {j} right this time. Most instructive.",
+          "{a} of {j}. Plenty of new notes, which is all to the good.",
+        ],
+        syncNone: [
+          "Mostly unfamiliar performers this run. Thank you for the introductions.",
+          "I scarcely knew these performers. Now I know a little more.",
+        ],
+        surprises: [
+          "You surprised me with {s}. I'll take those into account at my next model update.",
+          "The surprises: {s}. Noted for my next update.",
+          "{s} caught me unawares. I'll account for them next update.",
+        ],
+        theme: [
+          "The theme of this run: {t} ({n} of {m} winners).",
+          "{t} prevailed: {n} of {m} winners.",
+          "A clear pattern: {n} of {m} winners were {t}.",
+        ],
+        mostWins: [
+          "Most wins: {w}, with {n}.",
+          "{w} had the most distinguished run: {n} wins.",
+          "The standout: {w}, {n} wins.",
+        ],
+      },
+      facts: {
+        factPlays: [
+          "You've played {w}'s scenes {wp} times. A simple matter.",
+          "{wp} plays of {w} in your history. That settles it.",
+          "{w}: {wp} plays across {ws} scenes.",
+          "{w}, {wp} plays and counting. Naturally.",
+          "{ws} of {w}'s scenes in your history. No contest.",
+        ],
+        factOs: [
+          "{w}'s scenes have {wo} O's in your history. Enough said.",
+          "{wo} O's with {w}. The verdict was clear.",
+          "With {wo} O's to their name, {w} was always likely to win.",
+        ],
+        factRecent: [
+          "You watched {w} only {wago}.",
+          "{w}, last enjoyed {wago}. Consistent.",
+          "{w} again, following a viewing {wago}.",
+        ],
+        factContrast: [
+          "{l} has {lp} plays in your history, {w} {wpp}. Interesting.",
+          "{w} over {l}, whom you've played {lp} times? Noted.",
+          "{lp} plays of {l}, and still {w}. Instructive.",
+          "Your history says {l} ({lp} plays). You say {w}. Noted.",
+        ],
+        factStale: [
+          "You haven't watched {l} since {lwhen}. Perhaps that explains it.",
+          "{l}'s last play was {lwhen}. Tastes change.",
+          "No {l} since {lwhen}, so this follows.",
+        ],
+        factClose: [
+          "{wp} plays of {w}, {lp} of {l}. No wonder it was close.",
+          "Level in your history too: {wp} plays against {lp}.",
+          "{w} {wp}, {l} {lp} in plays. A fair contest.",
+        ],
+        factUnwatched: [
+          "{w} it is. {wu} of their scenes are still unplayed, if I may mention it.",
+          "{wu} unplayed {w} scenes await in your library.",
+          "There are {wu} {w} scenes you've not yet seen.",
+          "Should you want more: {wu} {w} scenes, unplayed.",
+          "{w} has {wu} scenes in your library you've never played.",
+        ],
+        factStudio: [
+          "Most of your {w} plays are {studio} scenes. A favoured pairing.",
+          "{w} and {studio}: {sn} of your plays.",
+          "{w} at {studio} seems to suit you particularly.",
+        ],
+        factTogether: [
+          "If I may: {w} and {l} share {tn} {tscenes} in your history.",
+          "These two share {tn} {tscenes} you've played. A delicate choice.",
+          "{w} and {l} appear together in {tn} {tscenes} you've played. Still, one had to prevail.",
+        ],
+        factFirst: [
+          "You've never played a {w} scene, and {w} still wins. Intriguing.",
+          "{wsc} {w} scenes in your library, none yet played. A fine place to begin.",
+        ],
+      },
+      rare: {
+        page: {
+          day: [
+            "Welcome home. I've polished the shelves and aired out the library.",
+            "Ah, there you are. Everything is precisely as you like it.",
+          ],
+          topPick: [
+            "If you'll permit a personal recommendation, {r}. I'd stake my reputation on it.",
+            "Should you choose only one, {r}. I took the liberty of keeping it at the front.",
+          ],
+          newScenes: [
+            "{n} new scenes arrived in your absence. I've had them brought up.",
+          ],
+        },
+        lines: {
+          dependable: [
+            "{w}, of course. I had already laid out the usual.",
+            "{w}. Quite as anticipated, if I may say so.",
+          ],
+          agree: [
+            "{w}, narrowly. A choice I'd have made myself, were I permitted.",
+            "{w}, by the slimmest margin. Very good.",
+          ],
+          close: [
+            "A delicate decision, gracefully made.",
+            "Neither was favoured in your history. Now one is. Thank you.",
+          ],
+          surprise: [
+            "{w} over {l}. How refreshing. I shall amend the household notes.",
+            "Most unexpected. {w}. I'll adjust accordingly.",
+          ],
+          unknown: [
+            "Two guests I've not yet had the pleasure of. {w} is now acquainted.",
+            "Unfamiliar, both. I've made a note of {w}.",
+          ],
+        },
+        kickers: {
+          opener: [
+            "A ranking. I've brought the good notebook.",
+            "Shall we? I've cleared my schedule.",
+          ],
+          milestone: [
+            "{n} matches, if I may remark. Most diligent.",
+            "{n} in. A most productive session.",
+          ],
+        },
+        wrap: {
+          championKnown: [
+            "{c} takes the honours. I had the ribbon ready.",
+          ],
+        },
+      },
+    },
+  };
+  let chatVoiceClassic = null;
+  let chatVoiceActive = null;
+  function chatVoiceTables() {
+    return { page: PAGE_CHAT_LINES, joined: PAGE_CHAT_JOINED, clauses: PAGE_CHAT_CLAUSES, lines: RANKING_LINES, kickers: RANKING_KICKERS, wrap: RANKING_WRAP, facts: RANKING_FACTS };
+  }
+  function applyChatVoice(name) {
+    const voice = Object.hasOwn(CHAT_VOICES, name) ? name : CHAT_VOICE_DEFAULT;
+    if (voice !== chatVoiceActive) {
+      const tables = chatVoiceTables();
+      if (!chatVoiceClassic) chatVoiceClassic = Object.fromEntries(Object.entries(tables).map(([part, table]) => [part, { ...table }]));
+      for (const [part, table] of Object.entries(tables)) Object.assign(table, chatVoiceClassic[part], CHAT_VOICES[voice][part]);
+      // Rare lines: the odd surprise in place of a table's usual ones.
+      CHAT_RARE.clear();
+      for (const [part, rare] of Object.entries(CHAT_VOICES[voice].rare || {})) if (tables[part]) CHAT_RARE.set(tables[part], rare);
+      chatVoiceActive = voice;
+    }
+    try { localStorage.setItem(CHAT_VOICE_KEY, voice); } catch { /* the setting still applies on this page */ }
+    return voice;
+  }
   function loadPerformerAffinities() {
     if (!performerAffinitiesPending) {
       performerAffinitiesPending = operation({ operation: "get_performer_affinities" })
@@ -14236,6 +24520,8 @@
     attachPlayer(event.detail.data.location.pathname);
     flushQueue();
   });
+  // The voice this browser last used, until the plugin settings answer.
+  try { applyChatVoice(localStorage.getItem(CHAT_VOICE_KEY)); } catch { applyChatVoice(null); }
   getPluginSettings().then(ensureHomeDefaults).catch((error) => console.warn("Curator could not load its plugin settings:", error.message));
   window.addEventListener("online", flushQueue);
   window.addEventListener("online", flushTagPreferenceQueue);

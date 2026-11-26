@@ -861,7 +861,9 @@ const vm = require('node:vm');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const classes = new Set();
 let settings = {}, fail = false;
+const voices = [];
 const context = {
+  applyChatVoice: (voice) => voices.push(voice),
   document: { body: { dataset: {}, classList: { toggle(name, hidden) {
     assert.equal(name, 'curator-hide-card-badges');
     if (hidden) classes.add(name); else classes.delete(name);
@@ -889,6 +891,8 @@ vm.runInContext(source.slice(source.indexOf('  async function configurePlugin(')
     await context.getPluginSettings();
     assert.equal(context.document.body.dataset.curatorDetailPageControls, expected);
   }
+  await context.configurePlugin({ chatVoice: 'clerk' });
+  assert.equal(voices.at(-1), 'clerk', 'a saved voice applies at once');
   await context.configurePlugin({ pageSize: 42, hideCardRatings: true });
   assert.equal(classes.size, 1, 'hiding applies immediately after save');
   classes.clear();
