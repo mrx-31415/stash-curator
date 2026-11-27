@@ -756,6 +756,11 @@ result always follows its match.
 - Back up before plugin updates and before uninstalling.
 - Treat Blind Spots and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
+- While a model update runs, **Manage → Tasks** shows it stage by stage (syncing,
+  describing your scenes, learning from plays and ratings, weighing tags, performers
+  and studios, scoring, saving, then lanes and pages) with an estimate of the time
+  left, based on how long the same task took last time. The task indicator in the
+  header names the same stages. When it finishes, a note links to your new picks.
 - Enable profiling only while measuring a reproducible slow operation; retained
   traces stay local until cleared. `worker-*` traces measure actual background
   execution; task traces without that prefix measure the request to enqueue work.

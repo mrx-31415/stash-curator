@@ -7820,29 +7820,114 @@
     );
   }
 
+  // A model build's real phases, as the share of the task's progress each
+  // covers. The model itself reports 0..1 through its phases (features to
+  // 0.25, labels to 0.30, affinities to 0.35, scoring to 0.78, then saving);
+  // the task maps that onto 0.68..0.95 after a sync, or 0.03..0.95 for a
+  // rebuild, then organizes lanes (0.95) and prepares pages (0.97).
+  const MODEL_PHASES = [
+    [0, "Describing your scenes"],
+    [0.25, "Learning from your plays and ratings"],
+    [0.3, "Weighing tags, performers and studios"],
+    [0.35, "Scoring your library"],
+    [0.78, "Saving the model"],
+  ];
+  const SYNC_BUILD_TYPES = new Set(["sync-build", "full-sync-build"]);
+  const REBUILD_TYPES = new Set(["build", "force-build", "update-model"]);
+  function buildKind(job) {
+    if (SYNC_BUILD_TYPES.has(job?.job_type)) return "sync";
+    if (REBUILD_TYPES.has(job?.job_type)) return "rebuild";
+    const description = String(job?.description || "").toLowerCase();
+    if (description.includes("sync") && description.includes("build")) return "sync";
+    if (description.includes("rebuild") || description.includes("feedback")) return "rebuild";
+    return null;
+  }
+  function buildPhases(job) {
+    const kind = buildKind(job);
+    if (!kind) return null;
+    const [modelStart, modelEnd] = kind === "sync" ? [0.68, 0.95] : [0.03, 0.95];
+    const model = (fraction) => modelStart + (modelEnd - modelStart) * fraction;
+    const bounds = [
+      ...(kind === "sync" ? [[0, "Syncing your library from Stash"], [0.58, "Rebuilding your play history"]] : []),
+      ...MODEL_PHASES.map(([fraction, label], index) => [index === 0 && kind === "rebuild" ? 0 : model(fraction), label]),
+      [0.95, "Organizing recommendation lanes"],
+      [0.97, "Preparing recommendation pages"],
+    ];
+    const progress = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null;
+    const done = job.state === "complete";
+    return bounds.map(([start, label], index) => {
+      const end = index + 1 < bounds.length ? bounds[index + 1][0] : 0.99;
+      const state = done || (progress !== null && progress >= end) ? "done" : progress !== null && progress >= start ? "active" : "pending";
+      const fraction = state === "done" ? 1 : state === "active" ? Math.max(0, Math.min(1, (progress - start) / Math.max(1e-6, end - start))) : 0;
+      return { label, state, fraction };
+    });
+  }
+
+  // Seconds left, guessed from how long the same kind of task took last time.
+  function buildTimeLeft(job, previousMs, now = Date.now()) {
+    const progress = typeof job.progress === "number" ? job.progress : 0;
+    const elapsed = typeof job.started_at_ms === "number" ? Math.max(0, now - job.started_at_ms) : 0;
+    if (previousMs > 0) return Math.max(0, Math.round((previousMs - elapsed) / 1000));
+    if (progress > 0.05 && elapsed > 0) return Math.max(0, Math.round((elapsed / progress - elapsed) / 1000));
+    return null;
+  }
+  function formatSecondsLeft(seconds) {
+    if (seconds === null) return "Working out how long this takes…";
+    if (seconds < 5) return "Almost done";
+    if (seconds < 60) return `About ${seconds} s left`;
+    const minutes = Math.floor(seconds / 60);
+    return `About ${minutes} min${seconds % 60 >= 10 ? ` ${seconds % 60} s` : ""} left`;
+  }
+
+  // The stage-by-stage view of a running model build (Manage → Tasks).
+  function ModelBuildProgress({ job, previousMs }) {
+    const phases = buildPhases(job) || [];
+    const progress = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : 0;
+    const pct = Math.round(progress * 100);
+    return React.createElement(
+      "section",
+      { className: "curator-build-progress", "aria-label": "Model update progress" },
+      React.createElement("div", { className: "curator-build-head" },
+        React.createElement("strong", null, "Updating your recommendations"),
+        React.createElement("span", { className: "curator-build-eta" }, formatSecondsLeft(buildTimeLeft(job, previousMs)))),
+      React.createElement("div", { className: "curator-build-overall" },
+        React.createElement("div", { className: "curator-build-track", role: "progressbar", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Overall progress" },
+          React.createElement("span", { style: { width: `${pct}%` } })),
+        React.createElement("span", { className: "curator-build-pct" }, `${pct}%`)),
+      React.createElement("ol", { className: "curator-build-phases" }, phases.map((phase, index) => React.createElement(
+        "li",
+        { key: phase.label, className: `curator-build-phase is-${phase.state}` },
+        React.createElement("span", { className: "curator-build-dot", "aria-hidden": "true" }, phase.state === "done" ? "✓" : phase.state === "active" ? "" : String(index + 1)),
+        React.createElement("span", { className: "curator-build-label" }, phase.label,
+          React.createElement("span", { className: "visually-hidden" }, phase.state === "done" ? " (done)" : phase.state === "active" ? " (in progress)" : "")),
+        phase.state === "active" && React.createElement("span", { className: "curator-build-phase-bar", "aria-hidden": "true" }, React.createElement("span", { style: { width: `${Math.round(phase.fraction * 100)}%` } }))
+      )))
+    );
+  }
+
+  function ModelBuildDone({ job, onDismiss }) {
+    const seconds = typeof job.finished_at_ms === "number" && typeof job.started_at_ms === "number" ? Math.round((job.finished_at_ms - job.started_at_ms) / 1000) : null;
+    const took = seconds === null ? "" : seconds < 60 ? ` in ${seconds} s` : ` in ${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+    return React.createElement(
+      "section",
+      { className: "curator-build-done", role: "status" },
+      React.createElement("span", { className: "curator-moved-sparks", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index }))),
+      React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }),
+      React.createElement("span", null, React.createElement("strong", null, "Your picks just got sharper."), ` Recommendations updated${took}.`),
+      React.createElement("a", { className: "btn btn-primary btn-sm", href: "/plugins/stash-curator?view=for_you" }, "See your picks"),
+      React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: onDismiss }, "×")
+    );
+  }
+
   function curatorTaskStage(job) {
     const description = String(job.description || "").toLowerCase();
     const progress = typeof job.progress === "number" ? job.progress : null;
+    const phases = buildPhases(job);
+    if (phases) return phases.find((phase) => phase.state === "active")?.label || (progress === null ? "Working" : "Finishing");
     const stages = description.includes("local scene matches")
       ? [[0.7, "Checking your library"], [0.99, "Saving library matches"]]
       : description.includes("expand")
         ? [[0.04, "Checking your library"], [0.98, "Collecting Stash-box candidates"], [0.99, "Finishing"]]
-      : description.includes("sync")
-      ? [
-          [0.03, "Synchronizing library metadata"],
-          [0.58, "Rebuilding preference history"],
-          [0.68, "Building the recommendation model"],
-          [0.95, "Organizing recommendation lanes"],
-          [0.97, "Preparing recommendation pages"],
-          [0.99, "Finishing"],
-        ]
-      : description.includes("rebuild") || description.includes("feedback")
-        ? [
-            [0.1, "Building the recommendation model"],
-            [0.95, "Organizing recommendation lanes"],
-            [0.97, "Preparing recommendation pages"],
-            [0.99, "Finishing"],
-          ]
         : description.includes("prepare")
           ? [[0.05, "Preparing recommendation pages"], [0.99, "Finishing"]]
           : description.includes("backup")
@@ -7947,6 +8032,23 @@
     const finished = jobs.filter((job) => job.state !== "queued" && job.state !== "running");
     const running = active.length > 0;
     const last = jobs[0];
+    const building = active.find((job) => job.state === "running" && buildKind(job));
+    const previousBuild = building && finished.find((job) => job.state === "complete" && job.job_type === building.job_type && typeof job.started_at_ms === "number" && typeof job.finished_at_ms === "number");
+    // Remember the build being watched, so its finish shows a result here.
+    const watched = React.useRef(null);
+    const [doneBuild, setDoneBuild] = React.useState(null);
+    React.useEffect(() => {
+      if (building) {
+        watched.current = building.job_id;
+        return;
+      }
+      if (!watched.current) return;
+      const finishedBuild = jobs.find((job) => job.job_id === watched.current);
+      if (finishedBuild && finishedBuild.state !== "running" && finishedBuild.state !== "queued") {
+        watched.current = null;
+        if (finishedBuild.state === "complete") setDoneBuild(finishedBuild);
+      }
+    }, [building?.job_id, jobs]);
     function durationMs(job) {
       const end = typeof job.finished_at_ms === "number" ? job.finished_at_ms : Date.now();
       const start = typeof job.started_at_ms === "number" ? job.started_at_ms : end;
@@ -8050,6 +8152,8 @@
       "div",
       { className: "curator-tasks-panel" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
+      building && React.createElement(ModelBuildProgress, { job: building, previousMs: previousBuild ? previousBuild.finished_at_ms - previousBuild.started_at_ms : 0 }),
+      !building && doneBuild && React.createElement(ModelBuildDone, { job: doneBuild, onDismiss: () => setDoneBuild(null) }),
       React.createElement("p", null, "Tasks run in Curator's own background worker, so they keep going even after the Stash-side job completes — progress and results are shown here."),
       React.createElement(
         "div",

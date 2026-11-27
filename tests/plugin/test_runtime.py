@@ -1562,8 +1562,8 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "health?.active_jobs" in source
     assert "?view=manage&section=tasks" in source
     assert "curatorTaskStage(job)" in source
-    assert '"Synchronizing library metadata"' in source
-    assert '"Building the recommendation model"' in source
+    assert '"Syncing your library from Stash"' in source
+    assert '"Scoring your library"' in source
     assert '"Installing optional dependencies"' in source
     assert "curator-task-progress-indeterminate" in source
     assert "showTaskDetails" in source
