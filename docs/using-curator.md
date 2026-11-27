@@ -673,7 +673,8 @@ searched for, and **Next search** sorts by when each is next searched. Each scen
 the rotation shows how often it was searched, when last, and when the next search
 can run (never before the next round), or why it waits: its release date, or a
 download in progress. Scenes the rotation found, gave up on, or stopped show that
-too. A note above the list gives the pace and the next round, or why the rotation is
+too. A note above the list gives the pace and the next round, with a ring that
+drains toward it and stays current while the tab is open, or why the rotation is
 paused, including Whisparr's error when it could not be reached.
 
 Use the clock button on a scene, or **Add to rolling search** for selected ones, to

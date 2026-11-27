@@ -4216,14 +4216,14 @@
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags", "aria-label": "Rate tags", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
-      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "secondary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparrLabel, "aria-label": whisparrLabel, onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: `curator-icon-action curator-whisparr-action${whisparr?.status === "adding" ? " is-sending" : whisparr?.status === "sent" || whisparr?.status === "already_exists" ? " is-sent" : ""}`, size: "sm", variant: "secondary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparrLabel, "aria-label": whisparrLabel, onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
       whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
   }
 
   // A small Whisparr mark on a scene's image once Curator has sent it there.
-  function WhisparrBadge() {
-    return React.createElement("span", { className: "curator-whisparr-badge", title: "Sent to Whisparr", "aria-label": "Sent to Whisparr", role: "img" },
+  function WhisparrBadge({ fresh = false }) {
+    return React.createElement("span", { className: `curator-whisparr-badge${fresh ? " is-fresh" : ""}`, title: "Sent to Whisparr", "aria-label": "Sent to Whisparr", role: "img" },
       React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() })));
   }
 
@@ -4467,7 +4467,7 @@
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name), inWhisparr && React.createElement(WhisparrBadge)),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name), inWhisparr && React.createElement(WhisparrBadge, { fresh: whisparr?.status === "sent" })),
       React.createElement("div", { className: "card-section" },
         stickyScene && React.createElement("div", { className: "sticky-card-top" },
           React.createElement(ExternalStudioLink, { key: payload.studio?.id, payload }),
@@ -6786,6 +6786,22 @@
     return parts.join(" · ");
   }
   // The rolling search as a whole: its pace, the next round, and any pause.
+  const WHISPARR_TICK_MS = 30000;
+  // How much of the wait until the next rolling-search round is left, 0..1.
+  function whisparrRoundLeft(rotation, now) {
+    const interval = Number(rotation?.interval_ms) || 0;
+    const next = Number(rotation?.next_sweep_at_ms) || 0;
+    if (interval <= 0 || !next) return 0;
+    return Math.max(0, Math.min(1, (next - now) / interval));
+  }
+  // A ring that drains toward the next round; the panel re-renders it every
+  // half minute, and the ring eases between those steps.
+  function WhisparrCountdown({ rotation, now }) {
+    const left = whisparrRoundLeft(rotation, now);
+    return React.createElement("svg", { className: "curator-whisparr-countdown", width: 22, height: 22, viewBox: "0 0 22 22", "aria-hidden": "true" },
+      React.createElement("circle", { cx: 11, cy: 11, r: 8.5, fill: "none", strokeWidth: 3, className: "curator-countdown-track" }),
+      React.createElement("circle", { cx: 11, cy: 11, r: 8.5, fill: "none", strokeWidth: 3, strokeLinecap: "round", pathLength: 100, strokeDasharray: 100, strokeDashoffset: Math.round((1 - left) * 100), transform: "rotate(-90 11 11)", className: "curator-countdown-arc" }));
+  }
   function whisparrRotationStatus(summary, waiting, now = Date.now()) {
     if (!summary) return null;
     if (!summary.enabled) return waiting ? { tone: "info", text: `Rolling search is off. ${whisparrScenes(waiting)} would still be searched in the background; turn it on in Settings.` } : null;
@@ -6947,6 +6963,12 @@
     const [busy, setBusy] = React.useState(null);
     const [notice, setNotice] = React.useState("");
     const [searched, setSearched] = React.useState(() => new Set());
+    // Keeps "next round in …" and its countdown ring current while open.
+    const [now, setNow] = React.useState(() => Date.now());
+    React.useEffect(() => {
+      const timer = setInterval(() => setNow(Date.now()), WHISPARR_TICK_MS);
+      return () => clearInterval(timer);
+    }, []);
     React.useEffect(() => {
       let active = true;
       setLoading(true);
@@ -7032,7 +7054,7 @@
       );
     }
     const allShownSelected = visible.length > 0 && visible.slice(0, limit).every((item) => selected.has(item.id));
-    const rotationStatus = data && whisparrRotationStatus(data.rotation, counts.rotation);
+    const rotationStatus = data && whisparrRotationStatus(data.rotation, counts.rotation, now);
     const canRotate = chosen.filter((item) => item.status === "missing" && item.stashdb_id && !whisparrRotating(item));
     const canStop = chosen.filter(whisparrRotating);
     return React.createElement(
@@ -7045,7 +7067,7 @@
           "button",
           { key: entry.value, type: "button", role: "tab", className: `curator-whisparr-chip curator-whisparr-status-${entry.value}`, "aria-selected": status === entry.value, onClick: () => setStatus(entry.value), title: entry.description },
           entry.label,
-          React.createElement("span", { className: "curator-whisparr-count" }, data ? counts[entry.value].toLocaleString() : "…")
+          React.createElement("span", { key: data ? counts[entry.value] : "loading", className: "curator-whisparr-count" }, data ? counts[entry.value].toLocaleString() : "…")
         ))
       ),
       React.createElement(
@@ -7058,7 +7080,7 @@
         status === "missing" && visible.length > 0 && React.createElement(Button, { className: "curator-whisparr-search-all", size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", visible) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), ` Search ${visible.length === 1 ? "it" : `all ${visible.length.toLocaleString()}`}`)
       ),
       statusInfo && React.createElement("p", { className: "curator-whisparr-hint" }, statusInfo.description),
-      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`,
+      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, rotationStatus.tone === "info" && data.rotation?.enabled ? React.createElement(WhisparrCountdown, { rotation: data.rotation, now }) : React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`,
         rotationStatus.retry && React.createElement(Button, { className: "curator-whisparr-retry", size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: resumeRotation, title: "Run the next rolling-search round within a minute" }, "Try now")),
       data && !data.library_ready && React.createElement("div", { className: "alert alert-info" }, "Curator is still matching your library to StashDB. Scenes you own show as In library once that finishes."),
       notice && React.createElement("div", { className: "alert alert-success", role: "status" }, notice),
