@@ -5542,7 +5542,7 @@
       if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: entry.scene_id, impression_id: entry.item.impression_id, lane: entry.slate.lane, impression_position: entry.item.position, model_id: entry.slate.model_id }));
     } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
   }
-  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onReaction }) {
+  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onReaction, movement = null }) {
     // Key by the lane the slate was served for: on a lane switch this renders
     // once with the new lane prop but the previous lane's slate, and keying by
     // the prop saved those items as the new lane's restore point.
@@ -5706,7 +5706,7 @@
     const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
     return React.createElement("div", { style: { position: "relative", paddingTop: startPage > slate.page ? "2.5rem" : 0 } },
       cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
-        entries.map((entry, index) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction, enterIndex: index % (entry.slate.page_size || 20) }))
+        entries.map((entry, index) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction, enterIndex: index % (entry.slate.page_size || 20), movement: movement?.scenes.get(String(entry.scene_id)) || null }))
       ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
         React.createElement("div", { ref: grid, className: "curator-preview-wall", style: { position: "absolute", top: range.offset, width: "100%" } },
           entries.slice(range.first, range.last).map((entry, index) => React.createElement(EndlessRecommendationTile, { key: String(entry.scene_id), entry, index, thumbnails, seen: seen.current }))
@@ -5769,9 +5769,78 @@
       })
     );
   }
+  // After a model update, the scenes your feedback moved most get a small
+  // badge on their card, once per new model. Movement comes from the
+  // Impact report (get_curation_impact), which compares the two newest builds.
+  const MOVEMENT_SEEN_KEY = "stash-curator:movement-seen-model:v1";
+  const MOVEMENT_FRESH_MS = 7 * 86_400_000;
+
+  function movementReason(entry) {
+    const top = [...(entry.contributors || [])].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
+    if (!top) return "";
+    if (top.kind === "direct") return "your feedback on it";
+    return top.name ? `${top.kind === "performer" ? "your answers about" : "your answer on"} ${top.name}` : "";
+  }
+
+  // scene_id -> { delta, reason } for the scenes an update moved.
+  function movementIndex(impact) {
+    const index = new Map();
+    for (const entry of [...(impact?.scenes?.promoted || []), ...(impact?.scenes?.demoted || [])]) {
+      if (Math.abs(Number(entry.delta)) < 1e-3) continue;
+      index.set(String(entry.scene_id), { delta: Number(entry.delta), reason: movementReason(entry) });
+    }
+    return index;
+  }
+
+  function useModelMovement(modelId) {
+    const [movement, setMovement] = React.useState(null);
+    React.useEffect(() => {
+      let current = true;
+      setMovement(null);
+      if (!modelId) return undefined;
+      let seen = "";
+      try { seen = localStorage.getItem(MOVEMENT_SEEN_KEY) || ""; } catch (_) { /* Storage may be unavailable. */ }
+      if (seen === modelId) return undefined;
+      operation({ operation: "get_curation_impact" })
+        .then((impact) => {
+          if (!current || !impact?.available || impact.newer_model_id !== modelId) return;
+          try { localStorage.setItem(MOVEMENT_SEEN_KEY, modelId); } catch (_) { /* Badges then show again next visit. */ }
+          if (Date.now() - Number(impact.published_at_ms) > MOVEMENT_FRESH_MS) return;
+          const scenes = movementIndex(impact);
+          if (scenes.size) setMovement({ scenes, publishedAtMs: Number(impact.published_at_ms) });
+        })
+        .catch(() => {});
+      return () => { current = false; };
+    }, [modelId]);
+    return movement;
+  }
+
+  function MovementBadge({ movement }) {
+    const up = movement.delta > 0;
+    const label = `${up ? "Moved up" : "Moved down"} after the last update${movement.reason ? `, because of ${movement.reason}` : ""}`;
+    return React.createElement("span", { className: `curator-move-badge ${up ? "is-up" : "is-down"}`, title: label, "aria-label": label },
+      React.createElement(FontAwesomeIcon, { icon: up ? faArrowTrendUp : faArrowTrendDown }),
+      React.createElement("span", null, formatSigned(movement.delta)));
+  }
+
+  function MovementBanner({ movement, onDismiss }) {
+    const values = [...movement.scenes.values()];
+    const up = values.filter((entry) => entry.delta > 0).length;
+    const down = values.length - up;
+    const parts = [up && `${up} moved up`, down && `${down} moved down`].filter(Boolean).join(" and ");
+    return React.createElement(
+      "aside",
+      { className: "curator-movement-banner alert alert-secondary", role: "status" },
+      React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }),
+      React.createElement("span", null, React.createElement("strong", null, `Recommendations updated ${formatTimeAgo(movement.publishedAtMs)}.`), ` Your feedback moved ${values.length} ${values.length === 1 ? "scene" : "scenes"}: ${parts}. Look for the arrows on their cards.`),
+      React.createElement("a", { href: "/plugins/stash-curator?view=curate&section=progress" }, "What changed"),
+      React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: onDismiss }, "×")
+    );
+  }
+
   const CARD_LEAVE_MS = 340;
   const CARD_ENTER_STAGGER_MAX = 11;
-  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes, enterIndex = 0 }) {
+  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes, enterIndex = 0, movement = null }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
     const [leaving, setLeaving] = React.useState(false);
@@ -5820,6 +5889,7 @@
         React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
         React.createElement("span", null, laneLabel.toUpperCase())
       ),
+      movement && React.createElement(MovementBadge, { movement }),
       scene
         ? React.createElement(SceneCard, { scene, curatorAppeal: item.appeal })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
@@ -9613,6 +9683,8 @@
       ? (slate?.items || []).filter((item) => scenes.has(String(item.scene_id)))
       : slate?.items || [];
     useCuratorActivity("recommendations", loading || loadingComponents || scenesQuery.loading, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…");
+    const movement = useModelMovement(laneByValue.has(lane) ? slate?.model_id : null);
+    const [movementDismissed, setMovementDismissed] = React.useState(false);
     function remove(sceneId, info) {
       clearSlateCache();
       const excluded = laneExclusions.get(lane) || new Set();
@@ -9866,15 +9938,16 @@
         React.createElement(
           React.Fragment,
           null,
+          movement && !movementDismissed && React.createElement(MovementBanner, { movement, onDismiss: () => setMovementDismissed(true) }),
           visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
           endless
-            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp })
+            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp, movement })
             : recommendationView !== "cards"
               ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
               { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
-              visibleItems.map((item, index) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp, enterIndex: index }))
+              visibleItems.map((item, index) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp, enterIndex: index, movement: movement?.scenes.get(String(item.scene_id)) || null }))
             ),
           !endless && React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )

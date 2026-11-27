@@ -100,6 +100,6 @@ Object.assign(context, vm.runInNewContext(`${region}
   }
 
   // The lane page passes each card its place so the grid arrives in a stagger.
-  assert.match(source, /onReaction: showFollowUp, enterIndex: index \}/);
+  assert.match(source, /onReaction: showFollowUp, enterIndex: index, movement:/);
   assert.match(source, /enterIndex: index % \(entry\.slate\.page_size \|\| 20\)/);
 })().catch((error) => { console.error(error); process.exit(1); });

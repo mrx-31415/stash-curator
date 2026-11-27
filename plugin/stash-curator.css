@@ -6809,3 +6809,41 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   .curator-moved-sparks { display: none; }
   .curator-ring-segment { transition: none; }
 }
+
+/* ---------- Motion: what an update moved, on the cards themselves ---------- */
+.curator-move-badge {
+  align-items: center;
+  animation: curator-move-badge-in 0.45s cubic-bezier(0.2, 1.8, 0.4, 1) 0.6s both;
+  border-radius: 999px;
+  box-shadow: 0 0.3rem 0.8rem rgba(0, 0, 0, 0.35);
+  color: #101216;
+  display: inline-flex;
+  font-size: calc(0.7rem * var(--curator-card-text-scale, 1));
+  font-weight: 800;
+  gap: 0.3rem;
+  padding: 0.18rem 0.55rem;
+  left: 0.5rem;
+  position: absolute;
+  /* Just under the lane badge, clear of Stash's studio overlay at the right. */
+  top: calc(2.1rem * var(--curator-card-text-scale, 1));
+  z-index: 3;
+}
+.curator-move-badge.is-up { background: var(--curator-positive, #8fbf4f); }
+.curator-move-badge.is-down { background: #e48b8b; }
+@keyframes curator-move-badge-in {
+  from { opacity: 0; transform: scale(0.3) translateY(-0.4rem); }
+}
+.curator-movement-banner {
+  align-items: center;
+  animation: curator-moved-in 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+.curator-movement-banner > span { flex: 1 1 18rem; }
+.curator-movement-banner .btn-link { margin-left: auto; padding: 0 0.35rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-move-badge,
+  .curator-movement-banner { animation: none; }
+}

@@ -50,6 +50,10 @@ interface's colors and fonts. Stash UI's standalone lists and player do not run
 Stash's component hooks, so Curator's native card and detail-page additions appear
 in classic Stash only.
 Cards keep Appeal visible; selection evidence and lane rank are under **Why this?**.
+After a model update, the first visit to a lane page notes how many scenes your
+feedback moved, and those scenes' cards carry a small up or down arrow with the
+change in Appeal; hover it to see which answer moved it. This shows once per update,
+for updates in the last week, and **What changed** opens the full Impact report.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
 It is off by default. All three recommendation views then load the next ranked page
