@@ -82,3 +82,42 @@ func TestHomeRecapSummarizesTheWeekAndWhatIsNew(t *testing.T) {
 		t.Fatalf("no since block without a previous visit: %v", quiet.get("since"))
 	}
 }
+
+func TestHomeRecapExploredCountsNewStudiosAndPerformers(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	const day = int64(86_400_000)
+	now := int64(1_800_000_000_000)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO source_studio (studio_id, name, source_hash) VALUES ('a', 'Studio A', 'h'), ('b', 'Studio B', 'h')`)
+	exec(`INSERT INTO source_performer (performer_id, name, source_hash) VALUES ('p-old', 'Old', 'h'), ('p-new', 'New', 'h')`)
+	exec(`INSERT INTO source_scene (scene_id, studio_id, rating100, source_hash) VALUES
+('a1', 'a', 90, 'h'), ('a2', 'a', 50, 'h'), ('b1', 'b', 80, 'h'), ('a0', 'a', NULL, 'h')`)
+	exec(`INSERT INTO scene_performer (scene_id, performer_id) VALUES ('a1', 'p-old'), ('a2', 'p-old'), ('a0', 'p-old'), ('b1', 'p-new')`)
+	exec(`INSERT INTO source_play (scene_id, played_at_ms, ordinal) VALUES ('a0', ?, 0)`, now-60*day)
+	exec(`INSERT INTO play_session (session_id, scene_id, started_at_ms, active_seconds, provenance, confidence) VALUES
+('s1', 'a1', ?, 600, 'stash', 1), ('s2', 'a2', ?, 300, 'stash', 1), ('s3', 'b1', ?, 900, 'stash', 1), ('s4', 'b1', ?, 100, 'stash', 1)`,
+		now-5*day, now-4*day, now-3*day, now+day)
+	recap, err := homeRecap(db, now, 30, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explored := recap.get("explored")
+	top := explored.get("top_studios").arr
+	if len(top) != 2 || top[0].get("name").asString() != "Studio A" || pythonInt(top[0].get("scenes")) != 2 || pythonInt(top[0].get("rated_well")) != 1 {
+		t.Fatalf("top studios = %v", explored.get("top_studios"))
+	}
+	if pythonInt(explored.get("new_studios")) != 1 || pythonInt(explored.get("new_performers")) != 1 {
+		t.Fatalf("explored = %v, want Studio B and its performer as new", explored)
+	}
+	if number(explored.get("watched_seconds")) != 1800 || number(explored.get("new_seconds")) != 900 {
+		t.Fatalf("explored seconds = %v (a session after the window's end is left out)", explored)
+	}
+}

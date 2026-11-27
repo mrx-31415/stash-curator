@@ -5126,9 +5126,205 @@
           React.createElement("small", null, `${tile.action} →`)
         )))
       ),
+      React.createElement(RewindTeaser, { pick: items[0] || null, scenes }),
       items.length > 0 && React.createElement(TonightsPick, { items, scenes }),
       showRecap && React.createElement(WeeklyRecap, { recap, now, onHide: () => { writeStored(RECAP_HIDDEN_KEY, weekKey); setHiddenWeek(weekKey); } })
     );
+  }
+
+  // Monthly Rewind: during the first days of a month, a card on For You
+  // opens a short story about the month before. It shows once per month
+  // until opened or dismissed, and only when there was watching to tell.
+  const REWIND_SEEN_KEY = "stash-curator:rewind-seen-month:v1";
+  const REWIND_SHOW_DAYS = 10;
+  const REWIND_CARD_MS = 5500;
+  function rewindMonths(now) {
+    const current = new Date(now);
+    const thisMonth = new Date(current.getFullYear(), current.getMonth(), 1);
+    const lastMonth = new Date(current.getFullYear(), current.getMonth() - 1, 1);
+    const monthBefore = new Date(current.getFullYear(), current.getMonth() - 2, 1);
+    const days = (from, to) => Math.round((to.getTime() - from.getTime()) / 86400000);
+    return {
+      key: `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}`,
+      name: lastMonth.toLocaleDateString(undefined, { month: "long" }),
+      next: thisMonth.toLocaleDateString(undefined, { month: "long" }),
+      month: { end_ms: thisMonth.getTime(), window_days: days(lastMonth, thisMonth) },
+      before: { end_ms: lastMonth.getTime(), window_days: days(monthBefore, lastMonth) },
+      showing: current.getDate() <= REWIND_SHOW_DAYS,
+    };
+  }
+  function hitRate(recap) {
+    return recap?.picks_watched > 0 ? Math.round((recap.rated_well / recap.picks_watched) * 100) : null;
+  }
+  // The cards worth telling for this month, in order; ones without data drop out.
+  function rewindCards({ month, before, taste, pick, names }) {
+    const cards = [{ kind: "numbers" }];
+    const top = month.explored?.top_studios || [];
+    if (top.length) cards.push({ kind: "studio", top });
+    if (month.best_find) cards.push({ kind: "find", find: month.best_find });
+    const rising = (taste?.shift?.rising || []).slice(0, 2);
+    const fading = (taste?.shift?.fading || []).slice(0, 1);
+    if (rising.length || fading.length) cards.push({ kind: "drift", rising, fading });
+    const rate = hitRate(month);
+    if (rate !== null) cards.push({ kind: "hits", rate, before: hitRate(before), taught: Number(month.learned?.answers || 0) + Number(month.learned?.feedback || 0) });
+    const explored = month.explored || {};
+    if (explored.watched_seconds > 0 && (explored.new_studios > 0 || explored.new_performers > 0)) {
+      cards.push({ kind: "explore", studios: explored.new_studios, performers: explored.new_performers, share: Math.round((explored.new_seconds / explored.watched_seconds) * 100) });
+    }
+    if (pick) cards.push({ kind: "next", pick });
+    return cards.map((card) => ({ ...card, ...names }));
+  }
+
+  function RewindTeaser({ pick, scenes }) {
+    const months = React.useMemo(() => rewindMonths(Date.now()), []);
+    const [seen, setSeen] = React.useState(() => readStored(REWIND_SEEN_KEY));
+    const [story, setStory] = React.useState(null);
+    const [open, setOpen] = React.useState(false);
+    React.useEffect(() => {
+      if (!months.showing || seen === months.key) return undefined;
+      let current = true;
+      Promise.all([
+        operation({ operation: "get_home_recap", ...months.month }),
+        operation({ operation: "get_home_recap", ...months.before }).catch(() => null),
+        operation({ operation: "get_taste_summary" }).catch(() => null),
+      ]).then(([month, before, taste]) => {
+        if (current && month && (month.picks_watched > 0 || month.explored?.watched_seconds > 0)) setStory({ month, before, taste });
+      }).catch(() => {});
+      return () => { current = false; };
+    }, [months.key]);
+    function done() {
+      writeStored(REWIND_SEEN_KEY, months.key);
+      setSeen(months.key);
+      setOpen(false);
+    }
+    if (!story || seen === months.key) return null;
+    const cards = rewindCards({ ...story, pick, names: { monthName: months.name, nextName: months.next } });
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("section", { className: "curator-rewind-teaser" },
+        React.createElement("span", null, React.createElement("strong", null, `Your ${months.name}, rewound`), ` · ${cards.length} short cards about your month with Curator`),
+        React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setOpen(true) }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Watch"),
+        React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: done }, "×")),
+      open && React.createElement(RewindStory, { cards, month: story.month, scenes, onClose: done })
+    );
+  }
+
+  function RewindStory({ cards, month, scenes, onClose }) {
+    const [index, setIndex] = React.useState(0);
+    const [elapsed, setElapsed] = React.useState(0);
+    const [paused, setPaused] = React.useState(() => reducedMotion());
+    const [back, setBack] = React.useState(false);
+    const closeButton = React.useRef(null);
+    React.useEffect(() => { closeButton.current?.focus(); }, []);
+    React.useEffect(() => {
+      if (paused) return undefined;
+      let frame = 0;
+      let last = performance.now();
+      const step = (now) => {
+        const delta = now - last;
+        last = now;
+        setElapsed((value) => value + delta);
+        frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+      return () => cancelAnimationFrame(frame);
+    }, [paused]);
+    React.useEffect(() => {
+      if (elapsed < REWIND_CARD_MS) return;
+      if (index < cards.length - 1) go(index + 1);
+      else { setPaused(true); setElapsed(REWIND_CARD_MS); }
+    }, [elapsed]);
+    function go(next, backwards = false) {
+      if (next < 0 || next >= cards.length) return;
+      setBack(backwards);
+      setIndex(next);
+      setElapsed(0);
+    }
+    function keys(event) {
+      if (event.key === "Escape") onClose();
+      else if (event.key === "ArrowRight") go(index + 1);
+      else if (event.key === "ArrowLeft") go(index - 1, true);
+    }
+    const card = cards[index];
+    const grow = Math.min(1, elapsed / 1500);
+    return React.createElement(
+      "div",
+      { className: "curator-rewind", role: "dialog", "aria-modal": "true", "aria-label": `Your ${card.monthName}, rewound`, onKeyDown: keys },
+      React.createElement("div", { className: "curator-rewind-backdrop", onClick: onClose }),
+      React.createElement("button", { type: "button", className: "curator-rewind-nav", "aria-label": "Previous card", disabled: index === 0, onClick: () => go(index - 1, true) }, "‹"),
+      React.createElement(
+        "div",
+        { className: `curator-rewind-story curator-rewind-${card.kind}` },
+        React.createElement("div", { className: "curator-rewind-segments", "aria-hidden": "true" }, cards.map((_, at) => React.createElement("span", { key: at }, React.createElement("i", { style: { width: `${at < index ? 100 : at === index ? Math.round((elapsed / REWIND_CARD_MS) * 100) : 0}%` } })))),
+        React.createElement("div", { className: "curator-rewind-tools" },
+          React.createElement("button", { type: "button", "aria-label": paused ? "Play" : "Pause", onClick: () => setPaused((value) => !value) }, paused ? "▶" : "❚❚"),
+          React.createElement("button", { type: "button", ref: closeButton, "aria-label": "Close", onClick: onClose }, "×")),
+        React.createElement("div", { key: index, className: `curator-rewind-card${back ? " is-back" : ""}`, "aria-live": "polite" }, React.createElement(RewindCard, { card, month, scenes, grow }))
+      ),
+      React.createElement("button", { type: "button", className: "curator-rewind-nav", "aria-label": "Next card", disabled: index === cards.length - 1, onClick: () => go(index + 1) }, "›")
+    );
+  }
+
+  function RewindCard({ card, month, scenes, grow }) {
+    const rise = (className, ...children) => React.createElement("div", { className: `curator-rewind-rise ${className || ""}` }, ...children);
+    const ease = 1 - Math.pow(1 - grow, 3);
+    if (card.kind === "numbers") {
+      const minutes = Math.round((Number(month.watched_seconds) || 0) / 60);
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", card.monthName),
+        rise("curator-rewind-head", "You and Curator had a good month."),
+        rise("curator-rewind-stat", React.createElement("strong", null, Math.round(month.picks_watched * ease)), React.createElement("span", null, "Curator picks watched")),
+        minutes > 0 && rise("curator-rewind-stat", React.createElement("strong", null, `${Math.floor((minutes * ease) / 60)} h ${Math.round(minutes * ease) % 60} min`), React.createElement("span", null, "of watching, all from your own library")));
+    }
+    if (card.kind === "studio") {
+      const [first] = card.top;
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Your studio of the month"),
+        rise("curator-rewind-head curator-rewind-big", first.name),
+        rise("", `${first.scenes} ${first.scenes === 1 ? "scene" : "scenes"}${first.rated_well ? `, ${first.rated_well} rated well` : ""}.`),
+        rise("curator-rewind-bars", card.top.map((studio) => React.createElement("div", { key: studio.studio_id },
+          React.createElement("span", null, studio.name, React.createElement("small", null, studio.scenes)),
+          React.createElement("i", null, React.createElement("b", { style: { width: `${Math.round((studio.scenes / first.scenes) * 100 * ease)}%` } }))))));
+    }
+    if (card.kind === "find") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Best discovery"),
+        rise("curator-rewind-head", "A studio you had never watched."),
+        rise("curator-rewind-shot scene-card", React.createElement("img", { className: "scene-card-image", src: `/scene/${card.find.scene_id}/screenshot`, alt: "", loading: "lazy" })),
+        rise("card-section", React.createElement("strong", { className: "card-section-title" }, card.find.title || "A new scene"), React.createElement("span", null, ` · ${card.find.studio}`)));
+    }
+    if (card.kind === "drift") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "How your taste moved"),
+        rise("curator-rewind-head", card.rising.length ? `Warming up to ${card.rising.map((tag) => tag.name).join(" and ")}.` : `Cooling on ${card.fading[0].name}.`),
+        rise("curator-rewind-drift", [...card.rising.map((tag) => ["up", tag]), ...card.fading.map((tag) => ["down", tag])].map(([way, tag]) => React.createElement("span", { key: tag.tag_id, className: `is-${way}` }, `${way === "up" ? "↑" : "↓"} ${tag.name}`))));
+    }
+    if (card.kind === "hits") {
+      const shown = card.before === null ? card.rate : Math.round(card.before + (card.rate - card.before) * ease);
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Curator's hit rate"),
+        rise("curator-rewind-head", "Picks you rated well"),
+        rise("curator-rewind-ring",
+          React.createElement("svg", { width: 200, height: 200, viewBox: "0 0 200 200", role: "img", "aria-label": `${card.rate}% of picks rated well${card.before === null ? "" : `, ${card.before}% the month before`}` },
+            React.createElement("circle", { cx: 100, cy: 100, r: 84, fill: "none", strokeWidth: 15, className: "curator-rewind-ring-track" }),
+            React.createElement("circle", { cx: 100, cy: 100, r: 84, fill: "none", strokeWidth: 15, strokeLinecap: "round", pathLength: 100, strokeDasharray: 100, strokeDashoffset: 100 - shown, transform: "rotate(-90 100 100)", className: "curator-rewind-ring-arc" })),
+          React.createElement("span", null, React.createElement("strong", null, `${shown}%`), card.before !== null && React.createElement("small", null, `${card.rate >= card.before ? "up" : "down"} from ${card.before}%`))),
+        card.taught > 0 && rise("", `You taught Curator ${card.taught} ${card.taught === 1 ? "thing" : "things"} this month. Thank you.`));
+    }
+    if (card.kind === "explore") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Exploring"),
+        rise("curator-rewind-head", `You tried ${[card.performers > 0 && `${card.performers} new ${card.performers === 1 ? "performer" : "performers"}`, card.studios > 0 && `${card.studios} new ${card.studios === 1 ? "studio" : "studios"}`].filter(Boolean).join(" and ")}.`),
+        rise("curator-rewind-split", React.createElement("b", { style: { width: `${Math.max(8, Math.round(card.share * ease))}%` } }, `${card.share}% new`), React.createElement("span", null, "familiar")));
+    }
+    const scene = scenes.get(String(card.pick.scene_id));
+    return React.createElement(React.Fragment, null,
+      rise("curator-rewind-kicker", `To start ${card.nextName}`),
+      rise("curator-rewind-head", "Curator saved you a good one."),
+      rise("curator-rewind-shot scene-card", React.createElement("img", { className: "scene-card-image", src: `/scene/${card.pick.scene_id}/screenshot`, alt: "", loading: "lazy" })),
+      rise("card-section", React.createElement("strong", { className: "card-section-title" }, scene?.title || `Scene ${card.pick.scene_id}`)),
+      rise("", React.createElement("a", { className: "btn btn-light btn-sm", href: `/scenes/${card.pick.scene_id}` }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play")));
   }
 
   // One of For You's top picks, dealt like a card; Deal again moves on.

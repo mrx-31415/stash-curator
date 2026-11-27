@@ -5,6 +5,7 @@ package main
 
 import (
 	"database/sql"
+	"sort"
 	"strings"
 )
 
@@ -30,7 +31,12 @@ func opGetHomeRecap(pluginDir string, payload jVal) (jVal, error) {
 		if days > 62 {
 			days = 62
 		}
-		recap, err := homeRecap(db, nowMs(), days, argsInt(args, "since_ms", 0))
+		// end_ms ends the window early, for a past month's Rewind.
+		end := nowMs()
+		if requested := argsInt(args, "end_ms", 0); requested > 0 && requested < end {
+			end = requested
+		}
+		recap, err := homeRecap(db, end, days, argsInt(args, "since_ms", 0))
 		if err != nil {
 			return jvNull(), err
 		}
@@ -97,6 +103,10 @@ ORDER BY started_at_ms LIMIT ?`, start, now, homeRecapMaxSessions)
 	if err != nil {
 		return jvNull(), err
 	}
+	explored, err := homeRecapExplored(db, start, now)
+	if err != nil {
+		return jvNull(), err
+	}
 	out := jvObj(
 		jvKey("now_ms", jvInt(now)),
 		jvKey("window_start_ms", jvInt(start)),
@@ -107,6 +117,7 @@ ORDER BY started_at_ms LIMIT ?`, start, now, homeRecapMaxSessions)
 		jvKey("sessions", sessions),
 		jvKey("best_find", bestFind),
 		jvKey("learned", learned),
+		jvKey("explored", explored),
 	)
 	if sinceMs > 0 {
 		since, err := homeRecapSince(db, sinceMs)
@@ -262,5 +273,138 @@ WHERE published_at_ms IS NOT NULL AND published_at_ms > ?`, sinceMs).Scan(&updat
 		jvKey("new_scenes", jvInt(newScenes)),
 		jvKey("whisparr_landed", jvInt(whisparr)),
 		jvKey("model_updates", jvInt(updates)),
+	), nil
+}
+
+// Where the window's watching went: the studios watched most, and how much
+// of it was a studio or performer the person had never played before.
+func homeRecapExplored(db dbx, start, now int64) (jVal, error) {
+	type watched struct {
+		sceneID string
+		seconds float64
+	}
+	var scenes []watched
+	rows, err := db.Query(`SELECT scene_id, SUM(active_seconds) FROM play_session
+WHERE started_at_ms >= ? AND started_at_ms <= ? GROUP BY scene_id ORDER BY scene_id`, start, now)
+	if err != nil {
+		return jvNull(), err
+	}
+	for rows.Next() {
+		var entry watched
+		if err := rows.Scan(&entry.sceneID, &entry.seconds); err != nil {
+			rows.Close()
+			return jvNull(), err
+		}
+		scenes = append(scenes, entry)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return jvNull(), err
+	}
+	playedBefore := func(query string, id string) (bool, error) {
+		var count int
+		err := db.QueryRow(query, id, start).Scan(&count)
+		return count > 0, err
+	}
+	type studioTally struct {
+		name   string
+		scenes int64
+		good   int64
+	}
+	studios := map[string]*studioTally{}
+	newStudios := map[string]bool{}
+	newPerformers := map[string]bool{}
+	var total, fresh float64
+	for _, entry := range scenes {
+		total += entry.seconds
+		var studioID, studio sql.NullString
+		var rating sql.NullInt64
+		err := db.QueryRow(`SELECT s.studio_id, st.name, s.rating100 FROM source_scene s
+LEFT JOIN source_studio st ON st.studio_id = s.studio_id WHERE s.scene_id=?`, entry.sceneID).Scan(&studioID, &studio, &rating)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return jvNull(), err
+		}
+		isNew := false
+		if studioID.Valid && studio.Valid && strings.TrimSpace(studio.String) != "" {
+			tally := studios[studioID.String]
+			if tally == nil {
+				tally = &studioTally{name: studio.String}
+				studios[studioID.String] = tally
+			}
+			tally.scenes++
+			if rating.Valid && rating.Int64 >= homeRecapGoodRating {
+				tally.good++
+			}
+			before, err := playedBefore(`SELECT COUNT(*) FROM source_play p JOIN source_scene s ON s.scene_id = p.scene_id
+WHERE s.studio_id=? AND p.played_at_ms < ?`, studioID.String)
+			if err != nil {
+				return jvNull(), err
+			}
+			if !before {
+				newStudios[studioID.String] = true
+				isNew = true
+			}
+		}
+		performers, err := db.Query(`SELECT performer_id FROM scene_performer WHERE scene_id=? ORDER BY performer_id`, entry.sceneID)
+		if err != nil {
+			return jvNull(), err
+		}
+		var ids []string
+		for performers.Next() {
+			var id string
+			if err := performers.Scan(&id); err != nil {
+				performers.Close()
+				return jvNull(), err
+			}
+			ids = append(ids, id)
+		}
+		performers.Close()
+		for _, id := range ids {
+			before, err := playedBefore(`SELECT COUNT(*) FROM source_play p JOIN scene_performer sp ON sp.scene_id = p.scene_id
+WHERE sp.performer_id=? AND p.played_at_ms < ?`, id)
+			if err != nil {
+				return jvNull(), err
+			}
+			if !before {
+				newPerformers[id] = true
+				isNew = true
+			}
+		}
+		if isNew {
+			fresh += entry.seconds
+		}
+	}
+	ranked := make([]string, 0, len(studios))
+	for id := range studios {
+		ranked = append(ranked, id)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		a, b := studios[ranked[i]], studios[ranked[j]]
+		if a.scenes != b.scenes {
+			return a.scenes > b.scenes
+		}
+		if a.good != b.good {
+			return a.good > b.good
+		}
+		return ranked[i] < ranked[j]
+	})
+	top := jvArr()
+	for _, id := range ranked[:minInt(3, len(ranked))] {
+		top.arr = append(top.arr, jvObj(
+			jvKey("studio_id", jvStr(id)),
+			jvKey("name", jvStr(studios[id].name)),
+			jvKey("scenes", jvInt(studios[id].scenes)),
+			jvKey("rated_well", jvInt(studios[id].good)),
+		))
+	}
+	return jvObj(
+		jvKey("top_studios", top),
+		jvKey("new_studios", jvInt(int64(len(newStudios)))),
+		jvKey("new_performers", jvInt(int64(len(newPerformers)))),
+		jvKey("watched_seconds", jvFloat(total)),
+		jvKey("new_seconds", jvFloat(fresh)),
 	), nil
 }

@@ -94,6 +94,14 @@ from a studio you had not played before), and what you taught Curator through
 feedback and tag answers. Hide it with **×** until next week. All of this is read
 from Curator's own data and never leaves your machine.
 
+In the first ten days of a month, **Your <month>, rewound** offers a short story
+about the month before: picks watched and time spent, your studio of the month, your
+best discovery, how your taste moved (from Insights), Curator's hit rate (picks you
+rated well, against the month before), how much of your watching was new to you, and
+a first pick for the new month. Cards move on by themselves (use the arrows or
+**Pause**; with reduced motion they wait for you). It shows once per month until
+you watch or dismiss it.
+
 ### Curator's comments
 
 Now and then Curator leaves a short chat bubble at the top of the
