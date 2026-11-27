@@ -75,19 +75,30 @@ Databases, backups, and exported reports can reveal library titles, viewing hist
 and preferences. Treat them as private files. Before sharing diagnostic material,
 check it for personal data, server addresses, and credentials.
 
-## Pausing and forgetting viewing
+<a id="pausing-and-forgetting-viewing"></a>
 
-**Pause learning from viewing** (Settings → Plugins → Stash Curator) stops Curator
-learning from what you play while it is on: player sessions are not recorded, and
-plays from that time are left out when Curator rebuilds sessions from Stash's play
-history. Thumbs, tag answers and dismissals still count. To forget viewing after the
-fact, the `forget_viewing` operation (for example `{"hours": 48}`) removes the
-player sessions and their signals from that period and leaves its plays out of the
-history rebuild; the next model update no longer uses them. Stash's own play
-history is not changed.
+## Choosing which viewing counts
 
-**Incognito** is a separate plugin from the same plugin source that also leaves Stash's
-history alone. It adds a switch to Stash's navbar, beside Settings. While it is on,
+**Manage → Viewing history** lists every play Curator knows about: player sessions
+and Stash's play history, joined into one row per watch, newest first. Each row says
+whether it counts toward your recommendations. **Don't count** stops one play
+counting, and **Count** makes it count again. You can also select several plays, or
+choose a whole period (the last hour, today or the last 7 days). Curator deletes
+nothing: a choice only marks plays, so it can always be undone, and Stash's own play
+history is never changed. A choice for one play stands until you change that play,
+even inside a pause or a period choice. A play that does not count teaches Curator
+nothing: no signal, no performer or studio play count, no Expand seed, and its scene is
+treated as unwatched. Recommendations follow after the next model update.
+
+**Pause learning from viewing** (on that page, or Settings → Plugins → Stash Curator)
+marks every new play, on every device, as not counted while it is on. The plays are
+still recorded, so **Count them** on the Viewing history page counts a pause's plays
+later. Thumbs, tag answers and dismissals always count. The `forget_viewing`
+operation (for example `{"hours": 48}`) is the same as choosing a period: it marks
+the plays in it as not counted.
+
+**Incognito** is a separate plugin from the same plugin source for viewing you want no
+record of at all. It adds a switch to Stash's navbar, beside Settings. While it is on,
 this browser records no plays anywhere. Stash's player saves no resume point, play
 duration or play count. Curator records nothing it would learn from implicitly: no
 lane views, and no player session that was open while it was on, including a scene

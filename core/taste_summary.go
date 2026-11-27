@@ -164,7 +164,7 @@ func tasteSummary(db dbx) (jVal, error) {
 	}
 
 	plays := map[string][]int64{}
-	playRows, err := db.Query(`SELECT scene_id, played_at_ms FROM source_play ORDER BY scene_id, played_at_ms, ordinal`)
+	playRows, err := db.Query(`SELECT scene_id, played_at_ms FROM counted_source_play ORDER BY scene_id, played_at_ms, ordinal`)
 	if err != nil {
 		return jvNull(), err
 	}

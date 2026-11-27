@@ -216,7 +216,7 @@ func recommendGreedy(db dbx, modelID, lane string, count int64, diversityEnabled
 	// recommend()'s direct_plays query has no OBSERVED_PLAYBACK_SQL filter
 	// (unlike _direct_play_filters).
 	directPlays := make(map[string]int64)
-	rows, err := db.Query(`SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
+	rows, err := db.Query(`SELECT scene_id, max(ended_at_ms) AS last_played FROM counted_play_session
 WHERE provenance='direct_player' GROUP BY scene_id`)
 	if err != nil {
 		return builtSlate{}, err
@@ -596,7 +596,7 @@ func loadPreparedSlate(db dbx, modelID, lane string, count int64, diversityEnabl
 		args = append(args, id)
 	}
 	changed := make(map[string]bool)
-	rows, err := db.Query(`SELECT scene_id FROM play_session
+	rows, err := db.Query(`SELECT scene_id FROM counted_play_session
 WHERE ended_at_ms>=? AND scene_id IN (`+inClause(len(ids))+`)
 AND (provenance<>'direct_player' OR `+observedPlaybackSQL+`)`, args...)
 	if err != nil {

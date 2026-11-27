@@ -413,7 +413,7 @@ const observedPlaybackSQL = `(
 // directPlayFilters mirrors SlateBuilder._direct_play_filters.
 func directPlayFilters(db dbx, nowMs int64) (directPlayFilter, error) {
 	plays := make(map[string]int64)
-	rows, err := db.Query(`SELECT scene_id, max(ended_at_ms) AS last_played FROM play_session
+	rows, err := db.Query(`SELECT scene_id, max(ended_at_ms) AS last_played FROM counted_play_session
 WHERE provenance='direct_player' AND ` + observedPlaybackSQL + ` GROUP BY scene_id`)
 	if err != nil {
 		return directPlayFilter{}, err
@@ -501,7 +501,7 @@ func drawSlate(db dbx, lane string, items []*recommendationItem, seed string, at
 	cooldownMs := cooldownDays * 86_400_000
 	picked := map[string]bool{}
 	for _, query := range []string{
-		"SELECT impression_id, scene_id FROM play_session WHERE scene_id IN (" + marks + ") AND impression_id IS NOT NULL",
+		"SELECT impression_id, scene_id FROM counted_play_session WHERE scene_id IN (" + marks + ") AND impression_id IS NOT NULL",
 		"SELECT impression_id, scene_id FROM feedback WHERE scene_id IN (" + marks + ") AND feedback_type='thumb_up' AND reversed_by_id IS NULL",
 	} {
 		rows, err := db.Query(query, args...)
@@ -1130,7 +1130,7 @@ WHERE NOT EXISTS (SELECT 1 FROM source_file f WHERE f.scene_id=l.scene_id AND f.
    OR l.scene_id IN (SELECT t.scene_id FROM direct_tag_preference d
                      CROSS JOIN scene_tag t ON t.tag_id=d.tag_id WHERE d.blocked=1)
    OR (l.source_lane IN ('best_bets', 'revisit')
-       AND l.scene_id IN (SELECT scene_id FROM play_session WHERE provenance='direct_player'))`, laneArgs...)
+       AND l.scene_id IN (SELECT scene_id FROM counted_play_session WHERE provenance='direct_player'))`, laneArgs...)
 	if err != nil {
 		return nil, err
 	}

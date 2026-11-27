@@ -184,3 +184,56 @@ def test_playing_a_scene_schedules_the_automatic_play_sync(page: Page, base_url:
         assert session, "the tracker session was not ingested into play_session"
     finally:
         connection.close()
+
+
+def _counted(scene_id: str) -> int:
+    connection = _open_sidecar()
+    try:
+        return connection.execute(
+            "SELECT count(*) FROM counted_source_play WHERE scene_id=?", (scene_id,)
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+
+def test_viewing_history_marks_a_play_not_counted_and_back(page: Page, base_url: str) -> None:
+    """Manage → Viewing history: Don't count, Undo, and the pause switch, by clicking."""
+    from tests.integration.test_smoke import _dismiss_modals
+
+    _wait_curator_idle()
+    scene_id = _first_scene_id()
+    _import_play(scene_id)
+    plays = _counted(scene_id)
+    assert plays >= 1
+
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(
+        f"{base_url}/plugins/stash-curator?view=manage&section=viewing",
+        wait_until="domcontentloaded",
+    )
+    _dismiss_modals(page)
+    page.get_by_text("Learning from what you watch").wait_for(timeout=20_000)
+    row = page.locator(".curator-viewing-row").first
+    row.get_by_role("button", name="Don\u2019t count").first.click()
+    page.get_by_text("Stopped counting").wait_for(timeout=20_000)
+    page.locator(".curator-viewing-badge", has_text="your choice").first.wait_for(timeout=20_000)
+    assert _counted(scene_id) == plays - 1, "the newest play still counts"
+
+    page.locator(".curator-viewing-toast").get_by_role("button", name="Undo").click()
+    page.locator(".curator-viewing-toast").wait_for(state="detached", timeout=20_000)
+    assert _counted(scene_id) == plays, "undo did not count the play again"
+
+    page.get_by_role("button", name="Pause learning").click()
+    page.get_by_role("button", name="Resume learning").wait_for(timeout=20_000)
+    connection = _open_sidecar()
+    try:
+        open_pause = connection.execute(
+            "SELECT count(*) FROM viewing_rule WHERE reason='paused' AND ended_at_ms IS NULL"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert open_pause == 1, "pausing did not open a pause"
+    page.get_by_role("button", name="Resume learning").click()
+    page.get_by_role("button", name="Pause learning").wait_for(timeout=20_000)
+    assert not errors, errors

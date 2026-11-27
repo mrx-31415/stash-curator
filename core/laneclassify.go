@@ -166,9 +166,9 @@ FROM model_scene_neighbor WHERE model_id=? ORDER BY scene_id, rank`, modelID)
 
 // playedSceneIDs mirrors LanePolicy._played_scene_ids.
 func playedSceneIDs(db dbx) (map[string]bool, error) {
-	rows, err := db.Query(`SELECT DISTINCT scene_id FROM source_play
+	rows, err := db.Query(`SELECT DISTINCT scene_id FROM counted_source_play
 UNION
-SELECT DISTINCT scene_id FROM play_session
+SELECT DISTINCT scene_id FROM counted_play_session
 WHERE provenance<>'direct_player' OR ` + observedPlaybackSQL)
 	if err != nil {
 		return nil, err

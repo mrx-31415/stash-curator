@@ -401,7 +401,8 @@ ORDER BY appeal * confidence DESC LIMIT 500`, modelID)
 		performers.arr = append(performers.arr, jvStr(externalID))
 	}
 	playedRows, err := s.db.Query(`
-SELECT scene_id FROM source_scene ORDER BY play_count DESC, updated_at DESC LIMIT 200`)
+SELECT s.scene_id FROM source_scene s JOIN counted_scene_play c USING(scene_id)
+ORDER BY c.play_count DESC, s.updated_at DESC LIMIT 200`)
 	if err != nil {
 		return jvNull(), err
 	}

@@ -1120,14 +1120,13 @@ func submitSessions(db dbx, entries []jVal) (int64, error) {
 	signaled := false
 	err := withTxn(db, func(conn *sql.Conn) error {
 		ctx := context.Background()
-		paused, err := connPauseWindows(conn)
+		// Every session is kept; viewing rules decide whether it counts
+		// (counted_play_session), so a paused play can be counted later.
+		rules, err := loadViewingRules(connQuerier{conn})
 		if err != nil {
 			return err
 		}
 		for _, session := range sessions {
-			if pausedAt(paused, session.startedAtMs) {
-				continue // learning was paused: the session is not recorded
-			}
 			if !session.hasImpression {
 				attributed, err := attributeImpression(conn, session)
 				if err != nil {
@@ -1163,7 +1162,7 @@ INSERT OR IGNORE INTO play_session(
 					if err != nil {
 						return err
 					}
-					signaled = signaled || sig
+					signaled = signaled || sig && countedAt(rules, session.sceneID, session.startedAtMs)
 				}
 			}
 			sig, err := insertReplacement(conn, session)

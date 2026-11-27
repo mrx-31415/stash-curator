@@ -70,7 +70,7 @@ func entityDormancyRows(artifact dbx, modelID, featureVersion string) ([][]any, 
 	performerRows, err := artifact.Query(`
 WITH plays AS (
     SELECT sp.performer_id AS entity_id, spl.scene_id, spl.played_at_ms
-    FROM scene_performer sp JOIN source_play spl ON spl.scene_id = sp.scene_id
+    FROM scene_performer sp JOIN counted_source_play spl ON spl.scene_id = sp.scene_id
 ),
 stats AS (
     SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,
@@ -117,7 +117,7 @@ FROM stats s LEFT JOIN appeal a ON a.entity_id = s.entity_id`, modelID)
 	studioRows, err := artifact.Query(`
 WITH plays AS (
     SELECT ss.studio_id AS entity_id, spl.scene_id, spl.played_at_ms
-    FROM source_scene ss JOIN source_play spl ON spl.scene_id = ss.scene_id
+    FROM source_scene ss JOIN counted_source_play spl ON spl.scene_id = ss.scene_id
     WHERE ss.studio_id IS NOT NULL
 ),
 stats AS (
@@ -174,7 +174,7 @@ plays AS (
     SELECT ct.tag_id AS entity_id, spl.scene_id, spl.played_at_ms
     FROM scene_tag st
     JOIN confirmed_tags ct ON ct.tag_id = st.tag_id
-    JOIN source_play spl ON spl.scene_id = st.scene_id
+    JOIN counted_source_play spl ON spl.scene_id = st.scene_id
 ),
 stats AS (
     SELECT entity_id, max(played_at_ms) AS last_played_at_ms, count(*) AS play_count,

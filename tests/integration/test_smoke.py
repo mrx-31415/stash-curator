@@ -148,6 +148,10 @@ TABS: list[tuple[str, list[str]]] = [
         ["Prune", "Nothing in this view."],
     ),
     (
+        "?view=manage&section=viewing",
+        ["Learning from what you watch", "No plays recorded yet."],
+    ),
+    (
         "?view=manage&section=diagnostics",
         ["Diagnostics", "This allowlisted report excludes library metadata"],
     ),
