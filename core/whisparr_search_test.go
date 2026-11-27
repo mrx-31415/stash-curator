@@ -16,6 +16,7 @@ type sweepStub struct {
 	commands      string // GET /command body
 	searches      []string
 	fail          bool
+	missing       map[string]bool // "METHOD path" answering 404
 }
 
 func (stub *sweepStub) serve(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +24,10 @@ func (stub *sweepStub) serve(w http.ResponseWriter, r *http.Request) {
 	if stub.fail {
 		w.WriteHeader(http.StatusInternalServerError)
 		io.WriteString(w, `{"message":"Boom"}`)
+		return
+	}
+	if stub.missing[r.Method+" "+r.URL.Path] {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -259,5 +264,89 @@ func TestWhisparrSweepTickQueuesAJobThatRunsWhileBrowsing(t *testing.T) {
 	jobID, _, _, mode, err := claimQueuedJob(db, true) // a Curator page is open
 	if err != nil || jobID == "" || mode != whisparrSearchTask {
 		t.Fatalf("claimed %q %q, %v", jobID, mode, err)
+	}
+}
+
+func TestWhisparrOverviewShowsAndManagesTheRotation(t *testing.T) {
+	stub, path, settings, db := whisparrOverviewFixture(t)
+	// rotate and resume wake the daemon; a real one would hold the temp
+	// dir's log open and break its cleanup on Windows.
+	prevSpawn := spawnWorkerFn
+	spawnWorkerFn = func(string) error { return nil }
+	defer func() { spawnWorkerFn = prevSpawn }()
+	run := func(args jVal) (jVal, error) {
+		args.set("database_path", jvStr(path))
+		payload := jvObj(jvKey("args", args), jvKey("server_connection", jvObj()))
+		return whisparrActionBody(t.TempDir(), payload, settings)
+	}
+	// "Add to rolling search" pairs each Whisparr id with its StashDB id;
+	// an id without a StashDB id is skipped.
+	result, err := run(jvObj(jvKey("action", jvStr("rotate")),
+		jvKey("whisparr_ids", jvArr(jvInt(1), jvInt(2), jvInt(1))),
+		jvKey("stashdb_ids", jvArr(jvStr("s-missing"), jvStr(""), jvStr("s-missing")))))
+	if err != nil || pythonInt(result.get("count")) != 1 {
+		t.Fatalf("rotate = %s, %v", result.marshalCompact(), err)
+	}
+	if _, err := run(jvObj(jvKey("action", jvStr("rotate")), jvKey("whisparr_ids", jvArr(jvInt(1))), jvKey("stashdb_ids", jvArr()))); err == nil {
+		t.Fatal("unpaired ids accepted")
+	}
+	if err := recordWhisparrSweep(db, 5_000, 0, "Whisparr rejected the request (HTTP 500)"); err != nil {
+		t.Fatal(err)
+	}
+
+	overview, err := getWhisparrOverviewBody(t.TempDir(), taskPayload(path, "get_whisparr_overview"), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := overview.get("rotation")
+	if !summary.get("enabled").truthy() || pythonInt(summary.get("active")) != 1 || pythonInt(summary.get("batch_size")) != 3 ||
+		pythonInt(summary.get("next_sweep_at_ms")) != 5_000+15*60_000 || !strings.Contains(summary.get("last_error").asString(), "HTTP 500") {
+		t.Fatalf("rotation = %s", summary.marshalCompact())
+	}
+	for _, item := range overview.get("items").arr {
+		rotation := item.get("rotation")
+		if item.get("stashdb_id").asString() == "s-missing" {
+			if rotation.get("state").asString() != "active" || pythonInt(rotation.get("attempts")) != 0 || rotation.get("last_searched_at_ms").kind != jNull {
+				t.Fatalf("missing scene rotation = %s", rotation.marshalCompact())
+			}
+		} else if rotation.kind != jNull {
+			t.Fatalf("%s has rotation %s", item.get("title").asString(), rotation.marshalCompact())
+		}
+	}
+
+	if _, err := run(jvObj(jvKey("action", jvStr("stop")), jvKey("whisparr_ids", jvArr(jvInt(1))), jvKey("stashdb_ids", jvArr(jvStr("s-missing"))))); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := db.QueryRow(`SELECT state FROM whisparr_search WHERE external_id='s-missing'`).Scan(&state); err != nil || state != "stopped" {
+		t.Fatalf("state = %q, %v", state, err)
+	}
+	if len(stub.calls) != 0 {
+		t.Fatalf("rotation actions reached Whisparr: %v", stub.calls)
+	}
+}
+
+func TestWhisparrSweepSkipsChecksAWhisparrVersionLacks(t *testing.T) {
+	stub, settings, db := sweepFixture(t)
+	stub.missing = map[string]bool{"GET /api/v3/indexerstatus": true, "GET /api/v3/command": true}
+	summary, err := runWhisparrSweep(db, settings, sweepConfig(2), sweepNow)
+	if err != nil || summary.get("status").asString() != "searched" || len(stub.searches) != 1 {
+		t.Fatalf("summary = %s, %v, searches %v", summary.marshalCompact(), err, stub.searches)
+	}
+	// A required endpoint missing is still an error, and names the endpoint.
+	stub.missing["GET /api/v3/movie"] = true
+	summary, err = taskWhisparrSearch(db, settings)
+	if err != nil || !strings.HasPrefix(summary.get("error").asString(), "GET /movie: Whisparr rejected the request (HTTP 404)") {
+		t.Fatalf("summary = %s, %v", summary.marshalCompact(), err)
+	}
+	// "Try now" lifts the pause so the next tick runs a round.
+	if _, paused, _ := whisparrSweepState(db); paused <= nowMs() {
+		t.Fatalf("no pause after an error: %d", paused)
+	}
+	if err := resumeWhisparrSweep(db); err != nil {
+		t.Fatal(err)
+	}
+	if lastRun, paused, err := whisparrSweepState(db); err != nil || lastRun != 0 || paused != 0 {
+		t.Fatalf("after resume: last run %d, paused %d, %v", lastRun, paused, err)
 	}
 }

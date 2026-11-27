@@ -655,6 +655,19 @@ scenes**. **Rolling search interval**, **Scenes per rolling search**, and **Stop
 searching after** in settings change the pace. With the rolling search off, **Search
 Whisparr immediately** starts one search per sent scene, as before.
 
+In **Find → Whisparr**, the **Rolling search** chip lists the scenes still being
+searched for, and **Next search** sorts by when each is next searched. Each scene in
+the rotation shows how often it was searched, when last, and when the next search
+can run (never before the next round), or why it waits: its release date, or a
+download in progress. Scenes the rotation found, gave up on, or stopped show that
+too. A note above the list gives the pace and the next round, or why the rotation is
+paused, including Whisparr's error when it could not be reached.
+
+Use the clock button on a scene, or **Add to rolling search** for selected ones, to
+put missing scenes into the rotation, such as scenes sent before the rolling search
+existed. On a scene in the rotation, the same button, or **Stop retrying** for
+selected ones, takes it out. Neither changes anything in Whisparr.
+
 ## Prune
 
 Open **Manage → Prune** to review explicit dislikes, suspected poor fits, and

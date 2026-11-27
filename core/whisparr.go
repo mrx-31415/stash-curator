@@ -40,7 +40,7 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 		return jvNull(), fmt.Errorf("Whisparr request failed: %v", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return jvNull(), errors.New(whisparrRejection(resp.StatusCode, raw))
+		return jvNull(), whisparrHTTPError{status: resp.StatusCode, message: whisparrRejection(resp.StatusCode, raw)}
 	}
 	// Bulk editor deletes answer 200 with no body.
 	if len(strings.TrimSpace(string(raw))) == 0 {
@@ -51,6 +51,21 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 		return jvNull(), errors.New("Whisparr returned invalid JSON")
 	}
 	return parsed, nil
+}
+
+// whisparrHTTPError is a non-2xx Whisparr reply; its text is whisparrRejection's.
+type whisparrHTTPError struct {
+	status  int
+	message string
+}
+
+func (e whisparrHTTPError) Error() string { return e.message }
+
+// whisparrNotFound reports a 404: the endpoint does not exist in this
+// Whisparr version.
+func whisparrNotFound(err error) bool {
+	var httpErr whisparrHTTPError
+	return errors.As(err, &httpErr) && httpErr.status == http.StatusNotFound
 }
 
 // whisparrRejection mirrors whisparr._rejection: describe a non-2xx reply with

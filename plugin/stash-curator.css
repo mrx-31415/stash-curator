@@ -6389,6 +6389,19 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   font-size: 0.8rem;
 }
 
+.curator-whisparr-retry {
+  margin-left: 0.5rem;
+}
+
+.curator-whisparr-rotation-line {
+  color: var(--curator-text-muted);
+  font-size: 0.8rem;
+}
+
+.curator-whisparr-rotation-line.is-active {
+  color: var(--curator-text);
+}
+
 .curator-whisparr-badges {
   display: flex;
   flex-wrap: wrap;
