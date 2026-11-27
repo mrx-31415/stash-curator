@@ -79,6 +79,21 @@ Returning to the page keeps the current draw; a new local day or a new model
 refreshes it. Refreshing the same lane twice in one tab also draws again; a
 single refresh keeps the current cards in place.
 
+### Welcome back and your week
+
+The top of **For You** greets you after time away. If you have been gone a couple
+of hours or more, tiles count what is new since your last visit in this browser:
+scenes added to your library, how many of them arrived from Whisparr, and model
+updates to your picks. Each tile opens the matching page.
+
+Below them, one of For You's top five picks is dealt as a card with its reason;
+**Deal again** moves to the next one. **Your week with Curator** sums up the last
+seven days: Curator picks you watched and how many you rated 70 or higher (or gave a
+thumbs up), the minutes you watched from Curator each day, your best find (a pick
+from a studio you had not played before), and what you taught Curator through
+feedback and tag answers. Hide it with **×** until next week. All of this is read
+from Curator's own data and never leaves your machine.
+
 ### Curator's comments
 
 Now and then Curator leaves a short chat bubble at the top of the

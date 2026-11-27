@@ -5005,6 +5005,198 @@
     );
   }
 
+  // Welcome back: what is new since the last visit, a pick for tonight, and
+  // the week with Curator, at the top of For You (get_home_recap).
+  const LAST_VISIT_KEY = "stash-curator:last-visit:v1";
+  const RECAP_HIDDEN_KEY = "stash-curator:recap-hidden-week:v1";
+  const WELCOME_AWAY_MS = 2 * 3600000;
+  const WEEK_DAYS = 7;
+
+  function readStored(key) {
+    try { return localStorage.getItem(key) || ""; } catch (_) { return ""; }
+  }
+  function writeStored(key, value) {
+    try { localStorage.setItem(key, value); } catch (_) { /* Storage may be unavailable. */ }
+  }
+  function localDayStart(ms) {
+    const date = new Date(ms);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  }
+  // Minutes watched from Curator picks on each of the last seven local days.
+  function recapDays(sessions, now) {
+    const today = localDayStart(now);
+    const days = Array.from({ length: WEEK_DAYS }, (_, index) => {
+      const date = new Date(today);
+      date.setDate(date.getDate() - (WEEK_DAYS - 1 - index));
+      return { start: date.getTime(), label: date.toLocaleDateString(undefined, { weekday: "short" }), minutes: 0 };
+    });
+    for (const session of sessions || []) {
+      if (!session.curator) continue;
+      const day = days.findLast((entry) => session.started_at_ms >= entry.start);
+      if (day) day.minutes += Number(session.seconds || 0) / 60;
+    }
+    return days.map((day) => ({ ...day, minutes: Math.round(day.minutes) }));
+  }
+  function recapWeekKey(now) {
+    const date = new Date(localDayStart(now));
+    date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+    return String(date.getTime());
+  }
+  function welcomeTiles(since) {
+    if (!since) return [];
+    return [
+      since.new_scenes > 0 && { key: "new", value: since.new_scenes, text: since.new_scenes === 1 ? "new scene in your library" : "new scenes in your library", href: "/plugins/stash-curator?view=new_arrivals", action: "See New Arrivals" },
+      since.whisparr_landed > 0 && { key: "whisparr", value: since.whisparr_landed, text: since.whisparr_landed === 1 ? "arrived from Whisparr" : "arrived from Whisparr", href: "/plugins/stash-curator?view=whisparr", action: "Open Whisparr" },
+      since.model_updates > 0 && { key: "model", value: since.model_updates, text: since.model_updates === 1 ? "model update to your picks" : "model updates to your picks", href: "/plugins/stash-curator?view=curate&section=progress", action: "What changed" },
+    ].filter(Boolean);
+  }
+
+  // Counts from 0 up to `target` once, quickly; reduced motion shows it at once.
+  function useCountUp(target, duration = 900) {
+    const [value, setValue] = React.useState(() => (reducedMotion() ? target : 0));
+    React.useEffect(() => {
+      if (reducedMotion() || !window.requestAnimationFrame) {
+        setValue(target);
+        return undefined;
+      }
+      let frame = 0;
+      const start = performance.now();
+      const step = (now) => {
+        const progress = Math.min(1, (now - start) / duration);
+        setValue(Math.round(target * (1 - Math.pow(1 - progress, 3))));
+        if (progress < 1) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+      return () => cancelAnimationFrame(frame);
+    }, [target, duration]);
+    return value;
+  }
+  function CountUp({ value }) {
+    return React.createElement("span", { className: "curator-count-up" }, useCountUp(Number(value) || 0).toLocaleString());
+  }
+
+  // The lane remounts this strip on every reload (a hidden card, New picks),
+  // so the previous visit is read once per page load and the recap is kept
+  // for a few minutes.
+  const welcomeSession = { previous: null, recap: null, fetchedAt: 0 };
+  const WELCOME_RECAP_TTL_MS = 5 * 60000;
+  function welcomePrevious() {
+    if (welcomeSession.previous === null) {
+      welcomeSession.previous = Number(readStored(LAST_VISIT_KEY)) || 0;
+      writeStored(LAST_VISIT_KEY, String(Date.now()));
+    }
+    return welcomeSession.previous;
+  }
+
+  function WelcomeBack({ items, scenes }) {
+    const [previous] = React.useState(welcomePrevious);
+    const fresh = welcomeSession.recap && Date.now() - welcomeSession.fetchedAt < WELCOME_RECAP_TTL_MS;
+    const [recap, setRecap] = React.useState(fresh ? welcomeSession.recap : null);
+    const [hiddenWeek, setHiddenWeek] = React.useState(() => readStored(RECAP_HIDDEN_KEY));
+    React.useEffect(() => {
+      if (fresh) return undefined;
+      let current = true;
+      operation({ operation: "get_home_recap", window_days: WEEK_DAYS, since_ms: previous || 0 })
+        .then((result) => {
+          welcomeSession.recap = result;
+          welcomeSession.fetchedAt = Date.now();
+          if (current) setRecap(result);
+        })
+        .catch(() => {});
+      return () => { current = false; };
+    }, []);
+    const now = recap?.now_ms || Date.now();
+    const away = previous > 0 && now - previous >= WELCOME_AWAY_MS;
+    const tiles = away ? welcomeTiles(recap?.since) : [];
+    const weekKey = recapWeekKey(now);
+    const showRecap = recap && hiddenWeek !== weekKey && (recap.picks_watched > 0 || recap.learned?.answers > 0 || recap.learned?.feedback > 0);
+    return React.createElement(
+      "div",
+      { className: "curator-welcome" },
+      tiles.length > 0 && React.createElement(
+        "section",
+        { className: "curator-welcome-since", "aria-label": "Since you were last here" },
+        React.createElement("p", { className: "curator-welcome-head" }, React.createElement("strong", null, "Welcome back."), ` Since you were last here, ${formatTimeAgo(previous)}:`),
+        React.createElement("div", { className: "curator-welcome-tiles" }, tiles.map((tile, index) => React.createElement(
+          "a",
+          { key: tile.key, className: "curator-welcome-tile", href: tile.href, style: { "--curator-enter-i": index } },
+          React.createElement("strong", null, React.createElement(CountUp, { value: tile.value })),
+          React.createElement("span", null, tile.text),
+          React.createElement("small", null, `${tile.action} →`)
+        )))
+      ),
+      items.length > 0 && React.createElement(TonightsPick, { items, scenes }),
+      showRecap && React.createElement(WeeklyRecap, { recap, now, onHide: () => { writeStored(RECAP_HIDDEN_KEY, weekKey); setHiddenWeek(weekKey); } })
+    );
+  }
+
+  // One of For You's top picks, dealt like a card; Deal again moves on.
+  function TonightsPick({ items, scenes }) {
+    const [index, setIndex] = React.useState(0);
+    const [dealing, setDealing] = React.useState(false);
+    const timer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(timer.current), []);
+    const item = items[index % items.length];
+    const scene = scenes.get(String(item.scene_id));
+    const reason = cardReason(item, scene)?.teaser || "";
+    function deal() {
+      if (dealing) return;
+      const next = () => { setDealing(false); setIndex((value) => value + 1); };
+      if (reducedMotion()) return next();
+      setDealing(true);
+      timer.current = setTimeout(next, TONIGHT_DEAL_MS);
+    }
+    const hour = new Date().getHours();
+    const label = hour >= 17 || hour < 4 ? "Tonight's pick" : hour < 12 ? "This morning's pick" : "This afternoon's pick";
+    return React.createElement(
+      "section",
+      { className: "curator-tonight", "aria-label": label },
+      React.createElement("div", { className: "curator-tonight-deck" },
+        React.createElement("span", { className: "curator-tonight-back curator-tonight-back-2", "aria-hidden": "true" }),
+        React.createElement("span", { className: "curator-tonight-back curator-tonight-back-1", "aria-hidden": "true" }),
+        React.createElement("a", { key: index, className: `curator-tonight-card scene-card${dealing ? " is-dealing" : ""}`, href: `/scenes/${item.scene_id}` },
+          React.createElement("img", { className: "scene-card-image", src: `/scene/${item.scene_id}/screenshot`, alt: "", loading: "lazy" }),
+          React.createElement("span", { className: "curator-tonight-ribbon" }, label))),
+      React.createElement("div", { className: "curator-tonight-copy" },
+        React.createElement("div", { className: "card-section" },
+          React.createElement("small", null, `Pick ${(index % items.length) + 1} of ${items.length}`),
+          React.createElement("h3", { className: "card-section-title" }, scene?.title || `Scene ${item.scene_id}`),
+          scene?.studio?.name && React.createElement("span", { className: "curator-tonight-meta" }, scene.studio.name),
+          reason && React.createElement("p", { className: "curator-tonight-reason" }, reason)),
+        React.createElement("div", { className: "curator-tonight-actions" },
+          React.createElement("a", { className: "btn btn-light btn-sm", href: `/scenes/${item.scene_id}` }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play"),
+          items.length > 1 && React.createElement(Button, { size: "sm", variant: "secondary", onClick: deal }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Deal again")))
+    );
+  }
+
+  function WeeklyRecap({ recap, now, onHide }) {
+    const days = recapDays(recap.sessions, now);
+    const tallest = Math.max(1, ...days.map((day) => day.minutes));
+    const learned = recap.learned || {};
+    const taught = Number(learned.feedback || 0) + Number(learned.answers || 0);
+    return React.createElement(
+      "section",
+      { className: "curator-recap", "aria-label": "Your week with Curator" },
+      React.createElement(Button, { className: "curator-recap-hide", size: "sm", variant: "link", "aria-label": "Hide until next week", title: "Hide until next week", onClick: onHide }, "×"),
+      React.createElement("div", { className: "curator-recap-main" },
+        React.createElement("small", null, "Your week with Curator"),
+        React.createElement("p", { className: "curator-recap-headline" }, "You watched ", React.createElement("strong", null, React.createElement(CountUp, { value: recap.picks_watched })), recap.picks_watched === 1 ? " Curator pick" : " Curator picks", recap.picks_watched > 0 ? [" and rated ", React.createElement("strong", { key: "rated" }, React.createElement(CountUp, { value: recap.rated_well })), " of them well."] : "."),
+        recap.best_find && React.createElement("p", { className: "curator-recap-find" }, "Best find: ", React.createElement("a", { href: `/scenes/${recap.best_find.scene_id}` }, recap.best_find.title || "a new scene"), ` from ${recap.best_find.studio}, a studio you hadn't watched before.`)),
+      React.createElement("div", { className: "curator-recap-chart", role: "img", "aria-label": `Minutes watched from Curator picks: ${days.map((day) => `${day.label} ${day.minutes}`).join(", ")}` },
+        days.map((day, index) => React.createElement("span", { key: day.start, className: "curator-recap-day" },
+          React.createElement("i", { className: day.minutes === tallest && day.minutes > 0 ? "is-top" : undefined, style: { "--h": `${Math.max(4, Math.round((day.minutes / tallest) * 100))}%`, "--curator-enter-i": index } }),
+          React.createElement("small", null, day.label)))),
+      taught > 0 && React.createElement("div", { className: "curator-recap-learned" },
+        React.createElement("small", null, "Curator learned ", React.createElement("strong", null, React.createElement(CountUp, { value: taught })), taught === 1 ? " thing" : " things"),
+        React.createElement("div", { className: "curator-recap-chips" }, (learned.tags || []).map((tag, index) => React.createElement("span", {
+          key: tag.tag_id,
+          className: `curator-recap-chip ${tag.blocked || Number(tag.value) < 0 ? "is-down" : Number(tag.value) > 0 ? "is-up" : ""}`,
+          style: { "--curator-pop-i": index },
+        }, `${tag.blocked || Number(tag.value) < 0 ? "−" : "+"} ${tag.name}`))))
+    );
+  }
+
   // Placeholder cards that shimmer while a lane loads, with a status line
   // that moves on through what Curator is doing.
   const LANE_LOADING_LINES = ["Loading recommendations…", "Picking your strongest matches…", "Varying studios and performers…", "Almost there…"];
@@ -5083,6 +5275,7 @@
   }
 
   const UNDO_TOAST_MS = 6000;
+  const TONIGHT_DEAL_MS = 420;
 
   // What the undo toast says after a removing reaction.
   const FEEDBACK_UNDO_TEXT = {
@@ -10118,6 +10311,7 @@
         React.createElement(
           React.Fragment,
           null,
+          lane === "for_you" && !togetherMode && React.createElement(WelcomeBack, { items: visibleItems.slice(0, 5), scenes }),
           movement && !movementDismissed && React.createElement(MovementBanner, { movement, onDismiss: () => setMovementDismissed(true) }),
           visibleItems.length === 0 && (togetherMode
             ? React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "No recommendations match Mood mode in this lane."))
