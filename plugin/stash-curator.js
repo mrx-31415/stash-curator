@@ -10,7 +10,7 @@
   const { Button, ButtonGroup, Nav } = libraries.Bootstrap;
   const { NavLink, useHistory, useLocation } = libraries.ReactRouterDOM;
   const { FontAwesomeIcon } = libraries.ReactFontAwesome;
-  const { faArrowTrendDown, faArrowTrendUp, faBalanceScale, faBed, faBell, faBellSlash, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faForward, faGlobe, faHeart, faHistory, faInbox, faLightbulb, faList, faMoon, faPlay, faPlayCircle, faRotateLeft, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faTrash, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
+  const { faArrowTrendDown, faArrowTrendUp, faBalanceScale, faBed, faBell, faBellSlash, faBroom, faBullseye, faChartLine, faCheckCircle, faCircleQuestion, faClock, faClone, faCog, faCompass, faCopy, faCrosshairs, faDatabase, faDice, faDownload, faExpandArrowsAlt, faExternalLinkAlt, faEyeSlash, faFilm, faFilter, faForward, faGlobe, faHeart, faHistory, faInbox, faLightbulb, faList, faMoon, faPause, faPlay, faPlayCircle, faRotateLeft, faSearch, faSortAmountDown, faStar, faSun, faSync, faTag, faThLarge, faThumbsDown, faThumbsUp, faTrash, faUser, faVenus, faWrench } = libraries.FontAwesomeSolid;
   const componentTransforms = window.StashCuratorComponentTransforms ||= {};
 
   function transformComponentProps(name, props) {
@@ -111,6 +111,13 @@
       icon: faThumbsUp,
       maintenance: true,
       description: "Review recent feedback, undo mistakes, or replace an action without rewriting history.",
+    },
+    {
+      value: "viewing",
+      label: "Viewing history",
+      icon: faPlayCircle,
+      maintenance: true,
+      description: "Every play Curator knows about, whether it counts, and pausing learning from viewing.",
     },
     {
       value: "history",
@@ -8956,7 +8963,7 @@
         { key: "modelUpdateEventThreshold", configKey: "model_update_event_threshold", type: "NUMBER", label: "Actions before model update", description: "Rebuild after this many new playback or feedback actions. Default 5." },
         { key: "modelUpdateMaxWaitMinutes", configKey: "model_update_max_wait_minutes", type: "NUMBER", label: "Maximum model update delay (minutes)", description: "Rebuild pending preference changes after this delay. Default 30." },
         { key: "modelUpdateMinIntervalMinutes", configKey: "model_update_min_interval_minutes", type: "NUMBER", label: "Minimum model update interval (minutes)", description: "Minimum time between automatic preference-model rebuilds. Default 60." },
-        { key: "pauseLearning", type: "BOOLEAN", label: "Pause learning from viewing", description: "While on, Curator ignores what you play, such as when testing, with guests or on a shared screen. Plays from this time are also left out when Curator reads Stash's play history. Thumbs, tag answers and dismissals still count." },
+        { key: "pauseLearning", type: "BOOLEAN", label: "Pause learning from viewing", description: "While on, plays on every device are kept but not counted, such as when testing, with guests or on a shared screen. Count them later from Manage → Viewing history. Thumbs, tag answers and dismissals still count." },
         { key: "autoTasksEnabled", configKey: "auto_tasks_enabled", type: "BOOLEAN", label: "Automatic background tasks", description: "Let the background worker apply pending model updates and sync recent plays on its own, without needing a browser tab open." },
       ],
     },
@@ -9257,11 +9264,342 @@
     );
   }
 
+  // Manage → Viewing history: every watch Curator knows about and whether it
+  // counts. Nothing is deleted here; a choice is a reversible rule
+  // (set_viewing_choice), and the pause is the pauseLearning setting.
+  const VIEWING_PERIODS = [
+    { value: "hour", label: "the last hour", ms: 3_600_000 },
+    { value: "today", label: "today", ms: null },
+    { value: "week", label: "the last 7 days", ms: 7 * 86_400_000 },
+  ];
+  const VIEWING_FILTERS = [
+    { value: "all", label: "All" },
+    { value: "counted", label: "Counted" },
+    { value: "not", label: "Not counted" },
+  ];
+  function viewingDayLabel(ms, now = new Date()) {
+    const day = new Date(ms);
+    const start = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const days = Math.round((start(now) - start(day)) / 86_400_000);
+    if (days === 0) return "Today";
+    if (days === 1) return "Yesterday";
+    return day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  }
+  function viewingTime(ms) {
+    return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  function viewingMinutes(seconds) {
+    if (seconds > 0 && seconds < 30) return "<1 min";
+    return `${Math.round(seconds / 60)} min`;
+  }
+  function viewingSource(watch) {
+    if (watch.source === "lane") return `From ${laneByValue.get(watch.lane)?.label || watch.lane}`;
+    if (watch.source === "stash") return "Stash player";
+    return "Stash history";
+  }
+  function viewingBadge(watch) {
+    if (watch.counted) return { label: "Counted", tone: "counted" };
+    if (watch.reason === "paused") return { label: "Not counted · paused", tone: "paused" };
+    return { label: "Not counted · your choice", tone: "excluded" };
+  }
+  function viewingKey(watch) {
+    return `${watch.scene_id}:${watch.started_at_ms}`;
+  }
+  function viewingSpan(watch) {
+    return { scene_id: watch.scene_id, started_at_ms: watch.started_at_ms, ended_at_ms: watch.ended_at_ms };
+  }
+  function viewingPlural(count) {
+    return count === 1 ? "1 play" : `${count} plays`;
+  }
+
+  function ViewingStatus({ data, busy, onTogglePause, onCountPaused }) {
+    const since = data.paused_since_ms;
+    const days = since ? Math.max(0, Math.floor((Date.now() - since) / 86_400_000)) : 0;
+    const pending = data.paused_not_counted || 0;
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        "section",
+        { className: `curator-viewing-status${data.paused ? " is-paused" : ""}`, "aria-label": "Learning from viewing" },
+        React.createElement("span", { className: "curator-viewing-status-icon", "aria-hidden": "true" }, React.createElement(FontAwesomeIcon, { icon: data.paused ? faPause : faPlayCircle })),
+        React.createElement(
+          "div",
+          { className: "curator-viewing-status-copy" },
+          React.createElement("strong", null, data.paused
+            ? `Learning paused since ${new Date(since).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+            : "Learning from what you watch"),
+          React.createElement("span", null, data.paused
+            ? `${days === 1 ? "1 day" : `${days} days`}. New plays on every device are kept but not counted until you count them.`
+            : "Plays on every device count. Pause here for all of them, or use Incognito for one browser.")
+        ),
+        React.createElement(Button, { variant: data.paused ? "primary" : "secondary", disabled: busy, onClick: onTogglePause }, data.paused ? "Resume learning" : "Pause learning")
+      ),
+      pending > 0 && React.createElement(
+        "section",
+        { className: "curator-viewing-status", "aria-label": "Plays from pauses" },
+        React.createElement(
+          "div",
+          { className: "curator-viewing-status-copy" },
+          React.createElement("strong", null, `${viewingPlural(pending)} from ${data.pause_periods.length === 1 ? "the pause" : "pauses"} ${pending === 1 ? "isn’t" : "aren’t"} counted`),
+          React.createElement("span", null, "Curator kept them. Count them and they shape your recommendations like any other play.")
+        ),
+        React.createElement(Button, { variant: "secondary", disabled: busy, onClick: onCountPaused }, "Count them")
+      )
+    );
+  }
+
+  function ViewingRow({ watch, scene, missing, selected, busy, onSelect, onChoose }) {
+    const badge = viewingBadge(watch);
+    const duration = scene?.files?.[0]?.duration;
+    const title = scene ? scene.title || `Scene ${watch.scene_id}` : `Scene ${watch.scene_id}`;
+    const watched = watch.watched_seconds == null
+      ? (watch.stash_plays ? "Played" : "")
+      : duration ? `${viewingMinutes(watch.watched_seconds)} of ${viewingMinutes(duration)}` : viewingMinutes(watch.watched_seconds);
+    const share = watch.watched_seconds != null && duration ? Math.min(100, Math.round((watch.watched_seconds / duration) * 100)) : null;
+    return React.createElement(
+      "div",
+      { className: `curator-viewing-row is-${badge.tone}` },
+      React.createElement("input", { type: "checkbox", checked: selected, onChange: onSelect, "aria-label": `Select ${title}` }),
+      React.createElement(
+        NavLink,
+        { to: `/scenes/${watch.scene_id}`, className: "curator-viewing-thumb", tabIndex: -1, "aria-hidden": "true" },
+        scene?.paths?.screenshot ? React.createElement("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" }) : React.createElement(FontAwesomeIcon, { icon: faFilm })
+      ),
+      React.createElement(
+        "div",
+        { className: "curator-viewing-main" },
+        React.createElement(
+          "div",
+          { className: "curator-viewing-title" },
+          missing ? React.createElement("span", { className: "text-muted" }, "Scene removed from Stash") : React.createElement(NavLink, { to: `/scenes/${watch.scene_id}` }, title),
+          scene?.studio?.name && React.createElement("span", { className: "curator-viewing-studio" }, scene.studio.name)
+        ),
+        React.createElement(
+          "div",
+          { className: "curator-viewing-meta" },
+          React.createElement("span", null, viewingTime(watch.started_at_ms)),
+          watched && React.createElement("span", null, watched),
+          share != null && React.createElement("span", { className: "curator-viewing-bar", "aria-hidden": "true" }, React.createElement("span", { style: { width: `${share}%` } })),
+          React.createElement("span", { className: "curator-viewing-source" }, viewingSource(watch))
+        )
+      ),
+      React.createElement("span", { className: `curator-viewing-badge is-${badge.tone}` }, badge.label),
+      React.createElement(
+        Button,
+        { size: "sm", variant: watch.counted ? "outline-secondary" : "primary", className: "curator-viewing-action", disabled: busy, onClick: onChoose, "aria-label": `${watch.counted ? "Don’t count" : "Count"} ${title}` },
+        watch.counted ? "Don’t count" : "Count"
+      )
+    );
+  }
+
+  function ViewingHistoryPanel() {
+    const [data, setData] = React.useState(null);
+    const [items, setItems] = React.useState([]);
+    const [loading, setLoading] = React.useState(true);
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState("");
+    const [filter, setFilter] = React.useState("all");
+    const [period, setPeriod] = React.useState("today");
+    const [selected, setSelected] = React.useState(() => new Set());
+    const [toast, setToast] = React.useState(null);
+    const [pages, setPages] = React.useState(1);
+    const [version, setVersion] = React.useState(0);
+    useCuratorActivity("viewing-history", loading, "Loading viewing history…");
+    React.useEffect(() => {
+      let active = true;
+      setLoading(true);
+      setError("");
+      operation({ operation: "get_viewing_history", limit: 50 * pages }).then(
+        (result) => { if (!active) return; setData(result); setItems(result.items); setLoading(false); },
+        (failure) => { if (!active) return; setError(failure.message); setLoading(false); }
+      );
+      return () => { active = false; };
+    }, [version, pages]);
+    const ids = [...new Set(items.map((item) => item.scene_id))];
+    const scenesQuery = GQL.useFindScenesQuery({
+      variables: { filter: { per_page: Math.max(1, ids.length) }, scene_ids: ids.map(Number) },
+      skip: ids.length === 0,
+    });
+    const scenes = new Map((scenesQuery.data?.findScenes?.scenes || []).map((scene) => [String(scene.id), scene]));
+    async function run(request, message) {
+      setBusy(true);
+      setError("");
+      try {
+        const result = await operation({ operation: "set_viewing_choice", ...request });
+        setSelected(new Set());
+        setToast({ message, undo: result.undo });
+        scheduleModelUpdate();
+        clearSlateCache(true);
+        setVersion((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function undoLast() {
+      if (!toast) return;
+      setBusy(true);
+      try {
+        await operation({ operation: "undo_viewing_choice", undo: toast.undo });
+        setToast(null);
+        scheduleModelUpdate();
+        clearSlateCache(true);
+        setVersion((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function togglePause() {
+      setBusy(true);
+      setError("");
+      try {
+        // configurePlugin replaces the whole settings map: send it all.
+        const raw = await getPluginSettings();
+        await configurePlugin({ ...raw, pauseLearning: !data.paused });
+        setToast(null);
+        setVersion((value) => value + 1);
+      } catch (failure) {
+        setError(failure.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    function countPaused() {
+      const periods = data.pause_periods.map((pause) => ({ since_ms: pause.started_at_ms, until_ms: pause.ended_at_ms ?? Date.now() }));
+      run({ choice: "include", periods }, `Counting ${viewingPlural(data.paused_not_counted)} from the pause.`);
+    }
+    function choosePeriod() {
+      const option = VIEWING_PERIODS.find((item) => item.value === period);
+      const now = Date.now();
+      const since = option.ms ? now - option.ms : new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+      run({ choice: "exclude", since_ms: since, until_ms: now }, `Stopped counting plays from ${option.label}.`);
+    }
+    function chooseWatches(watches, choice) {
+      const title = watches.length === 1 ? scenes.get(String(watches[0].scene_id))?.title : "";
+      const what = title || viewingPlural(watches.length);
+      run({ choice, watches: watches.map(viewingSpan) }, choice === "include" ? `Counting ${what}.` : `Stopped counting ${what}.`);
+    }
+    function toggleSelected(key) {
+      setSelected((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+      });
+    }
+    const visible = items.filter((item) => filter === "all" || (filter === "counted") === item.counted);
+    const chosen = items.filter((item) => selected.has(viewingKey(item)));
+    const rows = [];
+    const pauses = (data?.pause_periods || []).slice().sort((a, b) => b.started_at_ms - a.started_at_ms);
+    let lastDay = null;
+    let pauseIndex = 0;
+    for (const watch of visible) {
+      while (pauseIndex < pauses.length && pauses[pauseIndex].started_at_ms > watch.started_at_ms) {
+        const pause = pauses[pauseIndex++];
+        if (filter !== "counted") rows.push({ type: "pause", key: `pause-${pause.rule_id}`, pause });
+      }
+      const day = viewingDayLabel(watch.started_at_ms);
+      if (day !== lastDay) {
+        rows.push({ type: "day", key: `day-${watch.started_at_ms}`, label: day });
+        lastDay = day;
+      }
+      rows.push({ type: "watch", key: viewingKey(watch), watch });
+    }
+    // Pauses older than every loaded play still mark where they began.
+    if (!data?.has_more && filter !== "counted") {
+      for (const pause of pauses.slice(pauseIndex)) rows.push({ type: "pause", key: `pause-${pause.rule_id}`, pause });
+    }
+    const summary = data?.summary;
+    return React.createElement(
+      "section",
+      { className: "curator-viewing-page" },
+      error && React.createElement("div", { className: "alert alert-danger" }, error),
+      data && React.createElement(ViewingStatus, { data, busy, onTogglePause: togglePause, onCountPaused: countPaused }),
+      summary && React.createElement(
+        "div",
+        { className: "curator-viewing-stats" },
+        [
+          [`Plays, last ${summary.days} days`, summary.watches],
+          ["Watch time", summary.watched_seconds >= 3600 ? `${Math.floor(summary.watched_seconds / 3600)} h ${Math.round((summary.watched_seconds % 3600) / 60)} min` : viewingMinutes(summary.watched_seconds || 0)],
+          ["Counted", summary.counted],
+          ["Not counted", summary.not_counted],
+        ].map(([label, value]) => React.createElement("div", { key: label, className: "curator-viewing-stat" }, React.createElement("span", null, label), React.createElement("strong", null, value)))
+      ),
+      data && React.createElement(
+        "div",
+        { className: "curator-viewing-toolbar" },
+        React.createElement(
+          ButtonGroup,
+          { size: "sm", "aria-label": "Show" },
+          VIEWING_FILTERS.map((option) => React.createElement(Button, { key: option.value, variant: filter === option.value ? "primary" : "secondary", "aria-pressed": filter === option.value, onClick: () => setFilter(option.value) }, option.label))
+        ),
+        React.createElement("span", { className: "curator-viewing-spacer" }),
+        React.createElement(
+          "div",
+          { className: "curator-viewing-period" },
+          React.createElement("label", { htmlFor: "curator-viewing-period" }, "Don’t count"),
+          React.createElement(
+            "select",
+            { id: "curator-viewing-period", className: "form-control form-control-sm", value: period, onChange: (event) => setPeriod(event.target.value), disabled: busy },
+            VIEWING_PERIODS.map((option) => React.createElement("option", { key: option.value, value: option.value }, option.label))
+          ),
+          React.createElement(Button, { size: "sm", variant: "secondary", disabled: busy, onClick: choosePeriod }, "Apply")
+        )
+      ),
+      chosen.length > 0 && React.createElement(
+        "div",
+        { className: "curator-viewing-selection" },
+        React.createElement("strong", null, `${chosen.length} selected`),
+        React.createElement(Button, { size: "sm", variant: "light", disabled: busy, onClick: () => chooseWatches(chosen, "include") }, "Count"),
+        React.createElement(Button, { size: "sm", variant: "light", disabled: busy, onClick: () => chooseWatches(chosen, "exclude") }, "Don’t count"),
+        React.createElement(Button, { size: "sm", variant: "outline-light", disabled: busy, onClick: () => setSelected(new Set()) }, "Clear")
+      ),
+      toast && React.createElement(
+        "div",
+        { className: "curator-viewing-toast", role: "status" },
+        React.createElement("span", null, `${toast.message} Recommendations follow after the next model update.`),
+        React.createElement(Button, { size: "sm", variant: "link", disabled: busy, onClick: undoLast }, "Undo")
+      ),
+      loading && !data && React.createElement("div", { role: "status" }, "Loading viewing history…"),
+      data && items.length === 0 && React.createElement("div", { className: "alert alert-info" }, "No plays recorded yet."),
+      data && items.length > 0 && React.createElement(
+        "div",
+        { className: "curator-viewing-list" },
+        rows.map((row) => {
+          if (row.type === "day") return React.createElement("div", { key: row.key, className: "curator-viewing-day" }, row.label);
+          if (row.type === "pause") {
+            const pause = row.pause;
+            const end = pause.ended_at_ms ? new Date(pause.ended_at_ms).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "now";
+            return React.createElement(
+              "div",
+              { key: row.key, className: "curator-viewing-pause" },
+              React.createElement(FontAwesomeIcon, { icon: faPause }),
+              ` Learning paused · ${new Date(pause.started_at_ms).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} – ${end}`
+            );
+          }
+          const key = row.key;
+          return React.createElement(ViewingRow, {
+            key, watch: row.watch, scene: scenes.get(String(row.watch.scene_id)), missing: Boolean(scenesQuery.data) && !scenes.has(String(row.watch.scene_id)), selected: selected.has(key), busy,
+            onSelect: () => toggleSelected(key),
+            onChoose: () => chooseWatches([row.watch], row.watch.counted ? "exclude" : "include"),
+          });
+        }),
+        visible.length === 0 && React.createElement("div", { className: "curator-viewing-empty" }, "No plays match this filter.")
+      ),
+      data?.has_more && React.createElement(Button, { variant: "secondary", disabled: loading, onClick: () => setPages((value) => value + 1) }, loading ? "Loading…" : "Show older plays"),
+      data && React.createElement("p", { className: "curator-viewing-note" }, "Plays made with Incognito on never reach Stash or Curator, so they don’t appear here.")
+    );
+  }
+
   // Manage shell (GH #150 Package 3): a two-pane list/detail view that hosts
   // every maintenance-flagged NAV_ITEMS entry plus Profiling. Each panel is
   // mounted unmodified — this is pure relocation, not a rebuild.
   const MANAGE_BODIES = {
     feedback: () => React.createElement(FeedbackHistoryPanel),
+    viewing: () => React.createElement(ViewingHistoryPanel),
     sentiment: () => React.createElement(ScoreReviewPanel),
     history: () => React.createElement(RecommendationHistoryPanel),
     backups: () => React.createElement(BackupPanel),

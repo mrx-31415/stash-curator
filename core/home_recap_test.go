@@ -121,3 +121,36 @@ func TestHomeRecapExploredCountsNewStudiosAndPerformers(t *testing.T) {
 		t.Fatalf("explored seconds = %v (a session after the window's end is left out)", explored)
 	}
 }
+
+// A play marked "don't count" (or made while learning was paused) is kept but
+// left out of the recap, like everywhere else that reads viewing.
+func TestHomeRecapLeavesOutPlaysThatDoNotCount(t *testing.T) {
+	db, _ := openTempDB(t)
+	if err := migrate(db, 1_700_000_000_000); err != nil {
+		t.Fatal(err)
+	}
+	const day = int64(86_400_000)
+	now := int64(1_800_000_000_000)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO source_scene (scene_id, title, source_hash) VALUES ('kept', 'Kept', 'h'), ('hidden', 'Hidden', 'h')`)
+	exec(`INSERT INTO impression (impression_id, requested_at_ms, lane, config_version) VALUES ('imp', ?, 'for_you', 'v')`, now-3*day)
+	exec(`INSERT INTO play_session (session_id, scene_id, started_at_ms, active_seconds, provenance, confidence, impression_id) VALUES
+('a', 'kept', ?, 300, 'direct_player', 1, 'imp'), ('b', 'hidden', ?, 700, 'direct_player', 1, 'imp')`, now-2*day, now-day)
+	exec(`INSERT INTO viewing_rule (scene_id, started_at_ms, ended_at_ms, choice, reason, created_at_ms) VALUES
+('hidden', ?, ?, 'exclude', 'chosen', ?)`, now-day-1, now-day+1, now)
+	recap, err := homeRecap(db, now, 7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := number(recap.get("watched_seconds")); got != 300 {
+		t.Fatalf("watched seconds = %v, want only the counted play", got)
+	}
+	if got := len(recap.get("sessions").arr); got != 1 {
+		t.Fatalf("sessions = %d, want only the counted play", got)
+	}
+}

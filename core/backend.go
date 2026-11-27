@@ -232,6 +232,12 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opSubmitEvents(pluginDir, payload)
 	case "forget_viewing":
 		return opForgetViewing(pluginDir, payload)
+	case "get_viewing_history":
+		return opGetViewingHistory(pluginDir, payload)
+	case "set_viewing_choice":
+		return opSetViewingChoice(pluginDir, payload)
+	case "undo_viewing_choice":
+		return opUndoViewingChoice(pluginDir, payload)
 	case "update_config":
 		return opUpdateConfig(pluginDir, payload)
 	case "get_prune_candidates":

@@ -1181,7 +1181,7 @@ func sceneReasonCandidatesBody(pluginDir string, payload, settings jVal) (jVal, 
 	}
 	played, order := "", "ASC"
 	if mode == "hits" {
-		played, order = "AND s.scene_id IN (SELECT scene_id FROM source_play)", "DESC"
+		played, order = "AND s.scene_id IN (SELECT scene_id FROM counted_source_play)", "DESC"
 	}
 	rows, err := db.Query(`
 SELECT s.scene_id, s.appeal, s.confidence FROM model_scene_score s

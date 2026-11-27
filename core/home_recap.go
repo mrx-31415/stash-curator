@@ -56,7 +56,7 @@ func homeRecap(db dbx, now, days, sinceMs int64) (jVal, error) {
 	picked := map[string]bool{}
 	var watchedSeconds float64
 	rows, err := db.Query(`SELECT scene_id, started_at_ms, active_seconds, impression_id IS NOT NULL
-FROM play_session WHERE started_at_ms >= ? AND started_at_ms <= ?
+FROM counted_play_session WHERE started_at_ms >= ? AND started_at_ms <= ?
 ORDER BY started_at_ms LIMIT ?`, start, now, homeRecapMaxSessions)
 	if err != nil {
 		return jvNull(), err
@@ -171,7 +171,7 @@ WHERE s.scene_id=?`, sceneID).Scan(&title, &studioID, &studio, &rating)
 			continue
 		}
 		var before int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM source_play p JOIN source_scene s ON s.scene_id = p.scene_id
+		if err := db.QueryRow(`SELECT COUNT(*) FROM counted_source_play p JOIN source_scene s ON s.scene_id = p.scene_id
 WHERE s.studio_id=? AND p.played_at_ms < ?`, studioID.String, start).Scan(&before); err != nil {
 			return jvNull(), err
 		}
@@ -179,7 +179,7 @@ WHERE s.studio_id=? AND p.played_at_ms < ?`, studioID.String, start).Scan(&befor
 			continue
 		}
 		var seconds float64
-		if err := db.QueryRow(`SELECT COALESCE(SUM(active_seconds), 0) FROM play_session
+		if err := db.QueryRow(`SELECT COALESCE(SUM(active_seconds), 0) FROM counted_play_session
 WHERE scene_id=? AND started_at_ms >= ?`, sceneID, start).Scan(&seconds); err != nil {
 			return jvNull(), err
 		}
@@ -284,7 +284,7 @@ func homeRecapExplored(db dbx, start, now int64) (jVal, error) {
 		seconds float64
 	}
 	var scenes []watched
-	rows, err := db.Query(`SELECT scene_id, SUM(active_seconds) FROM play_session
+	rows, err := db.Query(`SELECT scene_id, SUM(active_seconds) FROM counted_play_session
 WHERE started_at_ms >= ? AND started_at_ms <= ? GROUP BY scene_id ORDER BY scene_id`, start, now)
 	if err != nil {
 		return jvNull(), err
@@ -338,7 +338,7 @@ LEFT JOIN source_studio st ON st.studio_id = s.studio_id WHERE s.scene_id=?`, en
 			if rating.Valid && rating.Int64 >= homeRecapGoodRating {
 				tally.good++
 			}
-			before, err := playedBefore(`SELECT COUNT(*) FROM source_play p JOIN source_scene s ON s.scene_id = p.scene_id
+			before, err := playedBefore(`SELECT COUNT(*) FROM counted_source_play p JOIN source_scene s ON s.scene_id = p.scene_id
 WHERE s.studio_id=? AND p.played_at_ms < ?`, studioID.String)
 			if err != nil {
 				return jvNull(), err
@@ -363,7 +363,7 @@ WHERE s.studio_id=? AND p.played_at_ms < ?`, studioID.String)
 		}
 		performers.Close()
 		for _, id := range ids {
-			before, err := playedBefore(`SELECT COUNT(*) FROM source_play p JOIN scene_performer sp ON sp.scene_id = p.scene_id
+			before, err := playedBefore(`SELECT COUNT(*) FROM counted_source_play p JOIN scene_performer sp ON sp.scene_id = p.scene_id
 WHERE sp.performer_id=? AND p.played_at_ms < ?`, id)
 			if err != nil {
 				return jvNull(), err

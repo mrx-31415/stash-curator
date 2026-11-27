@@ -219,7 +219,7 @@ func modelSceneLabels(db dbx) (map[string]sceneLabel, map[string]*sceneLabel, er
 	}
 	signals := map[string][]signal{}
 	rows, err := db.Query(`
-SELECT scene_id, event_type, outcome, confidence, payload_json FROM behavior_event
+SELECT scene_id, event_type, outcome, confidence, payload_json FROM counted_behavior_event
 WHERE scene_id IS NOT NULL AND outcome IS NOT NULL ORDER BY scene_id, occurred_at_ms`)
 	if err != nil {
 		return nil, nil, err
@@ -745,7 +745,7 @@ func modelSourceFingerprint(db dbx) (string, error) {
 		label     string
 		statement string
 	}{
-		{"source_play", `SELECT scene_id, max(played_at_ms) FROM source_play GROUP BY scene_id ORDER BY scene_id`},
+		{"source_play", `SELECT scene_id, max(played_at_ms) FROM counted_source_play GROUP BY scene_id ORDER BY scene_id`},
 		{"source_performer", `SELECT performer_id, favorite, rating100 FROM source_performer ORDER BY performer_id`},
 		{"source_studio", `SELECT studio_id, favorite FROM source_studio ORDER BY studio_id`},
 		{"source_file", `SELECT scene_id, max(available) FROM source_file GROUP BY scene_id ORDER BY scene_id`},
@@ -869,7 +869,7 @@ func modelImplicitSkipEvents(db dbx) ([]pairEvent, error) {
 	type winner struct{ sceneID, impressionID string }
 	winners := map[string]winner{}
 	rows, err := db.Query(`
-SELECT ps.scene_id, ps.impression_id FROM play_session ps
+SELECT ps.scene_id, ps.impression_id FROM counted_play_session ps
 WHERE ps.impression_id IS NOT NULL
   AND ps.provenance='direct_player' AND ` + observedPlaybackSQL + `
 UNION
@@ -1214,7 +1214,7 @@ func modelWatchLift(db dbx, sceneFeatures map[string][]storedFeature) (map[strin
 		return terms, nil
 	}
 	watched := map[string]bool{}
-	rows, err := db.Query(`SELECT DISTINCT scene_id FROM source_play`)
+	rows, err := db.Query(`SELECT DISTINCT scene_id FROM counted_source_play`)
 	if err != nil {
 		return nil, err
 	}

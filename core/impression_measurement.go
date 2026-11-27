@@ -37,7 +37,7 @@ func getImpressionMeasurementBody(pluginDir string, payload, settings jVal) (jVa
 	// a played or thumbed scene links to the impression that surfaced it.
 	played := make(map[[2]string]bool)
 	rows, err := db.Query(`
-SELECT scene_id, impression_id FROM play_session
+SELECT scene_id, impression_id FROM counted_play_session
 WHERE impression_id IS NOT NULL
   AND provenance='direct_player' AND ` + observedPlaybackSQL + `
 UNION

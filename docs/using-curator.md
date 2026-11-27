@@ -759,6 +759,24 @@ draws a new slot; without it, a new match slot starts a new session. Send a
 pick before you record it if recording it can open your result screen, so the
 result always follows its match.
 
+## Viewing history
+
+**Manage → Viewing history** shows every play Curator knows about, newest first, one
+row per watch. A row joins Curator's player sessions with the play Stash recorded at the
+same time; a play Stash recorded elsewhere (another device or app) shows as *Stash
+history*. Each row says whether it counts and why not: *paused* or *your choice*.
+
+- **Don't count** / **Count** on a row changes that play; select rows to change several.
+- **Don't count [the last hour / today / the last 7 days] → Apply** covers a period.
+- **Pause learning** at the top switches the *Pause learning from viewing* setting.
+  While it is on, new plays are kept but not counted. **Count them** counts the plays
+  from pauses afterwards.
+- Every change shows **Undo**. Nothing is deleted, and Stash's own history is not
+  changed. Recommendations follow after the next model update.
+
+See [Privacy](privacy.md#choosing-which-viewing-counts) for what a play that does not
+count leaves out, and how the Incognito plugin differs.
+
 ## Routine maintenance
 
 - Curator's background worker can apply pending model updates and recent-play syncs;

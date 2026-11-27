@@ -64,7 +64,7 @@ spot, a flag on the player fixes that scene for good.
 **Watch without a trace.** Incognito is a small plugin from the same plugin source. It
 adds a switch to Stash's navbar. While it is on, this browser records no plays: Stash
 saves no resume point, play count or history, and Curator learns nothing from what
-you watch. Curator is optional. [Details](docs/privacy.md#pausing-and-forgetting-viewing) ·
+you watch. Curator is optional. [Details](docs/privacy.md#choosing-which-viewing-counts) ·
 [Source](https://github.com/mrx-31415/stash-incognito)
 
 ## Explore Curator

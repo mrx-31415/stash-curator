@@ -1580,7 +1580,7 @@ SELECT p.performer_id, p.name, p.favorite,
     AS observed_appeal
 FROM source_performer p
 LEFT JOIN scene_performer sp USING(performer_id)
-LEFT JOIN source_scene s USING(scene_id)
+LEFT JOIN counted_scene_play s USING(scene_id)
 LEFT JOIN appeal a USING(scene_id)
 GROUP BY p.performer_id`, modelID)
 	if err != nil {

@@ -416,7 +416,7 @@ WHERE feedback_type='not_now' AND reversed_by_id IS NULL GROUP BY scene_id`)
 	cutoff := referenceAtMs - 30*86_400_000
 	rows, err = db.Query(`
 SELECT p.scene_id, max(p.played_at_ms) AS played_at, s.studio_id
-FROM source_play p JOIN source_scene s ON s.scene_id=p.scene_id
+FROM counted_source_play p JOIN source_scene s ON s.scene_id=p.scene_id
 WHERE p.played_at_ms >= ? GROUP BY p.scene_id ORDER BY played_at DESC LIMIT 200`, cutoff)
 	if err != nil {
 		return nil, err
@@ -1148,7 +1148,7 @@ func buildModelScores(db dbx, featureVersion string, sceneFeatures map[string][]
 	baseline := labelMean * baselineSupport / (1.0 + baselineSupport)
 	baseline = softBound(baseline, 0.10)
 	lastPlayed := map[string]int64{}
-	rows, err := db.Query(`SELECT scene_id, max(played_at_ms) AS last_played FROM source_play GROUP BY scene_id`)
+	rows, err := db.Query(`SELECT scene_id, max(played_at_ms) AS last_played FROM counted_source_play GROUP BY scene_id`)
 	if err != nil {
 		return nil, jvNull(), nil, err
 	}
