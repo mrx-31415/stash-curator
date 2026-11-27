@@ -93,7 +93,8 @@ Object.assign(context, vm.runInNewContext(`${region}
   assert.equal(find(failed, (node) => node.type === "Button" && node.children.includes(" Undo")), null);
 
   // Every new animation is switched off for reduced motion.
-  const reduced = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+  const motion = css.slice(css.indexOf("Motion: cards that arrive"));
+  const reduced = motion.slice(motion.indexOf("@media (prefers-reduced-motion: reduce)"));
   for (const selector of [".curator-card-enter", ".curator-card.curator-card-leaving", ".curator-feedback-button.btn-link.is-on", ".curator-undo-toast", ".curator-feedback-burst"]) {
     assert.ok(reduced.includes(selector), `${selector} respects reduced motion`);
   }

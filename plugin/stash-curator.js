@@ -1474,13 +1474,61 @@
         "div",
         { className: "curator-evidence-rows" },
         React.createElement("strong", null, "Evidence"),
-        React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement("div", { key: `${row.code}-${index}`, className: `curator-evidence-row curator-evidence-${row.direction || "context"}` }, React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"), React.createElement("strong", null, row.label || reasonLabel(row.code)), row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`))))
+        React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement(EvidenceRow, { key: `${row.code}-${index}`, row, index, strongest: evidenceStrongest(rows) })))
       ),
       !selection && lane?.available && lane.source_lane && React.createElement("p", { className: "curator-lane-callout" }, `Selected for ${lane.source_lane.replaceAll("_", " ")} as ${lane.subtype || "a qualified match"}.`),
       // Issue #216: never render the Technical details disclosure empty —
       // ScoreBreakdown has rows only when the explanation carries components
       // or an item fallback exists.
       (explanation.components?.length || item) && React.createElement("details", { className: "curator-technical-details" }, React.createElement("summary", null, "Technical details"), React.createElement(ScoreBreakdown, { explanation, item }))
+    );
+  }
+
+  function evidenceStrongest(rows) {
+    return Math.max(1e-6, ...rows.map((row) => Math.abs(Number(row.magnitude) || 0)));
+  }
+
+  // The tag answer one step from `current` on the sentiment scale.
+  function nudgedSentiment(current, step) {
+    const values = SENTIMENTS.map(([value]) => value);
+    const start = Number.isFinite(Number(current)) && current !== null ? nearestSentiment(Number(current))[0] : 0;
+    const index = values.indexOf(start);
+    return values[Math.max(0, Math.min(values.length - 1, index + step))];
+  }
+
+  // One "Why this?" evidence row: a signed bar from the centre line, sized
+  // against the strongest row so the biggest reason fills its half. A tag row
+  // can be taught from here; the answer is an ordinary Tag sentiment answer.
+  function EvidenceRow({ row, index, strongest }) {
+    const [answer, setAnswer] = React.useState(null);
+    const [pulse, setPulse] = React.useState(0);
+    const sign = row.direction === "negative" ? -1 : row.direction === "positive" ? 1 : 0;
+    const share = clamp01(Math.abs(Number(row.magnitude) || 0) / strongest);
+    const name = row.detail?.name;
+    const tagId = row.subject_type === "tag" && row.subject_id ? String(row.subject_id) : "";
+    const declared = row.detail?.declared_preference;
+    function teach(step) {
+      const value = nudgedSentiment(answer ?? declared ?? 0, step);
+      setAnswer(value);
+      setPulse((count) => count + 1);
+      submitTagPreference(tagId, { value, blocked: false });
+    }
+    const label = row.label || reasonLabel(row.code);
+    return React.createElement(
+      "div",
+      { className: `curator-evidence-row curator-evidence-${row.direction || "context"}`, style: { "--curator-row-i": index } },
+      React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"),
+      React.createElement("strong", null, name && tagId ? `${label}: ${name}` : label),
+      row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`),
+      React.createElement("div", { className: "curator-evidence-bar", role: "img", "aria-label": `${label}: ${sign < 0 ? "pulls down" : "pushes up"}, ${Math.round(share * 100)}% of the strongest reason` },
+        React.createElement("span", { className: "curator-evidence-zero", "aria-hidden": "true" }),
+        sign !== 0 && React.createElement("span", { className: `curator-evidence-fill ${sign < 0 ? "is-negative" : "is-positive"}`, style: { width: `${share * 50}%`, [sign < 0 ? "right" : "left"]: "50%" }, "aria-hidden": "true" })
+      ),
+      tagId && React.createElement("div", { className: "curator-evidence-teach" },
+        React.createElement(Button, { size: "sm", variant: "secondary", "aria-label": `Less of ${name || "this tag"}`, title: "Like this tag a little less", onClick: () => teach(-1) }, "−"),
+        React.createElement(Button, { size: "sm", variant: "secondary", "aria-label": `More of ${name || "this tag"}`, title: "Like this tag a little more", onClick: () => teach(1) }, "+"),
+        answer !== null && React.createElement("small", { key: pulse, role: "status", className: "curator-evidence-taught" }, `${nearestSentimentLabel(answer)}. Picks update soon.`)
+      )
     );
   }
 

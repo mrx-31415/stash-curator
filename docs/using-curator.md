@@ -217,7 +217,12 @@ An unavailable scene or failed request offers retry and navigation controls.
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
 Appeal from Current Fit, shows confidence, and names positive or negative evidence.
-The score tree shows the evidence behind the summary.
+The score tree shows the evidence behind the summary. Each evidence row has a bar
+that pushes the scene up (right of the centre line) or pulls it down (left), sized
+against the strongest reason. A row about a tag has **−** and **+** buttons: each
+press moves your answer for that tag one step along the Tag sentiment scale and saves
+it like any other Tag sentiment answer, so the change reaches your picks with the
+next model update.
 
 Use thumbs up or down for direct feedback. The detail menu also supports **Not now**,
 **Never show**, **Mark for pruning**, and **Metadata is wrong**. Check the card's
