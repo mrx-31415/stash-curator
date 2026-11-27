@@ -120,6 +120,10 @@ DEFAULT_PLUGIN_CONFIG: dict[str, object] = {
     "schedule_backup_enabled": False,
     "schedule_backup_interval_hours": 24,
     "schedule_backup_at_hour": None,
+    "whisparr_sweep_enabled": True,
+    "whisparr_sweep_interval_minutes": 15,
+    "whisparr_sweep_batch_size": 3,
+    "whisparr_sweep_give_up_days": 60,
 }
 
 
@@ -1852,6 +1856,10 @@ class CuratorAPI:
             "schedule_backup_enabled",
             "schedule_backup_interval_hours",
             "schedule_backup_at_hour",
+            "whisparr_sweep_enabled",
+            "whisparr_sweep_interval_minutes",
+            "whisparr_sweep_batch_size",
+            "whisparr_sweep_give_up_days",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -1944,6 +1952,28 @@ class CuratorAPI:
             value = values.get(key)
             if value is not None and (not isinstance(value, int) or not 0 <= value <= 23):
                 raise ValueError(f"{key} must be an integer from 0 to 23")
+        sweep_enabled = values.get("whisparr_sweep_enabled")
+        if sweep_enabled is not None and not isinstance(sweep_enabled, bool):
+            raise ValueError("whisparr_sweep_enabled must be true or false")
+        sweep_interval = values.get("whisparr_sweep_interval_minutes")
+        if sweep_interval is not None and (
+            isinstance(sweep_interval, bool)
+            or not isinstance(sweep_interval, (int, float))
+            or not 5 <= float(sweep_interval) <= 24 * 60
+        ):
+            raise ValueError("whisparr_sweep_interval_minutes must be between 5 and 1440")
+        sweep_batch = values.get("whisparr_sweep_batch_size")
+        if sweep_batch is not None and (
+            isinstance(sweep_batch, bool)
+            or not isinstance(sweep_batch, int)
+            or not 1 <= sweep_batch <= 50
+        ):
+            raise ValueError("whisparr_sweep_batch_size must be an integer from 1 to 50")
+        give_up = values.get("whisparr_sweep_give_up_days")
+        if give_up is not None and (
+            isinstance(give_up, bool) or not isinstance(give_up, int) or not 1 <= give_up <= 365
+        ):
+            raise ValueError("whisparr_sweep_give_up_days must be an integer from 1 to 365")
         for key in ("page_size", "sync_page_size"):
             value = values.get(key)
             if value is not None and (not isinstance(value, int) or not 1 <= value <= 500):

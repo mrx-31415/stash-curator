@@ -40,7 +40,7 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 		return jvNull(), fmt.Errorf("Whisparr request failed: %v", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return jvNull(), errors.New(whisparrRejection(resp.StatusCode, raw))
+		return jvNull(), whisparrHTTPError{status: resp.StatusCode, message: whisparrRejection(resp.StatusCode, raw)}
 	}
 	// Bulk editor deletes answer 200 with no body.
 	if len(strings.TrimSpace(string(raw))) == 0 {
@@ -51,6 +51,21 @@ func whisparrRequest(method, baseURL string, headers map[string]string, path str
 		return jvNull(), errors.New("Whisparr returned invalid JSON")
 	}
 	return parsed, nil
+}
+
+// whisparrHTTPError is a non-2xx Whisparr reply; its text is whisparrRejection's.
+type whisparrHTTPError struct {
+	status  int
+	message string
+}
+
+func (e whisparrHTTPError) Error() string { return e.message }
+
+// whisparrNotFound reports a 404: the endpoint does not exist in this
+// Whisparr version.
+func whisparrNotFound(err error) bool {
+	var httpErr whisparrHTTPError
+	return errors.As(err, &httpErr) && httpErr.status == http.StatusNotFound
 }
 
 // whisparrRejection mirrors whisparr._rejection: describe a non-2xx reply with
@@ -282,7 +297,14 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 	root := strings.TrimSpace(pythonStrOrEmpty(settings.get("whisparrRootFolder")))
 	profile := pythonInt(settings.get("whisparrQualityProfileId"))
 	monitor := argsBool(settings, "whisparrMonitor", true)
-	search := argsBool(settings, "whisparrSearchImmediately", true)
+	// With the rolling search on, the daemon searches sent scenes a few at a
+	// time instead of one search per send.
+	cfg, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	rotation := readWhisparrSweepConfig(cfg.get("config")).enabled
+	search := !rotation && argsBool(settings, "whisparrSearchImmediately", true)
 	title := pythonStrOrEmpty(scenePayload.get("title"))
 	if title == "" {
 		title = "Added by Stash Curator"
@@ -292,9 +314,16 @@ WHERE entity_type='scene' AND external_id=? LIMIT 1`,
 		return jvNull(), err
 	}
 	// Remember the send so Find can mark the scene and batch dismissals skip it.
+	sentAt := nowMs()
 	if err := execImmediate(db, `INSERT OR IGNORE INTO external_whisparr_sent(endpoint, external_id, sent_at_ms)
-VALUES (lower(?), ?, ?)`, stashdbEndpoint, externalID, nowMs()); err != nil {
+VALUES (lower(?), ?, ?)`, stashdbEndpoint, externalID, sentAt); err != nil {
 		return jvNull(), err
+	}
+	if whisparrID := pythonInt(result.get("id")); rotation && whisparrID > 0 {
+		if err := queueWhisparrSearch(db, externalID, whisparrID, sentAt); err != nil {
+			return jvNull(), err
+		}
+		ensureAutoWorker(pluginDir, payload, settings, db)
 	}
 	return result, nil
 }

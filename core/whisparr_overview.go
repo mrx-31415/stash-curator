@@ -248,6 +248,18 @@ func getWhisparrOverviewBody(pluginDir string, payload, settings jVal) (jVal, er
 	if err != nil {
 		return jvNull(), err
 	}
+	searches, err := whisparrSearchRows(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	cfgRow, err := sidecarConfig(db)
+	if err != nil {
+		return jvNull(), err
+	}
+	rotation, err := whisparrRotationSummary(db, cfgRow.get("config"), searches)
+	if err != nil {
+		return jvNull(), err
+	}
 	counts := map[string]int64{}
 	items := jvArr()
 	for _, movie := range movies.arr {
@@ -285,6 +297,7 @@ func getWhisparrOverviewBody(pluginDir string, payload, settings jVal) (jVal, er
 			jvKey("queue", jvNull()),
 			jvKey("sent_at_ms", jvNull()),
 			jvKey("score", jvNull()),
+			jvKey("rotation", jvNull()),
 		)
 		if inLibrary && stashID != "" {
 			item.set("local_scene_id", jvStr(localID))
@@ -298,6 +311,9 @@ func getWhisparrOverviewBody(pluginDir string, payload, settings jVal) (jVal, er
 		if score, ok := scores[stashID]; ok && stashID != "" {
 			item.set("score", jvFloat(score))
 		}
+		if search, ok := searches[stashID]; ok && stashID != "" {
+			item.set("rotation", search)
+		}
 		items.arr = append(items.arr, item)
 	}
 	countObj := jvObj()
@@ -308,6 +324,7 @@ func getWhisparrOverviewBody(pluginDir string, payload, settings jVal) (jVal, er
 		jvKey("items", items),
 		jvKey("counts", countObj),
 		jvKey("library_ready", jvBool(libraryReady)),
+		jvKey("rotation", rotation),
 		jvKey("whisparr_url", jvStr(strings.TrimSuffix(api.base, "/api/v3"))),
 	), nil
 }
@@ -331,6 +348,19 @@ func opWhisparrAction(pluginDir string, payload jVal) (jVal, error) {
 func whisparrActionBody(pluginDir string, payload, settings jVal) (jVal, error) {
 	args := payload.get("args")
 	action := argsString(args, "action", "")
+	if action == "resume" {
+		// "Try now" on a paused rolling search: Curator-side only.
+		db, err := openAPISidecar(pluginDir, payload, settings)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer db.Close()
+		if err := resumeWhisparrSweep(db); err != nil {
+			return jvNull(), err
+		}
+		ensureAutoWorker(pluginDir, payload, settings, db)
+		return jvObj(jvKey("action", jvStr(action)), jvKey("count", jvInt(0))), nil
+	}
 	rawIDs := args.get("whisparr_ids")
 	if !isList(rawIDs) || len(rawIDs.arr) == 0 || len(rawIDs.arr) > whisparrActionLimit {
 		return jvNull(), fmt.Errorf("whisparr_ids must be a list of 1 to %d ids", whisparrActionLimit)
@@ -390,9 +420,37 @@ func whisparrActionBody(pluginDir string, payload, settings jVal) (jVal, error) 
 AND external_id IN (SELECT value FROM json_each(?))`, stashdbEndpoint, encoded.marshalCompact()); err != nil {
 				return jvNull(), err
 			}
+			if err := forgetWhisparrSearch(db, stashIDs); err != nil {
+				return jvNull(), err
+			}
+		}
+	case "rotate", "stop":
+		// Curator-side only: the rolling search, not Whisparr, changes.
+		db, err := openAPISidecar(pluginDir, payload, settings)
+		if err != nil {
+			return jvNull(), err
+		}
+		defer db.Close()
+		now := nowMs()
+		if action == "rotate" {
+			count, err := rotateWhisparrScenes(db, rawIDs, args.get("stashdb_ids"), now)
+			if err != nil {
+				return jvNull(), err
+			}
+			ensureAutoWorker(pluginDir, payload, settings, db)
+			return jvObj(jvKey("action", jvStr(action)), jvKey("count", jvInt(count))), nil
+		}
+		var stashIDs []string
+		for _, value := range args.get("stashdb_ids").arr {
+			if id := strings.TrimSpace(pythonStrOrEmpty(value)); id != "" {
+				stashIDs = append(stashIDs, id)
+			}
+		}
+		if err := stopWhisparrSearches(db, stashIDs, now); err != nil {
+			return jvNull(), err
 		}
 	default:
-		return jvNull(), errors.New("action must be search, monitor, unmonitor, or remove")
+		return jvNull(), errors.New("action must be search, monitor, unmonitor, remove, rotate, stop, or resume")
 	}
 	return jvObj(jvKey("action", jvStr(action)), jvKey("count", jvInt(int64(len(ids.arr))))), nil
 }

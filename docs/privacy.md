@@ -42,13 +42,16 @@ Whisparr is a separate optional integration and receives only an item you
 explicitly send with **Send to Whisparr**; it is never sent automatically.
 Curator records the StashDB ids of scenes it has sent, in the local database only,
 to mark them in Find.
-Sending a scene also requests a release search by default, controlled by the
-**Search Whisparr immediately** setting. Sent scenes are monitored by default, so
-Whisparr downloads a release it finds later on its own; the **Monitor scenes sent to
-Whisparr** setting turns this off.
+Sent scenes are monitored by default, so Whisparr downloads a release it finds later
+on its own; the **Monitor scenes sent to Whisparr** setting turns this off. With
+**Rolling Whisparr search** on (the default), the background worker later asks
+Whisparr to search for scenes you sent, a few at a time, until Whisparr has them or
+the give-up window ends; these requests carry only Whisparr's own ids for those
+scenes. With it off, sending a scene requests one release search, controlled by the
+**Search Whisparr immediately** setting.
 Opening **Find → Whisparr** reads Whisparr's scene list and download queue and
 compares them with your library inside Curator; nothing from your library is sent to
-Whisparr. Searches, monitoring changes, and removals there happen only when you
+Whisparr. Other searches, monitoring changes, and removals happen only when you
 choose them, and a removal never deletes files.
 
 ## Retention and diagnostics

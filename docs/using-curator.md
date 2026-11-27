@@ -636,6 +636,38 @@ out of Whisparr only: downloaded files always stay on disk, and the scene no lon
 shows **Sent to Whisparr** in Find. Filter by title or studio, or with **Sent by
 Curator** show only the scenes Curator sent.
 
+#### Rolling search
+
+Sending many scenes at once would start one indexer search per scene, which can trip
+your indexers' rate limits. With **Rolling Whisparr search** on (the default), a sent
+scene is not searched right away. The background worker asks Whisparr to search for a
+few sent scenes at a time instead: 3 every 15 minutes by default, best match first.
+Scenes Whisparr does not find are searched again 2 hours later, then 6 hours later,
+then daily for three days, then weekly.
+
+A scene leaves the rotation once Whisparr has its file or it is in your library, and
+waits while Whisparr is downloading it. A scene with a release date in the future
+waits until that date. Curator stops searching for a scene 60 days after it was sent,
+and sending it again restarts its searches. The rotation pauses while Whisparr reports
+an indexer in backoff, at most 6 hours at a time, and for an hour when Whisparr cannot
+be reached. Each search appears in **Manage → Tasks** as **Search Whisparr for missing
+scenes**. **Rolling search interval**, **Scenes per rolling search**, and **Stop
+searching after** in settings change the pace. With the rolling search off, **Search
+Whisparr immediately** starts one search per sent scene, as before.
+
+In **Find → Whisparr**, the **Rolling search** chip lists the scenes still being
+searched for, and **Next search** sorts by when each is next searched. Each scene in
+the rotation shows how often it was searched, when last, and when the next search
+can run (never before the next round), or why it waits: its release date, or a
+download in progress. Scenes the rotation found, gave up on, or stopped show that
+too. A note above the list gives the pace and the next round, or why the rotation is
+paused, including Whisparr's error when it could not be reached.
+
+Use the clock button on a scene, or **Add to rolling search** for selected ones, to
+put missing scenes into the rotation, such as scenes sent before the rolling search
+existed. On a scene in the rotation, the same button, or **Stop retrying** for
+selected ones, takes it out. Neither changes anything in Whisparr.
+
 ## Prune
 
 Open **Manage → Prune** to review explicit dislikes, suspected poor fits, and

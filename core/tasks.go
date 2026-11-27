@@ -280,6 +280,8 @@ func runTaskMode(db dbx, pluginDir string, payload jVal, mode string, settings j
 		return taskBuild(db, pluginDir, payload, mode)
 	case "sync-build", "full-sync-build":
 		return taskSyncBuild(db, pluginDir, payload, mode, settings)
+	case whisparrSearchTask:
+		return taskWhisparrSearch(db, settings)
 	}
 	return jvNull(), fmt.Errorf("unknown Curator task: %s", mode)
 }

@@ -221,8 +221,24 @@ settings:
     type: BOOLEAN
   whisparrSearchImmediately:
     displayName: Search Whisparr immediately
-    description: Start a release search after adding a scene. Enabled by default.
+    description: With the rolling search off, start a release search right after adding a scene. Enabled by default.
     type: BOOLEAN
+  whisparrSweepEnabled:
+    displayName: Rolling Whisparr search
+    description: Search for sent scenes a few at a time in the background, and keep retrying the ones Whisparr has not found, so a bulk send never trips indexer rate limits. Enabled by default.
+    type: BOOLEAN
+  whisparrSweepIntervalMinutes:
+    displayName: Rolling search interval (minutes)
+    description: Time between background searches. Default 15 (5 to 1440).
+    type: NUMBER
+  whisparrSweepBatchSize:
+    displayName: Scenes per rolling search
+    description: How many scenes each background search asks Whisparr for. Default 3 (1 to 50).
+    type: NUMBER
+  whisparrSweepGiveUpDays:
+    displayName: Stop searching after (days)
+    description: Stop retrying a scene this many days after it was sent. Default 60 (1 to 365).
+    type: NUMBER
 tasks:
   - name: Prepare local scene matches
     description: Check your library for scenes already owned before browsing Expand.
