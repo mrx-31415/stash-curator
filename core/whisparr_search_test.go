@@ -269,6 +269,11 @@ func TestWhisparrSweepTickQueuesAJobThatRunsWhileBrowsing(t *testing.T) {
 
 func TestWhisparrOverviewShowsAndManagesTheRotation(t *testing.T) {
 	stub, path, settings, db := whisparrOverviewFixture(t)
+	// rotate and resume wake the daemon; a real one would hold the temp
+	// dir's log open and break its cleanup on Windows.
+	prevSpawn := spawnWorkerFn
+	spawnWorkerFn = func(string) error { return nil }
+	defer func() { spawnWorkerFn = prevSpawn }()
 	run := func(args jVal) (jVal, error) {
 		args.set("database_path", jvStr(path))
 		payload := jvObj(jvKey("args", args), jvKey("server_connection", jvObj()))
