@@ -300,7 +300,9 @@ tags**). The questions keep coming until none are left that would change much: t
 queue tops itself up in the background, and every five answers Curator updates
 recommendations and reorders the remaining questions, so a tag your earlier answers
 already settled is not asked next. Every answer is saved on **Next**, so you can stop
-at any point. **Apply my answers now** runs a model update straight away.
+at any point. A ring beside the question count fills with each answer and shows how
+many are left before the next update; while that update runs, a note says so.
+**Apply my answers now** runs a model update straight away.
 
 **Review my answers** goes through your own answers that most disagree with what
 your viewing alone suggests, ranked by the size of the gap and how confident the

@@ -6700,3 +6700,112 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
   .curator-evidence-taught { animation: none; }
   .curator-evidence-teach .btn:active { transform: none; }
 }
+
+/* ---------- Motion: tag questions and what an update moved ---------- */
+.curator-tag-question {
+  animation: curator-question-in 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+.curator-tag-question.is-leaving {
+  animation: curator-question-out 0.28s cubic-bezier(0.6, 0, 0.9, 0.5) forwards;
+  pointer-events: none;
+}
+@keyframes curator-question-in {
+  from { opacity: 0; transform: translateX(3rem) rotate(1.5deg); }
+}
+@keyframes curator-question-out {
+  to { opacity: 0; transform: translateX(-4rem) rotate(-4deg); }
+}
+.curator-tag-question-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; justify-content: space-between; }
+.curator-tag-question-ring { align-items: center; color: var(--curator-text-muted); display: inline-flex; gap: 0.4rem; }
+.curator-tag-question-ring small { font-size: 0.75rem; }
+.curator-ring-segment { stroke: var(--curator-wash-recessed, rgba(255, 255, 255, 0.12)); transition: stroke 0.3s; }
+.curator-ring-segment.is-on { animation: curator-segment-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); stroke: var(--curator-positive, #8fbf4f); }
+.curator-tag-question-ring.is-updating svg { animation: curator-spin 1.2s linear infinite; }
+@keyframes curator-segment-pop {
+  40% { stroke-width: 8; }
+}
+.btn.curator-ready { animation: curator-ready 0.45s cubic-bezier(0.3, 1.8, 0.5, 1); }
+@keyframes curator-ready {
+  40% { transform: scale(1.08); }
+}
+.curator-tag-question-updating { display: grid; gap: 0.5rem; }
+.curator-sweep {
+  background: var(--curator-wash-recessed, rgba(255, 255, 255, 0.12));
+  border-radius: 999px;
+  display: block;
+  height: 0.35rem;
+  overflow: hidden;
+  position: relative;
+}
+.curator-sweep::after {
+  animation: curator-sweep 1.4s cubic-bezier(0.6, 0, 0.3, 1) infinite;
+  background: var(--curator-accent);
+  border-radius: inherit;
+  content: "";
+  inset: 0;
+  position: absolute;
+  transform: translateX(-100%);
+  width: 40%;
+}
+@keyframes curator-sweep {
+  to { transform: translateX(260%); }
+}
+.curator-what-moved {
+  animation: curator-moved-in 0.55s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  position: relative;
+}
+@keyframes curator-moved-in {
+  from { opacity: 0; transform: scale(0.94); }
+}
+.curator-moved-check { animation: curator-moved-check 0.5s cubic-bezier(0.3, 1.8, 0.5, 1) 0.2s both; color: var(--curator-positive, #8fbf4f); }
+@keyframes curator-moved-check {
+  from { opacity: 0; transform: scale(0.3); }
+}
+.curator-moved-chip,
+.curator-moved-scene {
+  animation: curator-moved-pop 0.4s cubic-bezier(0.2, 1.8, 0.4, 1) both;
+  animation-delay: calc(0.35s + var(--curator-pop-i, 0) * 0.06s);
+}
+@keyframes curator-moved-pop {
+  from { opacity: 0; transform: scale(0.4); }
+}
+.curator-moved-sparks { left: 1.4rem; pointer-events: none; position: absolute; top: 1.1rem; }
+.curator-moved-sparks i {
+  animation: curator-moved-spark 0.9s ease-out 0.2s forwards;
+  border-radius: 2px;
+  height: 6px;
+  opacity: 0;
+  position: absolute;
+  width: 6px;
+}
+.curator-moved-sparks i:nth-child(3n + 1) { background: var(--curator-positive, #8fbf4f); }
+.curator-moved-sparks i:nth-child(3n + 2) { background: var(--curator-accent); }
+.curator-moved-sparks i:nth-child(3n) { background: var(--curator-accent-secondary); }
+.curator-moved-sparks i:nth-child(1) { --x: -1.8rem; --y: -1.4rem; }
+.curator-moved-sparks i:nth-child(2) { --x: 2rem; --y: -1.6rem; }
+.curator-moved-sparks i:nth-child(3) { --x: -0.6rem; --y: -2.4rem; }
+.curator-moved-sparks i:nth-child(4) { --x: 1rem; --y: -2.6rem; }
+.curator-moved-sparks i:nth-child(5) { --x: -2.4rem; --y: 0.4rem; }
+.curator-moved-sparks i:nth-child(6) { --x: 2.6rem; --y: 0.2rem; }
+.curator-moved-sparks i:nth-child(7) { --x: -1.4rem; --y: 1.6rem; }
+.curator-moved-sparks i:nth-child(8) { --x: 1.6rem; --y: 1.8rem; }
+@keyframes curator-moved-spark {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--x), var(--y)) rotate(200deg) scale(0.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-tag-question,
+  .curator-tag-question.is-leaving,
+  .curator-ring-segment.is-on,
+  .curator-tag-question-ring.is-updating svg,
+  .btn.curator-ready,
+  .curator-sweep::after,
+  .curator-what-moved,
+  .curator-moved-check,
+  .curator-moved-chip,
+  .curator-moved-scene { animation: none; }
+  .curator-sweep::after { transform: none; width: 100%; opacity: 0.5; }
+  .curator-moved-sparks { display: none; }
+  .curator-ring-segment { transition: none; }
+}

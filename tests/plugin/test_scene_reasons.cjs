@@ -77,6 +77,8 @@ function harness({ candidates, storage, impact = IMPACT }) {
   const context = {
     React: runtime.React,
     Button: "button",
+    FontAwesomeIcon: "icon",
+    faCheckCircle: "check",
     Date, JSON, Set, Map, Error, Object, Math, Number, String, Promise, setTimeout, clearTimeout,
     keepPreviewMuted: () => {},
     loadPerformerAffinities: async () => ({ affinities: {
@@ -355,7 +357,7 @@ const button = (tree, label) => nodes(tree).find((node) => node.type === "button
       return runtime.render(() => app.context.WhatMoved({ refreshKey: 1, onDismiss: () => {} }));
     };
     const card = await renderCard(IMPACT);
-    assert.match(text(card), /What your answers moved/);
+    assert.match(text(card), /Your picks just got sharper/);
     assert.match(text(card), /Lace \+0\.05/);
     assert.match(text(card), /Gaping −0\.12/);
     assert.match(text(card), /Performer One \+0\.09/);

@@ -2181,6 +2181,7 @@
   const TAG_QUESTION_BATCH = 5;
   const TAG_QUESTION_TOP_UP_AT = 2;
   const TAG_QUESTION_REBUILD_EVERY = 5;
+  const TAG_QUESTION_LEAVE_MS = 280;
   const TAG_QUESTION_SKIP_KEY = "stash-curator:tag-question-skips:v1";
   const TAG_QUESTION_SKIP_MS = 30 * 86_400_000;
 
@@ -2345,6 +2346,10 @@
     const [applying, setApplying] = React.useState(false);
     const [notice, setNotice] = React.useState("");
     const [moved, setMoved] = React.useState(0);
+    const [leaving, setLeaving] = React.useState(false);
+    const [updating, setUpdating] = React.useState(false);
+    const leaveTimer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(leaveTimer.current), []);
     // Tags answered or skipped here; they are excluded from every fetch, so
     // answers still on their way to the sidecar are not asked again.
     const handled = React.useRef(new Set());
@@ -2393,6 +2398,7 @@
       if (rebuilding.current) return false;
       rebuilding.current = true;
       setUnapplied(0);
+      setUpdating(true);
       try {
         const built = await applyFeedbackAndAwaitBuild();
         if (built) {
@@ -2402,16 +2408,26 @@
         return built;
       } finally {
         rebuilding.current = false;
+        setUpdating(false);
       }
     }
 
+    // The answered card flies off before the next one slides in; the answer
+    // was already saved, so only the card swap waits.
     function advance(item) {
       handled.current.add(item.tag_id);
-      setChoice(null);
-      setNotice("");
-      setIndex((current) => current + 1);
+      const show = () => {
+        setLeaving(false);
+        setChoice(null);
+        setNotice("");
+        setIndex((current) => current + 1);
+      };
+      if (reducedMotion()) return show();
+      setLeaving(true);
+      leaveTimer.current = setTimeout(show, TAG_QUESTION_LEAVE_MS);
     }
     function next(item) {
+      if (leaving) return;
       submitTagPreference(item.tag_id, choice);
       announcePageChat({ kind: "tag", name: item.name, value: choice.value, blocked: choice.blocked, inferred: item.inferred_value });
       setAnswered((count) => count + 1);
@@ -2421,6 +2437,7 @@
       if (pending >= TAG_QUESTION_REBUILD_EVERY) rebuild().catch(() => {});
     }
     function skip(item) {
+      if (leaving) return;
       rememberTagQuestionSkip(item.tag_id);
       advance(item);
     }
@@ -2452,15 +2469,18 @@
       moved > 0 && React.createElement(WhatMoved, { refreshKey: moved, onDismiss: () => setMoved(0) }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       notice && React.createElement("div", { className: "alert alert-info", role: "status" }, notice),
-      applying && React.createElement("div", { className: "alert alert-info", role: "status" },
-        "Rebuilding recommendations with your answers. This usually takes under a minute."),
+      (applying || updating) && React.createElement("div", { className: "alert alert-info curator-tag-question-updating", role: "status" },
+        React.createElement("span", null, "Updating your recommendations with your answers. This usually takes under a minute."),
+        React.createElement("span", { className: "curator-sweep", "aria-hidden": "true" })),
       !error && items.length === 0 && React.createElement("div", { className: "alert alert-info" },
         "No questions right now. Every tag in your current recommendations is either answered, skipped, or too rare to matter. Tag sentiment lists all tags."),
       item && React.createElement(
         "section",
-        { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-tag-question-${item.tag_id}` },
-        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
-          answered > 0 ? `Question ${index + 1} · ${answered} answered` : `Question ${index + 1}`),
+        { key: item.tag_id, className: `curator-tag-question${leaving ? " is-leaving" : ""}`, "aria-labelledby": `curator-tag-question-${item.tag_id}` },
+        React.createElement("div", { className: "curator-tag-question-head" },
+          React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
+            answered > 0 ? `Question ${index + 1} · ${answered} answered` : `Question ${index + 1}`),
+          React.createElement(TagQuestionRing, { pending: unapplied, every: TAG_QUESTION_REBUILD_EVERY, updating })),
         React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, tagQuestionHeading(item)),
         React.createElement("p", { className: "curator-tag-question-reason" }, tagQuestionReason(item)),
         React.createElement(TagQuestionMedia, { item }),
@@ -2492,7 +2512,7 @@
             "aria-pressed": !!choice && !choice.blocked && choice.value === TAG_QUESTION_GUESS_VALUE[item.guess],
             onClick: () => setChoice({ value: TAG_QUESTION_GUESS_VALUE[item.guess], blocked: false }),
           }, "Yes"),
-          React.createElement(Button, { size: "sm", variant: "primary", disabled: !choice, onClick: () => next(item) }, "Next"),
+          React.createElement(Button, { size: "sm", variant: "primary", className: choice ? "curator-ready" : undefined, disabled: !choice, onClick: () => next(item) }, "Next"),
           React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(item) }, "Skip")
         )
       ),
@@ -2503,6 +2523,29 @@
           ? "That's every useful question for now. Your answers are saved."
           : "That's every useful question for now."),
       controls
+    );
+  }
+
+  // Five segments that fill with each answer toward the next model update.
+  function TagQuestionRing({ pending, every, updating }) {
+    const filled = updating ? every : Math.min(pending, every);
+    const label = updating ? "Updating recommendations now" : `${every - filled} more ${every - filled === 1 ? "answer" : "answers"} to the next update`;
+    return React.createElement(
+      "span",
+      { className: `curator-tag-question-ring${updating ? " is-updating" : ""}`, title: label },
+      React.createElement(
+        "svg",
+        { width: 34, height: 34, viewBox: "0 0 34 34", role: "img", "aria-label": label },
+        Array.from({ length: every }, (_, segment) => React.createElement("circle", {
+          key: segment,
+          className: `curator-ring-segment${segment < filled ? " is-on" : ""}`,
+          cx: 17, cy: 17, r: 13, fill: "none", strokeWidth: 5, pathLength: 100,
+          strokeDasharray: `${100 / every - 3} ${100 - (100 / every - 3)}`,
+          strokeDashoffset: -segment * (100 / every),
+          transform: "rotate(-90 17 17)",
+        }))
+      ),
+      React.createElement("small", null, updating ? "Updating…" : `${every - filled} to the next update`)
     );
   }
 
@@ -3687,8 +3730,9 @@
       ...((group && group.promoted) || []).slice(0, WHAT_MOVED_ITEMS),
       ...((group && group.demoted) || []).slice(0, WHAT_MOVED_ITEMS),
     ];
+    let order = 0;
     const chip = (item, key) => React.createElement("span", {
-      key, className: `curator-moved-chip ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+      key, className: `curator-moved-chip ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`, style: { "--curator-pop-i": order++ },
     }, `${item.name} ${formatSigned(item.delta)}`);
     const tags = moves(impact.tags);
     const performers = moves(impact.performers);
@@ -3705,8 +3749,9 @@
     return React.createElement(
       "aside",
       { className: "curator-what-moved alert alert-secondary", "aria-label": "What your answers moved" },
+      React.createElement("span", { className: "curator-moved-sparks", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index }))),
       React.createElement("div", { className: "curator-tag-follow-up-heading" },
-        React.createElement("strong", null, "What your answers moved"),
+        React.createElement("strong", null, React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }), " Your picks just got sharper"),
         React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss" }, "×")
       ),
       row("Tags", tags, (item) => chip(item, `tag-${item.id}`)),
@@ -3715,7 +3760,7 @@
         "a",
         {
           key: `scene-${item.scene_id}`, href: `/scenes/${item.scene_id}`, title: item.title || `Scene ${item.scene_id}`,
-          className: `curator-moved-scene ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+          className: `curator-moved-scene ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`, style: { "--curator-pop-i": order++ },
         },
         React.createElement("img", { src: `/scene/${item.scene_id}/screenshot`, alt: "", loading: "lazy", className: "card-section" }),
         React.createElement("span", null, formatSigned(item.delta))

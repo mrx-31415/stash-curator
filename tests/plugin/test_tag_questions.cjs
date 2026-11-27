@@ -61,6 +61,8 @@ function harness({ result, failure, storage, built = true, media = { description
     React: runtime.React,
     Button: "button",
     TagSentimentControl: "sentiment-control",
+    // Reduced motion swaps question cards at once, so the flow stays synchronous.
+    reducedMotion: () => true,
     Date,
     JSON,
     Set,
@@ -267,7 +269,7 @@ function createRuntimeFor(app) {
   // shown yet with the new ranking, excluding everything already seen.
   const apply = nodes(tree).find((node) => node.type === "button" && text(node) === "Apply my answers now");
   const applied = apply.props.onClick();
-  assert.match(text(app.render()), /Rebuilding recommendations with your answers/);
+  assert.match(text(app.render()), /Updating your recommendations with your answers/);
   await applied;
   await settle();
   assert.equal(app.calls.applied, 1);
