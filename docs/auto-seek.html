@@ -1,6 +1,6 @@
 ---
 title: Auto Seek
-description: Skip the intro of every scene. Auto Seek finds where the action starts, on your server, and takes you straight there.
+description: Stop scrubbing. Auto Seek finds where the action starts in every scene, at the act you choose, takes you there, and maps every act across the scene, all on your own server.
 wide: true
 css: auto-seek.css
 icon: auto-seek.svg
@@ -11,8 +11,8 @@ icon: auto-seek.svg
 <section class="as-hero">
   <div>
     <span class="as-badge"><img src="{{ '/assets/auto-seek.svg' | relative_url }}" alt="">New · a Stash plugin from Curator</span>
-    <h1>Skip the intro. <span>Every&nbsp;scene.</span></h1>
-    <p class="lede">Auto Seek finds where the action starts in each scene and jumps straight there. Tap <strong>Skip intro</strong> on the player, or let it skip on its own. Your Stash server works it out in a few seconds when you open a scene, or ahead of time in the background.</p>
+    <h1>Stop scrubbing. <span>Skip to the part you&nbsp;want.</span></h1>
+    <p class="lede">Auto Seek finds where the action starts in each scene, at the act you choose, and takes you there: tap <strong>Skip intro</strong> on the player, or let it skip on its own. A timeline under the player shows every act across the scene, so any other part is one tap away. Your Stash server works it all out, in the background or when you open a scene.</p>
     <div class="actions">
       <a class="button" href="#install">Install Auto Seek</a>
       <a class="button secondary" href="#how">See how it finds the start</a>
@@ -47,7 +47,7 @@ icon: auto-seek.svg
 </section>
 
 <h2 id="how">How it finds the start</h2>
-<p class="lede">No chapter markers needed. An image model that knows what an intro looks like reads a handful of frames and homes in, like you would with the scrubber, only faster.</p>
+<p class="lede">No chapter markers needed. An image model that tells 26 acts apart reads a handful of frames and homes in, like you would with the scrubber, only faster.</p>
 <div class="as-steps">
   <section class="as-step">
     <svg viewBox="0 0 240 52" aria-hidden="true"><g fill="#5b6b85"><rect x="6" y="40" width="8" height="10" rx="2"/><rect x="46" y="36" width="8" height="14" rx="2"/><rect x="86" y="41" width="8" height="9" rx="2"/></g><g fill="#ffb81f"><rect x="126" y="8" width="8" height="42" rx="2"/><rect x="166" y="10" width="8" height="40" rx="2"/></g><g fill="none" stroke="#5b6b85" stroke-dasharray="3 3"><rect x="206" y="20" width="8" height="30" rx="2"/></g></svg>
@@ -64,6 +64,45 @@ icon: auto-seek.svg
     <h3>Pinpoint</h3>
     <p>A few rounds of halving the gap land it within seconds. The player jumps a moment before that, for a smoother way in.</p>
   </section>
+</div>
+
+<h2 id="timeline">Every act, across the whole scene</h2>
+<p class="lede">Once the start is found, Auto Seek keeps going in the background: it scans the whole scene and maps every act it sees onto a timeline under the player, live as it goes.</p>
+<figure class="as-shot">
+  <video autoplay muted loop playsinline preload="metadata" poster="{{ '/assets/auto-seek-timeline-poster.jpg' | relative_url }}" width="800" height="566" aria-label="The Acts panel under Stash's player: hovering a lane shows that moment's frame, tapping an act's name steps through its stretches, Ctrl + scroll zooms in to per-frame bars, a ruler and a row of frames, and Fit shows the whole scene again.">
+    <source src="{{ '/assets/auto-seek-timeline.webm' | relative_url }}" type="video/webm">
+    <source src="{{ '/assets/auto-seek-timeline.mp4' | relative_url }}" type="video/mp4">
+  </video>
+  <figcaption class="as-caption">A real 43-minute scene, pixelated: the lanes and scores are what the model saw in it.</figcaption>
+</figure>
+<div class="as-features">
+  <section class="as-feature">
+    <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h6M3 12h12M3 17h8"/><path d="M15 7h6M17 17h4"/></svg></span>
+    <h3>One lane per act</h3>
+    <p>Solid blocks where each act clearly is, in the order they first show, lined up with the seek bar. A Top act strip sums it up, and the act on screen lights up.</p>
+  </section>
+  <section class="as-feature">
+    <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5v14l7-7z" fill="currentColor"/><path d="M13 5v14l7-7z" fill="currentColor"/></svg></span>
+    <h3>Jump to any act</h3>
+    <p>Tap an act's name to go where it first shows, and again for its next stretch. Hover a lane to see that moment's frame; tap to play from there.</p>
+  </section>
+  <section class="as-feature">
+    <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M8 10.5h5M10.5 8v5"/></svg></span>
+    <h3>Zoom into any moment</h3>
+    <p>Ctrl + scroll or pinch to zoom, drag to move along. Up close you get every frame's scores, a ruler, and a row of preview frames to tap.</p>
+  </section>
+</div>
+
+<h2 id="start-at">Start where you want</h2>
+<div class="as-split">
+  <div>
+    <p class="lede">Some want the kissing, some want straight to the main act. Pick a stage, or tap the acts that count for you.</p>
+    <p><strong>Oral, hands or sex</strong> is the default; <strong>Kissing or later</strong> and <strong>Sex positions only</strong> move the line either way, and the experimental stages go back as far as a striptease. Search the 26 acts to make your own pick. Starts you marked with the flag always stay.</p>
+    <p>Two model sizes: <strong>Fast</strong>, the default, and <strong>Accurate</strong>, about four times slower per frame and much better at finding where sex positions begin.</p>
+  </div>
+  <figure class="as-shot">
+    <img src="{{ '/assets/auto-seek-start-at-menu.png' | relative_url }}" alt="Auto Seek's Start at setting with its dropdown open: Oral, hands or sex; Kissing or later; Sex positions only; Foreplay or later (experimental); and Anything, tease included, above a grid of acts with the ones that count highlighted" width="770" height="421" loading="lazy">
+  </figure>
 </div>
 
 <h2>Made for how you actually watch</h2>
@@ -104,16 +143,16 @@ icon: auto-seek.svg
   <p class="eyebrow">Install</p>
   <h2>Three steps, then just press play</h2>
   <ol>
-    <li><span>1</span><div>In Stash, open <strong>Settings → Plugins → Available Plugins → Add Source</strong> and add Curator's plugin source:<pre><code id="as-source">https://mrx-31415.github.io/stash-curator/index.yml</code></pre></div></li>
-    <li><span>2</span><div>Install <strong>Auto Seek</strong> and reload plugins. It downloads its image model (89 MB) and a runtime for your server (8–80 MB) in the background, once.</div></li>
-    <li><span>3</span><div>Open any scene: <strong>Skip intro</strong> appears on the player. To have every scene ready ahead of time, run <strong>Find start points</strong> under <strong>Settings → Tasks</strong>.</div></li>
+    <li><span>1</span><div>In Stash, open <strong>Settings → Plugins → Available Plugins → Add Source</strong> and add this plugin source:<pre><code id="as-source">https://mrx-31415.github.io/stash-plugins/main/index.yml</code></pre></div></li>
+    <li><span>2</span><div>Install <strong>Auto Seek</strong> and reload plugins. It downloads its image model (about 90 MB) and a runtime for your server (8–80 MB) in the background, once.</div></li>
+    <li><span>3</span><div>Open any scene: <strong>Skip intro</strong> appears on the player, and the act timeline fills in below it. To have every scene ready ahead of time, run <strong>Find start points</strong> under <strong>Settings → Tasks</strong>.</div></li>
   </ol>
-  <p class="as-caption">Requires Stash v0.31 and the <code>python</code> Stash already uses for plugins. Auto Seek works on its own; you don't need Curator. <a href="{{ '/auto-seek-guide/' | relative_url }}">Read the guide</a> for settings and troubleshooting.</p>
+  <p class="as-caption">Requires Stash v0.31 and the <code>python</code> Stash already uses for plugins. Auto Seek works on its own; you don't need Curator. Installed from Curator's source? That keeps receiving updates too. <a href="{{ '/auto-seek-guide/' | relative_url }}">Read the guide</a> for settings and troubleshooting.</p>
 </section>
 
 <h2>Honest about the misses</h2>
 <div class="as-misses">
-  <p>Auto Seek is new and was tuned and tested on one library, so treat its accuracy as a first impression. There, about 4 in 5 picks landed within a minute of the start a person chose by hand. It judges single frames, so:</p>
+  <p>Auto Seek is new and was tuned and tested on one library, so treat its accuracy as a first impression. There, with the default start, about 3 in 4 picks landed within a minute of a start checked by hand; for <em>Sex positions only</em>, 2 in 3 with the accurate model. It judges single frames, so:</p>
   <ul>
     <li>a slow-burn opening, or people still dressed when things get going, can make it start a little late;</li>
     <li>undressing or an interview without action can make it start early.</li>
@@ -121,7 +160,7 @@ icon: auto-seek.svg
   <p>When it's wrong, the flag fixes that scene for good.</p>
 </div>
 
-<p class="as-caption" style="margin-top:2.5rem">Auto Seek's model is a tuned version of <a href="https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K">LAION's CLIP ViT-B/32</a>, hosted at <a href="https://huggingface.co/mrx-31415/auto-seek">huggingface.co/mrx-31415/auto-seek</a>, and runs on <a href="https://onnxruntime.ai">ONNX Runtime</a>. The demo above uses footage from Big Buck Bunny (CC BY 3.0, © Blender Foundation).</p>
+<p class="as-caption" style="margin-top:2.5rem">Auto Seek's models are tuned versions of LAION's CLIP <a href="https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K">ViT-B/32</a> and ViT-B/16, hosted at <a href="https://huggingface.co/mrx-31415/auto-seek">huggingface.co/mrx-31415/auto-seek</a>, and run on <a href="https://onnxruntime.ai">ONNX Runtime</a>. The start demo uses footage from Big Buck Bunny (CC BY 3.0, © Blender Foundation); the timeline demo is a real scene, pixelated.</p>
 </div>
 
 <script>

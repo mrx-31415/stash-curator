@@ -27,10 +27,12 @@ wide: true
   <a class="hub-plugin auto-seek" href="{{ '/auto-seek/' | relative_url }}">
     <div class="hub-visual"><img src="{{ '/assets/auto-seek-demo.gif' | relative_url }}" alt="" loading="lazy"></div>
     <div class="hub-body">
-      <div class="hub-title"><img src="{{ '/assets/auto-seek.svg' | relative_url }}" alt="" width="52" height="52"><div><h2>Auto Seek <span class="hub-new">New</span></h2><p>Skip the intro. Every scene.</p></div></div>
+      <div class="hub-title"><img src="{{ '/assets/auto-seek.svg' | relative_url }}" alt="" width="52" height="52"><div><h2>Auto Seek <span class="hub-new">New</span></h2><p>Stop scrubbing. Skip to the part you want.</p></div></div>
       <ul>
         <li>An image model finds where the action starts</li>
         <li><strong>Skip intro</strong> on the player, or skip automatically</li>
+        <li>Choose what counts as the start, from kissing to sex positions</li>
+        <li>A timeline of every act in the scene, to jump and zoom</li>
         <li>Runs on your server, optionally ahead of time</li>
       </ul>
       <span class="hub-more">Explore Auto Seek →</span>
