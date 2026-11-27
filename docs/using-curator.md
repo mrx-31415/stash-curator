@@ -67,6 +67,8 @@ your position and nearby loaded batches in the same tab. Deep lists retain up to
 can retain fewer batches. Changing filters,
 moods, or choosing **New picks** starts a fresh list. **Results per page** controls
 the fetch size; **Load more** also lets you load explicitly or retry a failed request.
+While a lane loads, placeholder cards hold its place. An empty lane says why it is
+empty and offers **Try For You instead**, alongside **Rebuild model**.
 
 Use **New picks** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw

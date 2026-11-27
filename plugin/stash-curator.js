@@ -5005,6 +5005,60 @@
     );
   }
 
+  // Placeholder cards that shimmer while a lane loads, with a status line
+  // that moves on through what Curator is doing.
+  const LANE_LOADING_LINES = ["Loading recommendations…", "Picking your strongest matches…", "Varying studios and performers…", "Almost there…"];
+  function LaneSkeleton({ message = null, count = 8 }) {
+    const [line, setLine] = React.useState(0);
+    React.useEffect(() => {
+      if (message) return undefined;
+      const timer = setInterval(() => setLine((value) => Math.min(LANE_LOADING_LINES.length - 1, value + 1)), 900);
+      return () => clearInterval(timer);
+    }, [message]);
+    return React.createElement(
+      "div",
+      { className: "curator-lane-skeleton" },
+      React.createElement("p", { className: "curator-lane-skeleton-line", role: "status" }, message || LANE_LOADING_LINES[line]),
+      React.createElement("div", { className: "curator-grid", "aria-hidden": "true" }, Array.from({ length: count }, (_, index) => React.createElement(
+        "div",
+        { key: index, className: "curator-skeleton-card", style: { "--curator-enter-i": index } },
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-image" }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "70%" } }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "45%" } }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "60%" } })
+      )))
+    );
+  }
+
+  // What an empty lane means, and where to go instead.
+  const LANE_EMPTY = {
+    for_you: ["Nothing to recommend yet", "For You fills once Curator has built a model from your library, plays and ratings."],
+    best_bets: ["No strong unseen matches right now", "Best Bets needs scenes that more than one signal agrees on. Rate a few more scenes and check back."],
+    new_arrivals: ["Nothing new matches you well yet", "New Arrivals fills as you add scenes to your library."],
+    revisit: ["Nothing to revisit yet", "Scenes you enjoyed come back here after some time away."],
+    stretch: ["No stretch picks right now", "Stretch needs familiar matches with one less-tested tag or studio to try."],
+    blind_spots: ["No blind spots found", "Either you have explored widely, or Curator doesn't have enough evidence yet."],
+    dormant: ["Nothing dormant", "Nothing you used to watch a lot has been parked long enough to come back."],
+  };
+  function LaneEmpty({ lane, onOpenLane, onRebuild }) {
+    const [title, body] = LANE_EMPTY[lane] || ["Nothing qualifies for this lane right now.", ""];
+    return React.createElement(
+      "div",
+      { className: "curator-lane-empty", role: "status" },
+      React.createElement("svg", { className: "curator-lane-empty-art", width: 88, height: 88, viewBox: "0 0 96 96", fill: "none", "aria-hidden": "true" },
+        React.createElement("circle", { cx: 48, cy: 48, r: 40, className: "curator-lane-empty-disc" }),
+        React.createElement("circle", { cx: 48, cy: 48, r: 26, strokeWidth: 4, className: "curator-lane-empty-ring" }),
+        React.createElement("path", { d: "M48 34v14l9 6", strokeWidth: 4, strokeLinecap: "round", strokeLinejoin: "round", className: "curator-lane-empty-hand" }),
+        React.createElement("circle", { cx: 78, cy: 22, r: 5, className: "curator-lane-empty-dot-a" }),
+        React.createElement("circle", { cx: 16, cy: 70, r: 3, className: "curator-lane-empty-dot-b" })),
+      React.createElement("strong", null, title),
+      body && React.createElement("p", null, body),
+      React.createElement("div", { className: "curator-lane-empty-actions" },
+        lane !== "for_you" && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => onOpenLane("for_you") }, "Try For You instead"),
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: onRebuild }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model"))
+    );
+  }
+
   // A short-lived toast after a card is hidden. It closes by itself, and
   // Undo reverses the saved feedback through the normal correction path.
   function UndoToast({ entry, onUndo, onClose }) {
@@ -10059,13 +10113,15 @@
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods, onConfigSaved: applyDisplayConfig }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       laneByValue.has(lane) && scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
-      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
+      laneByValue.has(lane) && loading && React.createElement(LaneSkeleton, { message: rotatingLane === lane ? "Finding another set of qualified scenes…" : null }),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,
           null,
           movement && !movementDismissed && React.createElement(MovementBanner, { movement, onDismiss: () => setMovementDismissed(true) }),
-          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
+          visibleItems.length === 0 && (togetherMode
+            ? React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "No recommendations match Mood mode in this lane."))
+            : React.createElement(LaneEmpty, { lane, onOpenLane: openView, onRebuild: () => runTask("Rebuild recommendation model") })),
           endless
             ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp, movement })
             : recommendationView !== "cards"

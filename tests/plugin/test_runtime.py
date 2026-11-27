@@ -1845,6 +1845,7 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '" Sync and build now"' in source
     assert '" Rebuild model"' in source
     assert '"Nothing qualifies for this lane right now."' in source
+    assert '"Try For You instead"' in source
     assert "no model exists yet" in source
 
     # ── warnings ──
