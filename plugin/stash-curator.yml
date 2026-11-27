@@ -215,6 +215,10 @@ settings:
     displayName: Whisparr quality profile ID override
     description: Optional. Leave empty to use Whisparr's fallback (or first) quality profile.
     type: NUMBER
+  whisparrMonitor:
+    displayName: Monitor scenes sent to Whisparr
+    description: Add scenes as monitored, so Whisparr grabs a release that appears after the scene was sent. Enabled by default.
+    type: BOOLEAN
   whisparrSearchImmediately:
     displayName: Search Whisparr immediately
     description: Start a release search after adding a scene. Enabled by default.

@@ -392,6 +392,8 @@ class _StubWhisparr(BaseHTTPRequestHandler):
             return
         if "/api/v3/movie" in self.path:
             data: object = {"id": 77, "title": "added"}
+        elif "/api/v3/tag" in self.path:
+            data = {"id": 4, "label": "curator"}
         elif "/api/v3/command" in self.path:
             data = {"id": 9, "name": "MoviesSearch"}
         else:

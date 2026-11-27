@@ -23,13 +23,57 @@ def test_whisparr_send_checks_duplicates_and_honors_search_toggle() -> None:
 
     assert result == {"status": "sent", "id": 42}
     assert requests[0][1] == "http://whisparr.local/api/v3/movie?stashId=stashdb-scene"
-    assert requests[3][0:2] == (
-        "POST",
-        "http://whisparr.local/api/v3/movie",
+    added = next(
+        body
+        for method, url, body in requests
+        if (method, url) == ("POST", "http://whisparr.local/api/v3/movie")
     )
-    assert requests[3][2]["rootFolderPath"] == "/downloads"
-    assert requests[3][2]["qualityProfileId"] == 7
-    assert requests[3][2]["addOptions"] == {"monitor": "none", "searchForMovie": False}
+    assert added["rootFolderPath"] == "/downloads"
+    assert added["qualityProfileId"] == 7
+    assert added["monitored"] is True
+    assert added["addOptions"] == {"monitor": "movieOnly", "searchForMovie": False}
+    assert not any(url.endswith("/command") for _, url, _ in requests)
+
+
+@pytest.mark.parametrize(
+    ("tags", "created"), [(b'[{"id":5,"label":"Curator"}]', False), (b"[]", True)]
+)
+def test_whisparr_send_tags_the_scene_and_honors_monitor_toggle(tags: bytes, created: bool) -> None:
+    """An existing curator tag is reused (labels compare case-insensitively);
+    a missing one is created. Unmonitored sends keep monitor "none"."""
+    requests: list[tuple[str, str, object | None]] = []
+
+    def transport(method: str, url: str, _headers, body: bytes | None) -> bytes:
+        requests.append((method, url, json.loads(body) if body else None))
+        if url.endswith("/tag"):
+            return tags if method == "GET" else b'{"id":5,"label":"curator"}'
+        return b"[]" if method == "GET" else b'{"id":42}'
+
+    WhisparrClient("http://whisparr.local", "secret", transport=transport).send_scene(
+        "scene", "Scene", "/media", 3, monitor=False, search=False
+    )
+
+    tag_posts = [
+        body for method, url, body in requests if method == "POST" and url.endswith("/tag")
+    ]
+    assert tag_posts == ([{"label": "curator"}] if created else [])
+    added = requests[-1][2]
+    assert added["tags"] == [5]
+    assert added["monitored"] is False
+    assert added["addOptions"] == {"monitor": "none", "searchForMovie": False}
+
+
+def test_whisparr_send_without_a_tag_id_is_not_added() -> None:
+    requests: list[str] = []
+
+    def transport(method: str, url: str, _headers, _body: bytes | None) -> bytes:
+        requests.append(f"{method} {url}")
+        return b"[]" if method == "GET" else b'{"message":"nothing"}'
+
+    client = WhisparrClient("http://whisparr.local", "secret", transport=transport)
+    with pytest.raises(RuntimeError, match="did not return the curator tag"):
+        client.send_scene("scene", "Scene", "/media", 3)
+    assert "POST http://whisparr.local/api/v3/movie" not in requests
 
 
 def test_whisparr_send_starts_search_after_add() -> None:
@@ -101,6 +145,8 @@ def test_whisparr_add_without_id_is_not_searched() -> None:
 
     def transport(method: str, url: str, _headers, _body: bytes | None) -> bytes:
         requests.append(f"{method} {url}")
+        if url.endswith("/tag"):
+            return b"[]" if method == "GET" else b'{"id":5}'
         return b"[]" if method == "GET" else b'{"message":"nothing"}'
 
     client = WhisparrClient("http://whisparr.local", "secret", transport=transport)

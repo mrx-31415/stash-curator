@@ -821,6 +821,7 @@ def test_settings_panel_reads_and_saves_every_configured_field() -> None:
         "whisparrApiKey",
         "whisparrRootFolder",
         "whisparrQualityProfileId",
+        "whisparrMonitor",
         "whisparrSearchImmediately",
     ):
         assert f'key: "{key}"' in source
