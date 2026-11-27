@@ -621,7 +621,10 @@ def test_thumb_follow_up_is_optional_and_survives_card_removal() -> None:
         'if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction)'
         in source
     )
-    assert 'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);' in source
+    assert (
+        'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id, { feedbackId, feedbackType });'
+        in source
+    )
     assert source.count("React.createElement(SceneReasonFollowUp, {") == 3
     assert "TagSentimentFollowUp" not in source
     assert 'operation: "get_tag_sentiment_follow_up"' not in source

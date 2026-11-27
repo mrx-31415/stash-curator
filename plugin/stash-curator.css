@@ -6473,3 +6473,160 @@ body[data-curator-detail-page-controls="off"] .curator-entity-panel-host {
     margin-left: 0;
   }
 }
+
+/* ---------- Motion: cards that arrive, react and leave ----------
+   Every effect here plays once, stays under ~0.6s and never delays an
+   action: feedback is saved first and the motion follows. Reduced motion
+   turns all of it off at the end of this section. */
+.curator-card {
+  transition: border-color 120ms ease, box-shadow 200ms ease, transform 220ms cubic-bezier(0.3, 1.4, 0.6, 1);
+}
+.curator-card:hover {
+  transform: translateY(-3px);
+}
+.curator-card-enter {
+  animation: curator-card-enter 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+  animation-delay: calc(var(--curator-enter-i, 0) * 45ms);
+}
+@keyframes curator-card-enter {
+  from { opacity: 0; transform: translateY(1.1rem) scale(0.97); }
+}
+.curator-card.curator-card-leaving {
+  animation: curator-card-leave 0.34s cubic-bezier(0.5, 0, 0.8, 0.4) forwards;
+  pointer-events: none;
+}
+@keyframes curator-card-leave {
+  to { filter: grayscale(1); opacity: 0; transform: translateY(0.5rem) scale(0.88) rotate(-2deg); }
+}
+.curator-card .curator-score-fill {
+  animation: curator-fill-grow 0.7s cubic-bezier(0.3, 1.2, 0.5, 1) 0.15s both;
+  transform-origin: left center;
+}
+@keyframes curator-fill-grow {
+  from { transform: scaleX(0); }
+}
+
+.curator-feedback-button.btn-link {
+  position: relative;
+  transition: color 0.2s, transform 0.18s cubic-bezier(0.3, 1.8, 0.5, 1);
+}
+.curator-feedback-button.btn-link:active {
+  transform: scale(0.82);
+}
+.curator-feedback-button.btn-link.is-on {
+  animation: curator-feedback-pop 0.45s cubic-bezier(0.3, 1.8, 0.5, 1);
+  color: var(--curator-positive, #8fbf4f);
+}
+@keyframes curator-feedback-pop {
+  30% { transform: scale(1.3) rotate(-12deg); }
+}
+.curator-feedback-burst {
+  height: 0;
+  left: 50%;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  width: 0;
+}
+.curator-feedback-burst i {
+  animation: curator-feedback-fly 0.6s ease-out forwards;
+  background: var(--curator-positive, #8fbf4f);
+  border-radius: 50%;
+  height: 6px;
+  margin: -3px;
+  opacity: 0;
+  position: absolute;
+  width: 6px;
+}
+.curator-feedback-burst i:nth-child(2n) { background: var(--curator-accent-secondary); height: 4px; margin: -2px; width: 4px; }
+.curator-feedback-burst i:nth-child(1) { --x: 0; --y: -1.6rem; }
+.curator-feedback-burst i:nth-child(2) { --x: 1.1rem; --y: -1.1rem; }
+.curator-feedback-burst i:nth-child(3) { --x: 1.6rem; --y: 0; }
+.curator-feedback-burst i:nth-child(4) { --x: 1.1rem; --y: 1.1rem; }
+.curator-feedback-burst i:nth-child(5) { --x: 0; --y: 1.6rem; }
+.curator-feedback-burst i:nth-child(6) { --x: -1.1rem; --y: 1.1rem; }
+.curator-feedback-burst i:nth-child(7) { --x: -1.6rem; --y: 0; }
+.curator-feedback-burst i:nth-child(8) { --x: -1.1rem; --y: -1.1rem; }
+@keyframes curator-feedback-fly {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(0.3); }
+}
+.curator-feedback { position: relative; }
+.curator-feedback small.curator-feedback-float {
+  animation: curator-feedback-float 1.6s ease-out forwards;
+  background: var(--curator-positive, #8fbf4f);
+  border-radius: 999px;
+  color: #101216;
+  font-weight: 700;
+  left: 0;
+  padding: 0.1rem 0.55rem;
+  pointer-events: none;
+  position: absolute;
+  top: -1.4rem;
+  white-space: nowrap;
+}
+@keyframes curator-feedback-float {
+  0% { opacity: 0; transform: translateY(0.4rem); }
+  15% { opacity: 1; transform: translateY(-0.2rem); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-1.2rem); }
+}
+
+.curator-undo-toast {
+  align-items: center;
+  animation: curator-toast-in 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  background: var(--curator-surface-raised);
+  border: 1px solid var(--curator-border-strong);
+  border-radius: var(--curator-radius-lg);
+  bottom: 1.25rem;
+  box-shadow: 0 1.1rem 2.5rem rgba(0, 0, 0, 0.5);
+  color: var(--curator-text);
+  display: flex;
+  gap: 0.75rem;
+  left: 50%;
+  max-width: calc(100vw - 2rem);
+  padding: 0.55rem 0.6rem 0.55rem 0.9rem;
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 1050;
+}
+.curator-undo-dot {
+  background: var(--curator-negative, #d96a6a);
+  border-radius: 50%;
+  flex-shrink: 0;
+  height: 0.6rem;
+  width: 0.6rem;
+}
+.curator-undo-toast.is-error .curator-undo-dot { background: var(--curator-accent-secondary); }
+.curator-undo-close.btn-link { color: var(--curator-text-muted); padding: 0 0.35rem; }
+@keyframes curator-toast-in {
+  from { opacity: 0; transform: translate(-50%, 1.5rem) scale(0.96); }
+}
+
+.curator-lane-card {
+  transition: border-color 0.25s, background 0.3s, transform 0.2s cubic-bezier(0.3, 1.6, 0.6, 1);
+}
+.curator-lane-card:active { transform: scale(0.96); }
+.curator-lane-card[aria-pressed="true"] .curator-lane-card-icon {
+  animation: curator-lane-pick 0.45s cubic-bezier(0.3, 1.8, 0.5, 1);
+}
+.curator-lane-card-icon { transition: background 0.3s, color 0.3s; }
+@keyframes curator-lane-pick {
+  40% { transform: scale(1.25) rotate(-8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curator-card,
+  .curator-card:hover,
+  .curator-lane-card,
+  .curator-lane-card:active,
+  .curator-feedback-button.btn-link:active { transform: none; transition: none; }
+  .curator-card-enter,
+  .curator-card.curator-card-leaving,
+  .curator-card .curator-score-fill,
+  .curator-feedback-button.btn-link.is-on,
+  .curator-lane-card[aria-pressed="true"] .curator-lane-card-icon,
+  .curator-undo-toast { animation: none; }
+  .curator-feedback-burst { display: none; }
+  .curator-feedback small.curator-feedback-float { animation: none; position: static; }
+}

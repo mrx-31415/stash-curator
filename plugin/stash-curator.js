@@ -4855,15 +4855,17 @@
   function Feedback({ item, onRemove, onReaction, compact = false }) {
     const [saved, setSaved] = React.useState("");
     const [reaction, setReaction] = React.useState("");
+    const [pulse, setPulse] = React.useState(0);
     const [busy, setBusy] = React.useState(false);
     async function send(feedbackType, value) {
       setBusy(true);
+      const feedbackId = uuid();
       try {
         await operation({
           operation: "submit_feedback",
           entries: [
             {
-              feedback_id: uuid(),
+              feedback_id: feedbackId,
               scene_id: item.scene_id,
               feedback_type: feedbackType,
               value,
@@ -4877,19 +4879,21 @@
         if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction) {
           onReaction({ scene_id: String(item.scene_id), polarity: feedbackType === "thumb_up" ? 1 : -1 });
         }
-        setSaved(feedbackType === "thumb_up" || !onRemove ? "Saved" : "Removed from this view");
+        setSaved(feedbackType === "thumb_up" ? (compact ? "Saved" : "More like this") : !onRemove ? "Saved" : "Removed from this view");
         setReaction(feedbackType);
-        if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);
+        setPulse((count) => count + 1);
+        if (feedbackType !== "thumb_up") onRemove?.(item.scene_id, { feedbackId, feedbackType });
       } catch (error) {
         setSaved(error.message);
       } finally {
         setBusy(false);
       }
     }
+    const liked = reaction === "thumb_up";
     return React.createElement(
       "div",
       { className: "curator-feedback", "data-reaction": compact ? reaction : undefined },
-      React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Useful: strengthen recommendations like this one.", "aria-label": "Useful", onClick: () => send("thumb_up") }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp })),
+      React.createElement(Button, { className: `curator-feedback-button${liked ? " is-on" : ""}`, variant: "link", size: "sm", disabled: busy, title: "Useful: strengthen recommendations like this one.", "aria-label": "Useful", "aria-pressed": liked, onClick: () => send("thumb_up") }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp }), liked && React.createElement(FeedbackBurst, { key: pulse })),
       React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Not for me: treat this recommendation as a poor match.", "aria-label": "Not for me", onClick: () => send("thumb_down") }, React.createElement(FontAwesomeIcon, { icon: faThumbsDown })),
       !compact && React.createElement(
         "details",
@@ -4904,9 +4908,43 @@
           React.createElement(Button, { size: "sm", variant: "link", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
         )
       ),
-      saved && React.createElement("small", { role: "status" }, saved)
+      saved && React.createElement("small", { key: pulse, role: "status", className: liked && saved === "More like this" ? "curator-feedback-float" : undefined }, saved)
     );
   }
+
+  // A short-lived toast after a card is hidden. It closes by itself, and
+  // Undo reverses the saved feedback through the normal correction path.
+  function UndoToast({ entry, onUndo, onClose }) {
+    React.useEffect(() => {
+      const timer = setTimeout(onClose, UNDO_TOAST_MS);
+      return () => clearTimeout(timer);
+    }, [entry.key]);
+    return React.createElement(
+      "div",
+      { className: `curator-undo-toast${entry.failed ? " is-error" : ""}`, role: "status" },
+      React.createElement("span", { className: "curator-undo-dot", "aria-hidden": "true" }),
+      React.createElement("span", null, entry.text),
+      !entry.failed && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => onUndo(entry) }, React.createElement(FontAwesomeIcon, { icon: faRotateLeft }), " Undo"),
+      React.createElement(Button, { size: "sm", variant: "link", className: "curator-undo-close", "aria-label": "Dismiss", onClick: onClose }, "×")
+    );
+  }
+
+  // Eight dots that fly out of a thumbs-up once; CSS ends the animation and
+  // reduced motion hides it, so it never loops or delays the saved feedback.
+  function FeedbackBurst() {
+    return React.createElement("span", { className: "curator-feedback-burst", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index })));
+  }
+
+  const UNDO_TOAST_MS = 6000;
+
+  // What the undo toast says after a removing reaction.
+  const FEEDBACK_UNDO_TEXT = {
+    thumb_down: "Hidden. Curator will show fewer like this.",
+    not_now: "Hidden for now.",
+    never_show: "Hidden for good.",
+    metadata_wrong: "Hidden. Curator won't learn from its metadata.",
+    prune: "Marked for pruning.",
+  };
 
   const FEEDBACK_LABELS = {
     thumb_up: "Thumbs Up",
@@ -5575,7 +5613,7 @@
     const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
     return React.createElement("div", { style: { position: "relative", paddingTop: startPage > slate.page ? "2.5rem" : 0 } },
       cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
-        entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction }))
+        entries.map((entry, index) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction, enterIndex: index % (entry.slate.page_size || 20) }))
       ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
         React.createElement("div", { ref: grid, className: "curator-preview-wall", style: { position: "absolute", top: range.offset, width: "100%" } },
           entries.slice(range.first, range.last).map((entry, index) => React.createElement(EndlessRecommendationTile, { key: String(entry.scene_id), entry, index, thumbnails, seen: seen.current }))
@@ -5638,9 +5676,20 @@
       })
     );
   }
-  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes }) {
+  const CARD_LEAVE_MS = 340;
+  const CARD_ENTER_STAGGER_MAX = 11;
+  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes, enterIndex = 0 }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
+    const [leaving, setLeaving] = React.useState(false);
+    const leaveTimer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(leaveTimer.current), []);
+    // The card folds away before the lane drops it; the feedback is already
+    // saved, so the animation never delays anything that matters.
+    const leave = onRemove && ((sceneId, info) => {
+      setLeaving(true);
+      leaveTimer.current = setTimeout(() => onRemove(sceneId, info), reducedMotion() ? 0 : CARD_LEAVE_MS);
+    });
     const [explanation, setExplanation] = React.useState(
       item.explanation
         ? { summary: typeof item.explanation === "string" ? item.explanation : item.explanation.summary, ...(typeof item.explanation === "object" ? item.explanation : {}), supporting_reasons: item.supporting_reasons || [] }
@@ -5671,7 +5720,7 @@
     const hasLaneRank = item.source_lane !== "score_review";
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.scene_id), onMouseLeave: () => announcePageChatHover(null), "data-endless-item": String(item.scene_id), ref: card },
+      { className: `curator-card curator-compact-card curator-card-enter curator-source-${item.source_lane}${leaving ? " curator-card-leaving" : ""}`, style: { "--curator-enter-i": Math.min(Math.max(0, enterIndex), CARD_ENTER_STAGGER_MAX) }, onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.scene_id), onMouseLeave: () => announcePageChatHover(null), "data-endless-item": String(item.scene_id), ref: card },
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
@@ -5698,7 +5747,7 @@
               React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation?.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
             ),
             descriptionContent: scene?.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, scene.details),
-            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove, onReaction })),
+            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove: leave, onReaction })),
             scoreHeadline: scene ? null : "Appeal",
             scoreHeadlineValue: scene ? null : formatAppealValue(item.appeal),
             scoreHeadlineBar: scene ? null : scoreBar(item.appeal, true),
@@ -9317,6 +9366,7 @@
       setRefreshKey((value) => value + 1);
     }
     const [followUps, setFollowUps] = React.useState([]);
+    const [undo, setUndo] = React.useState(null);
     const [theme, setTheme] = React.useState(() => {
       try {
         return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
@@ -9470,13 +9520,28 @@
       ? (slate?.items || []).filter((item) => scenes.has(String(item.scene_id)))
       : slate?.items || [];
     useCuratorActivity("recommendations", loading || loadingComponents || scenesQuery.loading, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…");
-    function remove(sceneId) {
+    function remove(sceneId, info) {
       clearSlateCache();
       const excluded = laneExclusions.get(lane) || new Set();
       excluded.add(sceneId);
       laneExclusions.set(lane, excluded);
       persistSlateCache();
       setLoading(true);
+      setRefreshKey((value) => value + 1);
+      if (info?.feedbackId) setUndo({ sceneId, lane, feedbackId: info.feedbackId, text: FEEDBACK_UNDO_TEXT[info.feedbackType] || "Removed from this view.", key: info.feedbackId });
+    }
+    async function undoRemove(entry) {
+      setUndo(null);
+      try {
+        await operation({ operation: "correct_feedback", feedback_id: entry.feedbackId, correction_id: uuid(), feedback_type: null });
+      } catch (failure) {
+        setUndo({ ...entry, text: `Couldn't undo: ${failure.message}`, failed: true, key: `${entry.key}:failed` });
+        return;
+      }
+      scheduleModelUpdate();
+      clearSlateCache();
+      laneExclusions.get(entry.lane)?.delete(entry.sceneId);
+      persistSlateCache();
       setRefreshKey((value) => value + 1);
     }
     function showFollowUp(followUp) {
@@ -9690,6 +9755,7 @@
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),
       followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      undo && React.createElement(UndoToast, { key: undo.key, entry: undo, onUndo: undoRemove, onClose: () => setUndo(null) }),
       configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { endless: endlessEnabled }),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
       lane === "insights" && !loadingComponents && React.createElement(InsightsPanel, { onOpenSentiment: () => openCurate("sentiment") }),
@@ -9714,8 +9780,8 @@
               ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
-              { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },
-              visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp }))
+              { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
+              visibleItems.map((item, index) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp, enterIndex: index }))
             ),
           !endless && React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )

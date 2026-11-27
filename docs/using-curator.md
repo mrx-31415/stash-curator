@@ -223,7 +223,9 @@ Use thumbs up or down for direct feedback. The detail menu also supports **Not n
 **Never show**, **Mark for pruning**, and **Metadata is wrong**. Check the card's
 confirmation or error after submitting feedback. Accepted feedback contributes to a
 batched model update, so one action may not change the next recommendation immediately.
-Use **Manage → Feedback history** to undo or replace a mistaken answer. **Not now**
+When a reaction hides a card on a lane page, a note at the bottom of the page
+offers **Undo** for a few seconds; it reverses that feedback and brings the scene
+back. Use **Manage → Feedback history** to undo or replace an older answer. **Not now**
 temporarily hides a scene without recording dislike; **Metadata is wrong** excludes
 its current metadata from training.
 
