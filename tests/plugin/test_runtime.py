@@ -621,7 +621,10 @@ def test_thumb_follow_up_is_optional_and_survives_card_removal() -> None:
         'if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction)'
         in source
     )
-    assert 'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);' in source
+    assert (
+        'if (feedbackType !== "thumb_up") onRemove?.(item.scene_id, { feedbackId, feedbackType });'
+        in source
+    )
     assert source.count("React.createElement(SceneReasonFollowUp, {") == 3
     assert "TagSentimentFollowUp" not in source
     assert 'operation: "get_tag_sentiment_follow_up"' not in source
@@ -1559,8 +1562,8 @@ def test_task_indicator_and_compact_external_tag_rating_are_shared_ui_contracts(
     assert "health?.active_jobs" in source
     assert "?view=manage&section=tasks" in source
     assert "curatorTaskStage(job)" in source
-    assert '"Synchronizing library metadata"' in source
-    assert '"Building the recommendation model"' in source
+    assert '"Syncing your library from Stash"' in source
+    assert '"Scoring your library"' in source
     assert '"Installing optional dependencies"' in source
     assert "curator-task-progress-indeterminate" in source
     assert "showTaskDetails" in source
@@ -1842,6 +1845,7 @@ def test_every_user_visible_empty_and_error_message_is_defensive() -> None:
     assert '" Sync and build now"' in source
     assert '" Rebuild model"' in source
     assert '"Nothing qualifies for this lane right now."' in source
+    assert '"Try For You instead"' in source
     assert "no model exists yet" in source
 
     # ── warnings ──

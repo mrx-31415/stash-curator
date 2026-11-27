@@ -201,10 +201,14 @@ def test_viewing_history_marks_a_play_not_counted_and_back(page: Page, base_url:
     from tests.integration.test_smoke import _dismiss_modals
 
     _wait_curator_idle()
-    scene_id = _first_scene_id()
-    _import_play(scene_id)
+    _import_play(_first_scene_id())
+    # The newest row is one watch: earlier tests' player sessions on this
+    # scene can join several Stash plays into it, and Don't count covers them all.
+    newest = _plugin_operation("get_viewing_history", limit=1)["items"][0]
+    scene_id = newest["scene_id"]
+    in_watch = int(newest["stash_plays"])
     plays = _counted(scene_id)
-    assert plays >= 1
+    assert in_watch >= 1 and plays >= in_watch
 
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -218,7 +222,7 @@ def test_viewing_history_marks_a_play_not_counted_and_back(page: Page, base_url:
     row.get_by_role("button", name="Don\u2019t count").first.click()
     page.get_by_text("Stopped counting").wait_for(timeout=20_000)
     page.locator(".curator-viewing-badge", has_text="your choice").first.wait_for(timeout=20_000)
-    assert _counted(scene_id) == plays - 1, "the newest play still counts"
+    assert _counted(scene_id) == plays - in_watch, "the newest watch still counts"
 
     page.locator(".curator-viewing-toast").get_by_role("button", name="Undo").click()
     page.locator(".curator-viewing-toast").wait_for(state="detached", timeout=20_000)

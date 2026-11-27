@@ -1042,7 +1042,7 @@ func explanationReasonRows(reasons []*explanationReason) jVal {
 	})
 	rows := jvArr()
 	for _, r := range candidates {
-		rows.arr = append(rows.arr, jvObj(jvKey("code", jvStr(r.code)), jvKey("label", jvStr(explanationReasonLabel(r.code))), jvKey("direction", jvStr(r.direction)), jvKey("magnitude", jvFloat(r.magnitude)), jvKey("confidence", jvFloat(r.confidence)), jvKey("detail", r.detail)))
+		rows.arr = append(rows.arr, jvObj(jvKey("code", jvStr(r.code)), jvKey("label", jvStr(explanationReasonLabel(r.code))), jvKey("direction", jvStr(r.direction)), jvKey("magnitude", jvFloat(r.magnitude)), jvKey("confidence", jvFloat(r.confidence)), jvKey("detail", r.detail), jvKey("subject_type", r.subjectType), jvKey("subject_id", r.subjectID)))
 		if len(rows.arr) == 3 {
 			break
 		}
