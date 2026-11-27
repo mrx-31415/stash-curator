@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.60.0](https://github.com/mrx-31415/stash-curator/compare/v0.59.0...v0.60.0) (2026-11-27)
+
+
+### Features
+
+* add Manage → Viewing history with reversible count / don't count ([#502](https://github.com/mrx-31415/stash-curator/issues/502)) ([297259c](https://github.com/mrx-31415/stash-curator/commit/297259c3db68dd41304759fe38b3625a9b5ca1ce))
+* **chat:** selectable voices for Curator's comments ([#489](https://github.com/mrx-31415/stash-curator/issues/489)) ([f617fab](https://github.com/mrx-31415/stash-curator/commit/f617fab993049b414e86d1b3f91d242f6d1bfc76))
+* **find:** hide scenes already sent to Whisparr ([#487](https://github.com/mrx-31415/stash-curator/issues/487)) ([003d594](https://github.com/mrx-31415/stash-curator/commit/003d594dea594bdd80db0ff3c25af135880ebdd9))
+* include or exclude studios and tags from one filter box ([#485](https://github.com/mrx-31415/stash-curator/issues/485)) ([814a2d6](https://github.com/mrx-31415/stash-curator/commit/814a2d68abc9f4f2fbc64c29be012e4a23dbe7ed))
+* make Curator feel livelier with motion, undo, recaps and a monthly rewind ([#503](https://github.com/mrx-31415/stash-curator/issues/503)) ([22cc992](https://github.com/mrx-31415/stash-curator/commit/22cc99291946473fb031a37cd32d2d276933db27))
+* search for sent Whisparr scenes on a paced rolling schedule ([#491](https://github.com/mrx-31415/stash-curator/issues/491)) ([4d84a76](https://github.com/mrx-31415/stash-curator/commit/4d84a76427579bd6e58afdcac536f6d5a666faa9))
+* send Whisparr scenes monitored and tagged curator ([#490](https://github.com/mrx-31415/stash-curator/issues/490)) ([1e3c188](https://github.com/mrx-31415/stash-curator/commit/1e3c18838d73e36289a8614bf279017373ee7977))
+
 ## [0.59.0](https://github.com/mrx-31415/stash-curator/compare/v0.58.1...v0.59.0) (2026-11-14)
 
 
