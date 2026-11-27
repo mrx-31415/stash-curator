@@ -198,6 +198,8 @@ func dispatch(pluginDir string, payload jVal) (jVal, error) {
 		return opGetExternalSimilar(pluginDir, payload)
 	case "send_whisparr":
 		return opSendWhisparr(pluginDir, payload)
+	case "get_home_recap":
+		return opGetHomeRecap(pluginDir, payload)
 	case "get_whisparr_overview":
 		return opGetWhisparrOverview(pluginDir, payload)
 	case "whisparr_action":

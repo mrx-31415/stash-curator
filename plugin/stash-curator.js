@@ -1474,13 +1474,61 @@
         "div",
         { className: "curator-evidence-rows" },
         React.createElement("strong", null, "Evidence"),
-        React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement("div", { key: `${row.code}-${index}`, className: `curator-evidence-row curator-evidence-${row.direction || "context"}` }, React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"), React.createElement("strong", null, row.label || reasonLabel(row.code)), row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`))))
+        React.createElement("div", { className: "curator-evidence-row-group" }, rows.map((row, index) => React.createElement(EvidenceRow, { key: `${row.code}-${index}`, row, index, strongest: evidenceStrongest(rows) })))
       ),
       !selection && lane?.available && lane.source_lane && React.createElement("p", { className: "curator-lane-callout" }, `Selected for ${lane.source_lane.replaceAll("_", " ")} as ${lane.subtype || "a qualified match"}.`),
       // Issue #216: never render the Technical details disclosure empty —
       // ScoreBreakdown has rows only when the explanation carries components
       // or an item fallback exists.
       (explanation.components?.length || item) && React.createElement("details", { className: "curator-technical-details" }, React.createElement("summary", null, "Technical details"), React.createElement(ScoreBreakdown, { explanation, item }))
+    );
+  }
+
+  function evidenceStrongest(rows) {
+    return Math.max(1e-6, ...rows.map((row) => Math.abs(Number(row.magnitude) || 0)));
+  }
+
+  // The tag answer one step from `current` on the sentiment scale.
+  function nudgedSentiment(current, step) {
+    const values = SENTIMENTS.map(([value]) => value);
+    const start = Number.isFinite(Number(current)) && current !== null ? nearestSentiment(Number(current))[0] : 0;
+    const index = values.indexOf(start);
+    return values[Math.max(0, Math.min(values.length - 1, index + step))];
+  }
+
+  // One "Why this?" evidence row: a signed bar from the centre line, sized
+  // against the strongest row so the biggest reason fills its half. A tag row
+  // can be taught from here; the answer is an ordinary Tag sentiment answer.
+  function EvidenceRow({ row, index, strongest }) {
+    const [answer, setAnswer] = React.useState(null);
+    const [pulse, setPulse] = React.useState(0);
+    const sign = row.direction === "negative" ? -1 : row.direction === "positive" ? 1 : 0;
+    const share = clamp01(Math.abs(Number(row.magnitude) || 0) / strongest);
+    const name = row.detail?.name;
+    const tagId = row.subject_type === "tag" && row.subject_id ? String(row.subject_id) : "";
+    const declared = row.detail?.declared_preference;
+    function teach(step) {
+      const value = nudgedSentiment(answer ?? declared ?? 0, step);
+      setAnswer(value);
+      setPulse((count) => count + 1);
+      submitTagPreference(tagId, { value, blocked: false });
+    }
+    const label = row.label || reasonLabel(row.code);
+    return React.createElement(
+      "div",
+      { className: `curator-evidence-row curator-evidence-${row.direction || "context"}`, style: { "--curator-row-i": index } },
+      React.createElement("span", null, row.direction === "positive" ? "Supports" : row.direction === "negative" ? "Cautions" : "Context"),
+      React.createElement("strong", null, name && tagId ? `${label}: ${name}` : label),
+      row.confidence !== undefined && React.createElement("small", null, ` ${Math.round(clamp01(row.confidence) * 100)}% confidence`),
+      React.createElement("div", { className: "curator-evidence-bar", role: "img", "aria-label": `${label}: ${sign < 0 ? "pulls down" : "pushes up"}, ${Math.round(share * 100)}% of the strongest reason` },
+        React.createElement("span", { className: "curator-evidence-zero", "aria-hidden": "true" }),
+        sign !== 0 && React.createElement("span", { className: `curator-evidence-fill ${sign < 0 ? "is-negative" : "is-positive"}`, style: { width: `${share * 50}%`, [sign < 0 ? "right" : "left"]: "50%" }, "aria-hidden": "true" })
+      ),
+      tagId && React.createElement("div", { className: "curator-evidence-teach" },
+        React.createElement(Button, { size: "sm", variant: "secondary", "aria-label": `Less of ${name || "this tag"}`, title: "Like this tag a little less", onClick: () => teach(-1) }, "−"),
+        React.createElement(Button, { size: "sm", variant: "secondary", "aria-label": `More of ${name || "this tag"}`, title: "Like this tag a little more", onClick: () => teach(1) }, "+"),
+        answer !== null && React.createElement("small", { key: pulse, role: "status", className: "curator-evidence-taught" }, `${nearestSentimentLabel(answer)}. Picks update soon.`)
+      )
     );
   }
 
@@ -2133,6 +2181,7 @@
   const TAG_QUESTION_BATCH = 5;
   const TAG_QUESTION_TOP_UP_AT = 2;
   const TAG_QUESTION_REBUILD_EVERY = 5;
+  const TAG_QUESTION_LEAVE_MS = 280;
   const TAG_QUESTION_SKIP_KEY = "stash-curator:tag-question-skips:v1";
   const TAG_QUESTION_SKIP_MS = 30 * 86_400_000;
 
@@ -2297,6 +2346,10 @@
     const [applying, setApplying] = React.useState(false);
     const [notice, setNotice] = React.useState("");
     const [moved, setMoved] = React.useState(0);
+    const [leaving, setLeaving] = React.useState(false);
+    const [updating, setUpdating] = React.useState(false);
+    const leaveTimer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(leaveTimer.current), []);
     // Tags answered or skipped here; they are excluded from every fetch, so
     // answers still on their way to the sidecar are not asked again.
     const handled = React.useRef(new Set());
@@ -2345,6 +2398,7 @@
       if (rebuilding.current) return false;
       rebuilding.current = true;
       setUnapplied(0);
+      setUpdating(true);
       try {
         const built = await applyFeedbackAndAwaitBuild();
         if (built) {
@@ -2354,16 +2408,26 @@
         return built;
       } finally {
         rebuilding.current = false;
+        setUpdating(false);
       }
     }
 
+    // The answered card flies off before the next one slides in; the answer
+    // was already saved, so only the card swap waits.
     function advance(item) {
       handled.current.add(item.tag_id);
-      setChoice(null);
-      setNotice("");
-      setIndex((current) => current + 1);
+      const show = () => {
+        setLeaving(false);
+        setChoice(null);
+        setNotice("");
+        setIndex((current) => current + 1);
+      };
+      if (reducedMotion()) return show();
+      setLeaving(true);
+      leaveTimer.current = setTimeout(show, TAG_QUESTION_LEAVE_MS);
     }
     function next(item) {
+      if (leaving) return;
       submitTagPreference(item.tag_id, choice);
       announcePageChat({ kind: "tag", name: item.name, value: choice.value, blocked: choice.blocked, inferred: item.inferred_value });
       setAnswered((count) => count + 1);
@@ -2373,6 +2437,7 @@
       if (pending >= TAG_QUESTION_REBUILD_EVERY) rebuild().catch(() => {});
     }
     function skip(item) {
+      if (leaving) return;
       rememberTagQuestionSkip(item.tag_id);
       advance(item);
     }
@@ -2404,15 +2469,18 @@
       moved > 0 && React.createElement(WhatMoved, { refreshKey: moved, onDismiss: () => setMoved(0) }),
       error && React.createElement("div", { className: "alert alert-danger" }, error),
       notice && React.createElement("div", { className: "alert alert-info", role: "status" }, notice),
-      applying && React.createElement("div", { className: "alert alert-info", role: "status" },
-        "Rebuilding recommendations with your answers. This usually takes under a minute."),
+      (applying || updating) && React.createElement("div", { className: "alert alert-info curator-tag-question-updating", role: "status" },
+        React.createElement("span", null, "Updating your recommendations with your answers. This usually takes under a minute."),
+        React.createElement("span", { className: "curator-sweep", "aria-hidden": "true" })),
       !error && items.length === 0 && React.createElement("div", { className: "alert alert-info" },
         "No questions right now. Every tag in your current recommendations is either answered, skipped, or too rare to matter. Tag sentiment lists all tags."),
       item && React.createElement(
         "section",
-        { key: item.tag_id, className: "curator-tag-question", "aria-labelledby": `curator-tag-question-${item.tag_id}` },
-        React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
-          answered > 0 ? `Question ${index + 1} · ${answered} answered` : `Question ${index + 1}`),
+        { key: item.tag_id, className: `curator-tag-question${leaving ? " is-leaving" : ""}`, "aria-labelledby": `curator-tag-question-${item.tag_id}` },
+        React.createElement("div", { className: "curator-tag-question-head" },
+          React.createElement("p", { className: "curator-tag-question-progress", "aria-live": "polite" },
+            answered > 0 ? `Question ${index + 1} · ${answered} answered` : `Question ${index + 1}`),
+          React.createElement(TagQuestionRing, { pending: unapplied, every: TAG_QUESTION_REBUILD_EVERY, updating })),
         React.createElement("h3", { id: `curator-tag-question-${item.tag_id}` }, tagQuestionHeading(item)),
         React.createElement("p", { className: "curator-tag-question-reason" }, tagQuestionReason(item)),
         React.createElement(TagQuestionMedia, { item }),
@@ -2444,7 +2512,7 @@
             "aria-pressed": !!choice && !choice.blocked && choice.value === TAG_QUESTION_GUESS_VALUE[item.guess],
             onClick: () => setChoice({ value: TAG_QUESTION_GUESS_VALUE[item.guess], blocked: false }),
           }, "Yes"),
-          React.createElement(Button, { size: "sm", variant: "primary", disabled: !choice, onClick: () => next(item) }, "Next"),
+          React.createElement(Button, { size: "sm", variant: "primary", className: choice ? "curator-ready" : undefined, disabled: !choice, onClick: () => next(item) }, "Next"),
           React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => skip(item) }, "Skip")
         )
       ),
@@ -2455,6 +2523,29 @@
           ? "That's every useful question for now. Your answers are saved."
           : "That's every useful question for now."),
       controls
+    );
+  }
+
+  // Five segments that fill with each answer toward the next model update.
+  function TagQuestionRing({ pending, every, updating }) {
+    const filled = updating ? every : Math.min(pending, every);
+    const label = updating ? "Updating recommendations now" : `${every - filled} more ${every - filled === 1 ? "answer" : "answers"} to the next update`;
+    return React.createElement(
+      "span",
+      { className: `curator-tag-question-ring${updating ? " is-updating" : ""}`, title: label },
+      React.createElement(
+        "svg",
+        { width: 34, height: 34, viewBox: "0 0 34 34", role: "img", "aria-label": label },
+        Array.from({ length: every }, (_, segment) => React.createElement("circle", {
+          key: segment,
+          className: `curator-ring-segment${segment < filled ? " is-on" : ""}`,
+          cx: 17, cy: 17, r: 13, fill: "none", strokeWidth: 5, pathLength: 100,
+          strokeDasharray: `${100 / every - 3} ${100 - (100 / every - 3)}`,
+          strokeDashoffset: -segment * (100 / every),
+          transform: "rotate(-90 17 17)",
+        }))
+      ),
+      React.createElement("small", null, updating ? "Updating…" : `${every - filled} to the next update`)
     );
   }
 
@@ -3639,8 +3730,9 @@
       ...((group && group.promoted) || []).slice(0, WHAT_MOVED_ITEMS),
       ...((group && group.demoted) || []).slice(0, WHAT_MOVED_ITEMS),
     ];
+    let order = 0;
     const chip = (item, key) => React.createElement("span", {
-      key, className: `curator-moved-chip ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+      key, className: `curator-moved-chip ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`, style: { "--curator-pop-i": order++ },
     }, `${item.name} ${formatSigned(item.delta)}`);
     const tags = moves(impact.tags);
     const performers = moves(impact.performers);
@@ -3657,8 +3749,9 @@
     return React.createElement(
       "aside",
       { className: "curator-what-moved alert alert-secondary", "aria-label": "What your answers moved" },
+      React.createElement("span", { className: "curator-moved-sparks", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index }))),
       React.createElement("div", { className: "curator-tag-follow-up-heading" },
-        React.createElement("strong", null, "What your answers moved"),
+        React.createElement("strong", null, React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }), " Your picks just got sharper"),
         React.createElement(Button, { size: "sm", variant: "link", onClick: onDismiss, "aria-label": "Dismiss" }, "×")
       ),
       row("Tags", tags, (item) => chip(item, `tag-${item.id}`)),
@@ -3667,7 +3760,7 @@
         "a",
         {
           key: `scene-${item.scene_id}`, href: `/scenes/${item.scene_id}`, title: item.title || `Scene ${item.scene_id}`,
-          className: `curator-moved-scene ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`,
+          className: `curator-moved-scene ${item.delta >= 0 ? "curator-moved-up" : "curator-moved-down"}`, style: { "--curator-pop-i": order++ },
         },
         React.createElement("img", { src: `/scene/${item.scene_id}/screenshot`, alt: "", loading: "lazy", className: "card-section" }),
         React.createElement("span", null, formatSigned(item.delta))
@@ -4123,14 +4216,14 @@
       onShortlist && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: item.shortlisted ? "primary" : "secondary", title: item.shortlisted ? "Remove from shortlist" : "Add to shortlist", "aria-label": item.shortlisted ? "Remove from shortlist" : "Add to shortlist", onClick: () => onShortlist(item, kind) }, React.createElement(FontAwesomeIcon, { icon: faList })),
       kind === "scene" && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: tagsActive ? "primary" : "secondary", disabled: !tagsAvailable || tagLoading, title: "Rate tags", "aria-label": "Rate tags", onClick: onRateTags }, React.createElement(FontAwesomeIcon, { icon: faTag })),
       kind === "performer" && onShowScenes && React.createElement(Button, { className: "curator-icon-action", size: "sm", variant: "secondary", title: "Show this performer's scenes", "aria-label": "Show this performer's scenes", onClick: () => onShowScenes(item) }, React.createElement(FontAwesomeIcon, { icon: faFilm })),
-      kind === "scene" && canWhisparr && React.createElement(Button, { className: "curator-icon-action curator-whisparr-action", size: "sm", variant: "secondary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparrLabel, "aria-label": whisparrLabel, onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
+      kind === "scene" && canWhisparr && React.createElement(Button, { className: `curator-icon-action curator-whisparr-action${whisparr?.status === "adding" ? " is-sending" : whisparr?.status === "sent" || whisparr?.status === "already_exists" ? " is-sent" : ""}`, size: "sm", variant: "secondary", disabled: !whisparrEnabled || whisparr?.status === "adding" || whisparr?.status === "sent" || whisparr?.status === "already_exists", title: whisparrLabel, "aria-label": whisparrLabel, onClick: onAddToWhisparr }, React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() }))),
       whisparr && React.createElement("small", { className: `curator-whisparr-status ${whisparr.status === "error" ? "text-danger" : ""}`, role: "status" }, whisparr.message)
     );
   }
 
   // A small Whisparr mark on a scene's image once Curator has sent it there.
-  function WhisparrBadge() {
-    return React.createElement("span", { className: "curator-whisparr-badge", title: "Sent to Whisparr", "aria-label": "Sent to Whisparr", role: "img" },
+  function WhisparrBadge({ fresh = false }) {
+    return React.createElement("span", { className: `curator-whisparr-badge${fresh ? " is-fresh" : ""}`, title: "Sent to Whisparr", "aria-label": "Sent to Whisparr", role: "img" },
       React.createElement("span", { className: "curator-whisparr-logo", "aria-hidden": "true" }, React.createElement("span", { className: "curator-whisparr-fallback" }, "W"), React.createElement("img", { src: WHISPARR_LOGO, alt: "", onError: (event) => event.currentTarget.remove() })));
   }
 
@@ -4374,7 +4467,7 @@
       payload.curator_local && React.createElement("span", { className: "curator-local-badge", title: "Already in your local library" }, "In library"),
       hiddenKind && React.createElement("span", { className: "curator-hidden-badge", title: hiddenKind === "not_now" ? "You marked this Not now" : "You marked this Not interested" }, hiddenKind === "not_now" ? "Hidden · Not now" : "Hidden · Not interested"),
       payload.curator_local_match?.type === "phash" && React.createElement("span", { className: "curator-phash-badge", title: "A local scene has the same exact PHash. This is strong matching evidence, not guaranteed identity." }, "Likely local · exact PHash"),
-      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name), inWhisparr && React.createElement(WhisparrBadge)),
+      React.createElement("div", { className: `curator-external-thumbnail thumbnail-section ${kind === "scene" ? "video-section" : ""}` }, React.createElement("a", { className: `${kind}-card-link`, href, target: "_blank", rel: "noreferrer" }, image && React.createElement("img", { ...imageProps, className: `${kind}-card-image`, loading: "lazy", alt: "" })), kind === "scene" && !stickyScene && payload.studio?.name && React.createElement("span", { className: "curator-external-studio-overlay" }, payload.studio.name), inWhisparr && React.createElement(WhisparrBadge, { fresh: whisparr?.status === "sent" })),
       React.createElement("div", { className: "card-section" },
         stickyScene && React.createElement("div", { className: "sticky-card-top" },
           React.createElement(ExternalStudioLink, { key: payload.studio?.id, payload }),
@@ -4855,15 +4948,17 @@
   function Feedback({ item, onRemove, onReaction, compact = false }) {
     const [saved, setSaved] = React.useState("");
     const [reaction, setReaction] = React.useState("");
+    const [pulse, setPulse] = React.useState(0);
     const [busy, setBusy] = React.useState(false);
     async function send(feedbackType, value) {
       setBusy(true);
+      const feedbackId = uuid();
       try {
         await operation({
           operation: "submit_feedback",
           entries: [
             {
-              feedback_id: uuid(),
+              feedback_id: feedbackId,
               scene_id: item.scene_id,
               feedback_type: feedbackType,
               value,
@@ -4877,19 +4972,21 @@
         if ((feedbackType === "thumb_up" || feedbackType === "thumb_down") && onReaction) {
           onReaction({ scene_id: String(item.scene_id), polarity: feedbackType === "thumb_up" ? 1 : -1 });
         }
-        setSaved(feedbackType === "thumb_up" || !onRemove ? "Saved" : "Removed from this view");
+        setSaved(feedbackType === "thumb_up" ? (compact ? "Saved" : "More like this") : !onRemove ? "Saved" : "Removed from this view");
         setReaction(feedbackType);
-        if (feedbackType !== "thumb_up") onRemove?.(item.scene_id);
+        setPulse((count) => count + 1);
+        if (feedbackType !== "thumb_up") onRemove?.(item.scene_id, { feedbackId, feedbackType });
       } catch (error) {
         setSaved(error.message);
       } finally {
         setBusy(false);
       }
     }
+    const liked = reaction === "thumb_up";
     return React.createElement(
       "div",
       { className: "curator-feedback", "data-reaction": compact ? reaction : undefined },
-      React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Useful: strengthen recommendations like this one.", "aria-label": "Useful", onClick: () => send("thumb_up") }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp })),
+      React.createElement(Button, { className: `curator-feedback-button${liked ? " is-on" : ""}`, variant: "link", size: "sm", disabled: busy, title: "Useful: strengthen recommendations like this one.", "aria-label": "Useful", "aria-pressed": liked, onClick: () => send("thumb_up") }, React.createElement(FontAwesomeIcon, { icon: faThumbsUp }), liked && React.createElement(FeedbackBurst, { key: pulse })),
       React.createElement(Button, { className: "curator-feedback-button", variant: "link", size: "sm", disabled: busy, title: "Not for me: treat this recommendation as a poor match.", "aria-label": "Not for me", onClick: () => send("thumb_down") }, React.createElement(FontAwesomeIcon, { icon: faThumbsDown })),
       !compact && React.createElement(
         "details",
@@ -4904,9 +5001,486 @@
           React.createElement(Button, { size: "sm", variant: "link", title: "Add this scene to the library-removal review queue.", onClick: () => send("prune", "Review for removal") }, "Mark for pruning")
         )
       ),
-      saved && React.createElement("small", { role: "status" }, saved)
+      saved && React.createElement("small", { key: pulse, role: "status", className: liked && saved === "More like this" ? "curator-feedback-float" : undefined }, saved)
     );
   }
+
+  // Welcome back: what is new since the last visit, a pick for tonight, and
+  // the week with Curator, at the top of For You (get_home_recap).
+  const LAST_VISIT_KEY = "stash-curator:last-visit:v1";
+  const RECAP_HIDDEN_KEY = "stash-curator:recap-hidden-week:v1";
+  const WELCOME_AWAY_MS = 2 * 3600000;
+  const WEEK_DAYS = 7;
+
+  function readStored(key) {
+    try { return localStorage.getItem(key) || ""; } catch (_) { return ""; }
+  }
+  function writeStored(key, value) {
+    try { localStorage.setItem(key, value); } catch (_) { /* Storage may be unavailable. */ }
+  }
+  function localDayStart(ms) {
+    const date = new Date(ms);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  }
+  // Minutes watched from Curator picks on each of the last seven local days.
+  function recapDays(sessions, now) {
+    const today = localDayStart(now);
+    const days = Array.from({ length: WEEK_DAYS }, (_, index) => {
+      const date = new Date(today);
+      date.setDate(date.getDate() - (WEEK_DAYS - 1 - index));
+      return { start: date.getTime(), label: date.toLocaleDateString(undefined, { weekday: "short" }), minutes: 0 };
+    });
+    for (const session of sessions || []) {
+      if (!session.curator) continue;
+      const day = days.findLast((entry) => session.started_at_ms >= entry.start);
+      if (day) day.minutes += Number(session.seconds || 0) / 60;
+    }
+    return days.map((day) => ({ ...day, minutes: Math.round(day.minutes) }));
+  }
+  function recapWeekKey(now) {
+    const date = new Date(localDayStart(now));
+    date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+    return String(date.getTime());
+  }
+  function welcomeTiles(since) {
+    if (!since) return [];
+    return [
+      since.new_scenes > 0 && { key: "new", value: since.new_scenes, text: since.new_scenes === 1 ? "new scene in your library" : "new scenes in your library", href: "/plugins/stash-curator?view=new_arrivals", action: "See New Arrivals" },
+      since.whisparr_landed > 0 && { key: "whisparr", value: since.whisparr_landed, text: since.whisparr_landed === 1 ? "arrived from Whisparr" : "arrived from Whisparr", href: "/plugins/stash-curator?view=whisparr", action: "Open Whisparr" },
+      since.model_updates > 0 && { key: "model", value: since.model_updates, text: since.model_updates === 1 ? "model update to your picks" : "model updates to your picks", href: "/plugins/stash-curator?view=curate&section=progress", action: "What changed" },
+    ].filter(Boolean);
+  }
+
+  // Counts from 0 up to `target` once, quickly; reduced motion shows it at once.
+  function useCountUp(target, duration = 900) {
+    const [value, setValue] = React.useState(() => (reducedMotion() ? target : 0));
+    React.useEffect(() => {
+      if (reducedMotion() || !window.requestAnimationFrame) {
+        setValue(target);
+        return undefined;
+      }
+      let frame = 0;
+      const start = performance.now();
+      const step = (now) => {
+        const progress = Math.min(1, (now - start) / duration);
+        setValue(Math.round(target * (1 - Math.pow(1 - progress, 3))));
+        if (progress < 1) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+      return () => cancelAnimationFrame(frame);
+    }, [target, duration]);
+    return value;
+  }
+  function CountUp({ value }) {
+    return React.createElement("span", { className: "curator-count-up" }, useCountUp(Number(value) || 0).toLocaleString());
+  }
+
+  // The lane remounts this strip on every reload (a hidden card, New picks),
+  // so the previous visit is read once per page load and the recap is kept
+  // for a few minutes.
+  const welcomeSession = { previous: null, recap: null, fetchedAt: 0 };
+  const WELCOME_RECAP_TTL_MS = 5 * 60000;
+  function welcomePrevious() {
+    if (welcomeSession.previous === null) {
+      welcomeSession.previous = Number(readStored(LAST_VISIT_KEY)) || 0;
+      writeStored(LAST_VISIT_KEY, String(Date.now()));
+    }
+    return welcomeSession.previous;
+  }
+
+  function WelcomeBack({ items, scenes }) {
+    const [previous] = React.useState(welcomePrevious);
+    const fresh = welcomeSession.recap && Date.now() - welcomeSession.fetchedAt < WELCOME_RECAP_TTL_MS;
+    const [recap, setRecap] = React.useState(fresh ? welcomeSession.recap : null);
+    const [hiddenWeek, setHiddenWeek] = React.useState(() => readStored(RECAP_HIDDEN_KEY));
+    React.useEffect(() => {
+      if (fresh) return undefined;
+      let current = true;
+      operation({ operation: "get_home_recap", window_days: WEEK_DAYS, since_ms: previous || 0 })
+        .then((result) => {
+          welcomeSession.recap = result;
+          welcomeSession.fetchedAt = Date.now();
+          if (current) setRecap(result);
+        })
+        .catch(() => {});
+      return () => { current = false; };
+    }, []);
+    const now = recap?.now_ms || Date.now();
+    const away = previous > 0 && now - previous >= WELCOME_AWAY_MS;
+    const tiles = away ? welcomeTiles(recap?.since) : [];
+    const weekKey = recapWeekKey(now);
+    const showRecap = recap && hiddenWeek !== weekKey && (recap.picks_watched > 0 || recap.learned?.answers > 0 || recap.learned?.feedback > 0);
+    return React.createElement(
+      "div",
+      { className: "curator-welcome" },
+      tiles.length > 0 && React.createElement(
+        "section",
+        { className: "curator-welcome-since", "aria-label": "Since you were last here" },
+        React.createElement("p", { className: "curator-welcome-head" }, React.createElement("strong", null, "Welcome back."), ` Since you were last here, ${formatTimeAgo(previous)}:`),
+        React.createElement("div", { className: "curator-welcome-tiles" }, tiles.map((tile, index) => React.createElement(
+          "a",
+          { key: tile.key, className: "curator-welcome-tile", href: tile.href, style: { "--curator-enter-i": index } },
+          React.createElement("strong", null, React.createElement(CountUp, { value: tile.value })),
+          React.createElement("span", null, tile.text),
+          React.createElement("small", null, `${tile.action} →`)
+        )))
+      ),
+      React.createElement(RewindTeaser, { pick: items[0] || null, scenes }),
+      items.length > 0 && React.createElement(TonightsPick, { items, scenes }),
+      showRecap && React.createElement(WeeklyRecap, { recap, now, onHide: () => { writeStored(RECAP_HIDDEN_KEY, weekKey); setHiddenWeek(weekKey); } })
+    );
+  }
+
+  // Monthly Rewind: during the first days of a month, a card on For You
+  // opens a short story about the month before. It shows once per month
+  // until opened or dismissed, and only when there was watching to tell.
+  const REWIND_SEEN_KEY = "stash-curator:rewind-seen-month:v1";
+  const REWIND_SHOW_DAYS = 10;
+  const REWIND_CARD_MS = 5500;
+  function rewindMonths(now) {
+    const current = new Date(now);
+    const thisMonth = new Date(current.getFullYear(), current.getMonth(), 1);
+    const lastMonth = new Date(current.getFullYear(), current.getMonth() - 1, 1);
+    const monthBefore = new Date(current.getFullYear(), current.getMonth() - 2, 1);
+    const days = (from, to) => Math.round((to.getTime() - from.getTime()) / 86400000);
+    return {
+      key: `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}`,
+      name: lastMonth.toLocaleDateString(undefined, { month: "long" }),
+      next: thisMonth.toLocaleDateString(undefined, { month: "long" }),
+      month: { end_ms: thisMonth.getTime(), window_days: days(lastMonth, thisMonth) },
+      before: { end_ms: lastMonth.getTime(), window_days: days(monthBefore, lastMonth) },
+      showing: current.getDate() <= REWIND_SHOW_DAYS,
+    };
+  }
+  function hitRate(recap) {
+    return recap?.picks_watched > 0 ? Math.round((recap.rated_well / recap.picks_watched) * 100) : null;
+  }
+  // The cards worth telling for this month, in order; ones without data drop out.
+  function rewindCards({ month, before, taste, pick, names }) {
+    const cards = [{ kind: "numbers" }];
+    const top = month.explored?.top_studios || [];
+    if (top.length) cards.push({ kind: "studio", top });
+    if (month.best_find) cards.push({ kind: "find", find: month.best_find });
+    const rising = (taste?.shift?.rising || []).slice(0, 2);
+    const fading = (taste?.shift?.fading || []).slice(0, 1);
+    if (rising.length || fading.length) cards.push({ kind: "drift", rising, fading });
+    const rate = hitRate(month);
+    if (rate !== null) cards.push({ kind: "hits", rate, before: hitRate(before), taught: Number(month.learned?.answers || 0) + Number(month.learned?.feedback || 0) });
+    const explored = month.explored || {};
+    if (explored.watched_seconds > 0 && (explored.new_studios > 0 || explored.new_performers > 0)) {
+      cards.push({ kind: "explore", studios: explored.new_studios, performers: explored.new_performers, share: Math.round((explored.new_seconds / explored.watched_seconds) * 100) });
+    }
+    if (pick) cards.push({ kind: "next", pick });
+    return cards.map((card) => ({ ...card, ...names }));
+  }
+
+  function RewindTeaser({ pick, scenes }) {
+    const months = React.useMemo(() => rewindMonths(Date.now()), []);
+    const [seen, setSeen] = React.useState(() => readStored(REWIND_SEEN_KEY));
+    const [story, setStory] = React.useState(null);
+    const [open, setOpen] = React.useState(false);
+    React.useEffect(() => {
+      if (!months.showing || seen === months.key) return undefined;
+      let current = true;
+      Promise.all([
+        operation({ operation: "get_home_recap", ...months.month }),
+        operation({ operation: "get_home_recap", ...months.before }).catch(() => null),
+        operation({ operation: "get_taste_summary" }).catch(() => null),
+      ]).then(([month, before, taste]) => {
+        if (current && month && (month.picks_watched > 0 || month.explored?.watched_seconds > 0)) setStory({ month, before, taste });
+      }).catch(() => {});
+      return () => { current = false; };
+    }, [months.key]);
+    function done() {
+      writeStored(REWIND_SEEN_KEY, months.key);
+      setSeen(months.key);
+      setOpen(false);
+    }
+    if (!story || seen === months.key) return null;
+    const cards = rewindCards({ ...story, pick, names: { monthName: months.name, nextName: months.next } });
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("section", { className: "curator-rewind-teaser" },
+        React.createElement("span", null, React.createElement("strong", null, `Your ${months.name}, rewound`), ` · ${cards.length} short cards about your month with Curator`),
+        React.createElement(Button, { size: "sm", variant: "primary", onClick: () => setOpen(true) }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Watch"),
+        React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: done }, "×")),
+      open && React.createElement(RewindStory, { cards, month: story.month, scenes, onClose: done })
+    );
+  }
+
+  function RewindStory({ cards, month, scenes, onClose }) {
+    const [index, setIndex] = React.useState(0);
+    const [elapsed, setElapsed] = React.useState(0);
+    const [paused, setPaused] = React.useState(() => reducedMotion());
+    const [back, setBack] = React.useState(false);
+    const closeButton = React.useRef(null);
+    React.useEffect(() => { closeButton.current?.focus(); }, []);
+    React.useEffect(() => {
+      if (paused) return undefined;
+      let frame = 0;
+      let last = performance.now();
+      const step = (now) => {
+        const delta = now - last;
+        last = now;
+        setElapsed((value) => value + delta);
+        frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+      return () => cancelAnimationFrame(frame);
+    }, [paused]);
+    React.useEffect(() => {
+      if (elapsed < REWIND_CARD_MS) return;
+      if (index < cards.length - 1) go(index + 1);
+      else { setPaused(true); setElapsed(REWIND_CARD_MS); }
+    }, [elapsed]);
+    function go(next, backwards = false) {
+      if (next < 0 || next >= cards.length) return;
+      setBack(backwards);
+      setIndex(next);
+      setElapsed(0);
+    }
+    function keys(event) {
+      if (event.key === "Escape") onClose();
+      else if (event.key === "ArrowRight") go(index + 1);
+      else if (event.key === "ArrowLeft") go(index - 1, true);
+    }
+    const card = cards[index];
+    const grow = Math.min(1, elapsed / 1500);
+    return React.createElement(
+      "div",
+      { className: "curator-rewind", role: "dialog", "aria-modal": "true", "aria-label": `Your ${card.monthName}, rewound`, onKeyDown: keys },
+      React.createElement("div", { className: "curator-rewind-backdrop", onClick: onClose }),
+      React.createElement("button", { type: "button", className: "curator-rewind-nav", "aria-label": "Previous card", disabled: index === 0, onClick: () => go(index - 1, true) }, "‹"),
+      React.createElement(
+        "div",
+        { className: `curator-rewind-story curator-rewind-${card.kind}` },
+        React.createElement("div", { className: "curator-rewind-segments", "aria-hidden": "true" }, cards.map((_, at) => React.createElement("span", { key: at }, React.createElement("i", { style: { width: `${at < index ? 100 : at === index ? Math.round((elapsed / REWIND_CARD_MS) * 100) : 0}%` } })))),
+        React.createElement("div", { className: "curator-rewind-tools" },
+          React.createElement("button", { type: "button", "aria-label": paused ? "Play" : "Pause", onClick: () => setPaused((value) => !value) }, paused ? "▶" : "❚❚"),
+          React.createElement("button", { type: "button", ref: closeButton, "aria-label": "Close", onClick: onClose }, "×")),
+        React.createElement("div", { key: index, className: `curator-rewind-card${back ? " is-back" : ""}`, "aria-live": "polite" }, React.createElement(RewindCard, { card, month, scenes, grow }))
+      ),
+      React.createElement("button", { type: "button", className: "curator-rewind-nav", "aria-label": "Next card", disabled: index === cards.length - 1, onClick: () => go(index + 1) }, "›")
+    );
+  }
+
+  function RewindCard({ card, month, scenes, grow }) {
+    const rise = (className, ...children) => React.createElement("div", { className: `curator-rewind-rise ${className || ""}` }, ...children);
+    const ease = 1 - Math.pow(1 - grow, 3);
+    if (card.kind === "numbers") {
+      const minutes = Math.round((Number(month.watched_seconds) || 0) / 60);
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", card.monthName),
+        rise("curator-rewind-head", "You and Curator had a good month."),
+        rise("curator-rewind-stat", React.createElement("strong", null, Math.round(month.picks_watched * ease)), React.createElement("span", null, "Curator picks watched")),
+        minutes > 0 && rise("curator-rewind-stat", React.createElement("strong", null, `${Math.floor((minutes * ease) / 60)} h ${Math.round(minutes * ease) % 60} min`), React.createElement("span", null, "of watching, all from your own library")));
+    }
+    if (card.kind === "studio") {
+      const [first] = card.top;
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Your studio of the month"),
+        rise("curator-rewind-head curator-rewind-big", first.name),
+        rise("", `${first.scenes} ${first.scenes === 1 ? "scene" : "scenes"}${first.rated_well ? `, ${first.rated_well} rated well` : ""}.`),
+        rise("curator-rewind-bars", card.top.map((studio) => React.createElement("div", { key: studio.studio_id },
+          React.createElement("span", null, studio.name, React.createElement("small", null, studio.scenes)),
+          React.createElement("i", null, React.createElement("b", { style: { width: `${Math.round((studio.scenes / first.scenes) * 100 * ease)}%` } }))))));
+    }
+    if (card.kind === "find") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Best discovery"),
+        rise("curator-rewind-head", "A studio you had never watched."),
+        rise("curator-rewind-shot scene-card", React.createElement("img", { className: "scene-card-image", src: `/scene/${card.find.scene_id}/screenshot`, alt: "", loading: "lazy" })),
+        rise("card-section", React.createElement("strong", { className: "card-section-title" }, card.find.title || "A new scene"), React.createElement("span", null, ` · ${card.find.studio}`)));
+    }
+    if (card.kind === "drift") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "How your taste moved"),
+        rise("curator-rewind-head", card.rising.length ? `Warming up to ${card.rising.map((tag) => tag.name).join(" and ")}.` : `Cooling on ${card.fading[0].name}.`),
+        rise("curator-rewind-drift", [...card.rising.map((tag) => ["up", tag]), ...card.fading.map((tag) => ["down", tag])].map(([way, tag]) => React.createElement("span", { key: tag.tag_id, className: `is-${way}` }, `${way === "up" ? "↑" : "↓"} ${tag.name}`))));
+    }
+    if (card.kind === "hits") {
+      const shown = card.before === null ? card.rate : Math.round(card.before + (card.rate - card.before) * ease);
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Curator's hit rate"),
+        rise("curator-rewind-head", "Picks you rated well"),
+        rise("curator-rewind-ring",
+          React.createElement("svg", { width: 200, height: 200, viewBox: "0 0 200 200", role: "img", "aria-label": `${card.rate}% of picks rated well${card.before === null ? "" : `, ${card.before}% the month before`}` },
+            React.createElement("circle", { cx: 100, cy: 100, r: 84, fill: "none", strokeWidth: 15, className: "curator-rewind-ring-track" }),
+            React.createElement("circle", { cx: 100, cy: 100, r: 84, fill: "none", strokeWidth: 15, strokeLinecap: "round", pathLength: 100, strokeDasharray: 100, strokeDashoffset: 100 - shown, transform: "rotate(-90 100 100)", className: "curator-rewind-ring-arc" })),
+          React.createElement("span", null, React.createElement("strong", null, `${shown}%`), card.before !== null && React.createElement("small", null, `${card.rate >= card.before ? "up" : "down"} from ${card.before}%`))),
+        card.taught > 0 && rise("", `You taught Curator ${card.taught} ${card.taught === 1 ? "thing" : "things"} this month. Thank you.`));
+    }
+    if (card.kind === "explore") {
+      return React.createElement(React.Fragment, null,
+        rise("curator-rewind-kicker", "Exploring"),
+        rise("curator-rewind-head", `You tried ${[card.performers > 0 && `${card.performers} new ${card.performers === 1 ? "performer" : "performers"}`, card.studios > 0 && `${card.studios} new ${card.studios === 1 ? "studio" : "studios"}`].filter(Boolean).join(" and ")}.`),
+        rise("curator-rewind-split", React.createElement("b", { style: { width: `${Math.max(8, Math.round(card.share * ease))}%` } }, `${card.share}% new`), React.createElement("span", null, "familiar")));
+    }
+    const scene = scenes.get(String(card.pick.scene_id));
+    return React.createElement(React.Fragment, null,
+      rise("curator-rewind-kicker", `To start ${card.nextName}`),
+      rise("curator-rewind-head", "Curator saved you a good one."),
+      rise("curator-rewind-shot scene-card", React.createElement("img", { className: "scene-card-image", src: `/scene/${card.pick.scene_id}/screenshot`, alt: "", loading: "lazy" })),
+      rise("card-section", React.createElement("strong", { className: "card-section-title" }, scene?.title || `Scene ${card.pick.scene_id}`)),
+      rise("", React.createElement("a", { className: "btn btn-light btn-sm", href: `/scenes/${card.pick.scene_id}` }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play")));
+  }
+
+  // One of For You's top picks, dealt like a card; Deal again moves on.
+  function TonightsPick({ items, scenes }) {
+    const [index, setIndex] = React.useState(0);
+    const [dealing, setDealing] = React.useState(false);
+    const timer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(timer.current), []);
+    const item = items[index % items.length];
+    const scene = scenes.get(String(item.scene_id));
+    const reason = cardReason(item, scene)?.teaser || "";
+    function deal() {
+      if (dealing) return;
+      const next = () => { setDealing(false); setIndex((value) => value + 1); };
+      if (reducedMotion()) return next();
+      setDealing(true);
+      timer.current = setTimeout(next, TONIGHT_DEAL_MS);
+    }
+    const hour = new Date().getHours();
+    const label = hour >= 17 || hour < 4 ? "Tonight's pick" : hour < 12 ? "This morning's pick" : "This afternoon's pick";
+    return React.createElement(
+      "section",
+      { className: "curator-tonight", "aria-label": label },
+      React.createElement("div", { className: "curator-tonight-deck" },
+        React.createElement("span", { className: "curator-tonight-back curator-tonight-back-2", "aria-hidden": "true" }),
+        React.createElement("span", { className: "curator-tonight-back curator-tonight-back-1", "aria-hidden": "true" }),
+        React.createElement("a", { key: index, className: `curator-tonight-card scene-card${dealing ? " is-dealing" : ""}`, href: `/scenes/${item.scene_id}` },
+          React.createElement("img", { className: "scene-card-image", src: `/scene/${item.scene_id}/screenshot`, alt: "", loading: "lazy" }),
+          React.createElement("span", { className: "curator-tonight-ribbon" }, label))),
+      React.createElement("div", { className: "curator-tonight-copy" },
+        React.createElement("div", { className: "card-section" },
+          React.createElement("small", null, `Pick ${(index % items.length) + 1} of ${items.length}`),
+          React.createElement("h3", { className: "card-section-title" }, scene?.title || `Scene ${item.scene_id}`),
+          scene?.studio?.name && React.createElement("span", { className: "curator-tonight-meta" }, scene.studio.name),
+          reason && React.createElement("p", { className: "curator-tonight-reason" }, reason)),
+        React.createElement("div", { className: "curator-tonight-actions" },
+          React.createElement("a", { className: "btn btn-light btn-sm", href: `/scenes/${item.scene_id}` }, React.createElement(FontAwesomeIcon, { icon: faPlay }), " Play"),
+          items.length > 1 && React.createElement(Button, { size: "sm", variant: "secondary", onClick: deal }, React.createElement(FontAwesomeIcon, { icon: faClone }), " Deal again")))
+    );
+  }
+
+  function WeeklyRecap({ recap, now, onHide }) {
+    const days = recapDays(recap.sessions, now);
+    const tallest = Math.max(1, ...days.map((day) => day.minutes));
+    const learned = recap.learned || {};
+    const taught = Number(learned.feedback || 0) + Number(learned.answers || 0);
+    return React.createElement(
+      "section",
+      { className: "curator-recap", "aria-label": "Your week with Curator" },
+      React.createElement(Button, { className: "curator-recap-hide", size: "sm", variant: "link", "aria-label": "Hide until next week", title: "Hide until next week", onClick: onHide }, "×"),
+      React.createElement("div", { className: "curator-recap-main" },
+        React.createElement("small", null, "Your week with Curator"),
+        React.createElement("p", { className: "curator-recap-headline" }, "You watched ", React.createElement("strong", null, React.createElement(CountUp, { value: recap.picks_watched })), recap.picks_watched === 1 ? " Curator pick" : " Curator picks", recap.picks_watched > 0 ? [" and rated ", React.createElement("strong", { key: "rated" }, React.createElement(CountUp, { value: recap.rated_well })), " of them well."] : "."),
+        recap.best_find && React.createElement("p", { className: "curator-recap-find" }, "Best find: ", React.createElement("a", { href: `/scenes/${recap.best_find.scene_id}` }, recap.best_find.title || "a new scene"), ` from ${recap.best_find.studio}, a studio you hadn't watched before.`)),
+      React.createElement("div", { className: "curator-recap-chart", role: "img", "aria-label": `Minutes watched from Curator picks: ${days.map((day) => `${day.label} ${day.minutes}`).join(", ")}` },
+        days.map((day, index) => React.createElement("span", { key: day.start, className: "curator-recap-day" },
+          React.createElement("i", { className: day.minutes === tallest && day.minutes > 0 ? "is-top" : undefined, style: { "--h": `${Math.max(4, Math.round((day.minutes / tallest) * 100))}%`, "--curator-enter-i": index } }),
+          React.createElement("small", null, day.label)))),
+      taught > 0 && React.createElement("div", { className: "curator-recap-learned" },
+        React.createElement("small", null, "Curator learned ", React.createElement("strong", null, React.createElement(CountUp, { value: taught })), taught === 1 ? " thing" : " things"),
+        React.createElement("div", { className: "curator-recap-chips" }, (learned.tags || []).map((tag, index) => React.createElement("span", {
+          key: tag.tag_id,
+          className: `curator-recap-chip ${tag.blocked || Number(tag.value) < 0 ? "is-down" : Number(tag.value) > 0 ? "is-up" : ""}`,
+          style: { "--curator-pop-i": index },
+        }, `${tag.blocked || Number(tag.value) < 0 ? "−" : "+"} ${tag.name}`))))
+    );
+  }
+
+  // Placeholder cards that shimmer while a lane loads, with a status line
+  // that moves on through what Curator is doing.
+  const LANE_LOADING_LINES = ["Loading recommendations…", "Picking your strongest matches…", "Varying studios and performers…", "Almost there…"];
+  function LaneSkeleton({ message = null, count = 8 }) {
+    const [line, setLine] = React.useState(0);
+    React.useEffect(() => {
+      if (message) return undefined;
+      const timer = setInterval(() => setLine((value) => Math.min(LANE_LOADING_LINES.length - 1, value + 1)), 900);
+      return () => clearInterval(timer);
+    }, [message]);
+    return React.createElement(
+      "div",
+      { className: "curator-lane-skeleton" },
+      React.createElement("p", { className: "curator-lane-skeleton-line", role: "status" }, message || LANE_LOADING_LINES[line]),
+      React.createElement("div", { className: "curator-grid", "aria-hidden": "true" }, Array.from({ length: count }, (_, index) => React.createElement(
+        "div",
+        { key: index, className: "curator-skeleton-card", style: { "--curator-enter-i": index } },
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-image" }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "70%" } }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "45%" } }),
+        React.createElement("span", { className: "curator-skeleton curator-skeleton-text", style: { width: "60%" } })
+      )))
+    );
+  }
+
+  // What an empty lane means, and where to go instead.
+  const LANE_EMPTY = {
+    for_you: ["Nothing to recommend yet", "For You fills once Curator has built a model from your library, plays and ratings."],
+    best_bets: ["No strong unseen matches right now", "Best Bets needs scenes that more than one signal agrees on. Rate a few more scenes and check back."],
+    new_arrivals: ["Nothing new matches you well yet", "New Arrivals fills as you add scenes to your library."],
+    revisit: ["Nothing to revisit yet", "Scenes you enjoyed come back here after some time away."],
+    stretch: ["No stretch picks right now", "Stretch needs familiar matches with one less-tested tag or studio to try."],
+    blind_spots: ["No blind spots found", "Either you have explored widely, or Curator doesn't have enough evidence yet."],
+    dormant: ["Nothing dormant", "Nothing you used to watch a lot has been parked long enough to come back."],
+  };
+  function LaneEmpty({ lane, onOpenLane, onRebuild }) {
+    const [title, body] = LANE_EMPTY[lane] || ["Nothing qualifies for this lane right now.", ""];
+    return React.createElement(
+      "div",
+      { className: "curator-lane-empty", role: "status" },
+      React.createElement("svg", { className: "curator-lane-empty-art", width: 88, height: 88, viewBox: "0 0 96 96", fill: "none", "aria-hidden": "true" },
+        React.createElement("circle", { cx: 48, cy: 48, r: 40, className: "curator-lane-empty-disc" }),
+        React.createElement("circle", { cx: 48, cy: 48, r: 26, strokeWidth: 4, className: "curator-lane-empty-ring" }),
+        React.createElement("path", { d: "M48 34v14l9 6", strokeWidth: 4, strokeLinecap: "round", strokeLinejoin: "round", className: "curator-lane-empty-hand" }),
+        React.createElement("circle", { cx: 78, cy: 22, r: 5, className: "curator-lane-empty-dot-a" }),
+        React.createElement("circle", { cx: 16, cy: 70, r: 3, className: "curator-lane-empty-dot-b" })),
+      React.createElement("strong", null, title),
+      body && React.createElement("p", null, body),
+      React.createElement("div", { className: "curator-lane-empty-actions" },
+        lane !== "for_you" && React.createElement(Button, { size: "sm", variant: "primary", onClick: () => onOpenLane("for_you") }, "Try For You instead"),
+        React.createElement(Button, { size: "sm", variant: "secondary", onClick: onRebuild }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model"))
+    );
+  }
+
+  // A short-lived toast after a card is hidden. It closes by itself, and
+  // Undo reverses the saved feedback through the normal correction path.
+  function UndoToast({ entry, onUndo, onClose }) {
+    React.useEffect(() => {
+      const timer = setTimeout(onClose, UNDO_TOAST_MS);
+      return () => clearTimeout(timer);
+    }, [entry.key]);
+    return React.createElement(
+      "div",
+      { className: `curator-undo-toast${entry.failed ? " is-error" : ""}`, role: "status" },
+      React.createElement("span", { className: "curator-undo-dot", "aria-hidden": "true" }),
+      React.createElement("span", null, entry.text),
+      !entry.failed && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => onUndo(entry) }, React.createElement(FontAwesomeIcon, { icon: faRotateLeft }), " Undo"),
+      React.createElement(Button, { size: "sm", variant: "link", className: "curator-undo-close", "aria-label": "Dismiss", onClick: onClose }, "×")
+    );
+  }
+
+  // Eight dots that fly out of a thumbs-up once; CSS ends the animation and
+  // reduced motion hides it, so it never loops or delays the saved feedback.
+  function FeedbackBurst() {
+    return React.createElement("span", { className: "curator-feedback-burst", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index })));
+  }
+
+  const UNDO_TOAST_MS = 6000;
+  const TONIGHT_DEAL_MS = 420;
+
+  // What the undo toast says after a removing reaction.
+  const FEEDBACK_UNDO_TEXT = {
+    thumb_down: "Hidden. Curator will show fewer like this.",
+    not_now: "Hidden for now.",
+    never_show: "Hidden for good.",
+    metadata_wrong: "Hidden. Curator won't learn from its metadata.",
+    prune: "Marked for pruning.",
+  };
 
   const FEEDBACK_LABELS = {
     thumb_up: "Thumbs Up",
@@ -5411,7 +5985,7 @@
       if (event.target.closest("a")) sessionStorage.setItem(ORIGIN_KEY, JSON.stringify({ scene_id: entry.scene_id, impression_id: entry.item.impression_id, lane: entry.slate.lane, impression_position: entry.item.position, model_id: entry.slate.model_id }));
     } }, React.createElement(thumbnails ? ThumbnailTile : PreviewTile, { entry, index }));
   }
-  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onReaction }) {
+  function EndlessRecommendations({ slate, visibleItems, scenes, lane, filters, thumbnails, cards = false, onRestart, onRemove, onReaction, movement = null }) {
     // Key by the lane the slate was served for: on a lane switch this renders
     // once with the new lane prop but the previous lane's slate, and keying by
     // the prop saved those items as the new lane's restore point.
@@ -5575,7 +6149,7 @@
     const range = virtualWallRange(entries.length, geometry.columns, geometry.rowHeight, geometry.top, geometry.viewportHeight);
     return React.createElement("div", { style: { position: "relative", paddingTop: startPage > slate.page ? "2.5rem" : 0 } },
       cards ? React.createElement("section", { ref: root, className: "curator-grid curator-endless-cards", "aria-label": "Recommendations" },
-        entries.map((entry) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction }))
+        entries.map((entry, index) => React.createElement(RecommendationCard, { key: String(entry.scene_id), item: entry.item, scene: entry.scene, slate: entry.slate, onRemove, onReaction, enterIndex: index % (entry.slate.page_size || 20), movement: movement?.scenes.get(String(entry.scene_id)) || null }))
       ) : React.createElement("div", { ref: root, style: { position: "relative", height: range.height }, "aria-label": "Recommendations" },
         React.createElement("div", { ref: grid, className: "curator-preview-wall", style: { position: "absolute", top: range.offset, width: "100%" } },
           entries.slice(range.first, range.last).map((entry, index) => React.createElement(EndlessRecommendationTile, { key: String(entry.scene_id), entry, index, thumbnails, seen: seen.current }))
@@ -5638,9 +6212,89 @@
       })
     );
   }
-  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes }) {
+  // After a model update, the scenes your feedback moved most get a small
+  // badge on their card, once per new model. Movement comes from the
+  // Impact report (get_curation_impact), which compares the two newest builds.
+  const MOVEMENT_SEEN_KEY = "stash-curator:movement-seen-model:v1";
+  const MOVEMENT_FRESH_MS = 7 * 86_400_000;
+
+  function movementReason(entry) {
+    const top = [...(entry.contributors || [])].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0];
+    if (!top) return "";
+    if (top.kind === "direct") return "your feedback on it";
+    return top.name ? `${top.kind === "performer" ? "your answers about" : "your answer on"} ${top.name}` : "";
+  }
+
+  // scene_id -> { delta, reason } for the scenes an update moved.
+  function movementIndex(impact) {
+    const index = new Map();
+    for (const entry of [...(impact?.scenes?.promoted || []), ...(impact?.scenes?.demoted || [])]) {
+      if (Math.abs(Number(entry.delta)) < 1e-3) continue;
+      index.set(String(entry.scene_id), { delta: Number(entry.delta), reason: movementReason(entry) });
+    }
+    return index;
+  }
+
+  function useModelMovement(modelId) {
+    const [movement, setMovement] = React.useState(null);
+    React.useEffect(() => {
+      let current = true;
+      setMovement(null);
+      if (!modelId) return undefined;
+      let seen = "";
+      try { seen = localStorage.getItem(MOVEMENT_SEEN_KEY) || ""; } catch (_) { /* Storage may be unavailable. */ }
+      if (seen === modelId) return undefined;
+      operation({ operation: "get_curation_impact" })
+        .then((impact) => {
+          if (!current || !impact?.available || impact.newer_model_id !== modelId) return;
+          try { localStorage.setItem(MOVEMENT_SEEN_KEY, modelId); } catch (_) { /* Badges then show again next visit. */ }
+          if (Date.now() - Number(impact.published_at_ms) > MOVEMENT_FRESH_MS) return;
+          const scenes = movementIndex(impact);
+          if (scenes.size) setMovement({ scenes, publishedAtMs: Number(impact.published_at_ms) });
+        })
+        .catch(() => {});
+      return () => { current = false; };
+    }, [modelId]);
+    return movement;
+  }
+
+  function MovementBadge({ movement }) {
+    const up = movement.delta > 0;
+    const label = `${up ? "Moved up" : "Moved down"} after the last update${movement.reason ? `, because of ${movement.reason}` : ""}`;
+    return React.createElement("span", { className: `curator-move-badge ${up ? "is-up" : "is-down"}`, title: label, "aria-label": label },
+      React.createElement(FontAwesomeIcon, { icon: up ? faArrowTrendUp : faArrowTrendDown }),
+      React.createElement("span", null, formatSigned(movement.delta)));
+  }
+
+  function MovementBanner({ movement, onDismiss }) {
+    const values = [...movement.scenes.values()];
+    const up = values.filter((entry) => entry.delta > 0).length;
+    const down = values.length - up;
+    const parts = [up && `${up} moved up`, down && `${down} moved down`].filter(Boolean).join(" and ");
+    return React.createElement(
+      "aside",
+      { className: "curator-movement-banner alert alert-secondary", role: "status" },
+      React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }),
+      React.createElement("span", null, React.createElement("strong", null, `Recommendations updated ${formatTimeAgo(movement.publishedAtMs)}.`), ` Your feedback moved ${values.length} ${values.length === 1 ? "scene" : "scenes"}: ${parts}. Look for the arrows on their cards.`),
+      React.createElement("a", { href: "/plugins/stash-curator?view=curate&section=progress" }, "What changed"),
+      React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: onDismiss }, "×")
+    );
+  }
+
+  const CARD_LEAVE_MS = 340;
+  const CARD_ENTER_STAGGER_MAX = 11;
+  function RecommendationCard({ item, scene, slate, onRemove, onReaction, evidenceScenes, enterIndex = 0, movement = null }) {
     const { SceneCard } = Api.components;
     const card = React.useRef(null);
+    const [leaving, setLeaving] = React.useState(false);
+    const leaveTimer = React.useRef(0);
+    React.useEffect(() => () => clearTimeout(leaveTimer.current), []);
+    // The card folds away before the lane drops it; the feedback is already
+    // saved, so the animation never delays anything that matters.
+    const leave = onRemove && ((sceneId, info) => {
+      setLeaving(true);
+      leaveTimer.current = setTimeout(() => onRemove(sceneId, info), reducedMotion() ? 0 : CARD_LEAVE_MS);
+    });
     const [explanation, setExplanation] = React.useState(
       item.explanation
         ? { summary: typeof item.explanation === "string" ? item.explanation : item.explanation.summary, ...(typeof item.explanation === "object" ? item.explanation : {}), supporting_reasons: item.supporting_reasons || [] }
@@ -5671,13 +6325,14 @@
     const hasLaneRank = item.source_lane !== "score_review";
     return React.createElement(
       "article",
-      { className: `curator-card curator-compact-card curator-source-${item.source_lane}`, onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.scene_id), onMouseLeave: () => announcePageChatHover(null), "data-endless-item": String(item.scene_id), ref: card },
+      { className: `curator-card curator-compact-card curator-card-enter curator-source-${item.source_lane}${leaving ? " curator-card-leaving" : ""}`, style: { "--curator-enter-i": Math.min(Math.max(0, enterIndex), CARD_ENTER_STAGGER_MAX) }, onClickCapture: rememberOrigin, onMouseEnter: () => announcePageChatHover(item.scene_id), onMouseLeave: () => announcePageChatHover(null), "data-endless-item": String(item.scene_id), ref: card },
       React.createElement(
         "span",
         { className: `curator-source-badge curator-lane-${item.source_lane}`, title: `Selected from ${laneLabel}`, "aria-label": `Selected from ${laneLabel}` },
         React.createElement(FontAwesomeIcon, { icon: laneByValue.get(item.source_lane)?.icon || faCompass }),
         React.createElement("span", null, laneLabel.toUpperCase())
       ),
+      movement && React.createElement(MovementBadge, { movement }),
       scene
         ? React.createElement(SceneCard, { scene, curatorAppeal: item.appeal })
         : React.createElement("div", { className: "curator-card-placeholder" }, `Scene ${item.scene_id}`),
@@ -5698,7 +6353,7 @@
               React.createElement(ExplanationView, { explanation: { ...explanation, scores: explanation?.scores || { appeal: { value: item.appeal, direction: item.appeal >= 0 ? "positive" : "negative" }, rank: { value: item.lane_value, available: hasLaneRank } }, lane_context: { available: hasLaneRank, display_lane: slate.lane, source_lane: item.source_lane, subtype: item.subtype, qualification: item.qualification } }, item, scene, evidenceScenes })
             ),
             descriptionContent: scene?.details && React.createElement("p", { className: "card-section curator-card-description curator-card-description-local" }, scene.details),
-            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove, onReaction })),
+            actionsContent: React.createElement(React.Fragment, null, scene && React.createElement(LocalRatingPanel, { sceneId: item.scene_id }), React.createElement(Feedback, { item, onRemove: leave, onReaction })),
             scoreHeadline: scene ? null : "Appeal",
             scoreHeadlineValue: scene ? null : formatAppealValue(item.appeal),
             scoreHeadlineBar: scene ? null : scoreBar(item.appeal, true),
@@ -6574,6 +7229,22 @@
     return parts.join(" · ");
   }
   // The rolling search as a whole: its pace, the next round, and any pause.
+  const WHISPARR_TICK_MS = 30000;
+  // How much of the wait until the next rolling-search round is left, 0..1.
+  function whisparrRoundLeft(rotation, now) {
+    const interval = Number(rotation?.interval_ms) || 0;
+    const next = Number(rotation?.next_sweep_at_ms) || 0;
+    if (interval <= 0 || !next) return 0;
+    return Math.max(0, Math.min(1, (next - now) / interval));
+  }
+  // A ring that drains toward the next round; the panel re-renders it every
+  // half minute, and the ring eases between those steps.
+  function WhisparrCountdown({ rotation, now }) {
+    const left = whisparrRoundLeft(rotation, now);
+    return React.createElement("svg", { className: "curator-whisparr-countdown", width: 22, height: 22, viewBox: "0 0 22 22", "aria-hidden": "true" },
+      React.createElement("circle", { cx: 11, cy: 11, r: 8.5, fill: "none", strokeWidth: 3, className: "curator-countdown-track" }),
+      React.createElement("circle", { cx: 11, cy: 11, r: 8.5, fill: "none", strokeWidth: 3, strokeLinecap: "round", pathLength: 100, strokeDasharray: 100, strokeDashoffset: Math.round((1 - left) * 100), transform: "rotate(-90 11 11)", className: "curator-countdown-arc" }));
+  }
   function whisparrRotationStatus(summary, waiting, now = Date.now()) {
     if (!summary) return null;
     if (!summary.enabled) return waiting ? { tone: "info", text: `Rolling search is off. ${whisparrScenes(waiting)} would still be searched in the background; turn it on in Settings.` } : null;
@@ -6735,6 +7406,12 @@
     const [busy, setBusy] = React.useState(null);
     const [notice, setNotice] = React.useState("");
     const [searched, setSearched] = React.useState(() => new Set());
+    // Keeps "next round in …" and its countdown ring current while open.
+    const [now, setNow] = React.useState(() => Date.now());
+    React.useEffect(() => {
+      const timer = setInterval(() => setNow(Date.now()), WHISPARR_TICK_MS);
+      return () => clearInterval(timer);
+    }, []);
     React.useEffect(() => {
       let active = true;
       setLoading(true);
@@ -6820,7 +7497,7 @@
       );
     }
     const allShownSelected = visible.length > 0 && visible.slice(0, limit).every((item) => selected.has(item.id));
-    const rotationStatus = data && whisparrRotationStatus(data.rotation, counts.rotation);
+    const rotationStatus = data && whisparrRotationStatus(data.rotation, counts.rotation, now);
     const canRotate = chosen.filter((item) => item.status === "missing" && item.stashdb_id && !whisparrRotating(item));
     const canStop = chosen.filter(whisparrRotating);
     return React.createElement(
@@ -6833,7 +7510,7 @@
           "button",
           { key: entry.value, type: "button", role: "tab", className: `curator-whisparr-chip curator-whisparr-status-${entry.value}`, "aria-selected": status === entry.value, onClick: () => setStatus(entry.value), title: entry.description },
           entry.label,
-          React.createElement("span", { className: "curator-whisparr-count" }, data ? counts[entry.value].toLocaleString() : "…")
+          React.createElement("span", { key: data ? counts[entry.value] : "loading", className: "curator-whisparr-count" }, data ? counts[entry.value].toLocaleString() : "…")
         ))
       ),
       React.createElement(
@@ -6846,7 +7523,7 @@
         status === "missing" && visible.length > 0 && React.createElement(Button, { className: "curator-whisparr-search-all", size: "sm", variant: "primary", disabled: Boolean(busy), onClick: () => act("search", visible) }, React.createElement(FontAwesomeIcon, { icon: faSearch }), ` Search ${visible.length === 1 ? "it" : `all ${visible.length.toLocaleString()}`}`)
       ),
       statusInfo && React.createElement("p", { className: "curator-whisparr-hint" }, statusInfo.description),
-      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`,
+      rotationStatus && React.createElement("div", { className: `alert alert-${rotationStatus.tone} curator-whisparr-rotation`, role: "status" }, rotationStatus.tone === "info" && data.rotation?.enabled ? React.createElement(WhisparrCountdown, { rotation: data.rotation, now }) : React.createElement(FontAwesomeIcon, { icon: faHistory }), ` ${rotationStatus.text}`,
         rotationStatus.retry && React.createElement(Button, { className: "curator-whisparr-retry", size: "sm", variant: "secondary", disabled: Boolean(busy), onClick: resumeRotation, title: "Run the next rolling-search round within a minute" }, "Try now")),
       data && !data.library_ready && React.createElement("div", { className: "alert alert-info" }, "Curator is still matching your library to StashDB. Scenes you own show as In library once that finishes."),
       notice && React.createElement("div", { className: "alert alert-success", role: "status" }, notice),
@@ -7586,29 +8263,114 @@
     );
   }
 
+  // A model build's real phases, as the share of the task's progress each
+  // covers. The model itself reports 0..1 through its phases (features to
+  // 0.25, labels to 0.30, affinities to 0.35, scoring to 0.78, then saving);
+  // the task maps that onto 0.68..0.95 after a sync, or 0.03..0.95 for a
+  // rebuild, then organizes lanes (0.95) and prepares pages (0.97).
+  const MODEL_PHASES = [
+    [0, "Describing your scenes"],
+    [0.25, "Learning from your plays and ratings"],
+    [0.3, "Weighing tags, performers and studios"],
+    [0.35, "Scoring your library"],
+    [0.78, "Saving the model"],
+  ];
+  const SYNC_BUILD_TYPES = new Set(["sync-build", "full-sync-build"]);
+  const REBUILD_TYPES = new Set(["build", "force-build", "update-model"]);
+  function buildKind(job) {
+    if (SYNC_BUILD_TYPES.has(job?.job_type)) return "sync";
+    if (REBUILD_TYPES.has(job?.job_type)) return "rebuild";
+    const description = String(job?.description || "").toLowerCase();
+    if (description.includes("sync") && description.includes("build")) return "sync";
+    if (description.includes("rebuild") || description.includes("feedback")) return "rebuild";
+    return null;
+  }
+  function buildPhases(job) {
+    const kind = buildKind(job);
+    if (!kind) return null;
+    const [modelStart, modelEnd] = kind === "sync" ? [0.68, 0.95] : [0.03, 0.95];
+    const model = (fraction) => modelStart + (modelEnd - modelStart) * fraction;
+    const bounds = [
+      ...(kind === "sync" ? [[0, "Syncing your library from Stash"], [0.58, "Rebuilding your play history"]] : []),
+      ...MODEL_PHASES.map(([fraction, label], index) => [index === 0 && kind === "rebuild" ? 0 : model(fraction), label]),
+      [0.95, "Organizing recommendation lanes"],
+      [0.97, "Preparing recommendation pages"],
+    ];
+    const progress = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : null;
+    const done = job.state === "complete";
+    return bounds.map(([start, label], index) => {
+      const end = index + 1 < bounds.length ? bounds[index + 1][0] : 0.99;
+      const state = done || (progress !== null && progress >= end) ? "done" : progress !== null && progress >= start ? "active" : "pending";
+      const fraction = state === "done" ? 1 : state === "active" ? Math.max(0, Math.min(1, (progress - start) / Math.max(1e-6, end - start))) : 0;
+      return { label, state, fraction };
+    });
+  }
+
+  // Seconds left, guessed from how long the same kind of task took last time.
+  function buildTimeLeft(job, previousMs, now = Date.now()) {
+    const progress = typeof job.progress === "number" ? job.progress : 0;
+    const elapsed = typeof job.started_at_ms === "number" ? Math.max(0, now - job.started_at_ms) : 0;
+    if (previousMs > 0) return Math.max(0, Math.round((previousMs - elapsed) / 1000));
+    if (progress > 0.05 && elapsed > 0) return Math.max(0, Math.round((elapsed / progress - elapsed) / 1000));
+    return null;
+  }
+  function formatSecondsLeft(seconds) {
+    if (seconds === null) return "Working out how long this takes…";
+    if (seconds < 5) return "Almost done";
+    if (seconds < 60) return `About ${seconds} s left`;
+    const minutes = Math.floor(seconds / 60);
+    return `About ${minutes} min${seconds % 60 >= 10 ? ` ${seconds % 60} s` : ""} left`;
+  }
+
+  // The stage-by-stage view of a running model build (Manage → Tasks).
+  function ModelBuildProgress({ job, previousMs }) {
+    const phases = buildPhases(job) || [];
+    const progress = typeof job.progress === "number" ? Math.max(0, Math.min(job.progress, 1)) : 0;
+    const pct = Math.round(progress * 100);
+    return React.createElement(
+      "section",
+      { className: "curator-build-progress", "aria-label": "Model update progress" },
+      React.createElement("div", { className: "curator-build-head" },
+        React.createElement("strong", null, "Updating your recommendations"),
+        React.createElement("span", { className: "curator-build-eta" }, formatSecondsLeft(buildTimeLeft(job, previousMs)))),
+      React.createElement("div", { className: "curator-build-overall" },
+        React.createElement("div", { className: "curator-build-track", role: "progressbar", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Overall progress" },
+          React.createElement("span", { style: { width: `${pct}%` } })),
+        React.createElement("span", { className: "curator-build-pct" }, `${pct}%`)),
+      React.createElement("ol", { className: "curator-build-phases" }, phases.map((phase, index) => React.createElement(
+        "li",
+        { key: phase.label, className: `curator-build-phase is-${phase.state}` },
+        React.createElement("span", { className: "curator-build-dot", "aria-hidden": "true" }, phase.state === "done" ? "✓" : phase.state === "active" ? "" : String(index + 1)),
+        React.createElement("span", { className: "curator-build-label" }, phase.label,
+          React.createElement("span", { className: "visually-hidden" }, phase.state === "done" ? " (done)" : phase.state === "active" ? " (in progress)" : "")),
+        phase.state === "active" && React.createElement("span", { className: "curator-build-phase-bar", "aria-hidden": "true" }, React.createElement("span", { style: { width: `${Math.round(phase.fraction * 100)}%` } }))
+      )))
+    );
+  }
+
+  function ModelBuildDone({ job, onDismiss }) {
+    const seconds = typeof job.finished_at_ms === "number" && typeof job.started_at_ms === "number" ? Math.round((job.finished_at_ms - job.started_at_ms) / 1000) : null;
+    const took = seconds === null ? "" : seconds < 60 ? ` in ${seconds} s` : ` in ${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+    return React.createElement(
+      "section",
+      { className: "curator-build-done", role: "status" },
+      React.createElement("span", { className: "curator-moved-sparks", "aria-hidden": "true" }, [0, 1, 2, 3, 4, 5, 6, 7].map((index) => React.createElement("i", { key: index }))),
+      React.createElement(FontAwesomeIcon, { icon: faCheckCircle, className: "curator-moved-check" }),
+      React.createElement("span", null, React.createElement("strong", null, "Your picks just got sharper."), ` Recommendations updated${took}.`),
+      React.createElement("a", { className: "btn btn-primary btn-sm", href: "/plugins/stash-curator?view=for_you" }, "See your picks"),
+      React.createElement(Button, { size: "sm", variant: "link", "aria-label": "Dismiss", onClick: onDismiss }, "×")
+    );
+  }
+
   function curatorTaskStage(job) {
     const description = String(job.description || "").toLowerCase();
     const progress = typeof job.progress === "number" ? job.progress : null;
+    const phases = buildPhases(job);
+    if (phases) return phases.find((phase) => phase.state === "active")?.label || (progress === null ? "Working" : "Finishing");
     const stages = description.includes("local scene matches")
       ? [[0.7, "Checking your library"], [0.99, "Saving library matches"]]
       : description.includes("expand")
         ? [[0.04, "Checking your library"], [0.98, "Collecting Stash-box candidates"], [0.99, "Finishing"]]
-      : description.includes("sync")
-      ? [
-          [0.03, "Synchronizing library metadata"],
-          [0.58, "Rebuilding preference history"],
-          [0.68, "Building the recommendation model"],
-          [0.95, "Organizing recommendation lanes"],
-          [0.97, "Preparing recommendation pages"],
-          [0.99, "Finishing"],
-        ]
-      : description.includes("rebuild") || description.includes("feedback")
-        ? [
-            [0.1, "Building the recommendation model"],
-            [0.95, "Organizing recommendation lanes"],
-            [0.97, "Preparing recommendation pages"],
-            [0.99, "Finishing"],
-          ]
         : description.includes("prepare")
           ? [[0.05, "Preparing recommendation pages"], [0.99, "Finishing"]]
           : description.includes("backup")
@@ -7713,6 +8475,23 @@
     const finished = jobs.filter((job) => job.state !== "queued" && job.state !== "running");
     const running = active.length > 0;
     const last = jobs[0];
+    const building = active.find((job) => job.state === "running" && buildKind(job));
+    const previousBuild = building && finished.find((job) => job.state === "complete" && job.job_type === building.job_type && typeof job.started_at_ms === "number" && typeof job.finished_at_ms === "number");
+    // Remember the build being watched, so its finish shows a result here.
+    const watched = React.useRef(null);
+    const [doneBuild, setDoneBuild] = React.useState(null);
+    React.useEffect(() => {
+      if (building) {
+        watched.current = building.job_id;
+        return;
+      }
+      if (!watched.current) return;
+      const finishedBuild = jobs.find((job) => job.job_id === watched.current);
+      if (finishedBuild && finishedBuild.state !== "running" && finishedBuild.state !== "queued") {
+        watched.current = null;
+        if (finishedBuild.state === "complete") setDoneBuild(finishedBuild);
+      }
+    }, [building?.job_id, jobs]);
     function durationMs(job) {
       const end = typeof job.finished_at_ms === "number" ? job.finished_at_ms : Date.now();
       const start = typeof job.started_at_ms === "number" ? job.started_at_ms : end;
@@ -7816,6 +8595,8 @@
       "div",
       { className: "curator-tasks-panel" },
       error && React.createElement("div", { className: "alert alert-danger" }, error),
+      building && React.createElement(ModelBuildProgress, { job: building, previousMs: previousBuild ? previousBuild.finished_at_ms - previousBuild.started_at_ms : 0 }),
+      !building && doneBuild && React.createElement(ModelBuildDone, { job: doneBuild, onDismiss: () => setDoneBuild(null) }),
       React.createElement("p", null, "Tasks run in Curator's own background worker, so they keep going even after the Stash-side job completes — progress and results are shown here."),
       React.createElement(
         "div",
@@ -9317,6 +10098,7 @@
       setRefreshKey((value) => value + 1);
     }
     const [followUps, setFollowUps] = React.useState([]);
+    const [undo, setUndo] = React.useState(null);
     const [theme, setTheme] = React.useState(() => {
       try {
         return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
@@ -9470,13 +10252,30 @@
       ? (slate?.items || []).filter((item) => scenes.has(String(item.scene_id)))
       : slate?.items || [];
     useCuratorActivity("recommendations", loading || loadingComponents || scenesQuery.loading, loading ? `Preparing ${laneOption?.label || "recommendations"}…` : "Loading scene cards…");
-    function remove(sceneId) {
+    const movement = useModelMovement(laneByValue.has(lane) ? slate?.model_id : null);
+    const [movementDismissed, setMovementDismissed] = React.useState(false);
+    function remove(sceneId, info) {
       clearSlateCache();
       const excluded = laneExclusions.get(lane) || new Set();
       excluded.add(sceneId);
       laneExclusions.set(lane, excluded);
       persistSlateCache();
       setLoading(true);
+      setRefreshKey((value) => value + 1);
+      if (info?.feedbackId) setUndo({ sceneId, lane, feedbackId: info.feedbackId, text: FEEDBACK_UNDO_TEXT[info.feedbackType] || "Removed from this view.", key: info.feedbackId });
+    }
+    async function undoRemove(entry) {
+      setUndo(null);
+      try {
+        await operation({ operation: "correct_feedback", feedback_id: entry.feedbackId, correction_id: uuid(), feedback_type: null });
+      } catch (failure) {
+        setUndo({ ...entry, text: `Couldn't undo: ${failure.message}`, failed: true, key: `${entry.key}:failed` });
+        return;
+      }
+      scheduleModelUpdate();
+      clearSlateCache();
+      laneExclusions.get(entry.lane)?.delete(entry.sceneId);
+      persistSlateCache();
       setRefreshKey((value) => value + 1);
     }
     function showFollowUp(followUp) {
@@ -9690,6 +10489,7 @@
         onApply: () => { setPage(1); setFiltersOpen(false); },
       }),
       followUps.slice(-1).map((followUp) => React.createElement(SceneReasonFollowUp, { key: followUp.scene_id, followUp, onDismiss: () => setFollowUps((current) => current.filter((item) => item.scene_id !== followUp.scene_id)) })),
+      undo && React.createElement(UndoToast, { key: undo.key, entry: undo, onUndo: undoRemove, onClose: () => setUndo(null) }),
       configReady && lane === "similar" && !loadingComponents && React.createElement(SimilarityPanel, { endless: endlessEnabled }),
       lane === "curate" && React.createElement(CuratePanel, { section: curateSection, onSelectSection: openCurate, sentimentQuery: route.get("sent_tag") || "" }),
       lane === "insights" && !loadingComponents && React.createElement(InsightsPanel, { onOpenSentiment: () => openCurate("sentiment") }),
@@ -9702,20 +10502,24 @@
       lane === "manage" && (currentSection !== "prune" || !loadingComponents) && React.createElement(ManagePanel, { section: currentSection, onSelectSection: openManage, diversityEnabled, diversitySaving, onToggleDiversity: toggleDiversity, onMoodsSaved: applyMoods, onConfigSaved: applyDisplayConfig }),
       error && React.createElement("div", { className: "alert alert-danger" }, error, React.createElement("p", null, "Run “Sync and build recommendations” from Tasks if no model exists yet."), React.createElement(Button, { size: "sm", variant: "primary", onClick: () => runTask("Sync and build recommendations") }, React.createElement(FontAwesomeIcon, { icon: faSync }), " Sync and build now")),
       laneByValue.has(lane) && scenesQuery.error && React.createElement("div", { className: "alert alert-danger" }, scenesQuery.error.message),
-      laneByValue.has(lane) && loading && React.createElement("div", { className: "curator-loading", role: "status" }, React.createElement("span", null, rotatingLane === lane ? "Finding another set of qualified scenes…" : "Loading recommendations…")),
+      laneByValue.has(lane) && loading && React.createElement(LaneSkeleton, { message: rotatingLane === lane ? "Finding another set of qualified scenes…" : null }),
       laneByValue.has(lane) && slate && !loading &&
         React.createElement(
           React.Fragment,
           null,
-          visibleItems.length === 0 && React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, togetherMode ? "No recommendations match Mood mode in this lane." : "Nothing qualifies for this lane right now."), !togetherMode && React.createElement(Button, { size: "sm", variant: "secondary", onClick: () => runTask("Rebuild recommendation model") }, React.createElement(FontAwesomeIcon, { icon: faWrench }), " Rebuild model")),
+          lane === "for_you" && !togetherMode && React.createElement(WelcomeBack, { items: visibleItems.slice(0, 5), scenes }),
+          movement && !movementDismissed && React.createElement(MovementBanner, { movement, onDismiss: () => setMovementDismissed(true) }),
+          visibleItems.length === 0 && (togetherMode
+            ? React.createElement("div", { className: "alert alert-info" }, React.createElement("p", null, "No recommendations match Mood mode in this lane."))
+            : React.createElement(LaneEmpty, { lane, onOpenLane: openView, onRebuild: () => runTask("Rebuild recommendation model") })),
           endless
-            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp })
+            ? resolved && React.createElement(EndlessRecommendations, { key: `${slate.impression_id}:${recommendationView}`, slate, visibleItems, scenes, lane, filters: slateFilters, thumbnails: recommendationView === "thumbnails", cards: recommendationView === "cards", onRestart: refresh, onRemove: remove, onReaction: showFollowUp, movement })
             : recommendationView !== "cards"
               ? React.createElement(RecommendationWall, { visibleItems, scenes, lane, thumbnails: recommendationView === "thumbnails" })
             : React.createElement(
               "section",
-              { className: "curator-grid curator-grid-enter", role: "tabpanel", "aria-live": "polite" },
-              visibleItems.map((item) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp }))
+              { className: "curator-grid", role: "tabpanel", "aria-live": "polite" },
+              visibleItems.map((item, index) => React.createElement(RecommendationCard, { key: `${item.impression_id}:${item.scene_id}`, item, scene: scenes.get(String(item.scene_id)), slate, onRemove: remove, onReaction: showFollowUp, enterIndex: index, movement: movement?.scenes.get(String(item.scene_id)) || null }))
             ),
           !endless && React.createElement(Pager, { page, total: slate.total, pageSize: slate.page_size, hasMore: slate.has_more, loading, onPage: setPage, label: `${laneOption.label} pages` })
         )

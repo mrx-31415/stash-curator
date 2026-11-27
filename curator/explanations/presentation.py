@@ -189,6 +189,8 @@ def evidence_rows(reasons: Iterable[Any]) -> list[dict[str, object]]:
             "magnitude": float(reason.magnitude),
             "confidence": float(reason.confidence),
             "detail": reason.detail,
+            "subject_type": reason.subject_type,
+            "subject_id": reason.subject_id,
         }
         for reason in candidates[:3]
     ]

@@ -50,6 +50,10 @@ interface's colors and fonts. Stash UI's standalone lists and player do not run
 Stash's component hooks, so Curator's native card and detail-page additions appear
 in classic Stash only.
 Cards keep Appeal visible; selection evidence and lane rank are under **Why this?**.
+After a model update, the first visit to a lane page notes how many scenes your
+feedback moved, and those scenes' cards carry a small up or down arrow with the
+change in Appeal; hover it to see which answer moved it. This shows once per update,
+for updates in the last week, and **What changed** opens the full Impact report.
 For endless scrolling, enable **Virtual endless scrolling** under
 **Manage → Settings → Page settings**, alongside **Results per page** (or Curator's plugin settings).
 It is off by default. All three recommendation views then load the next ranked page
@@ -63,6 +67,8 @@ your position and nearby loaded batches in the same tab. Deep lists retain up to
 can retain fewer batches. Changing filters,
 moods, or choosing **New picks** starts a fresh list. **Results per page** controls
 the fetch size; **Load more** also lets you load explicitly or retry a failed request.
+While a lane loads, placeholder cards hold its place. An empty lane says why it is
+empty and offers **Try For You instead**, alongside **Rebuild model**.
 
 Use **New picks** for a fresh draw from the lane's strongest
 recommendations. Higher-ranked scenes have better odds, while scenes you saw
@@ -72,6 +78,29 @@ removed by rotation: their odds recover over the configured rotation cooldown
 Returning to the page keeps the current draw; a new local day or a new model
 refreshes it. Refreshing the same lane twice in one tab also draws again; a
 single refresh keeps the current cards in place.
+
+### Welcome back and your week
+
+The top of **For You** greets you after time away. If you have been gone a couple
+of hours or more, tiles count what is new since your last visit in this browser:
+scenes added to your library, how many of them arrived from Whisparr, and model
+updates to your picks. Each tile opens the matching page.
+
+Below them, one of For You's top five picks is dealt as a card with its reason;
+**Deal again** moves to the next one. **Your week with Curator** sums up the last
+seven days: Curator picks you watched and how many you rated 70 or higher (or gave a
+thumbs up), the minutes you watched from Curator each day, your best find (a pick
+from a studio you had not played before), and what you taught Curator through
+feedback and tag answers. Hide it with **×** until next week. All of this is read
+from Curator's own data and never leaves your machine.
+
+In the first ten days of a month, **Your <month>, rewound** offers a short story
+about the month before: picks watched and time spent, your studio of the month, your
+best discovery, how your taste moved (from Insights), Curator's hit rate (picks you
+rated well, against the month before), how much of your watching was new to you, and
+a first pick for the new month. Cards move on by themselves (use the arrows or
+**Pause**; with reduced motion they wait for you). It shows once per month until
+you watch or dismiss it.
 
 ### Curator's comments
 
@@ -217,13 +246,20 @@ An unavailable scene or failed request offers retry and navigation controls.
 
 Open **Why this?** for a plain-language reason and score tree. It separates durable
 Appeal from Current Fit, shows confidence, and names positive or negative evidence.
-The score tree shows the evidence behind the summary.
+The score tree shows the evidence behind the summary. Each evidence row has a bar
+that pushes the scene up (right of the centre line) or pulls it down (left), sized
+against the strongest reason. A row about a tag has **−** and **+** buttons: each
+press moves your answer for that tag one step along the Tag sentiment scale and saves
+it like any other Tag sentiment answer, so the change reaches your picks with the
+next model update.
 
 Use thumbs up or down for direct feedback. The detail menu also supports **Not now**,
 **Never show**, **Mark for pruning**, and **Metadata is wrong**. Check the card's
 confirmation or error after submitting feedback. Accepted feedback contributes to a
 batched model update, so one action may not change the next recommendation immediately.
-Use **Manage → Feedback history** to undo or replace a mistaken answer. **Not now**
+When a reaction hides a card on a lane page, a note at the bottom of the page
+offers **Undo** for a few seconds; it reverses that feedback and brings the scene
+back. Use **Manage → Feedback history** to undo or replace an older answer. **Not now**
 temporarily hides a scene without recording dislike; **Metadata is wrong** excludes
 its current metadata from training.
 
@@ -293,7 +329,9 @@ tags**). The questions keep coming until none are left that would change much: t
 queue tops itself up in the background, and every five answers Curator updates
 recommendations and reorders the remaining questions, so a tag your earlier answers
 already settled is not asked next. Every answer is saved on **Next**, so you can stop
-at any point. **Apply my answers now** runs a model update straight away.
+at any point. A ring beside the question count fills with each answer and shows how
+many are left before the next update; while that update runs, a note says so.
+**Apply my answers now** runs a model update straight away.
 
 **Review my answers** goes through your own answers that most disagree with what
 your viewing alone suggests, ranked by the size of the gap and how confident the
@@ -660,7 +698,8 @@ searched for, and **Next search** sorts by when each is next searched. Each scen
 the rotation shows how often it was searched, when last, and when the next search
 can run (never before the next round), or why it waits: its release date, or a
 download in progress. Scenes the rotation found, gave up on, or stopped show that
-too. A note above the list gives the pace and the next round, or why the rotation is
+too. A note above the list gives the pace and the next round, with a ring that
+drains toward it and stays current while the tab is open, or why the rotation is
 paused, including Whisparr's error when it could not be reached.
 
 Use the clock button on a scene, or **Add to rolling search** for selected ones, to
@@ -742,6 +781,11 @@ result always follows its match.
 - Back up before plugin updates and before uninstalling.
 - Treat Blind Spots and external results as exploration, not guaranteed matches.
 - If Curator feels stale, check task status and run the normal sync before a full one.
+- While a model update runs, **Manage → Tasks** shows it stage by stage (syncing,
+  describing your scenes, learning from plays and ratings, weighing tags, performers
+  and studios, scoring, saving, then lanes and pages) with an estimate of the time
+  left, based on how long the same task took last time. The task indicator in the
+  header names the same stages. When it finishes, a note links to your new picks.
 - Enable profiling only while measuring a reproducible slow operation; retained
   traces stay local until cleared. `worker-*` traces measure actual background
   execution; task traces without that prefix measure the request to enqueue work.
